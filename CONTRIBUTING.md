@@ -6,6 +6,10 @@ just check      # what CI runs: typecheck, lint, tests, the docs' prose and the 
 just site-dev   # serve the docs locally
 ```
 
+## The package
+
+`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. It ships TypeScript and runs through tsx, like chant. Its tests run with the rest under `just check`. `npm pack` in that directory builds the tarball; publishing to npm waits for an explicit go.
+
 ## Workflows
 
 Every workflow in this repo is a chant declaration. The YAML is rendered from it and committed, because GitHub reads YAML from the default branch.

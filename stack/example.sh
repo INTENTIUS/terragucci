@@ -128,15 +128,21 @@ case "$CMD" in
     # BREAK support for the boot claim: skip one root's apply, so the pipeline
     # stays green and only the resource check can notice.
     if [ -n "${TG_SKIP_ROOT:-}" ]; then
-      python3 - "$WORK/tree/.forgejo/scripts/apply-all.sh" "$TG_SKIP_ROOT" <<'PY'
+      python3 - "$WORK/tree/.forgejo/workflows/terragucci.yml" "$TG_SKIP_ROOT" <<'PY'
 import sys
 p, root = sys.argv[1], sys.argv[2]
 s = open(p).read()
-a = "grep -v /platform/)"
-assert a in s
-open(p, "w").write(s.replace(a, "grep -v /platform/ | grep -v '^%s/$')" % root))
+a = " '%s'" % root
+lines = s.split("\n")
+hits = [i for i, l in enumerate(lines) if "apply_together '" in l and a in l]
+assert hits, a
+lines[hits[0]] = lines[hits[0]].replace(a, "", 1)
+open(p, "w").write("\n".join(lines))
 PY
     fi
+    # The roots keep their state in this bucket. In a real account it exists
+    # before the first pipeline runs; on a fresh floci, make it.
+    curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
     # The sha depends only on the example's contents, so a capture can rely on it.
     TG_FIXED_DATE=1 apply_main_tree "The shop's estate"
     log "ready in $(( $(date +%s) - started ))s"

@@ -88,6 +88,21 @@ stack-up profile="forgejo":
     fi
     stack/bootstrap.sh {{profile}}
 
+[doc("Bring up the stack profiles a terragucci config needs: floci, its forges, and fountain only if a project runs there.")]
+stack-for config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    profiles="$(node_modules/.bin/terragucci profiles --config {{config}})"
+    echo "{{config}} needs: $profiles"
+    for p in $profiles; do
+      case "$p" in
+        aws) ;;
+        forgejo) stack/bootstrap.sh forgejo ;;
+        *) echo "  the $p profile is declared but not validated yet; skipping it (TERRAGUCCI_UNVALIDATED=1 stack/bootstrap.sh $p starts its containers)" ;;
+      esac
+    done
+    case " $profiles " in *" forgejo "*) ;; *) stack/bootstrap.sh aws ;; esac
+
 [doc("Remove every container, network and volume the validation stack started.")]
 stack-down:
     #!/usr/bin/env bash

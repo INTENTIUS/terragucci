@@ -1,6 +1,6 @@
 {
   "recorded": "2026-10-03",
-  "commit": "971452d",
+  "commit": "24bc9d7",
   "forge": "forgejo",
   "claims": [
     {
@@ -89,10 +89,17 @@
     },
     {
       "claim": "zero-config",
-      "says": "with no terragucci.yml the same roots are found",
-      "needs": "chant#3348",
-      "verdict": "pending",
-      "break": null
+      "says": "with no terragucci.yml, init writes the same pipeline",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "reconcile",
+      "says": "a control repo opens one pull request per project that changes, and the merged pipeline applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     }
   ]
 }

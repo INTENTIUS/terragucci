@@ -7,7 +7,7 @@ import { lintDocument } from "sentences/lint/run";
 
 const strictness = Number(process.argv[2] ?? 2);
 const limit = Number(process.argv[3] ?? 8);
-const roots = ["README.md", "AGENTS.md", "docs-site/src/content/docs"];
+const roots = ["README.md", "AGENTS.md", "packages/terragucci/README.md", "docs-site/src/content/docs"];
 
 function collect(path) {
   if (!statSync(path).isDirectory()) return [path];

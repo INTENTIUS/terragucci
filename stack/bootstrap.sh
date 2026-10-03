@@ -129,7 +129,8 @@ runner_online() {
     | jq -e 'map(select(.name == "terragucci-docker" and .status != "offline")) | length > 0' >/dev/null 2>&1
 }
 
-if "${COMPOSE[@]}" exec -T forgejo-runner test -s /data/config.yml 2>/dev/null && runner_online; then
+# A config written before the runner carried the AWS environment is replaced.
+if "${COMPOSE[@]}" exec -T forgejo-runner grep -q AWS_ENDPOINT_URL /data/config.yml 2>/dev/null && runner_online; then
   log "the runner is already registered and online"
 else
   # A runner from an earlier registration that is no longer polling would
@@ -158,9 +159,15 @@ runner:
   fetch_interval: 2s
   report_interval: 1s
   envs:
-    # Read by the fixture workflow's install step and by tofu itself.
+    # Read by the install steps and by tofu itself.
     TOFU_INSTALL_DIR: /cache/bin
     TF_PLUGIN_CACHE_DIR: /cache
+    # Every job's AWS is floci, the way a CI runner in a real account carries
+    # that account's credentials. Pipelines and roots name no endpoint.
+    AWS_ENDPOINT_URL: http://floci:4566
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+    AWS_REGION: us-east-1
   labels:
     - "docker:docker://${JOB_IMAGE}"
     - "ubuntu-latest:docker://${JOB_IMAGE}"
