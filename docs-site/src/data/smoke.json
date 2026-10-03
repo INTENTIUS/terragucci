@@ -62,7 +62,7 @@
     {
       "claim": "drift",
       "says": "drift is reported by root",
-      "needs": "chant#3343",
+      "needs": "chant#3388",
       "verdict": "pending",
       "break": null
     },
