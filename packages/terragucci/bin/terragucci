@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+# Resolve symlinks to find the real script location (npm links bins).
+SELF="$0"
+while [ -L "$SELF" ]; do
+  DIR="$(cd "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  case "$SELF" in /*) ;; *) SELF="$DIR/$SELF" ;; esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+MAIN_TS="$SCRIPT_DIR/../src/cli.ts"
+
+# terragucci ships TypeScript, like chant, and runs it through tsx, which
+# chant depends on. Nested install first, then hoisted, then chant's own.
+for CANDIDATE in \
+  "$SCRIPT_DIR/../node_modules/tsx/dist/loader.mjs" \
+  "$SCRIPT_DIR/../../../tsx/dist/loader.mjs" \
+  "$SCRIPT_DIR/../../../@intentius/chant/node_modules/tsx/dist/loader.mjs" \
+  "$SCRIPT_DIR/../node_modules/@intentius/chant/node_modules/tsx/dist/loader.mjs"
+do
+  if [ -f "$CANDIDATE" ]; then
+    exec node --import "file://$CANDIDATE" "$MAIN_TS" "$@"
+  fi
+done
+
+exec npx tsx "$MAIN_TS" "$@"

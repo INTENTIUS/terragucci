@@ -13,6 +13,8 @@
   "include": [
     "ci/**/*.ts",
     "pages/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
     "capture/**/*.ts",
     "workflows/**/*.ts",
     "test/**/*.ts",

@@ -4,6 +4,11 @@ The whole Terraform lifecycle, handled. Every pull request gets one grouped plan
 
 It runs whichever binary you already use; [Which binary you run](https://intentius.io/terragucci/getting-started/binaries/) lists them. Pipelines run on your forge's CI, or a fountain steward takes apply and drift for durable runs.
 
+```bash
+npm i -D @intentius/terragucci
+npx terragucci init
+```
+
 The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Build progress lives on its [status page](https://intentius.io/terragucci/status/).
 
 ## For agents

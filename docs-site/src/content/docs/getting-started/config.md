@@ -7,18 +7,28 @@ terragucci reads one file, `terragucci.yml`. The same schema works in a single r
 
 ## No file
 
-Add the generated pipeline to a repo and terragucci starts from these defaults:
+Install terragucci and let it read the repo:
+
+```bash
+npm i -D @intentius/terragucci
+npx terragucci init
+```
+
+`init` writes the pipeline for your forge and prints what it found. With no `terragucci.yml`, it starts from these defaults:
 
 | Setting | Default |
 |---|---|
-| Roots | every directory holding `*.tf` or `*.tofu` files with a backend or a `terraform` block |
-| Binary | the one on the runner's path |
+| Roots | every directory whose `*.tf` or `*.tofu` files declare a backend or configure a provider |
+| Binary | from `.opentofu-version` or `.terraform-version`, then `.tofu` files, then what is on your path |
+| Version | the one `required_version` pins exactly, or terragucci's default for the binary |
+| Forge | from a workflow directory already in the repo, or the host of its `origin` remote |
+| Order | a root that reads another's state through `terraform_remote_state` applies after it |
 | Gate | `on-destroy`, so a wave waits for an approval only when it destroys something |
 | Drift | off |
 | Runtime | your forge's CI |
 | Reports | a CI artifact, linked from the pull-request note |
 
-Your next pull request gets a plan note.
+Commit the pipeline, and your next pull request runs it. Running `init` again changes nothing unless the repo changed.
 
 ## One repo
 
@@ -51,8 +61,8 @@ projects:
 Preview what each project's pipeline would become, then open a pull request in each project that changes:
 
 ```bash
-terragucci reconcile --config terragucci.yml
-terragucci reconcile --config terragucci.yml --mode apply
+npx terragucci reconcile --config terragucci.yml
+npx terragucci reconcile --config terragucci.yml --mode apply
 ```
 
 A dry run is the default. terragucci writes to each project through a pull request, never straight to its main branch, and the project's own pipeline does the applying. A repo you leave out is never touched.
@@ -69,7 +79,10 @@ A dry run is the default. terragucci writes to each project through a pull reque
 | `drift` | off | a cron schedule for `tf-drift` |
 | `runtime` | `forge` | `fountain` runs apply and drift on a steward; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | CI artifact | a bucket to copy reports to; see [The plan report](/terragucci/reference/report/) |
-| `token_env` | per forge | the environment variable holding the forge token |
+| `version` | detected | the binary's version |
+| `env` | none | environment variables every job gets; values only, never secrets |
+| `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
+| `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN` | the environment variable holding the forge token |
 | `modules.path` | none | where your modules live, such as `modules/*` |
 | `modules.publish` | none | an `oci://` registry, or `git-tags`; turns on `tf-publish` |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |

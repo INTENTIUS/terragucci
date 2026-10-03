@@ -29,10 +29,10 @@ The site describes the finished product, and the status page is the only record 
 
 ## Steps for the agent
 
-1. Find the roots. A root is a directory whose `.tf` or `.tofu` files declare a backend or a `terraform` block. List them for the user.
-2. Find the binary. Read `required_version` and any `.terraform-version` or `.opentofu-version` file, and ask the user when they disagree.
+1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run`. It lists the roots, the binary and the forge it found. Show the user.
+2. Check what it found. When the binary or the forge is wrong, pass `--binary` or `--forge`, or ask the user.
 3. Decide whether the repo needs a config file. With one binary and no canary preference, it needs none. Otherwise write the smallest `terragucci.yml` that corrects the defaults; [Your config file](/terragucci/getting-started/config/) lists every key and its default.
-4. Preview. Run `terragucci reconcile --config terragucci.yml` and show the user the pipeline it would write.
+4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
 5. Open a pull request with the config and the generated pipeline. The default branch is the user's to change. Applying and approving are theirs too, so the agent runs no `apply`, `chant approve` or `--mode apply`.
 6. Read the tips the dry run prints about pins and lock files. Report them, and offer each fix as its own pull request.
 

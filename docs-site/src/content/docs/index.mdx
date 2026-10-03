@@ -64,10 +64,13 @@ Paste one prompt into Claude Code, Codex or Cursor, and your agent reads the doc
 
 ## Start with one file
 
-Most repos need no config at all. When yours does, write a `terragucci.yml`, or one for every repo you run, and preview the result with a dry run:
+Most repos need no config at all. Install terragucci and let it read the repo:
 
 ```bash
-terragucci reconcile --config terragucci.yml
+npm i -D @intentius/terragucci
+npx terragucci init
 ```
+
+It writes the pipeline for your forge. For many repos at once, one `terragucci.yml` in a control repo opens a pull request in each.
 
 [Write your config file](/terragucci/getting-started/config/)
