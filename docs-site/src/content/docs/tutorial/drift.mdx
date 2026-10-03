@@ -1,0 +1,20 @@
+---
+title: Drift
+description: Delete a queue outside Terraform and see the drift report name the root.
+sidebar:
+  order: 6
+claims: [drift]
+draft: true
+---
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+Someone deletes a queue in the console. This scenario does the same through the API.
+
+```bash
+just example change drift
+```
+
+The next `tf-drift` run plans every root against what exists in floci. It reports staging orders as drifted, with the queue it will create again, grouped with any other drift.

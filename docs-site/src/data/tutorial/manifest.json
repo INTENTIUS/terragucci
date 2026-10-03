@@ -1,0 +1,8 @@
+{
+  "captured": "2026-10-03",
+  "commit": "971452d",
+  "tofu": "1.13.1",
+  "aws_provider": "6.67.0",
+  "forgejo": "16.0.5",
+  "floci": "b08cd3d50742"
+}

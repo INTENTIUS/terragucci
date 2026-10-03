@@ -1,0 +1,14 @@
+diff --git a/envs/prod/search/main.tf b/envs/prod/search/main.tf
+index 7f73ea7..0114b06 100644
+--- a/envs/prod/search/main.tf
++++ b/envs/prod/search/main.tf
+@@ -40,6 +40,9 @@ module "service" {
+   env         = "prod"
+   name        = "search"
+   logs_bucket = data.terraform_remote_state.platform.outputs.logs_bucket
++
++  # Search records are looked up by product, so key the table by sku.
++  records_key = "sku"
+ }
+ 
+ output "jobs_queue" {

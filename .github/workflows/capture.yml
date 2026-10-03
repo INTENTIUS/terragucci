@@ -1,0 +1,54 @@
+name: capture
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capture
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Record the smoke claims
+        run: just smoke-record
+      - name: Capture the tutorial
+        run: CHROME=google-chrome just tutorial-capture
+      - name: Stop the stack
+        if: always()
+        run: just stack-down
+      - name: Open a pull request with what changed
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          if [ -z "$(git status --porcelain docs-site/src/data docs-site/src/assets)" ]; then
+            echo "nothing changed"
+            exit 0
+          fi
+          branch="capture/$(date -u +%Y-%m-%d)-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add docs-site/src/data docs-site/src/assets
+          git commit -m "docs: refresh the smoke record and tutorial captures"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" --title "docs: refresh the smoke record and tutorial captures" --body "From the capture workflow, run ${GITHUB_RUN_ID}. Review the screenshots before merging."

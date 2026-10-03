@@ -1,0 +1,45 @@
+---
+// A step's terminal output, as `just tutorial-capture` recorded it.
+const captures = import.meta.glob('../data/tutorial/*.json', { eager: true, import: 'default' }) as Record<
+	string,
+	{ step: string; commands: Array<{ cmd: string; output: string; exit: number }> }
+>;
+
+interface Props {
+	step: string;
+	/** Show only the command whose text starts with this. */
+	cmd?: string;
+}
+const { step, cmd } = Astro.props;
+const capture = captures[`../data/tutorial/${step}.json`];
+if (!capture) throw new Error(`no capture for tutorial step "${step}"; run just tutorial-capture`);
+const commands = cmd ? capture.commands.filter((c) => c.cmd.startsWith(cmd)) : capture.commands;
+if (commands.length === 0) throw new Error(`tutorial step "${step}" has no command starting "${cmd}"`);
+---
+{commands.map((c) => (
+	<figure class="tg-captured not-content">
+		<pre><code><span class="prompt">$ </span>{c.cmd}{'\n'}{c.output}</code></pre>
+	</figure>
+))}
+
+<style>
+	figure {
+		margin: 1rem 0;
+	}
+	pre {
+		margin: 0;
+		padding: 0.9rem 1rem;
+		background: var(--tg-panel);
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.5rem;
+		overflow-x: auto;
+		font-family: var(--sl-font-mono);
+		font-size: 0.8rem;
+		line-height: 1.55;
+		color: var(--sl-color-gray-2);
+	}
+	.prompt {
+		color: var(--sl-color-gray-4);
+		user-select: none;
+	}
+</style>

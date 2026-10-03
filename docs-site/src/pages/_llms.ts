@@ -16,7 +16,6 @@ const ORDER = [
 	'reference/report',
 	'reference/runtimes',
 	'reference/validation',
-	'reference/ci',
 	'status',
 ];
 
@@ -34,7 +33,7 @@ export async function pages() {
 			description: d.data.description ?? '',
 			url: d.id === 'index' ? `${SITE}/` : `${SITE}/${d.id}/`,
 			// MDX import lines and component tags are code, not text.
-			body: (d.body ?? '').replace(/^(import .*|<[A-Z]\w* *\/>)\n?/gm, '').trim(),
+			body: (d.body ?? '').replace(/^(import .*|<[A-Z][^>]*\/>)\n?/gm, '').trim(),
 		}));
 }
 

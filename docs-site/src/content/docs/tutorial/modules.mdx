@@ -1,0 +1,18 @@
+---
+title: Publishing and pinning modules
+description: Publish the module at a version, pin the roots to it, and roll a new version out one pull request per wave.
+sidebar:
+  order: 7
+claims: [publish, rollout]
+draft: true
+---
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+When roots pin a module version, a change to the module reaches no root until a pin moves. `tf-publish` publishes `modules/service` at a new version, and `tf-rollout` moves the pins for one wave at a time, each wave its own small pull request.
+
+```bash
+just example change pin
+```

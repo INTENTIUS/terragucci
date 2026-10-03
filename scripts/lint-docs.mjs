@@ -24,7 +24,7 @@ for (const file of files) {
   // line numbers still match the file.
   const raw = readFileSync(file, "utf8");
   const text = file.endsWith(".mdx")
-    ? raw.replace(/^(import .*|<[A-Z]\w* *\/>)$/gm, "")
+    ? raw.replace(/^(import .*|<[A-Z][^>]*\/>)$/gm, "")
     : raw;
   const report = lintDocument(text, { markdown: true, strictness });
   const score = report.score.total;

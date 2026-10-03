@@ -54,20 +54,9 @@ case "$FORGE:$CLAIM" in
   *) usage ;;
 esac
 
-if [ -z "${TERRAGUCCI_FORGEJO_TOKEN:-}" ]; then
-  [ -f "$HERE/.state/forgejo.env" ] || fail "no stack/.state/forgejo.env; run 'just stack-up forgejo' first"
-  # shellcheck disable=SC1091
-  . "$HERE/.state/forgejo.env"
-fi
-URL="$TERRAGUCCI_FORGEJO_URL"
-TOKEN="$TERRAGUCCI_FORGEJO_TOKEN"
+# shellcheck source=lib.sh
+. "$HERE/lib.sh"
 REPO="$TERRAGUCCI_FORGEJO_REPO"
-FLOCI="$TERRAGUCCI_FLOCI_URL"
-API="$URL/api/v1/repos/$REPO"
-api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
-
-api -o /dev/null "$URL/api/v1/user" 2>/dev/null \
-  || fail "Forgejo at $URL does not accept the token; run 'just stack-up forgejo' again"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-validate.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -82,22 +71,7 @@ prepare() { # dir
 }
 
 push() { # dir, branch -> prints the pushed sha
-  local dir="$1" branch="$2"
-  (
-    cd "$dir"
-    git init -q -b "$branch"
-    git add -A
-    git -c user.email=validate@terragucci.local -c user.name=terragucci-validate \
-      commit -qm "validate $CLAIM $(date -u +%Y-%m-%dT%H:%M:%SZ) $$"
-    local remote="${URL/#http:\/\//http://${TERRAGUCCI_FORGEJO_USER}:${TOKEN}@}/${REPO}.git"
-    # Forgejo's "create a pull request" hint is noise here; show output only
-    # when the push fails.
-    if ! out="$(git push -q --force "$remote" "HEAD:refs/heads/$branch" 2>&1)"; then
-      echo "${out//${TOKEN}/***}" >&2
-      exit 1
-    fi
-    git rev-parse HEAD
-  )
+  push_tree "$1" "$REPO" "$2" "validate $CLAIM $(date -u +%Y-%m-%dT%H:%M:%SZ) $$"
 }
 
 # The unformatted file the check claim relies on: valid HCL that tofu fmt
@@ -109,37 +83,6 @@ locals {
   also = 1
 }
 EOF
-}
-
-print_logs() { # run id
-  local jobs id name status
-  jobs="$(api "$API/actions/runs/$1/jobs" || echo '[]')"
-  echo "$jobs" | jq -r '.[] | "\(.id)\t\(.name)\t\(.status)"' | while IFS=$'\t' read -r id name status; do
-    echo "----- job '$name' ($status), last 60 lines -----"
-    api "$API/actions/jobs/$id/logs" 2>/dev/null | tail -60 || echo "(no log)"
-  done
-}
-
-# Poll the run for a sha until it is done; prints the run id, sets RUN_STATUS.
-wait_run() { # sha
-  local sha="$1" deadline=$(( $(date +%s) + TIMEOUT )) run="" status=""
-  while :; do
-    run="$(api "$API/actions/runs?head_sha=$sha" | jq -c '.workflow_runs[0] // empty')"
-    if [ -n "$run" ]; then
-      status="$(echo "$run" | jq -r '.status')"
-      case "$status" in
-        success|failure|cancelled|skipped) break ;;
-      esac
-    fi
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      [ -n "$run" ] && print_logs "$(echo "$run" | jq -r '.id')" >&2
-      fail "no finished run for $sha after ${TIMEOUT}s (last status: ${status:-none})"
-    fi
-    sleep 3
-  done
-  RUN_ID="$(echo "$run" | jq -r '.id')"
-  RUN_STATUS="$status"
-  log "run $(echo "$run" | jq -r '.index_in_repo') for ${sha:0:8}: $status ($(echo "$run" | jq -r '.html_url'))"
 }
 
 bucket_code() { curl -s -o /dev/null -m 5 -w '%{http_code}' -I "$FLOCI/$BUCKET" || true; }
@@ -154,9 +97,9 @@ case "$CLAIM" in
     [ -n "$BREAK" ] && add_unformatted "$WORK/clean"
     sha="$(push "$WORK/clean" validate/check)"
     log "pushed the formatted root to validate/check at ${sha:0:8}"
-    wait_run "$sha"
+    wait_run "$REPO" "$sha"
     if [ "$RUN_STATUS" != "success" ]; then
-      print_logs "$RUN_ID"
+      print_logs "$REPO" "$RUN_ID"
       fail "the formatted root's run ended '$RUN_STATUS'; expected success"
     fi
 
@@ -165,9 +108,9 @@ case "$CLAIM" in
     add_unformatted "$WORK/dirty"
     sha="$(push "$WORK/dirty" validate/check)"
     log "pushed an unformatted file to validate/check at ${sha:0:8}"
-    wait_run "$sha"
+    wait_run "$REPO" "$sha"
     [ "$RUN_STATUS" = "failure" ] || fail "the unformatted root's run ended '$RUN_STATUS'; expected failure"
-    logs="$(print_logs "$RUN_ID")"
+    logs="$(print_logs "$REPO" "$RUN_ID")"
     echo "$logs" | grep -q "unformatted.tf" \
       || { echo "$logs"; fail "the run failed, but its log does not name unformatted.tf, so it failed somewhere other than the fmt check"; }
     log "the run failed at the fmt check and named infra/unformatted.tf"
@@ -185,14 +128,14 @@ case "$CLAIM" in
     fi
     sha="$(push "$WORK/main" main)"
     log "pushed to main at ${sha:0:8}"
-    wait_run "$sha"
+    wait_run "$REPO" "$sha"
     if [ "$RUN_STATUS" != "success" ]; then
-      print_logs "$RUN_ID"
+      print_logs "$REPO" "$RUN_ID"
       fail "the apply run ended '$RUN_STATUS'; expected success"
     fi
     code="$(bucket_code)"
     if [ "$code" != "200" ]; then
-      print_logs "$RUN_ID"
+      print_logs "$REPO" "$RUN_ID"
       fail "the run went green but $BUCKET is not in floci (HEAD answered $code)"
     fi
     log "$BUCKET exists in floci (HEAD $FLOCI/$BUCKET answered 200)"

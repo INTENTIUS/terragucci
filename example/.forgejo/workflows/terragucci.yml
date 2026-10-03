@@ -1,0 +1,51 @@
+# The pipeline for this repo. terragucci generates this file from
+# terragucci.yml; until its stages ship, this hand-written version stands in.
+#
+# check  every push: format check and validate, for every root.
+# apply  pushes to main: apply every root to floci, platform roots first.
+#
+# floci stands in for AWS. The env block below points the roots at it; the
+# roots themselves are plain AWS code.
+name: terragucci
+
+on:
+  push:
+    branches: ["**"]
+
+env:
+  TOFU_VERSION: "1.13.1"
+  AWS_ENDPOINT_URL: http://floci:4566
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  check:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenTofu
+        run: .forgejo/scripts/tofu-install.sh
+      - name: tofu fmt -check
+        run: tofu fmt -check -recursive -diff .
+      - name: tofu validate, every root
+        run: |
+          for dir in envs/*/*/; do
+            tofu -chdir="$dir" init -backend=false -no-color >/dev/null
+            tofu -chdir="$dir" validate -no-color >/dev/null && echo "valid $dir"
+          done
+
+  apply:
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenTofu
+        run: .forgejo/scripts/tofu-install.sh
+      - name: Create the state bucket
+        run: curl -fsS -o /dev/null -X PUT "$AWS_ENDPOINT_URL/shop-terraform-state"
+      - name: tofu apply, every root
+        run: .forgejo/scripts/apply-all.sh

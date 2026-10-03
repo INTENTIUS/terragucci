@@ -1,0 +1,86 @@
+---
+title: Boot the example
+description: Run a 15-root Terraform estate on your laptop, with a local forge and an AWS stand-in, in about two minutes.
+sidebar:
+  order: 1
+claims: [boot]
+---
+
+import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
+import Manifest from '../../../components/Manifest.astro';
+
+This tutorial runs terragucci against a small shop's estate on your own machine. You make the changes a team makes every week and see what terragucci does with each one. Nothing here touches a cloud account or costs anything.
+
+<Manifest />
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| Docker, with 4 GB of memory free | the forge, its runner and the AWS stand-in run as containers |
+| [`just`](https://just.systems), `git` and `jq` | the commands below are `just` recipes |
+| about ten minutes | the first boot pulls the images |
+
+Clone terragucci and move into it:
+
+```bash
+git clone https://github.com/INTENTIUS/terragucci
+cd terragucci
+```
+
+## Boot it
+
+```bash
+just example up
+```
+
+It starts three containers. Forgejo is a forge like GitHub that runs on your laptop, its runner runs the pipelines, and floci answers the AWS API so Terraform has something to create. Then it pushes the example to Forgejo, and the pipeline applies every root. When it finishes you see this:
+
+<Captured step="boot" />
+
+## What you just made
+
+Open the Forgejo link. The repo is the shop's whole estate:
+
+<Shot step="boot" view="repo" alt="The example repo on the local Forgejo, showing envs, modules, changes and terragucci.yml" />
+
+```
+modules/service/     one service: a bucket, a jobs queue, a records table
+envs/dev/platform    each environment's logs bucket
+envs/dev/orders      orders, payments, search and email, each calling modules/service
+envs/staging/...     the same five roots
+envs/prod/...        the same five roots
+terragucci.yml       the whole terragucci config
+```
+
+That is three environments of five roots each, fifteen in all. Every service root calls the same module, so a change to `modules/service` reaches twelve roots at once. That is the situation terragucci is built for. Payments in prod is the one root that differs: its jobs queue has a dead-letter queue.
+
+The platform root in each environment holds the logs bucket every service writes to, so it has to exist first. terragucci reads that from the code and always applies the platform roots before the services.
+
+The pipeline run shows every root applied:
+
+<Shot step="boot" view="run" alt="The pipeline run in Forgejo, with the check and apply jobs both green" />
+
+`terragucci.yml` is four lines. Dev is the canary wave, and drift is checked every morning at six:
+
+```yaml
+binary: tofu
+waves:
+  canary: ["envs/dev/*"]
+drift: "0 6 * * *"
+```
+
+## When something looks wrong
+
+| You see | Try |
+|---|---|
+| `port is already allocated` | another program has port 3300 or 4580. Set `TERRAGUCCI_FORGEJO_PORT` or `TERRAGUCCI_FLOCI_PORT` to a free one and run `just example up` again. |
+| the pipeline waits and never starts | the runner has not registered. `docker logs terragucci-forgejo-runner` shows why; `just example up` again re-registers it. |
+| containers restart or Docker stops answering | Docker is short of memory. Give it 4 GB in Docker Desktop's settings. |
+
+## Stopping and starting again
+
+`just example reset` closes every pull request and puts the estate back the way it booted. `just example down` removes everything, and `just example up` brings it back from nothing.
+
+Go on to [your first pull request](/terragucci/tutorial/first-pull-request/).

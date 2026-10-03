@@ -1,0 +1,25 @@
+---
+// The line saying when and against what the tutorial's output was captured.
+const found = import.meta.glob('../data/tutorial/manifest.json', { eager: true, import: 'default' }) as Record<
+	string,
+	{ captured: string; commit: string; tofu: string; aws_provider: string; forgejo: string; floci: string }
+>;
+const m = Object.values(found)[0];
+if (!m) throw new Error('no tutorial manifest; run just tutorial-capture');
+---
+<p class="tg-manifest not-content">
+	Output on these pages was captured {m.captured} from terragucci <code>{m.commit}</code>, with OpenTofu {m.tofu},
+	the AWS provider {m.aws_provider} and Forgejo {m.forgejo}.
+</p>
+
+<style>
+	p {
+		margin: 1rem 0;
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
+	}
+	code {
+		font-family: var(--sl-font-mono);
+		font-size: 0.95em;
+	}
+</style>

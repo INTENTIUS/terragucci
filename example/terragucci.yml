@@ -1,0 +1,4 @@
+binary: tofu
+waves:
+  canary: ["envs/dev/*"]
+drift: "0 6 * * *"

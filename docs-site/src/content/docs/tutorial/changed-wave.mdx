@@ -1,0 +1,14 @@
+---
+title: A wave that changed
+description: Approve a wave, change one of its roots, and see the wave refuse to apply anything.
+sidebar:
+  order: 5
+claims: [refuse]
+draft: true
+---
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+Approve staging, then change one staging root before the stage runs again. The plans no longer match the digest you approved, so the wave applies nothing. It prints the digest you approved beside the one it found. Read the new plan, then approve again.

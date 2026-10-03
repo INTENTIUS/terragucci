@@ -1,0 +1,16 @@
+{
+  "step": "check",
+  "source_hash": "75b96a30996212a4",
+  "commands": [
+    {
+      "cmd": "just example change unformatted",
+      "output": "[example] pushed change/unformatted at bfa53d66\n[example] run 3 for bfa53d66: failure (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (failure)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example logs",
+      "output": "envs/dev/orders/locals.tf\n--- old/envs/dev/orders/locals.tf\n+++ new/envs/dev/orders/locals.tf\n@@ -1,4 +1,4 @@\n locals {\n-    team   = \"orders\"\n+  team  = \"orders\"\n   owner = \"shop\"\n }",
+      "exit": 0
+    }
+  ]
+}

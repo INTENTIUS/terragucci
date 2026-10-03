@@ -13,6 +13,7 @@ typecheck:
 lint:
     npx chant lint ci
     npx chant lint pages
+    npx chant lint capture
 
 [doc("Run the unit tests.")]
 test:
@@ -22,8 +23,12 @@ test:
 lint-docs strictness="2" limit="8":
     node scripts/lint-docs.mjs {{strictness}} {{limit}}
 
-[doc("Typecheck, lint, test and lint the docs. What CI runs.")]
-check: typecheck lint test lint-docs
+[doc("Fail when a published tutorial page shows a claim that does not pass, or a capture that is missing or stale.")]
+tutorial-check:
+    node scripts/tutorial-check.mjs
+
+[doc("Typecheck, lint, test, lint the docs and check the tutorial. What CI runs.")]
+check: typecheck lint test lint-docs tutorial-check
 
 # ── this repo's workflows ──────────────────────────────────────────────────
 
@@ -32,6 +37,7 @@ check: typecheck lint test lint-docs
 ci:
     npx chant build ci -o .github/workflows/ci.yml --format yaml
     npx chant build pages -o .github/workflows/pages.yml --format yaml
+    npx chant build capture -o .github/workflows/capture.yml --format yaml
 
 [doc("Fail if any committed workflow has drifted from its declaration.")]
 ci-check:
@@ -42,7 +48,7 @@ ci-check:
     out="$(mktemp -t terragucci-ci-XXXX.yml)"
     trap 'rm -f "$out"' EXIT
     rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml"; do
+    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml"; do
       src="${pair%%:*}"; committed="${pair#*:}"
       npx chant build "$src" -o "$out" --format yaml >/dev/null
       if diff -u "$committed" "$out"; then
@@ -99,3 +105,27 @@ validate forge="forgejo" claim="apply":
       echo "SKIP: Docker is not available, so no claim can run."; exit 0
     fi
     stack/validate.sh {{forge}} {{claim}}
+
+# ── the example and its smoke claims ───────────────────────────────────────
+# example/ is the shop's 15 roots; stack/example.sh runs them on the forgejo
+# profile against floci. stack/smoke.sh holds one claim per feature.
+
+[doc("The example: up [--fresh], verify, change <scenario>, reset, down.")]
+example cmd="up" *args:
+    stack/example.sh {{cmd}} {{args}}
+
+[doc("Run every smoke claim, or one. BREAK=1 breaks the property and the claim must print caught.")]
+smoke claim="":
+    stack/smoke.sh {{claim}}
+
+[doc("Run every claim plain and under BREAK=1, and write the record the status page shows.")]
+smoke-record:
+    stack/smoke.sh --record docs-site/src/data/smoke.json
+
+[doc("Run the tutorial's steps against the example and record their output and screenshots.")]
+tutorial-capture:
+    stack/tutorial-capture.sh
+
+[doc("Rebuild example/changes/*.patch from the example as committed.")]
+example-patches:
+    python3 stack/example-patches.py
