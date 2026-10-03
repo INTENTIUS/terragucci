@@ -26,6 +26,9 @@ This page is authoritative over everything else on the site and in the README. T
 | Local validation of every generated pipeline | [chant#3344](https://github.com/INTENTIUS/chant/issues/3344) |
 | One config file for one repo or many, and `terragucci reconcile` | [chant#3348](https://github.com/INTENTIUS/chant/issues/3348) |
 | The plan report: JSON, the plan note, the HTML report, bucket copies and the index | [chant#3349](https://github.com/INTENTIUS/chant/issues/3349) |
+| `tf-rollout`: pin-bump waves across repos, and lock-file waves | [chant#3352](https://github.com/INTENTIUS/chant/issues/3352), on [chant#3189](https://github.com/INTENTIUS/chant/issues/3189) and [chant#3190](https://github.com/INTENTIUS/chant/issues/3190) |
+| `tf-publish`: modules published as OCI artifacts or git tags | [chant#3353](https://github.com/INTENTIUS/chant/issues/3353) |
+| Tips | [chant#3354](https://github.com/INTENTIUS/chant/issues/3354) |
 
 choudoufu's side already exists: the set digest and wave planning (choudoufu#1754), and its grouped summary (choudoufu#1753).
 
@@ -33,5 +36,4 @@ choudoufu's side already exists: the set digest and wave planning (choudoufu#175
 
 | Piece | Tracked in |
 |---|---|
-| One pull request per wave that moves a module pin | [chant#3189](https://github.com/INTENTIUS/chant/issues/3189) |
 | A steward started by a pull request | [chant#2518](https://github.com/INTENTIUS/chant/issues/2518) |

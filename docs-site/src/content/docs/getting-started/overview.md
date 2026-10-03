@@ -11,6 +11,8 @@ terragucci runs the lifecycle around your Terraform roots. Your Terraform code a
 | `tf-plan` | every pull request | plan the affected roots and post one grouped summary |
 | `tf-apply` | a push to the main branch | apply in waves, each behind an approval tied to that wave's plans |
 | `tf-drift` | on a schedule | plan every root and report any drift, grouped |
+| `tf-publish` | a change under `modules/` on the main branch | publish each changed module at a new version |
+| `tf-rollout` | when you run `terragucci rollout` | move a module's pin one wave at a time, one pull request per wave |
 
 [Stages](/terragucci/reference/stages/) explains waves and the grouped summary. [Your config file](/terragucci/getting-started/config/) covers setup, which for most repos is nothing.
 
