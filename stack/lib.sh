@@ -42,7 +42,9 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     if [ -n "${TG_FIXED_DATE:-}" ]; then
       export GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" GIT_COMMITTER_DATE="2026-01-01T00:00:00Z"
     fi
-    git -c user.email=example@terragucci.local -c user.name=terragucci \
+    # Never sign: these are throwaway commits, and an unsigned commit has the
+    # same sha on every machine, which the tutorial's captures rely on.
+    git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false \
       commit -q --allow-empty -m "$message"
     local remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/${repo}.git"
     # Forgejo's "create a pull request" hint is noise; show output only on failure.

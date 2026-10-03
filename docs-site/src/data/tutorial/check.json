@@ -4,7 +4,7 @@
   "commands": [
     {
       "cmd": "just example change unformatted",
-      "output": "[example] pushed change/unformatted at bfa53d66\n[example] run 3 for bfa53d66: failure (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (failure)",
+      "output": "[example] pushed change/unformatted at 46428bbf\n[example] run 3 for 46428bbf: failure (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (failure)",
       "exit": 0
     },
     {
