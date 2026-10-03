@@ -1,0 +1,112 @@
+---
+// A rollout in waves: each wave's approval is bound to the digest of that wave's plans.
+const waves = [
+	{ label: 'canary', roots: 3, digest: 'set:4f1a…c09e', state: 'applied', note: 'approved by alex' },
+	{ label: 'wave 2', roots: 97, digest: 'set:b77d…12a4', state: 'waiting', note: 'chant approve tf-apply wave-2' },
+	{ label: 'wave 3', roots: 100, digest: 'planned after wave 2', state: 'next', note: 'planned once wave 2 has applied' },
+];
+---
+<div class="tg-waves not-content">
+	<ol>
+		{waves.map((w) => (
+			<li class={w.state}>
+				<span class="label">{w.label}</span>
+				<span class="roots">{w.roots} roots</span>
+				<code class="digest">{w.digest}</code>
+				<span class="state">{w.state}</span>
+				<span class="note">{w.note}</span>
+			</li>
+		))}
+	</ol>
+	<p class="refusal">
+		<span>refused</span>
+		A root in wave 2 changed after approval, so wave 2 applied nothing and named both digests.
+	</p>
+</div>
+
+<style>
+	.tg-waves {
+		display: grid;
+		gap: 1rem;
+	}
+	ol {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+		gap: 0;
+	}
+	li {
+		margin: 0;
+		padding: 1rem 1.25rem 1rem 0;
+		display: grid;
+		gap: 0.3rem;
+		align-content: start;
+		border-top: 2px solid var(--tg-rule);
+		min-width: 0;
+	}
+	li.applied {
+		border-top-color: var(--tg-moss);
+	}
+	li.waiting {
+		border-top-color: var(--tg-brass);
+	}
+	.label {
+		font-family: var(--tg-display);
+		font-size: 1.4rem;
+		font-weight: 700;
+		color: var(--sl-color-white);
+	}
+	.roots {
+		font-family: var(--sl-font-mono);
+		font-variant-numeric: tabular-nums;
+		font-size: 0.85rem;
+		color: var(--sl-color-gray-2);
+	}
+	.digest {
+		font-family: var(--sl-font-mono);
+		font-size: 0.8rem;
+		background: none;
+		padding: 0;
+		color: var(--sl-color-gray-3);
+		overflow-wrap: anywhere;
+	}
+	.state {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.applied .state {
+		color: var(--tg-moss);
+	}
+	.waiting .state {
+		color: var(--tg-brass);
+	}
+	.note {
+		font-size: 0.85rem;
+		color: var(--sl-color-gray-2);
+		overflow-wrap: anywhere;
+	}
+	.refusal {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		align-items: baseline;
+		color: var(--sl-color-gray-2);
+		font-size: 0.92rem;
+	}
+	.refusal span {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--tg-rust);
+		border: 1px solid var(--tg-rust);
+		border-radius: 99rem;
+		padding: 0.05rem 0.5rem;
+	}
+</style>

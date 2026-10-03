@@ -10,6 +10,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'terragucci',
+			customCss: ['./src/styles/terragucci.css'],
 			description: 'A lifecycle kit for Terraform, OpenTofu and choudoufu: plan, approve, apply and watch for drift, on your CI or a fountain steward.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },

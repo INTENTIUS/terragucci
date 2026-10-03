@@ -1,11 +1,11 @@
 ---
 title: Stages
-description: What each stage does at debut, its inputs, permissions and outputs.
+description: What each stage does, its inputs, permissions and outputs.
 ---
 
-The stages are planned, not built; [chant#3343](https://github.com/INTENTIUS/chant/issues/3343) tracks the debut. Every stage takes the root directories and the binary.
+Every stage takes the root directories and the binary.
 
-| Stage | At debut | Forge permissions | Outputs |
+| Stage | What it does | Forge permissions | Outputs |
 |---|---|---|---|
 | `tf-check` | format and validate | read the repository | pass or fail |
 | `tf-plan` | plans only the roots a change affects, in one run, and posts the grouped summary on the pull request | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |

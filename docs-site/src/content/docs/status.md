@@ -11,7 +11,7 @@ This page is authoritative over everything else on the site and in the README. T
 |---|---|
 | This site | built by `just site`, published by the pages workflow |
 | This repo's CI | `just check` and `just ci-check` |
-| The validation stack | the `forgejo` and `aws` profiles, with the `check` and `apply` claims passing on a hand-written fixture workflow |
+| The validation stack | the `forgejo` and `aws` profiles (Forgejo 16.0.5, forgejo-runner 13.2.0), with the `check` and `apply` claims passing on a hand-written fixture workflow. The `github`, `gitlab` and `fountain` profiles are declared and not validated yet. |
 
 ## At debut
 

@@ -13,7 +13,7 @@ The stage declarations do not change between runtimes. A schedule declared on a 
 
 ## Forge CI and a steward together
 
-A steward cannot be triggered by a pull request yet ([chant#2518](https://github.com/INTENTIUS/chant/issues/2518)). The pull-request stages stay on the forge. The apply stage runs on the steward, started by a small forge job:
+Pull-request stages run on the forge, where the pull request lives. The apply stage runs on the steward, started by a small forge job:
 
 ```bash
 chant run tf-apply --on fountain
@@ -23,4 +23,4 @@ A steward keeps its checkout and provider cache between runs. It runs one stage 
 
 ## Running your own fountain
 
-[fountain-ops](https://intentius.io/fountain-ops/) deploys fountain with chant. Its `just up` stands one up on a laptop, which is where terragucci's steward tests will run.
+[fountain-ops](https://intentius.io/fountain-ops/) deploys fountain with chant. Its `just up` stands one up on a laptop, and terragucci's steward validation runs against it.

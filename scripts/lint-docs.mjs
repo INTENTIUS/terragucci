@@ -20,7 +20,12 @@ function collect(path) {
 const files = roots.flatMap(collect);
 let failed = false;
 for (const file of files) {
-  const text = readFileSync(file, "utf8");
+  // MDX import lines and component tags are code, not prose; blank them so
+  // line numbers still match the file.
+  const raw = readFileSync(file, "utf8");
+  const text = file.endsWith(".mdx")
+    ? raw.replace(/^(import .*|<[A-Z]\w* *\/>)$/gm, "")
+    : raw;
   const report = lintDocument(text, { markdown: true, strictness });
   const score = report.score.total;
   const over = score > limit;

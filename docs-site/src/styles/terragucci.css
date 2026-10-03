@@ -1,0 +1,137 @@
+/*
+ * terragucci's look: a fashion house's restraint applied to infrastructure.
+ * Didone display (Bodoni Moda) for names and claims, Hanken Grotesk for
+ * reading, JetBrains Mono for anything a terminal or a plan would print.
+ * Forest neutrals, one brass accent, hairlines instead of boxes.
+ *
+ * Starlight's dark theme lives on :root and its light theme on
+ * :root[data-theme='light'], so both palettes are set here as tokens.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,500;0,6..96,700;1,6..96,500&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+	--tg-display: 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif;
+	--sl-font: 'Hanken Grotesk', 'Helvetica Neue', Arial, system-ui, sans-serif;
+	--sl-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	/* dark: forest black, brass accent */
+	--sl-color-white: #f1efe6;
+	--sl-color-gray-1: #dcdcd2;
+	--sl-color-gray-2: #b9bcb1;
+	--sl-color-gray-3: #8a9086;
+	--sl-color-gray-4: #5a6159;
+	--sl-color-gray-5: #2f3631;
+	--sl-color-gray-6: #1a201c;
+	--sl-color-black: #101512;
+	--sl-color-accent-low: #3a3117;
+	--sl-color-accent: #c9a24c;
+	--sl-color-accent-high: #e7cd8c;
+
+	--tg-brass: #c9a24c;
+	--tg-moss: #7fa37a;
+	--tg-rust: #d07a5f;
+	--tg-panel: #151b17;
+	--tg-rule: #2a312c;
+}
+
+:root[data-theme='light'] {
+	--sl-color-white: #121813;
+	--sl-color-gray-1: #1f2721;
+	--sl-color-gray-2: #39423b;
+	--sl-color-gray-3: #5d665e;
+	--sl-color-gray-4: #8c948b;
+	--sl-color-gray-5: #c9cec6;
+	--sl-color-gray-6: #e6e9e3;
+	--sl-color-gray-7: #f1f3ee;
+	--sl-color-black: #f8f9f6;
+	--sl-color-accent-low: #efe3c2;
+	--sl-color-accent: #8a6a1f;
+	--sl-color-accent-high: #5e4712;
+
+	--tg-brass: #8a6a1f;
+	--tg-moss: #3f6b3a;
+	--tg-rust: #a3452b;
+	--tg-panel: #ffffff;
+	--tg-rule: #d8ddd4;
+}
+
+/* Headings in the didone, at reading sizes a little tighter. */
+.sl-markdown-content :is(h1, h2, h3),
+h1#_top {
+	font-family: var(--tg-display);
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+h1#_top {
+	font-size: clamp(2rem, 4vw, 2.75rem);
+}
+
+/* Site title as a wordmark. */
+.site-title {
+	font-family: var(--tg-display);
+	font-weight: 700;
+	font-size: 1.35rem;
+	letter-spacing: 0.01em;
+	color: var(--sl-color-white);
+}
+
+/* Tables: hairlines, no zebra. */
+.sl-markdown-content table {
+	border-collapse: collapse;
+}
+.sl-markdown-content :is(th, td) {
+	border: none;
+	border-bottom: 1px solid var(--tg-rule);
+}
+.sl-markdown-content th {
+	font-family: var(--sl-font-mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--sl-color-gray-3);
+	background: none;
+}
+
+/* Inline code in brass on the panel colour. */
+.sl-markdown-content :not(pre):not(.not-content *) > code {
+	background: var(--sl-color-accent-low);
+	color: var(--sl-color-accent-high);
+	border: none;
+}
+
+/* The home hero: the claim in the didone, the tagline in reading type. */
+.hero {
+	padding-block: clamp(2.5rem, 8vw, 5rem) 1rem;
+}
+.hero h1 {
+	font-family: var(--tg-display);
+	font-weight: 700;
+	font-size: clamp(2.4rem, 6vw, 4.25rem);
+	line-height: 1.05;
+	letter-spacing: -0.015em;
+	text-wrap: balance;
+	color: var(--sl-color-white);
+}
+.hero .tagline {
+	font-size: clamp(1.05rem, 2vw, 1.3rem);
+	color: var(--sl-color-gray-2);
+	max-width: 42rem;
+	text-wrap: pretty;
+}
+
+/* Splash sections: generous air between them, headings set large. */
+[data-has-hero] .sl-markdown-content h2 {
+	font-size: clamp(1.7rem, 3.5vw, 2.4rem);
+	margin-top: 4rem;
+	border: none;
+}
+
+/* Components carry their own type; long identifiers wrap rather than widen the page. */
+.not-content code {
+	overflow-wrap: anywhere;
+}
+
+/* Stage and policy names stay whole in table cells. */
+.sl-markdown-content td > code {
+	white-space: nowrap;
+}

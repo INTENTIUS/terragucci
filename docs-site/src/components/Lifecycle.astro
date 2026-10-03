@@ -1,0 +1,68 @@
+---
+// The four stages as one line of travel, from a pull request to a watched estate.
+const stages = [
+	{ name: 'tf-check', when: 'every pull request', what: 'Format and validate, before anything plans.' },
+	{ name: 'tf-plan', when: 'every pull request', what: 'Only the roots the change touches, summarised in one note.' },
+	{ name: 'tf-apply', when: 'merge to main', what: 'Wave by wave, each wave behind its own approval.' },
+	{ name: 'tf-drift', when: 'on a schedule', what: 'Every root planned against live state, drift reported grouped.' },
+];
+---
+<ol class="tg-lifecycle not-content">
+	{stages.map((s) => (
+		<li>
+			<code class="name">{s.name}</code>
+			<span class="when">{s.when}</span>
+			<p>{s.what}</p>
+		</li>
+	))}
+</ol>
+
+<style>
+	.tg-lifecycle {
+		list-style: none;
+		margin: 2rem 0 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+		border-top: 1px solid var(--tg-rule);
+	}
+	.tg-lifecycle li {
+		position: relative;
+		padding: 1.25rem 1.25rem 1.25rem 0;
+		margin: 0;
+		display: grid;
+		gap: 0.35rem;
+		align-content: start;
+		border-bottom: 1px solid var(--tg-rule);
+		min-width: 0;
+	}
+	.tg-lifecycle li::before {
+		content: '';
+		position: absolute;
+		top: -4px;
+		left: 0;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--tg-brass);
+	}
+	.name {
+		font-family: var(--sl-font-mono);
+		font-size: 1rem;
+		color: var(--sl-color-white);
+		background: none;
+		padding: 0;
+	}
+	.when {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--tg-brass);
+	}
+	p {
+		margin: 0;
+		color: var(--sl-color-gray-2);
+		font-size: 0.95rem;
+	}
+</style>
