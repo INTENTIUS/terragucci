@@ -24,6 +24,7 @@ export default defineConfig({
 					label: 'Getting started',
 					items: [
 						{ label: 'What terragucci is', slug: 'getting-started/overview' },
+						{ label: 'For agents', slug: 'getting-started/agents' },
 						{ label: 'Which binary you run', slug: 'getting-started/binaries' },
 						{ label: 'Your config file', slug: 'getting-started/config' },
 					],

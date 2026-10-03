@@ -154,3 +154,27 @@ code, pre, kbd, samp {
 	color: var(--sl-color-white);
 	font-weight: 600;
 }
+
+/* Callouts: a neutral panel with a coloured edge, from the same two signals. */
+.starlight-aside {
+	background: var(--sl-color-gray-6);
+	border-inline-start-color: var(--tg-accent);
+	color: var(--sl-color-gray-1);
+}
+.starlight-aside .starlight-aside__title {
+	color: var(--sl-color-white);
+}
+.starlight-aside .starlight-aside__icon {
+	color: var(--tg-accent);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+	border-inline-start-color: var(--tg-warn);
+}
+.starlight-aside--caution .starlight-aside__icon,
+.starlight-aside--danger .starlight-aside__icon {
+	color: var(--tg-warn);
+}
+.starlight-aside a {
+	color: var(--sl-color-accent-high);
+}
