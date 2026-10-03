@@ -1,16 +1,58 @@
 ---
 title: terragucci
-description: A lifecycle kit for Terraform, OpenTofu and choudoufu.
+description: The whole Terraform lifecycle, handled. Grouped plans, gated waves and drift for Terraform, OpenTofu and choudoufu.
 template: splash
 hero:
-  tagline: Plan on every pull request, apply after an approval, and watch for drift. One set of stages for Terraform, OpenTofu and choudoufu.
+  title: The whole Terraform lifecycle, handled.
+  tagline: Plan every pull request in one readable note. Apply in waves that only go out once approved. Catch drift before it catches you.
   actions:
-    - text: What terragucci is
+    - text: Get started
       link: /terragucci/getting-started/overview/
       icon: right-arrow
-    - text: Status
-      link: /terragucci/status/
+    - text: See the stages
+      link: /terragucci/reference/stages/
       variant: minimal
 ---
 
-terragucci is in design. The stages and runtimes described on this site are the plan, and the [status page](/terragucci/status/) says what exists today.
+import Lifecycle from '../../components/Lifecycle.astro';
+import PlanNote from '../../components/PlanNote.astro';
+import Waves from '../../components/Waves.astro';
+import Runtimes from '../../components/Runtimes.astro';
+import KeepYours from '../../components/KeepYours.astro';
+import Validated from '../../components/Validated.astro';
+
+## The lifecycle around your roots
+
+Welcome, Terraform users. terragucci carries a root through review, rollout and the watch that follows, and you write none of the pipeline.
+
+<Lifecycle />
+
+## One note for two hundred plans
+
+A change to a shared module can touch hundreds of roots. Your reviewer gets one note on the pull request that groups the roots taking the same change. Every destroy and every replacement is still named.
+
+<PlanNote />
+
+## Rollouts in waves
+
+The change goes out a few roots at a time. Each wave waits for its own approval, and that approval covers exactly the plans it was given.
+
+<Waves />
+
+## Runs where you already work
+
+<Runtimes />
+
+## Keep what you have
+
+terragucci reads your roots and runs your binary. It adds the steps around them and changes nothing inside them.
+
+<KeepYours />
+
+<Validated />
+
+## Start with one root
+
+Point terragucci at a root and choose your forge. Your next pull request gets a plan note, and your next merge goes out in waves.
+
+[Get started](/terragucci/getting-started/overview/)

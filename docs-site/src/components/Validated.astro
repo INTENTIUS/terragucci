@@ -1,0 +1,39 @@
+---
+// The band that says every generated pipeline has run before you get it.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<aside class="tg-validated not-content">
+	<p class="claim">Every pipeline terragucci generates has already run.</p>
+	<p>
+		Each one runs on a real Forgejo, GitLab or GitHub runner against an AWS emulator before it ships,
+		and each property is checked twice. Once it must hold, and once, deliberately broken, it must fail.
+	</p>
+	<a href={`${base}/reference/validation/`}>How validation works</a>
+</aside>
+
+<style>
+	.tg-validated {
+		border-top: 1px solid var(--tg-rule);
+		border-bottom: 1px solid var(--tg-rule);
+		padding: 2rem 0;
+		display: grid;
+		gap: 0.75rem;
+	}
+	.claim {
+		margin: 0;
+		font-family: var(--tg-display);
+		font-size: clamp(1.5rem, 3vw, 2rem);
+		font-weight: 700;
+		color: var(--sl-color-white);
+		text-wrap: balance;
+	}
+	p {
+		margin: 0;
+		max-width: 60ch;
+		color: var(--sl-color-gray-2);
+	}
+	a {
+		color: var(--sl-color-accent-high);
+		font-weight: 600;
+	}
+</style>

@@ -1,10 +1,10 @@
 # terragucci
 
-A lifecycle kit for Terraform, OpenTofu and choudoufu. It is planned to plan each pull request and to apply only after an approval tied to that plan, with drift checks on a schedule. Your forge's CI is the first planned place to run it, and a fountain steward is the second.
+The whole Terraform lifecycle, handled. Every pull request gets one grouped plan note, and every merge goes out in approved waves while terragucci watches for drift.
 
-None of the stages exist yet. The [status page](https://intentius.io/terragucci/status/) tracks what does, and [chant#3341](https://github.com/INTENTIUS/chant/issues/3341) holds the design.
+It runs whichever binary you already use; [Which binary you run](https://intentius.io/terragucci/getting-started/binaries/) lists them. Pipelines run on your forge's CI, or a fountain steward takes apply and drift for durable runs.
 
-Start with [What terragucci is](https://intentius.io/terragucci/getting-started/overview/), then [Which binary you run](https://intentius.io/terragucci/getting-started/binaries/) and [Where it runs](https://intentius.io/terragucci/reference/runtimes/).
+The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Build progress lives on its [status page](https://intentius.io/terragucci/status/).
 
 ## Working on this repo
 

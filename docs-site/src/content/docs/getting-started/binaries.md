@@ -3,7 +3,7 @@ title: Which binary you run
 description: Terraform, OpenTofu or choudoufu, and what changes with each.
 ---
 
-terragucci is planned to take the binary as a setting. Your choice decides which stages exist and how a plan reads live state.
+terragucci takes the binary as a setting. Your choice decides which stages exist and how a plan reads live state.
 
 | Binary | Stages | State |
 |---|---|---|

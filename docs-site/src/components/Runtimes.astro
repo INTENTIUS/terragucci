@@ -1,0 +1,102 @@
+---
+// Where the stages run: three forges, or a fountain steward for durable runs.
+const forges = [
+	{ name: 'GitHub', how: 'GitHub Actions, with environments as a second reviewer.' },
+	{ name: 'GitLab', how: 'GitLab CI, with the summary as the merge-request note.' },
+	{ name: 'Forgejo', how: 'Forgejo Actions, on your own instance.' },
+];
+const durable = [
+	'Each stage converges on the declared state, so a run that dies partway is simply run again.',
+	'An approval is a record in your repository, so nothing stays running while someone decides.',
+	'One steward owns each environment, which keeps two applies to it from overlapping.',
+	'Cloud credentials live in a fountain vault and never reach CI.',
+];
+---
+<div class="tg-runtimes not-content">
+	<ul class="forges">
+		{forges.map((f) => (
+			<li>
+				<span class="name">{f.name}</span>
+				<p>{f.how}</p>
+			</li>
+		))}
+	</ul>
+	<section class="steward" aria-labelledby="tg-steward">
+		<h3 id="tg-steward">Durable runs on fountain, without Temporal</h3>
+		<p>
+			Plan, apply and drift can also run on a <a href="https://github.com/managoat/fountain">fountain</a> steward.
+			There is no workflow cluster to run, no workers, and no history service.
+		</p>
+		<ul>
+			{durable.map((d) => <li>{d}</li>)}
+		</ul>
+		<p class="small">
+			<a href="https://intentius.io/fountain-ops/">fountain-ops</a> deploys your own fountain with chant.
+		</p>
+	</section>
+</div>
+
+<style>
+	.tg-runtimes {
+		display: grid;
+		gap: 2rem;
+	}
+	.forges {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+		gap: 0;
+		border-top: 1px solid var(--tg-rule);
+	}
+	.forges li {
+		margin: 0;
+		padding: 1rem 1.25rem 1rem 0;
+		border-bottom: 1px solid var(--tg-rule);
+		min-width: 0;
+	}
+	.name {
+		font-family: var(--tg-display);
+		font-size: 1.3rem;
+		font-weight: 700;
+		color: var(--sl-color-white);
+	}
+	.forges p {
+		margin: 0.3rem 0 0;
+		color: var(--sl-color-gray-2);
+		font-size: 0.95rem;
+	}
+	.steward {
+		border-left: 2px solid var(--tg-brass);
+		padding-left: 1.25rem;
+		display: grid;
+		gap: 0.75rem;
+	}
+	.steward h3 {
+		margin: 0;
+		font-family: var(--tg-display);
+		font-size: 1.4rem;
+		color: var(--sl-color-white);
+	}
+	.steward p {
+		margin: 0;
+		color: var(--sl-color-gray-2);
+	}
+	.steward ul {
+		margin: 0;
+		padding-left: 1.1rem;
+		display: grid;
+		gap: 0.35rem;
+		color: var(--sl-color-gray-2);
+	}
+	.steward li {
+		margin: 0;
+	}
+	.small {
+		font-size: 0.9rem;
+	}
+	a {
+		color: var(--sl-color-accent-high);
+	}
+</style>

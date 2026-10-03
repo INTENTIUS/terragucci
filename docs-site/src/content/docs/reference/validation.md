@@ -3,7 +3,7 @@ title: Validation
 description: How every generated pipeline is run locally on a real forge before it ships.
 ---
 
-terragucci validates every pipeline it generates by running it. A pipeline that only parses has not been tested, so each one runs on a real forge with a real runner, against an AWS emulator, on one Docker network. [chant#3344](https://github.com/INTENTIUS/chant/issues/3344) tracks the work.
+terragucci validates every pipeline it generates by running it. A pipeline that only parses has not been tested, so each one runs on a real forge with a real runner, against an AWS emulator, on one Docker network. Every claim below runs for every forge before a release.
 
 ## The stack
 
@@ -22,8 +22,6 @@ just stack-up forgejo
 just validate forgejo apply
 just stack-down
 ```
-
-Today the `forgejo` and `aws` profiles run, with Forgejo 16.0.5 and forgejo-runner 13.2.0. The `github`, `gitlab` and `fountain` profiles are declared and not yet validated.
 
 ## Claims
 

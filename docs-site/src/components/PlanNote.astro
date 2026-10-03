@@ -1,0 +1,121 @@
+---
+// A grouped plan summary as it lands on a pull request: the product's own artefact.
+---
+<figure class="tg-note not-content" aria-label="A grouped plan summary on a pull request">
+	<header>
+		<span class="who">terragucci</span>
+		<span class="meta">commented on #482 · bump modules/iam to 1.4.0</span>
+	</header>
+	<div class="body">
+		<p class="lead">200 roots planned. 3 groups, 1 destroy.</p>
+		<table>
+			<tbody>
+				<tr><td class="n">180</td><td>identical change <code>~ aws_iam_role.app</code> tags</td></tr>
+				<tr><td class="n">15</td><td>the same, plus <code class="replace">-/+ aws_lambda_function.worker</code></td></tr>
+				<tr><td class="n">5</td><td>different changes, listed one by one below</td></tr>
+			</tbody>
+		</table>
+		<p class="destroy"><span>destroy</span><code>prod-eu/db · aws_db_instance.main</code></p>
+		<p class="foot">wave plan: canary (3) → 2 (97) → 3 (100) · approve wave 1 with <code>chant approve tf-apply wave-1</code></p>
+	</div>
+</figure>
+
+<style>
+	.tg-note {
+		margin: 0;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.5rem;
+		background: var(--tg-panel);
+		overflow: hidden;
+		font-size: 0.9rem;
+		max-width: 100%;
+	}
+	header {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		align-items: baseline;
+		padding: 0.65rem 1rem;
+		border-bottom: 1px solid var(--tg-rule);
+	}
+	.who {
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+	.meta {
+		color: var(--sl-color-gray-3);
+		font-size: 0.82rem;
+	}
+	.body {
+		padding: 1rem;
+		display: grid;
+		gap: 0.75rem;
+		overflow-x: auto;
+	}
+	.lead {
+		margin: 0;
+		font-family: var(--tg-display);
+		font-size: 1.35rem;
+		font-weight: 700;
+		color: var(--sl-color-white);
+	}
+	table {
+		border-collapse: collapse;
+		width: 100%;
+		margin: 0;
+		display: table;
+	}
+	td {
+		padding: 0.4rem 0.5rem 0.4rem 0;
+		border: none;
+		border-bottom: 1px solid var(--tg-rule);
+		color: var(--sl-color-gray-2);
+		vertical-align: baseline;
+	}
+	.n {
+		font-family: var(--sl-font-mono);
+		font-variant-numeric: tabular-nums;
+		color: var(--tg-brass);
+		width: 3.5rem;
+		text-align: right;
+		padding-right: 1rem;
+	}
+	code {
+		font-family: var(--sl-font-mono);
+		font-size: 0.85em;
+		background: none;
+		padding: 0;
+		color: var(--sl-color-white);
+	}
+	code.replace {
+		color: var(--tg-brass);
+	}
+	.destroy {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		align-items: baseline;
+	}
+	.destroy span {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--tg-rust);
+		border: 1px solid var(--tg-rust);
+		border-radius: 99rem;
+		padding: 0.05rem 0.5rem;
+	}
+	.destroy code {
+		color: var(--tg-rust);
+	}
+	.foot {
+		margin: 0;
+		color: var(--sl-color-gray-3);
+		font-size: 0.82rem;
+	}
+	.foot code {
+		color: var(--sl-color-gray-2);
+	}
+</style>

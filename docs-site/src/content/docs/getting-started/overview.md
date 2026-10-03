@@ -3,7 +3,7 @@ title: What terragucci is
 description: The stages, who they are for, and what they are built on.
 ---
 
-terragucci is planned to run the lifecycle around a Terraform root. None of it is built yet, and the [status page](/terragucci/status/) tracks what is. Your Terraform code and its state stay yours. The kit only adds the steps around them.
+terragucci runs the lifecycle around your Terraform roots. Your Terraform code and its state stay yours. The kit only adds the steps around them.
 
 | Stage | When it runs | What it does |
 |---|---|---|
