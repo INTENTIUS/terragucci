@@ -33,7 +33,7 @@ Nobody reads two hundred plan logs. The summary normalizes each root's changes a
 destroys: prod-eu/db (delete aws_db_instance.main)
 ```
 
-Every destroy, replacement and refusal is listed by name and is never folded into a group. The summary comes as text, JSON, or markdown sized for a pull-request note. No approval is bound to it; approvals bind the plan digests underneath.
+Every destroy, replacement and refusal is listed by name and is never folded into a group. The summary comes as text, JSON, or markdown sized for a pull-request note. No approval is bound to it; approvals bind the plan digests underneath. [The plan report](/terragucci/reference/report/) covers the HTML and JSON forms and where they are kept.
 
 ## Gate policy
 

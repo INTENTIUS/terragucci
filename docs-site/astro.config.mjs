@@ -25,12 +25,14 @@ export default defineConfig({
 					items: [
 						{ label: 'What terragucci is', slug: 'getting-started/overview' },
 						{ label: 'Which binary you run', slug: 'getting-started/binaries' },
+						{ label: 'Your config file', slug: 'getting-started/config' },
 					],
 				},
 				{
 					label: 'Reference',
 					items: [
 						{ label: 'Stages', slug: 'reference/stages' },
+						{ label: 'The plan report', slug: 'reference/report' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
 						{ label: 'Validation', slug: 'reference/validation' },
 						{ label: 'CI and the site', slug: 'reference/ci' },

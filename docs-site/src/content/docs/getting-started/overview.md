@@ -12,7 +12,7 @@ terragucci runs the lifecycle around your Terraform roots. Your Terraform code a
 | `tf-apply` | a push to the main branch | apply in waves, each behind an approval tied to that wave's plans |
 | `tf-drift` | on a schedule | plan every root and report any drift, grouped |
 
-[Stages](/terragucci/reference/stages/) explains waves and the grouped summary.
+[Stages](/terragucci/reference/stages/) explains waves and the grouped summary. [Your config file](/terragucci/getting-started/config/) covers setup, which for most repos is nothing.
 
 ## Who it is for
 

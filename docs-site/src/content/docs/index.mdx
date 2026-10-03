@@ -33,11 +33,15 @@ A change to a shared module can touch hundreds of roots. Your reviewer gets one 
 
 <PlanNote />
 
+The note links to the full report, a single HTML file you can filter by group, root or wave, with the same data as JSON for your scripts. [The plan report](/terragucci/reference/report/) shows both.
+
 ## Rollouts in waves
 
 The change goes out a few roots at a time. Each wave waits for its own approval, and that approval covers exactly the plans it was given.
 
 <Waves />
+
+Each wave's state and set digest are in the report, linked to the approval record that let it go out.
 
 ## Runs where you already work
 
@@ -51,8 +55,12 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 
 <Validated />
 
-## Start with one root
+## Start with one file
 
-Point terragucci at a root and choose your forge. Your next pull request gets a plan note, and your next merge goes out in waves.
+Most repos need no config at all. When yours does, write a `terragucci.yml`, or one for every repo you run, and preview the result with a dry run:
 
-[Get started](/terragucci/getting-started/overview/)
+```bash
+terragucci reconcile --config terragucci.yml
+```
+
+[Write your config file](/terragucci/getting-started/config/)

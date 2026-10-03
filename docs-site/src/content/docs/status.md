@@ -3,7 +3,7 @@ title: Status
 description: What exists, what terragucci debuts with, and where each piece is tracked.
 ---
 
-This page is authoritative over everything else on the site and in the README. The debut is tracked in [chant#3343](https://github.com/INTENTIUS/chant/issues/3343), and the design in [chant#3341](https://github.com/INTENTIUS/chant/issues/3341).
+This page is authoritative over everything else on the site and in the README. The debut is tracked in [chant#3343](https://github.com/INTENTIUS/chant/issues/3343), the design in [chant#3341](https://github.com/INTENTIUS/chant/issues/3341), and the adoption research and rulings in [chant#3347](https://github.com/INTENTIUS/chant/issues/3347).
 
 ## Exists
 
@@ -24,6 +24,8 @@ This page is authoritative over everything else on the site and in the README. T
 | One plan job and one job per wave in the generated pipelines | [choudoufu#1755](https://github.com/INTENTIUS/choudoufu/issues/1755), moving here |
 | The four stages, with the binary as a setting | this repo |
 | Local validation of every generated pipeline | [chant#3344](https://github.com/INTENTIUS/chant/issues/3344) |
+| One config file for one repo or many, and `terragucci reconcile` | [chant#3348](https://github.com/INTENTIUS/chant/issues/3348) |
+| The plan report: JSON, the plan note, the HTML report, bucket copies and the index | [chant#3349](https://github.com/INTENTIUS/chant/issues/3349) |
 
 choudoufu's side already exists: the set digest and wave planning (choudoufu#1754), and its grouped summary (choudoufu#1753).
 
@@ -33,4 +35,3 @@ choudoufu's side already exists: the set digest and wave planning (choudoufu#175
 |---|---|
 | One pull request per wave that moves a module pin | [chant#3189](https://github.com/INTENTIUS/chant/issues/3189) |
 | A steward started by a pull request | [chant#2518](https://github.com/INTENTIUS/chant/issues/2518) |
-| A five-line reusable workflow | chant running a packaged Op against a root given on the command line |
