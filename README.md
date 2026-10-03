@@ -6,6 +6,20 @@ It runs whichever binary you already use; [Which binary you run](https://intenti
 
 The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Build progress lives on its [status page](https://intentius.io/terragucci/status/).
 
+## For agents
+
+Setting terragucci up with a coding agent? Hand it this:
+
+```text
+Set up terragucci in this repository.
+Read https://intentius.io/terragucci/llms.txt first, then
+https://intentius.io/terragucci/getting-started/agents/ and follow it.
+Check https://intentius.io/terragucci/status/ before using any feature.
+Do not apply anything. Open a pull request with the result.
+```
+
+`llms.txt` lists every page and `llms-full.txt` holds their text. An agent working on this repo itself reads [AGENTS.md](AGENTS.md) instead.
+
 ## Working on this repo
 
 ```bash

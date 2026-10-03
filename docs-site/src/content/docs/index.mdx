@@ -12,6 +12,9 @@ hero:
     - text: See the stages
       link: /terragucci/reference/stages/
       variant: minimal
+    - text: Set up with an agent
+      link: /terragucci/getting-started/agents/
+      variant: minimal
 ---
 
 import Lifecycle from '../../components/Lifecycle.astro';
@@ -54,6 +57,10 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 <KeepYours />
 
 <Validated />
+
+## Or let your agent do it
+
+Paste one prompt into Claude Code, Codex or Cursor, and your agent reads the docs from [`llms.txt`](https://intentius.io/terragucci/llms.txt), writes the config and opens a pull request. It never applies and never approves. [The prompt](/terragucci/getting-started/agents/) is on the agents page.
 
 ## Start with one file
 
