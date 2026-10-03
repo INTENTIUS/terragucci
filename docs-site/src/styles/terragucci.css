@@ -1,66 +1,70 @@
 /*
- * terragucci's look: a fashion house's restraint applied to infrastructure.
- * Display serif (Fraunces) for names and claims, Hanken Grotesk for
- * reading, JetBrains Mono for anything a terminal or a plan would print.
- * Forest neutrals, one brass accent, hairlines instead of boxes.
+ * terragucci's look: modern, clean and minimal. Geist for reading and
+ * headings, Geist Mono for anything a terminal or a plan would print.
+ * Zinc neutrals and one blue accent.
+ *
+ * The signal colours are colour-blind safe: blue and vermillion, from the
+ * Okabe-Ito set, stay apart under protanopia, deuteranopia and tritanopia.
+ * There is no red/green pair anywhere, and every status also carries a
+ * text label, so no meaning rests on colour alone.
  *
  * Starlight's dark theme lives on :root and its light theme on
  * :root[data-theme='light'], so both palettes are set here as tokens.
  */
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 
 :root {
-	--tg-display: 'Fraunces', Georgia, 'Times New Roman', serif;
-	--sl-font: 'Hanken Grotesk', 'Helvetica Neue', Arial, system-ui, sans-serif;
-	--sl-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+	--tg-display: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-	/* dark: forest black, brass accent */
-	--sl-color-white: #f1efe6;
-	--sl-color-gray-1: #dcdcd2;
-	--sl-color-gray-2: #b9bcb1;
-	--sl-color-gray-3: #8a9086;
-	--sl-color-gray-4: #5a6159;
-	--sl-color-gray-5: #2f3631;
-	--sl-color-gray-6: #1a201c;
-	--sl-color-black: #101512;
-	--sl-color-accent-low: #3a3117;
-	--sl-color-accent: #c9a24c;
-	--sl-color-accent-high: #e7cd8c;
+	/* dark: zinc, sky blue accent */
+	--sl-color-white: #fafafa;
+	--sl-color-gray-1: #e4e4e7;
+	--sl-color-gray-2: #c4c4cc;
+	--sl-color-gray-3: #a1a1aa;
+	--sl-color-gray-4: #63636d;
+	--sl-color-gray-5: #2c2c31;
+	--sl-color-gray-6: #18181b;
+	--sl-color-black: #0b0b0d;
+	--sl-color-accent-low: #10263d;
+	--sl-color-accent: #56a8ec;
+	--sl-color-accent-high: #a9d3f7;
 
-	--tg-brass: #c9a24c;
-	--tg-moss: #7fa37a;
-	--tg-rust: #d07a5f;
-	--tg-panel: #151b17;
-	--tg-rule: #2a312c;
+	--tg-accent: #56a8ec;   /* waiting, links, the one highlight */
+	--tg-ok: #e4e4e7;       /* applied: strong neutral, labelled */
+	--tg-warn: #f2894a;     /* destroy, refused: vermillion */
+	--tg-panel: #121215;
+	--tg-rule: #27272a;
 }
 
 :root[data-theme='light'] {
-	--sl-color-white: #121813;
-	--sl-color-gray-1: #1f2721;
-	--sl-color-gray-2: #39423b;
-	--sl-color-gray-3: #5d665e;
-	--sl-color-gray-4: #8c948b;
-	--sl-color-gray-5: #c9cec6;
-	--sl-color-gray-6: #e6e9e3;
-	--sl-color-gray-7: #f1f3ee;
-	--sl-color-black: #f8f9f6;
-	--sl-color-accent-low: #efe3c2;
-	--sl-color-accent: #8a6a1f;
-	--sl-color-accent-high: #5e4712;
+	--sl-color-white: #09090b;
+	--sl-color-gray-1: #27272a;
+	--sl-color-gray-2: #3f3f46;
+	--sl-color-gray-3: #6b6b74;
+	--sl-color-gray-4: #a1a1aa;
+	--sl-color-gray-5: #d9d9de;
+	--sl-color-gray-6: #f1f1f3;
+	--sl-color-gray-7: #f8f8f9;
+	--sl-color-black: #ffffff;
+	--sl-color-accent-low: #e3eefa;
+	--sl-color-accent: #0a64c2;
+	--sl-color-accent-high: #084a91;
 
-	--tg-brass: #8a6a1f;
-	--tg-moss: #3f6b3a;
-	--tg-rust: #a3452b;
-	--tg-panel: #ffffff;
-	--tg-rule: #d8ddd4;
+	--tg-accent: #0a64c2;
+	--tg-ok: #27272a;
+	--tg-warn: #b94700;
+	--tg-panel: #fafafa;
+	--tg-rule: #e4e4e7;
 }
 
-/* Headings in the display serif, at reading sizes a little tighter. */
+/* Headings: Geist, semibold, tracked in a little. */
 .sl-markdown-content :is(h1, h2, h3),
 h1#_top {
 	font-family: var(--tg-display);
-	font-weight: 700;
-	letter-spacing: -0.01em;
+	font-weight: 600;
+	letter-spacing: -0.02em;
 }
 h1#_top {
 	font-size: clamp(2rem, 4vw, 2.75rem);
@@ -69,9 +73,9 @@ h1#_top {
 /* Site title as a wordmark. */
 .site-title {
 	font-family: var(--tg-display);
-	font-weight: 700;
-	font-size: 1.35rem;
-	letter-spacing: 0.01em;
+	font-weight: 600;
+	font-size: 1.1rem;
+	letter-spacing: -0.02em;
 	color: var(--sl-color-white);
 }
 
@@ -84,31 +88,31 @@ h1#_top {
 	border-bottom: 1px solid var(--tg-rule);
 }
 .sl-markdown-content th {
-	font-family: var(--sl-font-mono);
-	font-size: 0.75rem;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+	font-size: 0.8rem;
+	font-weight: 500;
 	color: var(--sl-color-gray-3);
 	background: none;
 }
 
-/* Inline code in brass on the panel colour. */
+/* Inline code: a quiet grey chip. */
 .sl-markdown-content :not(pre):not(.not-content *) > code {
-	background: var(--sl-color-accent-low);
-	color: var(--sl-color-accent-high);
-	border: none;
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-gray-1);
+	border: 1px solid var(--tg-rule);
+	border-radius: 0.3rem;
+	padding: 0.05em 0.35em;
 }
 
-/* The home hero: the claim in the display serif, the tagline in reading type. */
+/* The home hero: a large, tight claim and a quiet tagline. */
 .hero {
 	padding-block: clamp(2.5rem, 8vw, 5rem) 1rem;
 }
 .hero h1 {
 	font-family: var(--tg-display);
-	font-weight: 700;
-	font-size: clamp(2.4rem, 6vw, 4.25rem);
+	font-weight: 600;
+	font-size: clamp(2.4rem, 6vw, 4rem);
 	line-height: 1.05;
-	letter-spacing: -0.015em;
+	letter-spacing: -0.035em;
 	text-wrap: balance;
 	color: var(--sl-color-white);
 }
@@ -121,7 +125,7 @@ h1#_top {
 
 /* Splash sections: generous air between them, headings set large. */
 [data-has-hero] .sl-markdown-content h2 {
-	font-size: clamp(1.7rem, 3.5vw, 2.4rem);
+	font-size: clamp(1.5rem, 3vw, 2rem);
 	margin-top: 4rem;
 	border: none;
 }
@@ -140,4 +144,13 @@ h1#_top {
 code, pre, kbd, samp {
 	font-variant-ligatures: none;
 	font-feature-settings: 'calt' 0, 'liga' 0;
+}
+
+/* The current page in the sidebar: a quiet tint, not a solid block. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-white);
+	font-weight: 600;
 }
