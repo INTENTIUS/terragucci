@@ -111,8 +111,8 @@ validate forge="forgejo" claim="apply":
 # profile against floci. stack/smoke.sh holds one claim per feature.
 
 [doc("The example: up [--fresh], verify, change <scenario>, reset, down.")]
-example cmd="up" *args:
-    stack/example.sh {{cmd}} {{args}}
+example *args="up":
+    stack/example.sh {{args}}
 
 [doc("Run every smoke claim, or one. BREAK=1 breaks the property and the claim must print caught.")]
 smoke claim="":
