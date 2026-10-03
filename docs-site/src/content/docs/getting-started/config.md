@@ -70,6 +70,9 @@ A dry run is the default. terragucci writes to each project through a pull reque
 | `runtime` | `forge` | `fountain` runs apply and drift on a steward; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | CI artifact | a bucket to copy reports to; see [The plan report](/terragucci/reference/report/) |
 | `token_env` | per forge | the environment variable holding the forge token |
+| `modules.path` | none | where your modules live, such as `modules/*` |
+| `modules.publish` | none | an `oci://` registry, or `git-tags`; turns on `tf-publish` |
+| `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 
 The file can also be `terragucci.ts`, typed with `TerragucciConfig`. terragucci folds it to plain data without running it, so a value that reads the environment is refused with its line number.
 
