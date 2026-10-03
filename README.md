@@ -8,7 +8,7 @@ The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Build p
 
 ## For agents
 
-Setting terragucci up with a coding agent? Hand it this:
+Setting terragucci up with a coding agent? Paste this prompt into it.
 
 ```text
 Set up terragucci in this repository.
@@ -22,12 +22,7 @@ Do not apply anything. Open a pull request with the result.
 
 ## Working on this repo
 
-```bash
-npm install
-just check      # the same checks CI runs
-just ci         # render the workflows from ci/ and pages/
-just site-dev   # serve the docs locally
-```
+[CONTRIBUTING.md](CONTRIBUTING.md) is the guide for contributors.
 
 ## Licence
 

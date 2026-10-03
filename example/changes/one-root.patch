@@ -1,0 +1,14 @@
+diff --git a/envs/dev/orders/main.tf b/envs/dev/orders/main.tf
+index 7cdcf55..e160a21 100644
+--- a/envs/dev/orders/main.tf
++++ b/envs/dev/orders/main.tf
+@@ -40,6 +40,9 @@ module "service" {
+   env         = "dev"
+   name        = "orders"
+   logs_bucket = data.terraform_remote_state.platform.outputs.logs_bucket
++
++  # Orders in dev keeps unclaimed jobs for seven days instead of four.
++  job_retention_seconds = 604800
+ }
+ 
+ output "jobs_queue" {

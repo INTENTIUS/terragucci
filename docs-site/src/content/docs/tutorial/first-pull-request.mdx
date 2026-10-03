@@ -1,0 +1,53 @@
+---
+title: Your first pull request
+description: Change one root, open a pull request, and see the check stage run. Then break the formatting and watch it fail by name.
+sidebar:
+  order: 2
+claims: [check]
+---
+
+import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
+
+:::note[Where the example stands]
+Booted with `just example up`, nothing changed yet. `just example reset` gets you back here from any later step.
+:::
+
+## Change one root
+
+Orders in dev should keep jobs nobody has picked up for seven days instead of four. That is one line in one root, `envs/dev/orders/main.tf`. The example has it ready as a scenario. One command makes the branch and opens a pull request with the change:
+
+<Captured step="first-pr" />
+
+Open it in Forgejo. The change is the one line you would have written by hand:
+
+<Shot step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" />
+
+The pipeline runs `tf-check` on every pull request: a format check, then `validate` for every root. Both pass, so the pull request shows a green check:
+
+<Shot step="first-pr" view="pull" alt="The pull request in Forgejo with its check passing" />
+
+## Break the formatting
+
+Now add a file typed in a hurry and never run through `tofu fmt`:
+
+```hcl
+locals {
+    team   = "orders"
+  owner = "shop"
+}
+```
+
+The scenario opens it as a second pull request. This time the check fails, and `just example logs` prints why: the file, and the change `tofu fmt` would make to it.
+
+<Captured step="check" />
+
+In Forgejo the failed step is `tofu fmt -check`. Open it to see the same lines:
+
+<Shot step="check" view="log" alt="The failed check job in Forgejo, with the tofu fmt -check step marked failed and validate skipped" />
+
+Run `tofu fmt -recursive` in your own repo and the check goes green again.
+
+## What you saw
+
+Every pull request runs the check stage on every root. The check is cheap and it never needs cloud credentials, because it never plans anything.

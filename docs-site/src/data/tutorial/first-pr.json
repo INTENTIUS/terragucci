@@ -1,0 +1,11 @@
+{
+  "step": "first-pr",
+  "source_hash": "75b96a30996212a4",
+  "commands": [
+    {
+      "cmd": "just example change one-root",
+      "output": "[example] pushed change/one-root at cff22464\n[example] run 2 for cff22464: success (http://localhost:3300/terragucci-admin/example/actions/runs/2)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/2 (success)",
+      "exit": 0
+    }
+  ]
+}

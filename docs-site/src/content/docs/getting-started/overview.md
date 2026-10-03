@@ -7,6 +7,8 @@ description: The stages, who they are for, and what they are built on.
 Hand it [this prompt](/terragucci/getting-started/agents/#hand-your-agent-this). It reads [`llms.txt`](https://intentius.io/terragucci/llms.txt), sets terragucci up and opens a pull request.
 :::
 
+To see it work before reading further, [the tutorial](/terragucci/tutorial/) runs a 15-root example on your laptop.
+
 terragucci runs the lifecycle around your Terraform roots. Your Terraform code and its state stay yours. The kit only adds the steps around them.
 
 | Stage | When it runs | What it does |

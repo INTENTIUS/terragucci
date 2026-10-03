@@ -1,0 +1,10 @@
+diff --git a/envs/dev/orders/locals.tf b/envs/dev/orders/locals.tf
+new file mode 100644
+index 0000000..01d3ba8
+--- /dev/null
++++ b/envs/dev/orders/locals.tf
+@@ -0,0 +1,4 @@
++locals {
++    team   = "orders"
++  owner = "shop"
++}

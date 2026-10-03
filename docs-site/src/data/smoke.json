@@ -1,0 +1,98 @@
+{
+  "recorded": "2026-10-03",
+  "commit": "971452d",
+  "forge": "forgejo",
+  "claims": [
+    {
+      "claim": "boot",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "check",
+      "says": "tf-check fails an unformatted root and names the file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "affected",
+      "says": "only the roots a change touches are planned",
+      "needs": "chant#3183",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "grouped",
+      "says": "one note groups many plans",
+      "needs": "chant#3188",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "report",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": "chant#3349",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "highlight",
+      "says": "destroys and outliers are open, identical groups are folded",
+      "needs": "chant#3349",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "waves",
+      "says": "each wave goes out only once approved",
+      "needs": "chant#3049",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "refuse",
+      "says": "a wave whose plans changed after approval applies nothing",
+      "needs": "chant#3049",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "drift",
+      "says": "drift is reported by root",
+      "needs": "chant#3343",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "rollout",
+      "says": "a module version rolls out one pull request per wave",
+      "needs": "chant#3352",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "publish",
+      "says": "changed modules are published at a new version",
+      "needs": "chant#3353",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "tips",
+      "says": "tips are on by default and name their rule",
+      "needs": "chant#3354",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "zero-config",
+      "says": "with no terragucci.yml the same roots are found",
+      "needs": "chant#3348",
+      "verdict": "pending",
+      "break": null
+    }
+  ]
+}

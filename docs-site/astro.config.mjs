@@ -30,13 +30,16 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Tutorial',
+					items: [{ autogenerate: { directory: 'tutorial' } }],
+				},
+				{
 					label: 'Reference',
 					items: [
 						{ label: 'Stages', slug: 'reference/stages' },
 						{ label: 'The plan report', slug: 'reference/report' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
 						{ label: 'Validation', slug: 'reference/validation' },
-						{ label: 'CI and the site', slug: 'reference/ci' },
 					],
 				},
 				{ label: 'Status', slug: 'status' },

@@ -68,7 +68,9 @@ services:
       - "${TERRAGUCCI_FLOCI_PORT:-4580}:4566"
     networks:
       default:
-        aliases: [floci]
+        # The AWS provider reaches S3 Control at <account-id>.<endpoint host>,
+        # and floci's account id is twelve zeros.
+        aliases: [floci, 000000000000.floci]
 
   # ── forgejo ──────────────────────────────────────────────────────────────
   # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the

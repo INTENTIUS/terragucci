@@ -1,0 +1,39 @@
+---
+title: Status
+description: What you can run today, what the checks show, and what is still being built.
+---
+
+import SmokeClaims from '../../components/SmokeClaims.astro';
+
+terragucci is being built. The rest of this site describes it finished, so this page is the one to read before relying on a feature. It is authoritative over every other page and the README.
+
+## What you can run today
+
+| Piece | What works |
+|---|---|
+| The tutorial's example | `just example up` boots 15 roots on a local Forgejo and applies them to floci, with the scenarios ready to open as pull requests |
+| The check stage | format and validate on every pull request, failing by file name |
+| The local validation stack | Forgejo with its runner and floci; GitHub, GitLab and fountain setups are declared but not yet checked |
+
+## What the checks show
+
+Each feature on this site has one check, run against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo. A check that passes has also been broken on purpose, and it failed then.
+
+<SmokeClaims />
+
+## Still being built
+
+| Feature | Status |
+|---|---|
+| Plans for only the roots a change reaches | in development |
+| One grouped note for many plans | in development |
+| The plan report, its index and bucket copies | in development |
+| Applies in gated waves | in development |
+| Drift reports | in development |
+| `terragucci.yml` and `terragucci reconcile` | in development |
+| Module publishing and pin-bump rollouts | in development |
+| Tips | in development |
+| GitHub and GitLab pipelines, checked locally | in development |
+| A fountain steward started by a pull request | planned after launch |
+
+The tutorial grows a page each time one of these passes its check.

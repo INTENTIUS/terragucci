@@ -1,0 +1,20 @@
+---
+title: Waves and approvals
+description: Merge the module change and watch it go out a wave at a time, each wave behind its own approval.
+sidebar:
+  order: 4
+claims: [waves]
+draft: true
+---
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+Merge the module-bump pull request. The dev roots form the canary wave, so they apply first. Then the run stops at staging with exit code 3 and prints the command that approves it.
+
+```bash
+chant approve tf-apply wave-2
+```
+
+Run it and run the stage again, and staging applies. The approval names the set digest of the plans you saw. A plan that changes afterwards is not covered.

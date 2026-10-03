@@ -1,0 +1,24 @@
+---
+title: One note for fifteen plans
+description: Change the shared module and read twelve plans as one note, with the outlier and every destroy named.
+sidebar:
+  order: 3
+claims: [affected, grouped, report, highlight]
+draft: true
+---
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+Every queue in every service should wait 60 seconds before retrying a job. That is one line in `modules/service`, and twelve roots call the module.
+
+```bash
+just example change module-bump
+```
+
+terragucci plans only the twelve service roots the change reaches. The three platform roots are left alone. The pull request gets one note instead of twelve. Eleven roots take the identical change and appear as one group. Payments in prod sits apart, because its dead-letter queue changes too.
+
+The note links to the full report. The report opens on what differs and folds the eleven identical plans into one. Every root in it links to its full plan.
+
+Next, try `just example change replace` and `just example change destroy`. A replacement or a destroy is always named on its own and highlighted, never folded into a group.

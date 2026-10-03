@@ -20,6 +20,25 @@ Declared means the services are in `docker-compose.yml`, readable, with comments
 - `gitlab`: copied from choudoufu's `examples/ci-pipelines/e2e/gitlab`. The runner still has to be created over the API and registered with `--docker-network-mode terragucci`. The GitLab CE image is linux/amd64 only, so on an arm64 Mac it runs under emulation.
 - `fountain`: copied from waterpark's `compose/`. The runner needs an API key that exists only after an account is registered.
 
+## The example and the smoke claims
+
+`example/` is the shop's estate: 15 roots (dev, staging and prod, each a platform root and four services calling `modules/service`), applied to floci by the forgejo profile. It is the tutorial's example and the subject of every smoke claim ([chant#3355](https://github.com/INTENTIUS/chant/issues/3355)).
+
+| Command | Does |
+|---|---|
+| `just example up [--fresh]` | boots the forgejo profile, pushes the example to `terragucci-admin/example` (public) and applies every root; `--fresh` wipes floci and the repo first |
+| `just example verify` | checks that every bucket, queue and table main declares is in floci |
+| `just example change <scenario>` | opens a pull request with one of `example/changes/` (`drift` and `pin` act directly) |
+| `just example reset` | closes the pull requests, puts main back, applies again |
+| `just smoke [claim]` | one line per claim: `SMOKE claim=… verdict=pass\|caught\|fail\|pending`; `BREAK=1` must print `caught` |
+| `just smoke-record` | every claim plain and under `BREAK=1`, written to `docs-site/src/data/smoke.json` for the status page |
+| `just tutorial-capture` | the tutorial's output and screenshots, for steps whose claims pass |
+| `just example-patches` | rebuilds `example/changes/*.patch` after an edit under `example/` |
+
+The roots are plain AWS code apart from path-style S3, which floci needs and AWS accepts. The pipeline's `env` block points them at floci. floci's network aliases include `000000000000.floci`, because the AWS provider reaches S3 Control at the account id in front of the endpoint's host.
+
+Facts measured on floci that the example relies on: SQS `visibility_timeout_seconds` and `message_retention_seconds` are kept, so a re-plan after apply is clean; a DynamoDB hash-key change plans a replacement; the S3 backend with `use_lockfile` and `terraform_remote_state` both work; a queue deleted through the API plans as a create. Each new SQS queue takes about 25 seconds, because the provider waits for its attributes to settle, so the pipeline applies independent roots together.
+
 ## Claims
 
 `just validate <forge> <claim>`. `BREAK=1` breaks the property the claim is about, and the claim must then fail.
