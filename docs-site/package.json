@@ -1,0 +1,17 @@
+{
+  "name": "terragucci-docs",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.5",
+    "astro": "7.3.5",
+    "sharp": "^0.34.2"
+  }
+}

@@ -1,0 +1,277 @@
+# The local validation stack: a real forge, a real runner and an AWS emulator
+# on one Docker network. chant#3344 is the design; stack/README.md says what is
+# validated today and what is only declared.
+#
+#   stack/bootstrap.sh forgejo     bring a profile up and print its env vars
+#   stack/validate.sh forgejo apply
+#   stack/down.sh                  remove every container, network and volume
+#
+# Two rules every service here follows, learned on choudoufu's GitLab run:
+#
+#   * A forge's public URL is its service name (http://forgejo:3000), never
+#     localhost. Every URL a job is handed (the clone URL, the API URL) comes
+#     from it, and inside a job container localhost is the job container.
+#     The host reaches the same server through the published port, because
+#     the forge serves any Host header.
+#   * The network is named (terragucci), and each runner puts the containers
+#     it spawns on it. Jobs on the default bridge reach neither the forge nor
+#     floci.
+#
+# Host ports are deliberately off the defaults (3000, 4566, 8929) so the stack
+# can sit next to another harness on the same machine. Override any of them
+# with the TERRAGUCCI_*_PORT variables.
+#
+# Profiles:
+#   aws       floci                                    validated
+#   forgejo   floci + Forgejo + forgejo-runner         validated
+#   github    floci + mock GitHub API                  declared, not yet validated
+#   gitlab    floci + GitLab CE + gitlab-runner        declared, not yet validated
+#   fountain  floci + fountain + Postgres + runner     declared, not yet validated
+name: terragucci
+
+networks:
+  default:
+    name: terragucci
+
+volumes:
+  forgejo-data:
+    name: terragucci-forgejo-data
+  forgejo-runner-data:
+    name: terragucci-forgejo-runner-data
+  # Mounted at /cache in every job container forgejo-runner spawns (the
+  # runner's container.options in bootstrap.sh): the OpenTofu binary and the
+  # provider plugin cache, so a run does not download the AWS provider again.
+  # The runner service mounts it too, only so compose creates and removes it.
+  job-cache:
+    name: terragucci-job-cache
+  gitlab-runner-config:
+    name: terragucci-gitlab-runner-config
+  fountain-pgdata:
+    name: terragucci-fountain-pgdata
+  fountain-sandboxes:
+    name: terragucci-fountain-sandboxes
+
+services:
+  # ── aws ──────────────────────────────────────────────────────────────────
+  # The patched floci from the lex00/floci fork (branch
+  # fix/iam-permissions-boundary), the image waterpark runs. Upstream 2.0.1
+  # never returns a role's permissions boundary on read. Pinned by the index
+  # digest of ghcr.io/lex00/floci:iam-boundary as resolved on 2026-10-03; the
+  # index carries linux/amd64 and linux/arm64.
+  floci:
+    image: ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813
+    container_name: terragucci-floci
+    profiles: [aws, forgejo, github, gitlab, fountain]
+    environment:
+      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: "false"
+    ports:
+      - "${TERRAGUCCI_FLOCI_PORT:-4580}:4566"
+    networks:
+      default:
+        aliases: [floci]
+
+  # ── forgejo ──────────────────────────────────────────────────────────────
+  # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the
+  # admin and its token afterwards (the forgejo-warden e2e pattern).
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    container_name: terragucci-forgejo
+    profiles: [forgejo]
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__DOMAIN: forgejo
+      FORGEJO__server__ROOT_URL: http://forgejo:3000/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_PORT: "0"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__actions__ENABLED: "true"
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__log__LEVEL: warn
+    ports:
+      - "${TERRAGUCCI_FORGEJO_PORT:-3300}:3000"
+    volumes:
+      - forgejo-data:/data
+    networks:
+      default:
+        aliases: [forgejo]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/version"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  # The docker executor: it talks to the host's Docker through the socket and
+  # starts one job container per job, on the terragucci network (set as
+  # container.network in the config bootstrap.sh writes). It waits for that
+  # config, because the runner's credentials come from Forgejo after it boots.
+  # Root, so it can use the socket Docker Desktop mounts as root:root.
+  forgejo-runner:
+    image: data.forgejo.org/forgejo/runner:13.2.0
+    container_name: terragucci-forgejo-runner
+    profiles: [forgejo]
+    user: "0:0"
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - forgejo-runner-data:/data
+      - job-cache:/cache
+    working_dir: /data
+    command:
+      - sh
+      - -c
+      - |
+        echo "waiting for /data/config.yml (written by stack/bootstrap.sh)"
+        while [ ! -s /data/config.yml ]; do sleep 1; done
+        exec forgejo-runner daemon -c /data/config.yml
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [forgejo-runner]
+
+  # ── github: declared, not yet validated ──────────────────────────────────
+  # GitHub has no self-hostable edition. The plan (chant#3344) is `act` on the
+  # host with event payloads and the job containers on this network, plus
+  # github-warden's stateful mock API for the PR-comment calls. The mock is
+  # dependency-free node, mounted from a github-warden checkout next to this
+  # one (override with TERRAGUCCI_MOCK_GITHUB_DIR). It covers warden's
+  # endpoints, not PR comments yet. Nothing has been run here.
+  mock-github:
+    image: node:22-alpine
+    container_name: terragucci-mock-github
+    profiles: [github]
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ${TERRAGUCCI_MOCK_GITHUB_DIR:-../../github-warden/e2e/mock-github}:/srv:ro
+    environment:
+      PORT: "8188"
+    ports:
+      - "${TERRAGUCCI_GITHUB_PORT:-8198}:8188"
+    networks:
+      default:
+        aliases: [mock-github]
+
+  # ── gitlab: declared, not yet validated ──────────────────────────────────
+  # Lifted from choudoufu examples/ci-pipelines/e2e/gitlab. external_url is
+  # the service name, and the runner must be registered with
+  # --docker-network-mode terragucci. GitLab 17 has no registration tokens:
+  # create the runner with POST /api/v4/user/runners and pass the glrt- token
+  # it returns to `gitlab-runner register --token`. The GitLab CE image is
+  # linux/amd64 only, so on arm64 it runs under emulation; cold boot is
+  # minutes. bootstrap.sh does not drive this profile yet.
+  gitlab:
+    image: gitlab/gitlab-ce:17.11.0-ce.0
+    container_name: terragucci-gitlab
+    profiles: [gitlab]
+    shm_size: "256m"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab:8929'
+        gitlab_rails['initial_root_password'] = 'Tg9QvK3mNt8RpLb2WdHf'
+        gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
+        gitlab_rails['rack_attack_git_basic_auth'] = {}
+        prometheus_monitoring['enable'] = false
+        puma['worker_processes'] = 0
+        sidekiq['max_concurrency'] = 3
+    ports:
+      - "${TERRAGUCCI_GITLAB_PORT:-8939}:8929"
+    networks:
+      default:
+        aliases: [gitlab]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8929/-/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:v17.11.0
+    container_name: terragucci-gitlab-runner
+    profiles: [gitlab]
+    depends_on: [gitlab]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab-runner-config:/etc/gitlab-runner
+    networks:
+      default:
+        aliases: [gitlab-runner]
+
+  # ── fountain: declared, not yet validated ────────────────────────────────
+  # From waterpark's compose/: fountain, its Postgres, and the containerized
+  # sandbox runner (ghcr.io/intentius/waterpark-runner), which points the AWS
+  # SDK at floci. The runner needs a FOUNTAIN_API_KEY that only exists after
+  # an account is registered (waterpark's bin/register.sh). The steward claim
+  # (`chant run tf-apply --on fountain`) has not been run here.
+  fountain-postgres:
+    image: postgres:16
+    container_name: terragucci-fountain-postgres
+    profiles: [fountain]
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fountain
+    volumes:
+      - fountain-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fountain"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  fountain:
+    image: ghcr.io/binarybourbon/fountain:sha-7f8d16af5100e8a671039fd254543a95e728a40e
+    container_name: terragucci-fountain
+    profiles: [fountain]
+    depends_on:
+      fountain-postgres:
+        condition: service_healthy
+    ports:
+      - "${TERRAGUCCI_FOUNTAIN_PORT:-4010}:4000"
+    environment:
+      PHX_SERVER: "true"
+      PORT: "4000"
+      DATABASE_URL: postgres://postgres:postgres@fountain-postgres:5432/fountain
+      DATABASE_SSL: "false"
+      PUBLIC_URL: http://fountain:4000
+      # Throwaway values for a throwaway instance. Generate real ones with
+      # waterpark's compose/bin/env.sh if this ever leaves the laptop.
+      SECRET_KEY_BASE: ${TERRAGUCCI_FOUNTAIN_SECRET_KEY_BASE:-terragucci-local-only-secret-key-base-not-for-use-anywhere-else-0000000000}
+      MASTER_SECRETS_KEY: ${TERRAGUCCI_FOUNTAIN_MASTER_SECRETS_KEY:-CH2qg3r4EPKvk9BjGaOvDiWR3CKYXNySFdjpTFe08x0}
+      EMAIL_DELIVERY: none
+      FIRST_USER_ADMIN: "true"
+      SANDBOX_PROVIDER: runner
+      SANDBOX_RUNNERS_ENABLED: "true"
+      BILLING_ENABLED: "false"
+    networks:
+      default:
+        aliases: [fountain]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/4000"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  fountain-runner:
+    image: ghcr.io/intentius/waterpark-runner:latest
+    container_name: terragucci-fountain-runner
+    profiles: [fountain]
+    depends_on:
+      fountain:
+        condition: service_healthy
+    environment:
+      FOUNTAIN_BASE_URL: http://fountain:4000
+      FOUNTAIN_API_KEY: ${TERRAGUCCI_FOUNTAIN_API_KEY:-}
+      RUNNER_NAME: terragucci
+      AWS_ENDPOINT_URL: http://floci:4566
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - fountain-sandboxes:/sandboxes
+    command: ["sh", "-c", "[ -n \"$$FOUNTAIN_API_KEY\" ] || { echo 'TERRAGUCCI_FOUNTAIN_API_KEY is empty; register an account first' >&2; exit 1; }; exec fountain runner --name \"$$RUNNER_NAME\" --root /sandboxes"]
+    networks:
+      default:
+        aliases: [fountain-runner]
