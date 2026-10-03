@@ -1,6 +1,6 @@
 {
   "captured": "2026-10-03",
-  "commit": "971452d",
+  "commit": "6d234f8",
   "tofu": "1.13.1",
   "aws_provider": "6.67.0",
   "forgejo": "16.0.5",
