@@ -1,16 +1,16 @@
 /*
  * terragucci's look: a fashion house's restraint applied to infrastructure.
- * Didone display (Bodoni Moda) for names and claims, Hanken Grotesk for
+ * Display serif (Fraunces) for names and claims, Hanken Grotesk for
  * reading, JetBrains Mono for anything a terminal or a plan would print.
  * Forest neutrals, one brass accent, hairlines instead of boxes.
  *
  * Starlight's dark theme lives on :root and its light theme on
  * :root[data-theme='light'], so both palettes are set here as tokens.
  */
-@import url('https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,500;0,6..96,700;1,6..96,500&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-	--tg-display: 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif;
+	--tg-display: 'Fraunces', Georgia, 'Times New Roman', serif;
 	--sl-font: 'Hanken Grotesk', 'Helvetica Neue', Arial, system-ui, sans-serif;
 	--sl-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -55,7 +55,7 @@
 	--tg-rule: #d8ddd4;
 }
 
-/* Headings in the didone, at reading sizes a little tighter. */
+/* Headings in the display serif, at reading sizes a little tighter. */
 .sl-markdown-content :is(h1, h2, h3),
 h1#_top {
 	font-family: var(--tg-display);
@@ -99,7 +99,7 @@ h1#_top {
 	border: none;
 }
 
-/* The home hero: the claim in the didone, the tagline in reading type. */
+/* The home hero: the claim in the display serif, the tagline in reading type. */
 .hero {
 	padding-block: clamp(2.5rem, 8vw, 5rem) 1rem;
 }
