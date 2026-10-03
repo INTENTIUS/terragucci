@@ -13,6 +13,8 @@ The stage declarations do not change between runtimes. A schedule declared on a 
 
 ## Forge CI and a steward together
 
+Forge CI is the default, and it runs every stage, gated waves included. A steward is opt-in: set `runtime: fountain` on a project in [your config file](/terragucci/getting-started/config/).
+
 Pull-request stages run on the forge, where the pull request lives. The apply stage runs on the steward, started by a small forge job:
 
 ```bash
