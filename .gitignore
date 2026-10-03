@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.chant/
+
+# Built by `just site`; the Pages workflow publishes it and nothing commits it.
+docs-site/dist/
+docs-site/.astro/
