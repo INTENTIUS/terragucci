@@ -40,7 +40,7 @@ The site describes the finished product, and the status page is the only record 
 
 - Run terragucci from the shell with `--json` and parse the envelope ([JSON output](/terragucci/reference/cli-json/)). Each root carries the reason it was found, and the binary, version and forge carry theirs. Do not add an MCP server for it.
 - Run `npx terragucci config check --json` after writing a config; it lists every problem at once.
-- Approvals belong to people. An agent may print the `chant approve` command for a waiting wave but never runs it.
+- Approvals belong to people. An agent may print the `chant approve` command for a waiting wave but never runs it. Over MCP or ACP, chant refuses to resolve a wave's gate at all, whichever channel reached it.
 - Responses to pipeline events need no model. [Responses to pipeline events](/terragucci/reference/responses/) shows how a project opts in, one event at a time.
 - Credentials stay in the forge's secrets. The config names environment variables (`token_env`) and never holds a value.
 - Ask before choosing a runtime other than the forge. A fountain steward is opt-in.
