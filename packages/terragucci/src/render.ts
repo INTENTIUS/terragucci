@@ -58,6 +58,8 @@ export interface PipelineInput {
   tokenEnv?: string;
   /** A bucket for plan reports, besides the job's artifact. */
   reports?: PlanReportInput["reports"];
+  /** Set when `modules.publish` is: the pipeline gets a job that publishes changed modules after apply. */
+  publish?: boolean;
 }
 
 export interface RenderedPipeline {
@@ -326,6 +328,24 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
   ].join("\n");
 }
 
+/**
+ * The publish job's script. It needs the whole history and the module tags
+ * (publish reads the last release from them), and on GitLab a remote that can
+ * push, since the job's checkout carries no write credentials.
+ */
+export function publishScript(forge: ForgeName): string {
+  return [
+    "set -eu",
+    ...(forge === "gitlab"
+      ? [
+          'git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"',
+          'git fetch --quiet --tags origin',
+        ]
+      : []),
+    "terragucci publish",
+  ].join("\n");
+}
+
 function header(image: string): string {
   return [
     MARKER,
@@ -387,9 +407,21 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...idTokens,
       script: script(bash("APPLY", applyScript(binary, layers, forge, oidc))),
     } as never);
-    const out = text(
-      gitlabSerializer.serialize(new Map<string, never>([["check", check as never], ["plan", plan as never], ["apply", apply as never]])),
-    );
+    const jobs = new Map<string, never>([["check", check as never], ["plan", plan as never], ["apply", apply as never]]);
+    if (input.publish) {
+      // GitLab hands project variables (TERRAGUCCI_REGISTRY_USER and _PASSWORD)
+      // to every job, so mark them protected and masked to keep them off merge requests.
+      jobs.set("publish", new GitLabJob({
+        stage: "publish",
+        image: jobImage,
+        needs: ["apply"],
+        variables: { ...gitlabEnv, GIT_DEPTH: "0" },
+        rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        resource_group: "terragucci-publish",
+        script: script(bash("PUBLISH", publishScript(forge))),
+      } as never) as never);
+    }
+    const out = text(gitlabSerializer.serialize(jobs));
     return { path: PIPELINE_PATHS.gitlab, content: header(image) + out };
   }
 
@@ -462,6 +494,27 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ["plan", plan as never],
     ["apply", apply as never],
   ]);
+  if (input.publish) {
+    // The only job that sees the registry credentials. It pushes tags, so it is
+    // the only one with write access to contents, and it runs after apply.
+    entities.set("publish", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      needs: "apply",
+      if: "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+      permissions: { contents: "write" },
+      concurrency: { group: "terragucci-publish-${{ github.repository }}", "cancel-in-progress": false },
+      env: {
+        TERRAGUCCI_REGISTRY_USER: "${{ secrets.TERRAGUCCI_REGISTRY_USER }}",
+        TERRAGUCCI_REGISTRY_PASSWORD: "${{ secrets.TERRAGUCCI_REGISTRY_PASSWORD }}",
+      },
+      steps: [
+        new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
+        ...(installStep && install ? [new Step({ name: `Install ${install.binary} ${install.version}`, run: installStep })] : []),
+        new Step({ name: "Publish the modules that changed", shell: "bash", run: publishScript(forge) }),
+      ],
+    } as never) as never);
+  }
   const serializer = forge === "forgejo" ? forgejoSerializer : githubSerializer;
   return { path: PIPELINE_PATHS[forge], content: header(image) + text(serializer.serialize(entities)) };
 }

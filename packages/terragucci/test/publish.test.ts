@@ -160,6 +160,33 @@ describe("publish to git tags", () => {
     expect(git(repo, "tag", "--list", "modules/db/*")).toContain("modules/db/v0.1.1");
   });
 
+  it("reports a version the remote already has, when the clone lost its tags", async () => {
+    const repo = repoWithModules();
+    const remote = tmp("terragucci-remote-");
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    git(repo, "remote", "add", "origin", remote);
+    const cfg = { modules: { publish: "git-tags" } };
+    await publish(repo, cfg);
+    for (const t of git(repo, "tag", "--list").trim().split("\n")) git(repo, "tag", "-d", t);
+    const again = await publish(repo, cfg);
+    expect(again.map((r) => r.status)).toEqual(["unchanged", "unchanged"]);
+    expect(git(remote, "tag", "--list").trim().split("\n")).toEqual(["modules/db/v0.1.0", "modules/net/v0.1.0"]);
+  });
+
+  it("moves on from the remote's newest tag when the clone lost its tags and the module changed", async () => {
+    const repo = repoWithModules();
+    const remote = tmp("terragucci-remote-");
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    git(repo, "remote", "add", "origin", remote);
+    const cfg = { modules: { publish: "git-tags" } };
+    await publish(repo, cfg);
+    for (const t of git(repo, "tag", "--list").trim().split("\n")) git(repo, "tag", "-d", t);
+    write(repo, { "modules/db/main.tf": "# more\n" });
+    commit(repo, "fix: db");
+    const next = await publish(repo, cfg);
+    expect(next.map((r) => `${r.module}@${r.version}:${r.status}`)).toEqual(["db@0.1.1:published", "net@0.1.0:unchanged"]);
+  });
+
   it("publishes to both targets with the same content digest", async () => {
     const repo = repoWithModules();
     const reg = fakeRegistry();
