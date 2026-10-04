@@ -28,11 +28,11 @@ report|the report is JSON and HTML, and links every root to its full plan|
 highlight|destroys and outliers are open, identical groups are folded|
 waves|each wave goes out only once approved|chant#3049
 refuse|a wave whose plans changed after approval applies nothing|chant#3049
-drift|drift is reported by root|terragucci#13
+drift|drift is reported by root|
 rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
 tips|tips are on by default and name their rule|
-zero-config|with no terragucci.yml, init writes the same pipeline|
+zero-config|with no more than a drift schedule in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
 traces|each plan run is one trace, with a span per root and the binary spans inside it|
@@ -100,14 +100,15 @@ claim_check() {
 TERRAGUCCI="$HERE/../node_modules/.bin/terragucci"
 
 claim_zero_config() {
-  # The example with its terragucci.yml removed: init must write exactly the
-  # pipeline the example commits, found from the repo alone.
+  # The example with its terragucci.yml cut down to the drift schedule, the one
+  # thing a repo cannot show: init must write exactly the pipeline the example
+  # commits, finding everything else from the repo alone.
   local work rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
   cp -R "$EXAMPLE/." "$work/"
-  rm -f "$work/terragucci.yml"
+  printf 'drift: "0 6 * * *"\n' > "$work/terragucci.yml"
   # BREAK: a config that leaves out prod, so init finds fewer roots.
-  [ -n "${BREAK:-}" ] && printf 'roots: ["envs/dev/*", "envs/staging/*"]\n' > "$work/terragucci.yml"
+  [ -n "${BREAK:-}" ] && printf 'drift: "0 6 * * *"\nroots: ["envs/dev/*", "envs/staging/*"]\n' > "$work/terragucci.yml"
   (cd "$work" && "$TERRAGUCCI" init) >&2 || rc=1
   if [ $rc = 0 ] && ! diff -u "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$work/.forgejo/workflows/terragucci.yml" >&2; then
     echo "[smoke zero-config] init wrote a different pipeline" >&2
@@ -297,7 +298,10 @@ YML
 
 REPORT_BUCKET=terragucci-reports
 
-# work dir, then the patches to apply; leaves the run's report in $1/terragucci-report
+# work dir, then the patches to apply; leaves the run's report in $1/terragucci-report.
+# REPORT_STAGE names another stage (tf-drift); REPORT_EXTRA holds more `docker run` arguments and REPORT_ARGS more stage arguments.
+REPORT_EXTRA=()
+REPORT_ARGS=()
 report_run() {
   local work="$1"; shift
   local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p
@@ -320,7 +324,8 @@ report_run() {
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$image" terragucci stage tf-plan >&2
+    ${REPORT_EXTRA[@]+"${REPORT_EXTRA[@]}"} \
+    "$image" terragucci stage "${REPORT_STAGE:-tf-plan}" ${REPORT_ARGS[@]+"${REPORT_ARGS[@]}"} >&2
 }
 
 claim_report() {
@@ -500,6 +505,63 @@ claim_highlight() {
   rm -rf "$work"
   [ $rc = 0 ] || return 1
   log "named $del (delete) and $rep (replace), both roots open; group $big folded"
+}
+
+claim_drift() {
+  # Staging orders' jobs queue is deleted from floci, outside Terraform. A
+  # drift run, with an unapplied code change waiting on main, must report that
+  # root and that queue and nothing else, and keep exactly one open issue that
+  # names them. Run again it updates the issue instead of opening a second.
+  # Once the example is applied again, a run finds none and closes the issue.
+  # BREAK: the queue is not deleted, so there is no drift to name.
+  log() { echo "[smoke drift] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 dir issues n body root="envs/staging/orders" queue="shop-staging-orders-jobs"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  open_issues() { api "$URL/api/v1/repos/$USER/example/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
+  drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
+    mkdir -p "$1"
+    local REPORT_STAGE=tf-drift
+    local -a REPORT_ARGS=(--forge forgejo --report-url "http://forgejo:3000/$USER/example/actions")
+    local -a REPORT_EXTRA=(-e "GITHUB_REPOSITORY=$USER/example" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN")
+    report_run "$1" one-root
+  }
+  # Start with no drift issue open, so the claim reads only this run's.
+  for n in $(open_issues | jq -r '.[].number'); do
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$USER/example/issues/$n"
+  done
+  [ -n "${BREAK:-}" ] || TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { rm -rf "$work"; return 1; }
+
+  drift_run "$work/run1" || { log "the drift run failed"; rm -rf "$work"; return 1; }
+  dir="$work/run1/terragucci-report"
+  [ -f "$dir/report.json" ] || { log "no report"; rm -rf "$work"; return 1; }
+  jq -e '.run.stage == "tf-drift"' "$dir/report.json" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
+  jq -e --arg r "$root" --arg q "module.service.aws_sqs_queue.jobs" '[.roots[] | select(.path == $r) | .changes[] | select(.action == "delete" and (.address | endswith($q)))] | length == 1' "$dir/report.json" >/dev/null \
+    || { log "the report does not name $root and its queue"; rc=1; }
+  # Only the deleted queue drifted: the one-root change waiting on main is not drift.
+  [ "$(jq '[.roots[] | select(.changes | length > 0)] | length' "$dir/report.json")" = 1 ] \
+    || { log "more than $root drifted: $(jq -r '[.roots[] | select(.changes | length > 0) | .path] | join(",")' "$dir/report.json")"; rc=1; }
+  jq -e '[.roots[] | select(.path == "envs/dev/orders") | .changes | length] == [0]' "$dir/report.json" >/dev/null \
+    || { log "envs/dev/orders, whose change is only on main, shows as drift"; rc=1; }
+  issues="$(open_issues)"
+  [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
+  body="$(jq -r '.[0].body // ""' <<<"$issues")"
+  grep -q "$root" <<<"$body" && grep -q "$queue" <<<"$body" || { log "the issue does not name $root and $queue"; rc=1; }
+  [ $rc = 0 ] || { rm -rf "$work"; return 1; }
+
+  # A second run on the same drift updates the one issue.
+  drift_run "$work/run2" || { log "the second drift run failed"; rm -rf "$work"; return 1; }
+  [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rm -rf "$work"; return 1; }
+
+  # The example applied again recreates the queue; the next run finds no drift and closes the issue.
+  "$HERE/example.sh" reset >&2 || { log "could not apply the example again"; rm -rf "$work"; return 1; }
+  drift_run "$work/run3" || { log "the third drift run failed"; rm -rf "$work"; return 1; }
+  jq -e '[.roots[] | select(.changes | length > 0)] | length == 0' "$work/run3/terragucci-report/report.json" >/dev/null \
+    || { log "drift remains after the example was applied again"; rm -rf "$work"; return 1; }
+  [ "$(open_issues | jq length)" = 0 ] || { log "the drift issue is still open with no drift"; rm -rf "$work"; return 1; }
+  rm -rf "$work"
+  log "$root and $queue named in the report and one issue; a pending change on main was not drift; the next run found none and closed the issue"
 }
 
 claim_tips() {

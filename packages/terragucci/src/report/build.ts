@@ -188,6 +188,7 @@ export function buildReport(input: BuildInput): Report {
     const highlights: Highlight[] = changes.filter((c) => c.why !== undefined).map((c) => ({ address: c.address, type: c.type, action: c.action, why: c.why! }));
     const why: string[] = [];
     if (m.status === "failed") why.push("refused to plan");
+    if (inputRun.stage === "tf-drift" && changes.length > 0) why.push("drifted");
     if (outliers.has(m.member)) why.push("outlier: its change matches no other root's");
     if (highlights.length > 0) why.push(...new Set(highlights.map((h) => h.why)));
     const group = memberGroup.get(m.member);
@@ -218,6 +219,7 @@ export function buildReport(input: BuildInput): Report {
     if (destroys > 0) why.push(`${destroys} ${destroys === 1 ? "destroy or replacement" : "destroys or replacements"}`);
     const highlighted = [...new Set(members.flatMap((r) => r.highlights.filter((h) => h.action !== "delete" && h.action !== "replace").map((h) => h.why)))];
     why.push(...highlighted);
+    if (inputRun.stage === "tf-drift" && !g.noChanges) why.push("drifted");
     return {
       id: g.id,
       ...(g.resource ? { resource: g.resource } : {}),

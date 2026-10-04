@@ -10,9 +10,40 @@ Every stage takes the root directories and the binary.
 | `tf-check` | format and validate | read the repository | pass or fail |
 | `tf-plan` | plans only the roots a change affects, in one run, and posts the grouped summary on the pull request | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
 | `tf-apply` | applies wave by wave, one job per wave, each wave behind its own approval | read the repository, write the `chant/lifecycle` branch | per wave, whether it waited and the command that approves it |
-| `tf-drift` | plans every root on a schedule and reports the grouped summary | read the repository, open issues | drift, grouped |
+| `tf-drift` | plans every root on a schedule with `-refresh-only` and reports what changed outside Terraform, grouped | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
+
+## Drift
+
+Set `drift` in `terragucci.yml` to a cron schedule and the pipeline gets a `drift` job that runs on it.
+
+```yaml
+drift: "0 6 * * *"
+```
+
+The job runs `terragucci stage tf-drift`. It plans every root with `-refresh-only`, so the plan compares the state with the real objects and ignores the code. A change merged to the default branch but not yet applied is not drift. Only an object that was changed, or deleted, outside Terraform is.
+
+The report is the one [the plan report](/terragucci/reference/report/) describes, with the stage set to `tf-drift`. It groups roots whose drift is the same, and a deleted object is listed by name with its root. The job keeps it as an artifact like the plan job does.
+
+Each project has at most one open drift issue, titled `terragucci: drift found`:
+
+| This run finds | The issue |
+|---|---|
+| drift, and none is open | opens, with each drifted root and what moved in it |
+| drift, and one is open | updates in place, so the issue always shows the latest run |
+| no drift in any root | closes, with a comment naming the commit |
+| no drift, but a root could not be planned | stays as it is, since that root is unknown |
+
+A root that cannot be refreshed fails the job. Drift alone does not. The job never applies; correct drift with a pull request, or by applying the code as it is.
+
+The job needs a token that can write issues. On GitHub and Forgejo the job's own token does, with `issues: write` in the generated workflow. On GitLab, `token_env` names a variable holding a token with the `api` scope, and the schedule itself is set under CI/CD > Schedules with the cron from `terragucci.yml`, since GitLab keeps schedules outside the pipeline file. The job takes the plan job's read-only role when `oidc` is set. `workflow_dispatch` also runs it on GitHub and Forgejo, for a drift check on demand.
+
+```bash
+npx terragucci stage tf-drift
+```
+
+With no forge token in the environment, the stage still writes the report and `issue.md`, the issue as it would be filed, and leaves the forge alone. `--forge` names the forge when the environment alone cannot tell GitHub from Forgejo.
 
 ## Gated waves
 

@@ -19,6 +19,8 @@ export interface ForgeTarget {
   /** owner/name, or a GitLab group path and name. */
   path: string;
   token: string;
+  /** The API's base URL, when the runner names it (GITHUB_API_URL) and the origin alone does not give it. */
+  api?: string;
 }
 
 export interface PullRequest {
@@ -30,6 +32,7 @@ export interface PullRequest {
 export class ForgeError extends Error {}
 
 function apiBase(t: ForgeTarget): string {
+  if (t.api) return t.api.replace(/\/+$/, "");
   if (t.forge === "github") {
     return /^https?:\/\/github\.com$/i.test(t.origin) ? "https://api.github.com" : `${t.origin}/api/v3`;
   }
@@ -100,3 +103,49 @@ export const DEFAULT_TOKEN_ENV: Record<ForgeName, string> = {
   gitlab: "GITLAB_TOKEN",
   forgejo: "FORGEJO_TOKEN",
 };
+
+export interface Issue {
+  url: string;
+  /** GitHub and Forgejo number; GitLab iid. */
+  number: number;
+  body: string;
+}
+
+const gitlabId = (t: ForgeTarget): string => encodeURIComponent(t.path);
+
+/** The open issue whose body carries `marker`, if any. */
+export async function findIssue(fetch: Fetch, t: ForgeTarget, marker: string): Promise<Issue | undefined> {
+  if (t.forge === "gitlab") {
+    const list = (await call(fetch, t, "GET", `/projects/${gitlabId(t)}/issues?state=opened&per_page=100`)) as Array<{ web_url: string; iid: number; description?: string | null }>;
+    const hit = list.find((i) => (i.description ?? "").includes(marker));
+    return hit ? { url: hit.web_url, number: hit.iid, body: hit.description ?? "" } : undefined;
+  }
+  const list = (await call(fetch, t, "GET", `/repos/${t.path}/issues?state=open&type=issues&per_page=100`)) as Array<{ html_url: string; number: number; body?: string | null; pull_request?: unknown }>;
+  const hit = list.find((i) => !i.pull_request && (i.body ?? "").includes(marker));
+  return hit ? { url: hit.html_url, number: hit.number, body: hit.body ?? "" } : undefined;
+}
+
+export async function openIssue(fetch: Fetch, t: ForgeTarget, issue: { title: string; body: string }): Promise<Issue> {
+  if (t.forge === "gitlab") {
+    const i = (await call(fetch, t, "POST", `/projects/${gitlabId(t)}/issues`, { title: issue.title, description: issue.body })) as { web_url: string; iid: number };
+    return { url: i.web_url, number: i.iid, body: issue.body };
+  }
+  const i = (await call(fetch, t, "POST", `/repos/${t.path}/issues`, { title: issue.title, body: issue.body })) as { html_url: string; number: number };
+  return { url: i.html_url, number: i.number, body: issue.body };
+}
+
+export async function updateIssue(fetch: Fetch, t: ForgeTarget, number: number, issue: { title: string; body: string }): Promise<void> {
+  if (t.forge === "gitlab") await call(fetch, t, "PUT", `/projects/${gitlabId(t)}/issues/${number}`, { title: issue.title, description: issue.body });
+  else await call(fetch, t, "PATCH", `/repos/${t.path}/issues/${number}`, { title: issue.title, body: issue.body });
+}
+
+/** Comment on an issue, then close it. */
+export async function closeIssue(fetch: Fetch, t: ForgeTarget, number: number, comment: string): Promise<void> {
+  if (t.forge === "gitlab") {
+    await call(fetch, t, "POST", `/projects/${gitlabId(t)}/issues/${number}/notes`, { body: comment });
+    await call(fetch, t, "PUT", `/projects/${gitlabId(t)}/issues/${number}`, { state_event: "close" });
+    return;
+  }
+  await call(fetch, t, "POST", `/repos/${t.path}/issues/${number}/comments`, { body: comment });
+  await call(fetch, t, "PATCH", `/repos/${t.path}/issues/${number}`, { state: "closed" });
+}

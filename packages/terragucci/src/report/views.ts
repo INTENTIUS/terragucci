@@ -8,7 +8,7 @@ import {
   type PlanSummary, type PlanSummaryChange,
 } from "@intentius/chant/plan-summary";
 import { groupAnchor, rootAnchor } from "./build";
-import type { Report, ReportNamed } from "./schema";
+import { actionWord, type Report, type ReportNamed } from "./schema";
 
 /** chant's plan summary, rebuilt from the report. */
 export function planSummaryOf(report: Report): PlanSummary {
@@ -80,8 +80,6 @@ function changeText(l: PlanSummaryChange): string {
   return t;
 }
 
-const ACTION_WORD: Record<ReportNamed["action"], string> = { delete: "destroy", replace: "replace", refused: "refused to plan", forget: "forget", import: "import" };
-
 /**
  * The pull-request note. Each group links to `report.html#group-<id>` and
  * each named change to `report.html#root-<path>`. Destroys, replacements and
@@ -111,7 +109,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const what = n.address ? `${n.root}: ${n.address}${n.deposed !== undefined ? ` (deposed ${n.deposed})` : ""}` : n.root;
       const forced = n.replace_paths?.length ? `, forced by ${n.replace_paths.map((p) => code(p.join("."))).join(", ")}` : "";
       const reason = n.reason ? `: ${n.reason.split(/\s+/).join(" ")}` : "";
-      blocks.push({ group: false, units: 0, text: `- [${code(what)}](${url}#${rootAnchor(n.root)}) (${ACTION_WORD[n.action]}${forced})${reason}\n` });
+      blocks.push({ group: false, units: 0, text: `- [${code(what)}](${url}#${rootAnchor(n.root)}) (${actionWord(run.stage, n.action)}${forced})${reason}\n` });
     }
     blocks.push({ group: false, units: 0, text: "\n" });
   }
