@@ -3,9 +3,12 @@
  * lexicons so GitHub, Forgejo and GitLab get the same jobs in their own syntax.
  *
  * check  every push: format check and validate, for every root.
+ * plan   pull requests from the same repo: plan every root in apply order,
+ *        post one terragucci/plan status and one plan note. Read-only role.
  * apply  pushes to the default branch: apply every root, a layer at a time,
  *        roots in one layer together. A root that reads another's state
- *        applies after it.
+ *        applies after it. One apply per project at a time; posts one
+ *        terragucci/apply status and marks plan notes the push made stale.
  *
  * The stages terragucci is building (grouped plans, gated waves, drift) take
  * these jobs' place as they ship; the file stays where it is.
@@ -46,6 +49,10 @@ export interface PipelineInput {
   /** Roots in apply order: each inner list applies together. */
   layers: string[][];
   env: Record<string, string>;
+  /** Cloud roles the jobs assume over OIDC: plan reads, apply writes. */
+  oidc?: { plan_role: string; apply_role: string; audience?: string };
+  /** The environment variable holding the forge token, where the forge's own job token cannot post statuses (GitLab). */
+  tokenEnv?: string;
 }
 
 export interface RenderedPipeline {
@@ -75,23 +82,150 @@ export function checkScript(binary: Binary, roots: string[]): string {
   ].join("\n");
 }
 
-export function applyScript(binary: Binary, layers: string[][]): string {
+/**
+ * The forge calls the pipeline makes beyond running the binary: commit statuses,
+ * the plan note, marking a note stale, and the OIDC token. Plain Node, because
+ * the CI images carry node and git but not curl or jq. A failed status or note
+ * never fails the job; a failed token request does.
+ */
+const FORGE_API_JS = [
+  'import { writeFileSync, readFileSync } from "node:fs";',
+  "const [cmd, ...a] = process.argv.slice(1);",
+  "const e = process.env, gl = e.TG_FORGE === \"gitlab\", tok = e.TG_TOKEN;",
+  'const MARK = "<!-- terragucci:plan";',
+  "try {",
+  '  if (cmd === "oidc") {',
+  '    const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });',
+  '    if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");',
+  "    writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });",
+  "  } else if (!tok) {",
+  '    console.log("terragucci: no forge token, so no " + cmd);',
+  "  } else {",
+  '    const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";',
+  '    const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;',
+  "    const call = async (m, p, b) => {",
+  '      const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });',
+  '      if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);',
+  "      return r.status === 204 ? null : r.json();",
+  "    };",
+  '    const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";',
+  '    const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));',
+  '    const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });',
+  '    if (cmd === "status") {',
+  "      const [context, state, description] = a;",
+  '      const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;',
+  '      const sha = e.TG_SHA;',
+  '      if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });',
+  '      else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });',
+  '    } else if (cmd === "note") {',
+  "      const body = readFileSync(a[0], \"utf-8\"), old = await find(e.TG_PR);",
+  '      if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });',
+  '    } else if (cmd === "stale") {',
+  '      const moved = a[0].split(",");',
+  '      const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");',
+  "      for (const pr of open) {",
+  "        const n = gl ? pr.iid : pr.number, note = await find(n);",
+  "        if (!note || note.body.includes(\"<!-- terragucci:stale -->\")) continue;",
+  '        const hit = (note.body.match(/roots=(\\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));',
+  "        if (!hit.length) continue;",
+  '        const lines = note.body.split("\\n");',
+  '        lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");',
+  '        await edit(n, note.id, lines.join("\\n"));',
+  "      }",
+  "    }",
+  "  }",
+  "} catch (err) {",
+  '  console.log("terragucci: " + cmd + " failed: " + err.message);',
+  '  if (cmd === "oidc") process.exit(1);',
+  "}",
+].join("\n");
+
+/** Shell that defines `tg`, the forge calls above. */
+export function forgeApi(forge: ForgeName): string {
+  return [`export TG_FORGE=${forge}`, `tg() { node --input-type=module -e '${FORGE_API_JS}' -- "$@"; }`].join("\n");
+}
+
+const AUDIENCE = "sts.amazonaws.com";
+
+/** Take the role over OIDC: AWS reads the token file and exchanges it for the role. */
+export function oidcScript(forge: ForgeName, role: string, session: string, audience = AUDIENCE): string {
+  const token = forge === "gitlab" ? 'printf \'%s\' "$TERRAGUCCI_OIDC" >"$AWS_WEB_IDENTITY_TOKEN_FILE"' : `tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" ${sh(audience)}`;
+  return [
+    `export AWS_ROLE_ARN=${sh(role)} AWS_ROLE_SESSION_NAME=${sh(session)}`,
+    'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"',
+    token,
+  ].join("\n");
+}
+
+/** Roots that changed in the push, or all of them when the push cannot be diffed. */
+function movedRoots(roots: string[]): string {
+  return [
+    'if [ -n "${TG_BEFORE:-}" ] && [ "${TG_BEFORE#0000000}" = "$TG_BEFORE" ] && git fetch -q --depth=1 origin "$TG_BEFORE" 2>/dev/null; then',
+    '  changed="$(git diff --name-only "$TG_BEFORE" HEAD)"',
+    "else",
+    "  changed=",
+    "fi",
+    'moved=""',
+    `for dir in ${roots.map(sh).join(" ")}; do`,
+    '  if [ -z "$changed" ] || printf \'%s\\n\' "$changed" | grep -q "^$dir/"; then moved="${moved:+$moved,}$dir"; fi',
+    "done",
+  ].join("\n");
+}
+
+/**
+ * Applies on Forgejo run one at a time through a tag on the remote, because the
+ * runner ignores `concurrency`. A run that finds a newer push on the branch
+ * stands down, since that push applies the whole tree.
+ */
+function forgejoLock(): string {
+  return [
+    'lock_ref="refs/tags/terragucci-apply-lock"',
+    'empty="$(git mktree </dev/null)"',
+    'mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$}")"',
+    "tries=0",
+    'until git push -q origin "$mine:$lock_ref" 2>/dev/null; do',
+    '  if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour; delete the tag if none is running" >&2; exit 1; fi',
+    '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
+    "done",
+    "trap 'git push -q origin \":$lock_ref\" || true' EXIT",
+    'tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"',
+    'if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then',
+    '  echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"',
+    '  tg status terragucci/apply success "superseded by a newer push"',
+    "  exit 0",
+    "fi",
+  ].join("\n");
+}
+
+export function applyScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"]): string {
+  const roots = layers.flat().sort();
+  const total = layers.flat().length;
   return [
     "set -uo pipefail",
-    "# Each root's output goes to its own log, printed when the root is done.",
+    forgeApi(forge),
+    ...(oidc ? [oidcScript(forge, oidc.apply_role, "terragucci-apply", oidc.audience)] : []),
+    movedRoots(roots),
+    '# The base branch moved under these roots: plan notes that cover them are stale.',
+    'tg stale "$moved" "${TG_BRANCH:-}"',
+    ...(forge === "forgejo" ? [forgejoLock()] : []),
+    'tg status terragucci/apply pending "applying"',
+    "# Each root gets its own provider cache. A cache directory shared by roots",
+    "# that init together is not safe, so the one the job's env may name is set aside.",
     "apply_root() {",
     '  local dir="$1" log',
     '  log="$(mktemp)"',
+    '  export TF_PLUGIN_CACHE_DIR="$(mktemp -d)"',
+    "  # Each root's output goes to its own log, printed when the root is done.",
     `  if ${binary} -chdir="$dir" init -input=false -no-color >"$log" 2>&1 &&`,
     `    ${binary} -chdir="$dir" apply -auto-approve -input=false -no-color >>"$log" 2>&1; then`,
     `    echo "applied $dir: $(grep -o 'Resources: .*destroyed' "$log" | tail -1)"`,
     "  else",
     '    echo "FAILED $dir"',
     "    sed 's/^/    /' \"$log\"",
-    '    rm -f "$log"',
+    '    rm -rf "$log" "$TF_PLUGIN_CACHE_DIR"',
     "    return 1",
     "  fi",
-    '  rm -f "$log"',
+    '  rm -rf "$log" "$TF_PLUGIN_CACHE_DIR"',
     "}",
     "apply_together() {",
     "  local pids=() rc=0",
@@ -99,8 +233,60 @@ export function applyScript(binary: Binary, layers: string[][]): string {
     '  for pid in "${pids[@]}"; do wait "$pid" || rc=1; done',
     "  return $rc",
     "}",
-    ...layers.map((layer) => `apply_together ${layer.map(sh).join(" ")} || exit 1`),
+    'failed() { tg status terragucci/apply failure "an apply failed"; exit 1; }',
+    ...layers.map((layer) => `apply_together ${layer.map(sh).join(" ")} || failed`),
+    `tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
     'echo "all roots applied"',
+  ].join("\n");
+}
+
+/** The pull request stage: plan every root in apply order, post one status and one note. */
+export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"]): string {
+  const ordered = layers.flat();
+  return [
+    "set -uo pipefail",
+    forgeApi(forge),
+    ...(oidc ? [oidcScript(forge, oidc.plan_role, "terragucci-plan", oidc.audience)] : []),
+    'tg status terragucci/plan pending "planning"',
+    `dirs=(${ordered.map(sh).join(" ")})`,
+    "planned=0 destroys=0 failed=0 rows= summaries=",
+    'for dir in "${dirs[@]}"; do',
+    '  log="$(mktemp)"',
+    `  if ${binary} -chdir="$dir" init -input=false -no-color >"$log" 2>&1 &&`,
+    `    ${binary} -chdir="$dir" plan -input=false -no-color -lock=false >>"$log" 2>&1; then`,
+    "    summary=\"$(grep -E '^(Plan: |No changes\\.)' \"$log\" | tail -1)\"",
+    '    summary="${summary:-planned}"',
+    "  else",
+    "    failed=$((failed + 1))",
+    '    summary="failed"',
+    "    sed 's/^/    /' \"$log\"",
+    "  fi",
+    "  d=\"$(printf '%s' \"$summary\" | sed -n 's/.* \\([0-9][0-9]*\\) to destroy.*/\\1/p')\"",
+    "  destroys=$((destroys + ${d:-0}))",
+    "  planned=$((planned + 1))",
+    '  echo "$dir: $summary"',
+    "  rows=\"$rows| $dir | $summary |\"$'\\n'",
+    "  summaries=\"$summaries$summary\"$'\\n'",
+    '  rm -f "$log"',
+    "done",
+    "groups=\"$(printf '%s' \"$summaries\" | sort -u | grep -c . || true)\"",
+    'counts="$planned roots, $groups groups, $destroys destroys"',
+    'if [ -n "${TG_PR:-}" ]; then',
+    '  note="$(mktemp)"',
+    "  {",
+    '    echo "<!-- terragucci:plan roots=$(IFS=,; echo "${dirs[*]}") -->"',
+    '    echo "## terragucci plan"',
+    "    echo",
+    '    echo "$counts. Planned at $TG_SHA."',
+    "    echo",
+    '    echo "| root | plan |"',
+    '    echo "| --- | --- |"',
+    "    printf '%s' \"$rows\"",
+    '  } >"$note"',
+    '  tg note "$note"',
+    "fi",
+    'if [ "$failed" -ne 0 ]; then tg status terragucci/plan failure "$failed failed: $counts"; exit 1; fi',
+    'tg status terragucci/plan success "$counts"',
   ].join("\n");
 }
 
@@ -122,46 +308,106 @@ function text(result: string | { primary: string }): string {
 }
 
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
-  const { forge, binary, image, install, layers, env } = input;
+  const { forge, binary, image, install, layers, env, oidc, tokenEnv } = input;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError("there are no roots to run");
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...env };
   const installStep = install ? installScript(install.binary, install.version, forge) : undefined;
+  const audience = oidc?.audience ?? AUDIENCE;
 
   if (forge === "gitlab") {
     const jobImage = new Image({ name: image });
     const script = (main: string): string[] => (installStep ? [installStep, main] : [main]);
+    const bash = (tag: string, body: string): string => `bash <<'${tag}'\n${body}\n${tag}`;
+    const gitlabEnv = {
+      ...jobEnv,
+      TG_TOKEN: `$${tokenEnv ?? "GITLAB_TOKEN"}`,
+      TG_SHA: "$CI_COMMIT_SHA",
+      TG_BRANCH: "$CI_DEFAULT_BRANCH",
+    };
+    const idTokens = oidc ? { id_tokens: { TERRAGUCCI_OIDC: { aud: audience } } } : {};
     const check = new GitLabJob({ stage: "check", image: jobImage, variables: jobEnv, script: script(checkScript(binary, roots)) });
+    // Plan runs a merge request's code, so it gets the read-only role, and never
+    // runs for a merge request from a fork.
+    const plan = new GitLabJob({
+      stage: "plan",
+      image: jobImage,
+      variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID" },
+      rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
+      ...idTokens,
+      script: script(bash("PLAN", planScript(binary, layers, forge, oidc))),
+    } as never);
     const apply = new GitLabJob({
       stage: "apply",
       image: jobImage,
-      variables: jobEnv,
+      variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA" },
       rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
-      script: script(`bash <<'APPLY'\n${applyScript(binary, layers)}\nAPPLY`),
-    });
-    const out = text(gitlabSerializer.serialize(new Map<string, never>([["check", check as never], ["apply", apply as never]])));
+      resource_group: "terragucci-apply",
+      ...idTokens,
+      script: script(bash("APPLY", applyScript(binary, layers, forge, oidc))),
+    } as never);
+    const out = text(
+      gitlabSerializer.serialize(new Map<string, never>([["check", check as never], ["plan", plan as never], ["apply", apply as never]])),
+    );
     return { path: PIPELINE_PATHS.gitlab, content: header(image) + out };
   }
 
-  const workflow = new Workflow({ name: "terragucci", on: { push: { branches: ["**"] } }, env: jobEnv });
+  const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
+  const isFork = "github.event.pull_request.head.repo.full_name != github.repository";
+  const workflow = new Workflow({
+    name: "terragucci",
+    on: { push: { branches: ["**"] }, pull_request: {} },
+    env: jobEnv,
+    permissions: { contents: "read" },
+  } as never);
   const steps = (main: InstanceType<typeof Step>): InstanceType<typeof Step>[] => [
     new Step({ uses: "actions/checkout@v4" }),
     ...(installStep && install ? [new Step({ name: `Install ${install.binary} ${install.version}`, run: installStep })] : []),
     main,
   ];
+  // Check runs for a push, and for a fork's pull request, which has no push here.
   const check = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
+    if: `github.event_name == 'push' || ${isFork}`,
     steps: steps(new Step({ name: "Format check and validate, every root", run: checkScript(binary, roots) })),
   });
+  // Plan runs a pull request's code, so it gets the read-only role, and never
+  // runs for a fork, whose pull requests carry no token and no OIDC.
+  const plan = new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    if: `github.event_name == 'pull_request' && ${sameRepo}`,
+    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(oidc ? { "id-token": "write" } : {}) },
+    env: {
+      TG_TOKEN: "${{ github.token }}",
+      TG_SHA: "${{ github.event.pull_request.head.sha }}",
+      TG_PR: "${{ github.event.pull_request.number }}",
+    },
+    steps: steps(new Step({ name: "Plan every root", shell: "bash", run: planScript(binary, layers, forge, oidc) })),
+  } as never);
   const apply = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     needs: "check",
     if: "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
-    steps: steps(new Step({ name: "Apply every root", shell: "bash", run: applyScript(binary, layers) })),
-  });
-  const entities = new Map<string, never>([["workflow", workflow as never], ["check", check as never], ["apply", apply as never]]);
+    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(oidc ? { "id-token": "write" } : {}) },
+    // One apply per project at a time; a push that waits is not cancelled.
+    concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
+    env: {
+      TG_TOKEN: "${{ github.token }}",
+      TG_SHA: "${{ github.sha }}",
+      TG_BEFORE: "${{ github.event.before }}",
+      TG_BRANCH: "${{ github.event.repository.default_branch }}",
+    },
+    steps: steps(new Step({ name: "Apply every root", shell: "bash", run: applyScript(binary, layers, forge, oidc) })),
+  } as never);
+  const entities = new Map<string, never>([
+    ["workflow", workflow as never],
+    ["check", check as never],
+    ["plan", plan as never],
+    ["apply", apply as never],
+  ]);
   const serializer = forge === "forgejo" ? forgejoSerializer : githubSerializer;
   return { path: PIPELINE_PATHS[forge], content: header(image) + text(serializer.serialize(entities)) };
 }
