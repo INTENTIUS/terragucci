@@ -101,7 +101,7 @@ describe("init", () => {
       schema: 1,
       minReader: "0.102.0",
       members: [],
-      identity: { gates: { "wave-1": {}, "wave-2": {}, "wave-3": {} } },
+      identity: { gates: { "wave-1": {}, "wave-2": {} } },
     });
   });
 
