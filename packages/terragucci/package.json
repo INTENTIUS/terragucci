@@ -16,7 +16,8 @@
   "exports": {
     ".": {
       "types": "./dist/types.d.ts"
-    }
+    },
+    "./report.schema.json": "./dist/report.schema.json"
   },
   "files": [
     "dist",
@@ -39,10 +40,11 @@
     }
   },
   "devDependencies": {
-    "@intentius/chant": "0.102.0",
-    "@intentius/chant-lexicon-forgejo": "0.102.0",
-    "@intentius/chant-lexicon-github": "0.102.0",
-    "@intentius/chant-lexicon-gitlab": "0.102.0",
+    "@intentius/chant": "0.103.1",
+    "@intentius/chant-lexicon-forgejo": "0.103.1",
+    "@intentius/chant-lexicon-github": "0.103.1",
+    "@intentius/chant-lexicon-gitlab": "0.103.1",
+    "@intentius/chant-lexicon-terraform": "0.103.1",
     "@intentius/tsad-reference": "2.1.0"
   }
 }

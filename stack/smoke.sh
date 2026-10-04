@@ -24,8 +24,8 @@ CLAIMS='boot|the example boots and deploys locally|
 check|tf-check fails an unformatted root and names the file|
 affected|only the roots a change touches are planned|chant#3183
 grouped|one note groups many plans|chant#3188
-report|the report is JSON and HTML, and links every root to its full plan|terragucci#7
-highlight|destroys and outliers are open, identical groups are folded|terragucci#7
+report|the report is JSON and HTML, and links every root to its full plan|
+highlight|destroys and outliers are open, identical groups are folded|
 waves|each wave goes out only once approved|chant#3049
 refuse|a wave whose plans changed after approval applies nothing|chant#3049
 drift|drift is reported by root|terragucci#13
@@ -192,6 +192,120 @@ YML
     [ "$(curl -s -o /dev/null -w '%{http_code}' -I "$FLOCI/$b")" = 200 ] || { log "$b is not in floci"; return 1; }
   done
   log "one pull request on $repo, check green, merged, both roots applied in order; in-line unchanged"
+}
+
+# ── the plan report ───────────────────────────────────────────────────────
+# `terragucci stage tf-plan` runs in the tofu CI image on the stack's network,
+# against the example's state in floci, with the bundle built from this tree.
+# Its report goes to a floci bucket, which stands in for any S3-compatible
+# store. Needs the example booted (`just example up`, or the boot claim).
+
+REPORT_BUCKET=terragucci-reports
+
+# work dir, then the patches to apply; leaves the run's report in $1/terragucci-report
+report_run() {
+  local work="$1"; shift
+  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p
+  image="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
+  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  cp -R "$EXAMPLE/." "$work/"
+  rm -rf "$work/.git"
+  git -C "$work" init -q -b main
+  for p in "$@"; do git -C "$work" apply "$EXAMPLE/changes/$p.patch" || return 1; done
+  [ -n "${REPORT_CONFIG:-}" ] && printf '%s\n' "$REPORT_CONFIG" >> "$work/terragucci.yml"
+  git -C "$work" remote add origin "http://forgejo:3000/$USER/example.git"
+  git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost commit -qm "smoke report $(date +%s%N)"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan >&2
+}
+
+claim_report() {
+  # Two runs on two commits, each copying its report to the bucket. Each run
+  # writes report.json and report.html, every planned root links to its full
+  # plan text and JSON and those files exist, the HTML carries the JSON
+  # inline, and the index lists both runs, the first one still there.
+  log() { echo "[smoke report] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 dir root f n i index path commits=() prefix cfg=""
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  prefix="smoke-$(date +%s)"   # a fresh index for each claim run
+  # BREAK: no bucket named, so nothing reaches the index.
+  [ -z "${BREAK:-}" ] && cfg="$(printf 'reports:\n  bucket: s3://%s\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix")"
+  for i in 1 2; do
+    mkdir -p "$work/run$i"
+    # tf-plan exits 1 when a root refuses to plan; the report is written either way.
+    REPORT_CONFIG="$cfg" report_run "$work/run$i" module-bump destroy || true
+    dir="$work/run$i/terragucci-report"
+    [ -f "$dir/report.json" ] && [ -f "$dir/report.html" ] || { log "run $i wrote no report"; rc=1; break; }
+    commits+=("$(git -C "$work/run$i" rev-parse HEAD)")
+    n="$(jq '[.roots[] | select(.status == "planned")] | length' "$dir/report.json")"
+    [ "$n" -ge 15 ] || { log "run $i planned only $n roots"; rc=1; }
+    for root in $(jq -r '.roots[] | select(.status == "planned") | .path' "$dir/report.json"); do
+      for f in $(jq -r --arg r "$root" '.roots[] | select(.path == $r) | .plan.text, .plan.json' "$dir/report.json"); do
+        [ -s "$dir/$f" ] || { log "$root: $f is missing"; rc=1; }
+        grep -q "href=\"$f\"" "$dir/report.html" || { log "$root: the HTML does not link $f"; rc=1; }
+      done
+      grep -q "id=\"root-$root\"" "$dir/report.html" || { log "$root has no anchor in the HTML"; rc=1; }
+    done
+    if ! diff <(sed -n '/id="terragucci-report"/,/<\/script>/p' "$dir/report.html" | sed '1d;$d' | jq -S .) <(jq -S . "$dir/report.json") >/dev/null; then
+      log "the JSON inlined in report.html is not report.json"; rc=1
+    fi
+  done
+  if [ $rc = 0 ]; then
+    if ! index="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json")"; then
+      log "no index at $REPORT_BUCKET/$prefix/index.json"; rc=1
+    else
+      for c in "${commits[@]}"; do
+        path="$(jq -r --arg c "$c" '.reports[] | select(.commit == $c) | .path' <<<"$index" | head -1)"
+        if [ -z "$path" ]; then log "the index does not list commit $c"; rc=1; continue; fi
+        [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$REPORT_BUCKET/$prefix/$path/report.html")" = 200 ] || { log "$path/report.html is not in the bucket"; rc=1; }
+        f="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$path/report.json" | jq -r '.roots[0].plan.text')"
+        [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$REPORT_BUCKET/$prefix/$path/$f")" = 200 ] || { log "$path/$f is not in the bucket"; rc=1; }
+      done
+    fi
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] || return 1
+  log "two runs, each root linked to its plan, both in $REPORT_BUCKET/$prefix/index.json"
+}
+
+claim_highlight() {
+  # One run with a module bump (identical change in every root), a destroy and
+  # a replacement. The destroy and the replacement are named and their roots
+  # open; the bump's big group is folded.
+  log() { echo "[smoke highlight] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 dir patches=(module-bump replace destroy) del rep big
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  [ -n "${BREAK:-}" ] && patches=(module-bump replace)   # BREAK: no destroy to name
+  report_run "$work" "${patches[@]}" || true
+  dir="$work/terragucci-report"
+  [ -f "$dir/report.json" ] || { log "no report"; rm -rf "$work"; return 1; }
+  del="$(jq -r '.named[] | select(.action == "delete" and .root == "envs/staging/email") | .address' "$dir/report.json" | head -1)"
+  rep="$(jq -r '.named[] | select(.action == "replace" and .root == "envs/prod/search") | .address' "$dir/report.json" | head -1)"
+  [ -n "$del" ] || { log "the destroy in envs/staging/email is not named"; rc=1; }
+  [ -n "$rep" ] || { log "the replacement in envs/prod/search is not named"; rc=1; }
+  jq -e '.named[] | select(.action == "replace" and .root == "envs/prod/search") | .replace_paths | length > 0' "$dir/report.json" >/dev/null \
+    || { log "the replacement does not say which attribute forced it"; rc=1; }
+  for root in envs/staging/email envs/prod/search; do
+    grep -qE "<details class=\"root\" id=\"root-$root\"[^>]* open>" "$dir/report.html" || { log "$root is not open in the HTML"; rc=1; }
+  done
+  big="$(jq -r '[.groups[] | select(.units | length >= 5)] | sort_by(-(.units | length)) | .[0].id // empty' "$dir/report.json")"
+  if [ -z "$big" ]; then log "no group of five or more identical roots"; rc=1
+  else
+    jq -e --arg g "$big" '.groups[] | select(.id == $g) | .fold == "folded"' "$dir/report.json" >/dev/null || { log "group $big is not folded"; rc=1; }
+    grep -qE "<details class=\"group\" id=\"group-$big\"[^>]* open>" "$dir/report.html" && { log "group $big is open in the HTML"; rc=1; }
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] || return 1
+  log "named $del (delete) and $rep (replace), both roots open; group $big folded"
 }
 
 claim_publish() {
