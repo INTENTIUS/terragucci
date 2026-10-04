@@ -1,6 +1,6 @@
 # @intentius/terragucci
 
-The whole Terraform lifecycle, handled. terragucci writes your repo's pipeline for GitHub, GitLab or Forgejo. Most repos need no config file at all.
+The whole Terraform and Terragrunt lifecycle, handled. terragucci writes your repo's pipeline for GitHub, GitLab or Forgejo. Most repos need no config file at all.
 
 ```bash
 npm i -D @intentius/terragucci
