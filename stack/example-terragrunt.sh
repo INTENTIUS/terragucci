@@ -71,7 +71,7 @@ expected() { # dir
       echo "bucket shop-tg-$env-$name-files"
       echo "queue shop-tg-$env-$name-jobs"
       grep -q 'records_table = false' "$f" || echo "table shop-tg-$env-$name-records"
-      grep -q 'dead_letter_queue = true' "$f" && echo "queue shop-tg-$env-$name-dead-letter"
+      if grep -q 'dead_letter_queue = true' "$f"; then echo "queue shop-tg-$env-$name-dead-letter"; fi
     fi
   done
 }
@@ -191,8 +191,10 @@ OUT
   tg)
     # terragrunt in the CI image against TG_TREE, as a pipeline job would run it.
     tree="${TG_TREE:?TG_TREE=<dir> names the tree}"
+    # Providers go in the tree, so a later call in a new container finds the ones an earlier one installed.
+    mkdir -p "$tree/.terragrunt-cache/plugins"
     docker run --rm --network terragucci -v "$tree:/repo" -w /repo \
-      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      -e TF_PLUGIN_CACHE_DIR=/repo/.terragrunt-cache/plugins -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
       -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       "$(image terragrunt)" terragrunt "$@"
     ;;

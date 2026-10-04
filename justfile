@@ -201,5 +201,5 @@ images-check platform="":
     npx tsx scripts/images.ts check {{ if platform == "" { "" } else { "--platform " + platform } }}
 
 [doc("Rebuild both examples' changes/*.patch from the examples as committed.")]
-example-patches:
+example-patches: build-cli
     python3 stack/example-patches.py

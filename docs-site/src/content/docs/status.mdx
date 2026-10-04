@@ -14,7 +14,7 @@ terragucci is being built. The rest of this site describes it finished, so this 
 | The tutorial's example | `just example up` boots 15 roots on a local Forgejo and applies them to floci, with the scenarios ready to open as pull requests |
 | The check stage | format and validate on every pull request, failing by file name |
 | `npx terragucci init` | finds a repo's roots, binary and forge, and writes its pipeline for GitHub, GitLab or Forgejo; the pipeline checks every root and applies them in dependency order on the main branch |
-| Terragrunt repos | `init` notices Terragrunt, takes the units from `terragrunt find`, and writes a pipeline that checks with `hcl fmt` and `hcl validate`, plans the units a pull request reaches and applies a wave at a time with one `run --all`. A unit whose plan would read `mock_outputs` waits for its upstream instead of planning, and tips name mocks that can reach apply. Roles can follow unit paths. The Terragrunt example and its checks are written; the checks have not run yet |
+| Terragrunt repos | `init` notices Terragrunt, takes the units from `terragrunt find`, and writes a pipeline that checks with `hcl fmt` and `hcl validate`, plans the units a pull request reaches and applies a wave at a time with one `run --all`. A unit whose plan would read `mock_outputs` waits for its upstream instead of planning, and tips name mocks that can reach apply. Roles can follow unit paths. `just example-terragrunt up` boots the Terragrunt example: 15 units on the local Forgejo, applied to floci |
 | CI images | one per toolchain (OpenTofu, Terraform, Terragrunt), built and checked on amd64 and arm64; not yet published, so `init` pins them by tag until they are |
 | `terragucci stage tf-plan` | plans every root and writes the plan report: JSON, HTML, the pull-request note and GitLab's counts, with each root's full plan beside it, sensitive values redacted; with `reports.bucket`, copies it to the bucket and updates the index. The generated pipeline's plan job runs it on every pull request, posts its note and keeps it as the job's artifact |
 | Traces and metrics | with an OTLP endpoint set, `tf-plan` sends one trace per run, with a span per wave, root and binary run, and OpenTofu's own spans inside it; and its metrics, read from the report |
@@ -37,7 +37,7 @@ Each feature on this site has one check, run against the [tutorial's example](/t
 | Applies in gated waves | in development |
 | Drift reports | in development |
 | Module publishing and pin-bump rollouts | in development |
-| Terragrunt: explicit stacks, and a tutorial path that leaves draft once its checks pass | in development |
+| Terragrunt explicit stacks (`terragrunt.stack.hcl`) | in development |
 | Dashboards and alert rules, declared with chant's grafana and prometheus lexicons | in development |
 | A fountain steward started by a pull request | planned after launch |
 
