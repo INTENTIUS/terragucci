@@ -535,7 +535,10 @@ claim_publish() {
   log() { echo "[smoke publish] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work port="${TERRAGUCCI_REGISTRY_PORT:-5050}" repo="$USER/publish" sha out before t
+  local work port="${TERRAGUCCI_REGISTRY_PORT:-5050}" name="publish-$(date +%s)" sha out before t
+  # A fresh repo and registry repository per run: the registry keeps releases
+  # between runs, and a release cut from an earlier run's commit would stop this one.
+  local repo="$USER/$name"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
@@ -557,7 +560,7 @@ claim_publish() {
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
   settle "repos/$repo" 404 || { rm -rf "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X POST \
-    -d '{"name":"publish","private":false,"auto_init":false,"default_branch":"main"}' "$URL/api/v1/user/repos"
+    -d "{\"name\":\"$name\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" "$URL/api/v1/user/repos"
   settle "repos/$repo" 200 || { rm -rf "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   # The registry takes any credentials; the job still has to be handed them.
@@ -572,7 +575,7 @@ claim_publish() {
   curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
   printf 'resource "terraform_data" "service" {}\n' > "$tree/modules/service/main.tf"
   printf 'resource "terraform_data" "queue" {}\n' > "$tree/modules/queue/main.tf"
-  printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "publish/dev.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "dev" {}\n' > "$tree/envs/dev/main.tf"
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "%s/dev.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "dev" {}\n' "$name" > "$tree/envs/dev/main.tf"
   printf 'binary: tofu\nforge: forgejo\nenv:\n  NODE_EXTRA_CA_CERTS: registry.crt\nmodules:\n  path: modules/*\n  publish:\n    - oci://registry:5000/%s\n    - git-tags\n' "$repo" > "$tree/terragucci.yml"
   (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { rm -rf "$work"; return 1; }
   grep -q "terragucci publish" "$tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no publish job"; rm -rf "$work"; return 1; }
