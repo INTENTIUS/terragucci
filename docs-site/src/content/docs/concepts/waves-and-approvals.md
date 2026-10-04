@@ -7,7 +7,7 @@ A change to a shared module can touch hundreds of roots. Applying them all at on
 
 ## How roots are split into waves
 
-Wave 1 is an optional canary list, the roots named in `waves.canary`. Later waves follow dependency order. A root never applies before one it reads from through `terraform_remote_state`, so a platform root that holds a shared bucket goes before the services that use the bucket.
+Each wave is one layer of the dependency order, so no root in a wave reads another root in it. The roots named in `waves.canary` go first, in their own waves, and the rest follow. The plan report numbers its waves the same way, so its wave 3 is the gate `wave-3`. A root never applies before one it reads from through `terraform_remote_state`, so a platform root that holds a shared bucket goes before the services that use the bucket.
 
 In a Terragrunt repo the dependency graph decides the order. Each wave is one `terragrunt run --all` over exactly its units.
 

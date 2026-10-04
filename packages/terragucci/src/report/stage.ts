@@ -22,6 +22,7 @@ import { describeTerragruntAffectedReason, findTerragruntAffected } from "@inten
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../../package.json";
+import { applyWaves } from "../apply";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type ForgeName } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
@@ -323,7 +324,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
     return runTerragruntStage(repo, settings, options, env, log, drift);
   }
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
-  const layers = (options.layers ?? applyLayers(repo, all))
+  const full = options.layers ?? applyLayers(repo, all);
+  const layers = full
     .map((l) => (options.root ? l.filter((r) => globMatch(options.root!, r)) : l))
     .filter((l) => l.length > 0);
   if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
@@ -404,17 +406,13 @@ export async function runStage(stage: string, repo: string, options: StageOption
     rmSync(work, { recursive: true, force: true });
   }
 
-  // Wave 1 is the canary list, when there is one; later waves follow apply order.
-  const canary = drift ? [] : (options.canary ?? settings.waves?.canary ?? []);
-  const isCanary = (r: string) => canary.some((g) => globMatch(g, r));
-  const waves: WaveInput[] = [];
-  if (drift) {
-    // Drift is not applied, so there are no waves to gate.
-  } else if (roots.some((r) => isCanary(r) && !held.has(r))) waves.push({ number: 1, roots: roots.filter((r) => isCanary(r) && !held.has(r)) });
-  for (const l of drift ? [] : planLayers) {
-    const rest = l.filter((r) => !isCanary(r) && !held.has(r));
-    if (rest.length) waves.push({ number: waves.length + 1, roots: rest });
-  }
+  // The apply's waves (canary layers first, one dependency layer each), cut from every root so the numbers match its wave-<k> gates.
+  // Drift is not applied, so there are no waves to gate.
+  const waves: WaveInput[] = drift
+    ? []
+    : applyWaves(full, options.canary ?? settings.waves?.canary)
+        .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
+        .filter((w) => w.roots.length > 0);
 
   return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(deferred.length ? { deferred } : {}) });
 }

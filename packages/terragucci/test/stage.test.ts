@@ -59,6 +59,13 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan", () => {
     for (const f of ["note.md", "summary.txt", "gitlab-terraform.json"]) expect(existsSync(join(dir, f)), f).toBe(true);
   });
 
+  it("numbers the report's waves as the apply cuts them: canary layers first, one dependency layer each", { timeout: 120_000 }, async () => {
+    const tf = 'resource "terraform_data" "x" {\n  input = 1\n}\n';
+    const repo = write(tmp(), { "terragucci.yml": 'binary: tofu\nroots: ["*/*"]\nwaves:\n  canary: ["dev/*"]\n', "dev/net/main.tf": tf, "dev/app/main.tf": tf, "prod/net/main.tf": tf, "prod/app/main.tf": tf });
+    const { report } = await runStage("tf-plan", repo, { layers: [["dev/net", "prod/net"], ["dev/app", "prod/app"]] }, () => {});
+    expect(report.waves.map((w) => [w.number, w.roots])).toEqual([[1, ["dev/net"]], [2, ["dev/app"]], [3, ["prod/net"]], [4, ["prod/app"]]]);
+  });
+
   it("--json prints one envelope, and an unknown stage is a usage error", async () => {
     const repo = write(tmp(), { "terragucci.yml": 'binary: tofu\nroots: ["a"]\n', "a/main.tf": 'resource "terraform_data" "x" {\n  input = 1\n}\n' });
     const cwd = process.cwd();
