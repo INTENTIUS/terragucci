@@ -11,6 +11,7 @@
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
+ *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -18,10 +19,10 @@
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
  * config error; 3 waiting on an approval.
  */
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, type Binary, type ForgeName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -35,6 +36,8 @@ import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
 import { S3Error } from "./report/s3";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
+import { respond } from "./respond";
+import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--force] [--dry-run]
@@ -47,8 +50,9 @@ const USAGE = `usage:
   terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
+  terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question [--mode dry-run|apply] [flags]
 
-init, reconcile, plan, stage, rollout and config check take --json: one envelope on stdout.
+init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -164,6 +168,24 @@ export async function main(argv: string[]): Promise<number> {
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const results = await publish(cwd, settings, { dryRun: flags["dry-run"] === true });
         console.log(describePublish(results));
+        return 0;
+      }
+      case "respond": {
+        const event = args[0] ?? "";
+        const path = str(flags, "config") ?? findConfig(cwd);
+        if (event === "rollout" && responseTo(resolveRepo(path ? await loadConfig(resolve(path)) : {}), "rollout") !== "off") return main(["rollout", ...argv.slice(argv.indexOf("rollout") + 1)]);
+        const s = (k: string) => str(flags, k);
+        const log = s("log");
+        const result = await respond(event, cwd, {
+          ...Object.fromEntries(["config", "project", "out", "report", "approved", "current", "root", "binary", "branch", "module", "version", "question"].map((k) => [k, s(k)])),
+          mode: (s("mode") ?? "dry-run") as "dry-run",
+          ...(s("wave") ? { wave: Number(s("wave")) } : {}),
+          ...(log ? { log: readFileSync(log === "-" ? 0 : resolve(cwd, log), "utf-8") } : {}),
+          ...(s("platform") ? { platforms: s("platform")!.split(",") } : {}),
+          imports: argv.flatMap((a, i) => (a === "--import" ? [argv[i + 1] ?? ""] : a.startsWith("--import=") ? [a.slice(9)] : [])).map(parseImport),
+        });
+        if (json) return emit(envelope("respond", 0, result));
+        console.log(result.text + (result.agent_input ? `\nagent input: ${relative(cwd, result.agent_input)}` : ""));
         return 0;
       }
       case "rollout": {
