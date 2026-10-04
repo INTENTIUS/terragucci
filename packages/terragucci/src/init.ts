@@ -218,9 +218,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
 
-  if (settings.drift && tgMode) {
-    notes.push("drift is set, but tf-drift does not plan Terragrunt units yet, so the pipeline has no drift job");
-  } else if (settings.drift && forgeChoice.value === "gitlab") {
+  if (settings.drift && forgeChoice.value === "gitlab") {
     notes.push(`drift is set: add a pipeline schedule with the cron ${settings.drift} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope so the drift issue can be kept`);
   }
   if (settings.waves?.canary?.length) {
