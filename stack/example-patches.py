@@ -23,6 +23,10 @@ SCENARIOS = {
     "unformatted": [("envs/dev/orders/locals.tf", None, 'locals {\n    team   = "orders"\n  owner = "shop"\n}\n', 0)],
 }
 
+# An edit that runs `terragucci init` in the changed tree, as a person adding units would.
+INIT = ("init", None, None, -1)
+BUNDLE = os.path.join(HERE, "..", "packages", "terragucci", "dist", "terragucci.mjs")
+
 J = "  job_retention_seconds = local.common.locals.job_retention_seconds\n"
 R = "  logs_bucket           = dependency.platform.outputs.logs_bucket\n"
 LEDGER = """include "root" {
@@ -84,7 +88,8 @@ TG_SCENARIOS = {
     "module-bump": [("modules/service/policy.json", '"keep_days": 30', '"keep_days": 60', 1)],
     "destroy": [("live/staging/email/terragrunt.hcl", J, J + "\n  # Email in staging no longer keeps records.\n  records_table = false\n", 1)],
     # A new upstream and a new dependent in one change: the mock trap.
-    "new-service": [("live/dev/ledger/terragrunt.hcl", None, LEDGER, 0), ("live/dev/billing/terragrunt.hcl", None, BILLING, 0)],
+    # New units join the pipeline's waves, so the change carries the pipeline `init` rewrites.
+    "new-service": [("live/dev/ledger/terragrunt.hcl", None, LEDGER, 0), ("live/dev/billing/terragrunt.hcl", None, BILLING, 0), INIT],
     # A new file that `terragrunt hcl fmt` would rewrite: the check stage must name it.
     "unformatted": [("live/dev/orders/owner.hcl", None, 'locals {\n    team   = "orders"\n  owner = "shop"\n}\n', 0)],
 }
@@ -105,6 +110,13 @@ def write_patches(name_dir, scenarios):
     git("-c", "user.email=a@b", "-c", "user.name=x", "commit", "-qm", "base", cwd=repo)
     for name, edits in scenarios.items():
         for path, old, new, count in edits:
+            if count == -1:
+                if not os.path.exists(BUNDLE):
+                    sys.exit("the bundle is missing; run just build-cli first")
+                env = {k: v for k, v in os.environ.items() if k != "TERRAGUCCI_TERRAGRUNT"}
+                env["PATH"] = "/usr/bin:/bin"  # no terragrunt: the file walk, so the patch is the same on every machine
+                subprocess.run([shutil.which("node") or "node", BUNDLE, "init"], cwd=repo, check=True, capture_output=True, env=env)
+                continue
             p = os.path.join(repo, path)
             if old is None:
                 os.makedirs(os.path.dirname(p), exist_ok=True)
