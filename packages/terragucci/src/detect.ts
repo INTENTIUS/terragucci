@@ -215,11 +215,8 @@ function stateOf(repo: string, root: string): { own?: StateRef; reads: StateRef[
   return { own, reads };
 }
 
-/**
- * Roots in layers that can apply together: a root that reads another's state
- * through `terraform_remote_state` comes after it. A cycle is an error.
- */
-export function applyLayers(repo: string, roots: string[]): string[][] {
+/** For each root, the roots whose state it reads through `terraform_remote_state`. */
+export function rootDependencies(repo: string, roots: string[]): Map<string, Set<string>> {
   const states = new Map(roots.map((r) => [r, stateOf(repo, r)]));
   const deps = new Map<string, Set<string>>(roots.map((r) => [r, new Set()]));
   for (const [root, { reads }] of states) {
@@ -230,6 +227,15 @@ export function applyLayers(repo: string, roots: string[]): string[][] {
       }
     }
   }
+  return deps;
+}
+
+/**
+ * Roots in layers that can apply together: a root that reads another's state
+ * through `terraform_remote_state` comes after it. A cycle is an error.
+ */
+export function applyLayers(repo: string, roots: string[]): string[][] {
+  const deps = rootDependencies(repo, roots);
   const layers: string[][] = [];
   const done = new Set<string>();
   while (done.size < roots.length) {

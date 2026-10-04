@@ -64,6 +64,15 @@ describe.skipIf(!existsSync(DIST))("the bundle", () => {
     expect(r.stderr).toContain("npm i -D @intentius/tsad-reference");
   });
 
+  it("a module rollout with no HCL parser installed names the install command", () => {
+    const repo = twoRootRepo();
+    git(repo, "init", "-q");
+    git(repo, "remote", "add", "origin", "https://github.com/acme/infra.git");
+    const r = runIn(repo, isolated(), "rollout", "modules/network", "1.4.0");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("npm i -D @cdktn/hcl2json");
+  });
+
   it("with the TypeScript folder installed, the bundle folds a terragucci.ts", () => {
     const repo = write(twoRootRepo(join(import.meta.dirname, "../.tmp-ts-config")), { "terragucci.ts": 'export default { binary: "terraform" };\n' });
     try {

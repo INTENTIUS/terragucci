@@ -36,10 +36,32 @@ How a root takes a module decides how a new version reaches it.
 | a provider version, in `.terraform.lock.hcl` | everything using the provider | `tf-rollout`, moving the lock file a wave at a time |
 
 ```bash
-terragucci rollout modules/network 1.4.0
+terragucci rollout modules/network                 # dry run: the newest published version
+terragucci rollout modules/network 1.4.0 --mode apply
+terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
-Each wave is a small pull request that the usual stages plan and apply. The next wave's pull request opens only after the last one merged and its roots applied. From a control repo, a wave can reach roots in several repos, with one pull request in each.
+Name the module by its path or by its source without the pin. With no version, the rollout takes the newest one published. That is the highest `modules/network/vX.Y.Z` tag or the highest tag in the module's OCI repository. The old version is read from the pins; when they disagree, `--from` says which one moves. A pin keeps its shape, so a ref of `modules/network/v1.3.0` becomes `modules/network/v1.4.0`.
+
+Each wave is a small pull request that the usual stages plan and apply. It changes only that wave's files, so a path-diff selection plans exactly what moved. The canaries in `waves.canary` form wave 1 and dependency order gives the rest. From a control repo, wave 1 holds the canaries of every project. Each project's later waves then follow in config order, with one pull request per project per wave.
+
+Each run takes at most one step and exits. The next wave opens only on a run after the last wave's pull requests merged and their apply passed on the merge commit. A per-directory `apply/<path>` check decides when there is one; otherwise the pipeline's `apply` job does. A pull request closed without merging stops the rollout and so does a failed apply. Run it on a schedule or after each merge. It never merges anything or writes a default branch.
+
+The default is a dry run that lists the pull requests it would open and their files. `--mode apply` pushes the branches and opens them with the token from `token_env`. The exit code is 0 after a step or at the end, 3 while a pull request waits for a merge or an apply, and 1 when the rollout stopped.
+
+A pin the rollout cannot move is reported with its reason and a tip:
+
+| The pin | Tip |
+|---|---|
+| a range such as `~> 1.4` | `rollout-floating-pin`: pin one version |
+| set from a variable or a local | `rollout-literal-pin`: write a literal, since a variable's value is not in the diff |
+| absent from the source | `rollout-pin`: add a `?ref=`, `?tag=` or `version` |
+| two versions of the module in one directory | `rollout-one-pin`: pin every call at one version |
+| a provider with no `.terraform.lock.hcl` | `rollout-lock-file`: commit the lock file |
+
+A provider rollout runs the binary to rewrite each lock file for that provider alone. An exact `version` constraint on the provider moves with it. The new lock file must hold the provider at the new version and every other provider where it was, or the wave stops.
+
+Reading module pins needs the HCL parser, which is installed beside terragucci rather than bundled: `npm i -D @cdktn/hcl2json`.
 
 ## Publishing modules
 
