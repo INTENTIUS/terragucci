@@ -137,15 +137,16 @@ case "$CMD" in
     # stays green and only the resource check can notice.
     if [ -n "${TG_SKIP_ROOT:-}" ]; then
       python3 - "$WORK/tree/.forgejo/workflows/terragucci.yml" "$TG_SKIP_ROOT" <<'PY'
-import sys
+import re, sys
 p, root = sys.argv[1], sys.argv[2]
 s = open(p).read()
-a = " '%s'" % root
-lines = s.split("\n")
-hits = [i for i, l in enumerate(lines) if "apply_together '" in l and a in l]
-assert hits, a
-lines[hits[0]] = lines[hits[0]].replace(a, "", 1)
-open(p, "w").write("\n".join(lines))
+# Each wave job names every root in --layers; drop the root from each of them.
+def drop(m):
+    layers = [[r for r in l.split(",") if r != root] for l in m.group(1).split(";")]
+    return "--layers '%s'" % ";".join(",".join(l) for l in layers if l)
+s, n = re.subn(r"--layers '([^']*)'", lambda m: drop(m) if "stage tf-apply" in s[s.rfind("\n", 0, m.start()):m.start()] else m.group(0), s)
+assert root in open(p).read() and n, root
+open(p, "w").write(s)
 PY
     fi
     # The roots keep their state in this bucket. In a real account it exists

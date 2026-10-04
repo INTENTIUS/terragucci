@@ -195,6 +195,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.modules?.publish ? { publish: true } : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
+    ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
+    ...(!tgInput ? { gate: settings.gate } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
@@ -222,12 +224,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (settings.drift && forgeChoice.value === "gitlab") {
     notes.push(`drift is set: add a pipeline schedule with the cron ${settings.drift} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope so the drift issue can be kept`);
   }
-  if (settings.waves?.canary?.length) {
-    notes.push(
-      terragrunt
-        ? "waves.canary is set; the canary units apply first, then the rest, with no approval between them until gated waves are built"
-        : "waves.canary is set; gated waves are not built yet, so every root applies in dependency order",
-    );
+  if (settings.waves?.canary?.length && terragrunt) {
+    notes.push("waves.canary is set; the canary units apply first, then the rest, with no approval between them until gated waves are built");
   }
   if (settings.runtime === "fountain") notes.push("runtime fountain is not built yet; the pipeline runs on the forge");
   if (settings.reports) notes.push("reports is set; the plan report is not built yet");

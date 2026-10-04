@@ -1,0 +1,379 @@
+/**
+ * `terragucci stage tf-apply --wave <k>`: one wave of a plain repo's apply,
+ * run by the pipeline's wave-k job (chant#3049's gated waves, for Terraform
+ * and OpenTofu roots).
+ *
+ * The wave plans its roots now, after the waves before it applied, and takes
+ * the wave's set digest: chant's `waveSetDigest` over each root's plan
+ * digest, the same digest the plan report shows for the wave. The gate policy
+ * then decides whether the wave waits:
+ *
+ *   always      every wave with a change waits for an approval of its digest
+ *   on-destroy  a wave waits when one of its plans destroys or replaces
+ *   never       no wave waits
+ *
+ * A waiting wave reads the gate ledger (`_gates/tf-apply.jsonl` on the
+ * repo's `chant/lifecycle` branch, the file `chant approve` writes). An
+ * approval of this digest lets the wave apply the plans it just made, and
+ * nothing else. An approval of another digest means the wave's plans moved
+ * after someone approved them: the wave applies nothing and names the roots
+ * that moved. With no approval the wave records a pending fact for its digest,
+ * so `chant approve tf-apply wave-<k>` has the plan to approve, and stops.
+ *
+ * Nothing here records an approval. A person does, with `chant approve`.
+ *
+ * Exit codes: 0 applied (or nothing to apply); 1 a root failed; 3 the wave
+ * waits for an approval; 4 the wave's plans changed after approval.
+ */
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describeChangedWave, waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
+import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
+import { ConfigError, GATES, type Gate } from "./config";
+import { globMatch } from "./detect";
+
+/** The op every wave gate is recorded under. */
+export const APPLY_OP = "tf-apply";
+/** The gate wave `k` waits on. */
+export const waveGate = (wave: number): string => `wave-${wave}`;
+/** The approval command a waiting wave prints, bound to the digest it planned. */
+export const approveLine = (wave: number, digest: string): string => `chant approve ${APPLY_OP} ${waveGate(wave)} --plan ${digest}`;
+
+/** Exit codes of `stage tf-apply`. */
+export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
+
+/**
+ * The waves a plain repo applies in: the canary roots first, then the rest,
+ * each in dependency order. A wave is one layer, so no root in a wave reads
+ * another's state: every root plans against what the waves before it applied,
+ * and the wave's digest covers plans that can all be made before it applies.
+ */
+export function applyWaves(layers: string[][], canary: readonly string[] = []): string[][] {
+  const isCanary = (r: string): boolean => canary.some((g) => globMatch(g, r));
+  const first = layers.map((l) => l.filter(isCanary));
+  const rest = layers.map((l) => l.filter((r) => !isCanary(r)));
+  return [...first, ...rest].filter((l) => l.length > 0);
+}
+
+// ── the gate ledger ──────────────────────────────────────────────────────
+
+export interface PendingRecord {
+  version: 1;
+  kind: "pending";
+  op: string;
+  gate: string;
+  timestamp: string;
+  expiresAt: string;
+  planDigest?: string;
+  description?: string;
+  runId?: string;
+  url?: string;
+  /** terragucci's addition: each root's plan digest, so a later refusal can name the roots that moved. */
+  members?: WaveMember[];
+}
+
+export interface ResolutionRecord {
+  version: 1;
+  kind?: "resolution";
+  op: string;
+  gate: string;
+  resolvedBy: string;
+  timestamp: string;
+  planDigest?: string;
+}
+
+export interface GateLedger {
+  pending: PendingRecord[];
+  resolutions: ResolutionRecord[];
+}
+
+/** The lines of a `_gates/<op>.jsonl` file, as chant's `parseGateLedger` reads them. Malformed lines are skipped. */
+export function parseLedger(text: string): GateLedger {
+  const out: GateLedger = { pending: [], resolutions: [] };
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    let r: Record<string, unknown>;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (r.version !== 1 || typeof r.op !== "string" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    if (r.planDigest !== undefined && typeof r.planDigest !== "string") continue;
+    if (r.kind === "pending") {
+      if (typeof r.expiresAt === "string") out.pending.push(r as unknown as PendingRecord);
+    } else if (typeof r.resolvedBy === "string") {
+      out.resolutions.push(r as unknown as ResolutionRecord);
+    }
+  }
+  return out;
+}
+
+const at = (iso: string): number => new Date(iso).getTime();
+
+export type GateDecision =
+  | { status: "approved"; by: string }
+  /** `standing` is set when a pending fact for this digest already stands, so nothing new is recorded. */
+  | { status: "waiting"; standing?: PendingRecord }
+  /** An approval stands for another digest. `standing` as for waiting. */
+  | { status: "refused"; approved: string | undefined; by: string; standing?: PendingRecord };
+
+/**
+ * Decide one wave's gate against the ledger, the rule chant's `evaluateGate`
+ * applies to a plan-bound gate: an approval counts only when it is newer than
+ * the newest pending fact for the gate and names this digest. The newest
+ * approval for another digest is the changed-set refusal.
+ */
+export function decideGate(ledger: GateLedger, gate: string, digest: string, now: string): GateDecision {
+  let latest: PendingRecord | undefined;
+  for (const p of ledger.pending) if (p.gate === gate && (!latest || at(p.timestamp) >= at(latest.timestamp))) latest = p;
+  const since = latest ? at(latest.timestamp) : 0;
+  let matched: ResolutionRecord | undefined;
+  let mismatched: ResolutionRecord | undefined;
+  for (const r of ledger.resolutions) {
+    if (r.gate !== gate || at(r.timestamp) < since) continue;
+    if (samePlanDigest(r.planDigest, digest)) {
+      if (!matched || at(r.timestamp) >= at(matched.timestamp)) matched = r;
+    } else if (!mismatched || at(r.timestamp) >= at(mismatched.timestamp)) {
+      mismatched = r;
+    }
+  }
+  if (matched) return { status: "approved", by: matched.resolvedBy };
+  const standing = latest && at(latest.expiresAt) > at(now) && samePlanDigest(latest.planDigest, digest) ? latest : undefined;
+  if (mismatched) return { status: "refused", approved: mismatched.planDigest, by: mismatched.resolvedBy, ...(standing ? { standing } : {}) };
+  return { status: "waiting", ...(standing ? { standing } : {}) };
+}
+
+/** The roots whose plan digest differs between the approved members and the ones planned now. */
+export function movedMembers(approved: readonly WaveMember[], now: readonly WaveMember[]): string[] {
+  const before = new Map(approved.map((m) => [m.member, m.planDigest]));
+  const after = new Map(now.map((m) => [m.member, m.planDigest]));
+  const names = new Set([...before.keys(), ...after.keys()]);
+  return [...names].filter((n) => before.get(n) !== after.get(n)).sort();
+}
+
+const LIFECYCLE = "chant/lifecycle";
+const REMOTE_REF = `refs/remotes/origin/${LIFECYCLE}`;
+const LEDGER_PATH = `_gates/${APPLY_OP}.jsonl`;
+const GIT_ID = { GIT_AUTHOR_NAME: "terragucci", GIT_AUTHOR_EMAIL: "terragucci@localhost", GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" };
+
+function git(repo: string, args: string[], input?: string, env: NodeJS.ProcessEnv = process.env) {
+  return spawnSync("git", args, { cwd: repo, encoding: "utf-8", input, env });
+}
+
+/** Fetch `chant/lifecycle`. False when the remote has no such branch yet; throws when the remote cannot be read. */
+function fetchLifecycle(repo: string): boolean {
+  const heads = git(repo, ["ls-remote", "--heads", "origin", LIFECYCLE]);
+  if (heads.status !== 0) throw new ConfigError(`cannot read ${LIFECYCLE} from origin, so the gate cannot be decided: ${heads.stderr.trim()}`);
+  if (!heads.stdout.trim()) return false;
+  const f = git(repo, ["fetch", "-q", "origin", `+refs/heads/${LIFECYCLE}:${REMOTE_REF}`]);
+  if (f.status !== 0) throw new ConfigError(`cannot fetch ${LIFECYCLE}, so the gate cannot be decided: ${f.stderr.trim()}`);
+  return true;
+}
+
+/** The gate ledger as `chant/lifecycle` on origin holds it now. */
+export function readLedger(repo: string): GateLedger {
+  if (!fetchLifecycle(repo)) return { pending: [], resolutions: [] };
+  const show = git(repo, ["show", `${REMOTE_REF}:${LEDGER_PATH}`]);
+  return parseLedger(show.status === 0 ? show.stdout : "");
+}
+
+/** Append a pending fact to the ledger and push it, retrying when another writer moved the branch. */
+export function appendPending(repo: string, record: PendingRecord): void {
+  const line = JSON.stringify(record);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const exists = fetchLifecycle(repo);
+    const parent = exists ? git(repo, ["rev-parse", REMOTE_REF]).stdout.trim() : "";
+    const old = exists ? git(repo, ["show", `${REMOTE_REF}:${LEDGER_PATH}`]) : undefined;
+    const text = old && old.status === 0 && old.stdout.trim() ? `${old.stdout.replace(/\n$/, "")}\n${line}` : line;
+    const blob = git(repo, ["hash-object", "-w", "--stdin"], text).stdout.trim();
+    // A scratch index, so the checkout's own index is left alone.
+    const scratch = mkdtempSync(join(tmpdir(), "terragucci-ledger-"));
+    const env = { ...process.env, ...GIT_ID, GIT_INDEX_FILE: join(scratch, "index") };
+    if (parent) git(repo, ["read-tree", parent], undefined, env);
+    git(repo, ["update-index", "--add", "--cacheinfo", `100644,${blob},${LEDGER_PATH}`], undefined, env);
+    const tree = git(repo, ["write-tree"], undefined, env).stdout.trim();
+    const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", `Pending gate record: ${record.op} ${record.gate}`], undefined, env).stdout.trim();
+    rmSync(scratch, { recursive: true, force: true });
+    if (!commit) throw new ConfigError("could not write the pending gate record");
+    const push = git(repo, ["push", "-q", "origin", `${commit}:refs/heads/${LIFECYCLE}`]);
+    if (push.status === 0) return;
+  }
+  throw new ConfigError(`could not push the pending gate record to ${LIFECYCLE}; check that the job may push to it`);
+}
+
+// ── planning and applying ────────────────────────────────────────────────
+
+interface Run {
+  code: number;
+  out: string;
+}
+
+function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<Run> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.on("error", (e) => resolve({ code: 127, out: `${out}${e.message}` }));
+    child.on("close", (code) => resolve({ code: code ?? 1, out }));
+  });
+}
+
+interface PlannedRoot {
+  root: string;
+  planFile: string;
+  env: NodeJS.ProcessEnv;
+  member?: WaveMember;
+  changes: number;
+  destroys: number;
+  summary: string;
+  error?: string;
+}
+
+const indent = (s: string): string => s.trim().split("\n").map((l) => `    ${l}`).join("\n");
+
+async function planRoot(repo: string, binary: string, root: string, work: string, i: number): Promise<PlannedRoot> {
+  const dir = join(repo, root);
+  // Each root gets its own provider cache: a cache shared by roots that init together is not safe.
+  const env = { ...process.env, TF_PLUGIN_CACHE_DIR: mkdtempSync(join(work, "cache-")) };
+  const planFile = join(work, `${i}.tfplan`);
+  const base = { root, planFile, env, changes: 0, destroys: 0, summary: "" };
+  const init = await run(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], env);
+  if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
+  const plan = await run(binary, [`-chdir=${dir}`, "plan", "-input=false", "-no-color", `-out=${planFile}`], env);
+  if (plan.code !== 0) return { ...base, error: `plan failed\n${plan.out}` };
+  const show = spawnSync(binary, [`-chdir=${dir}`, "show", "-json", planFile], { encoding: "utf-8", env, maxBuffer: 512 * 1024 * 1024 });
+  let json: unknown;
+  try {
+    json = JSON.parse(show.stdout);
+  } catch {
+    return { ...base, error: `show -json printed no plan\n${show.stderr || show.stdout}` };
+  }
+  const part = terraformChangeSetPart({ member: root, plan: json, planner: plannerForBinary(binary) });
+  const changed = part.entries.filter((e) => e.action !== "no-op" && e.action !== "read");
+  return {
+    ...base,
+    member: { member: root, planDigest: part.member.planDigest ?? "" },
+    changes: changed.length,
+    destroys: changed.filter((e) => e.action === "delete" || e.action === "replace").length,
+    summary: plan.out.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned",
+  };
+}
+
+async function applyRoot(repo: string, binary: string, p: PlannedRoot): Promise<boolean> {
+  const r = await run(binary, [`-chdir=${join(repo, p.root)}`, "apply", "-input=false", "-no-color", p.planFile], p.env);
+  if (r.code === 0) {
+    console.log(`applied ${p.root}: ${[...r.out.matchAll(/Resources: .*destroyed/g)].pop()?.[0] ?? "done"}`);
+    return true;
+  }
+  console.log(`FAILED ${p.root}`);
+  console.log(indent(r.out));
+  return false;
+}
+
+export interface ApplyWaveOptions {
+  wave: number;
+  layers: string[][];
+  canary?: string[];
+  binary: string;
+  gate: Gate;
+  env?: NodeJS.ProcessEnv;
+  now?: string;
+}
+
+/** Run one wave. Returns the exit code; what happened is printed. */
+export async function applyWave(repo: string, options: ApplyWaveOptions): Promise<number> {
+  const work = mkdtempSync(join(tmpdir(), "terragucci-apply-"));
+  try {
+    return await runWave(repo, options, work);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+async function runWave(repo: string, options: ApplyWaveOptions, work: string): Promise<number> {
+  const { wave, binary, gate } = options;
+  if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
+  const waves = applyWaves(options.layers, options.canary);
+  if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("--wave must be a wave number from 1");
+  const roots = waves[wave - 1];
+  if (!roots) {
+    console.log(`wave ${wave}: this repo has ${waves.length} waves, so there is nothing to apply`);
+    return EXIT.applied;
+  }
+  const label = `wave ${wave} of ${waves.length}`;
+  console.log(`${label}: planning ${roots.join(", ")}`);
+  const planned = await Promise.all(roots.map((r, i) => planRoot(repo, binary, r, work, i)));
+  const failed = planned.filter((p) => p.error);
+  for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.summary}`);
+  if (failed.length > 0) {
+    for (const p of failed) console.log(indent(p.error!));
+    console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const members = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
+  const digest = waveSetDigest(members);
+  const changes = planned.reduce((n, p) => n + p.changes, 0);
+  const destroys = planned.reduce((n, p) => n + p.destroys, 0);
+  console.log(`${label}: set digest ${digest}, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
+
+  // A wave with nothing to change has nothing to approve.
+  const gated = changes > 0 && (gate === "always" || (gate === "on-destroy" && destroys > 0));
+  if (gated) {
+    const name = waveGate(wave);
+    const now = options.now ?? new Date().toISOString();
+    const ledger = readLedger(repo);
+    const decision = decideGate(ledger, name, digest, now);
+    if (decision.status === "approved") {
+      console.log(`${label}: approved by ${decision.by} for this digest`);
+    } else {
+      if (!decision.standing) {
+        const env = options.env ?? process.env;
+        const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
+        appendPending(repo, {
+          version: 1,
+          kind: "pending",
+          op: APPLY_OP,
+          gate: name,
+          timestamp: now,
+          expiresAt: new Date(at(now) + 48 * 3600 * 1000).toISOString(),
+          planDigest: digest,
+          description: `${label}: ${roots.join(", ")}`,
+          ...(runId ? { runId } : {}),
+          members,
+        });
+      }
+      if (decision.status === "refused") {
+        const approvedFact = [...ledger.pending].reverse().find((p) => p.gate === name && p.members && samePlanDigest(p.planDigest, decision.approved));
+        const moved = approvedFact ? movedMembers(approvedFact.members!, members) : roots.slice().sort();
+        console.log(describeChangedWave({ wave, op: APPLY_OP, gate: name, digest, approved: decision.approved }));
+        console.log(`${label}: approved by ${decision.by}, but these roots planned differently since: ${moved.join(", ")}`);
+        writeOutcome(options.env, `wave ${wave} changed after approval: ${moved.join(", ")}`);
+        return EXIT.refused;
+      }
+      console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
+      console.log(`  ${approveLine(wave, digest)}`);
+      console.log("and run this job again.");
+      writeOutcome(options.env, `wave ${wave} waits: ${approveLine(wave, digest)}`);
+      return EXIT.waiting;
+    }
+  }
+
+  // The roots of a wave do not read each other, so they apply together.
+  const ok = await Promise.all(planned.map((p) => applyRoot(repo, binary, p)));
+  if (ok.includes(false)) {
+    console.log(`${label}: an apply failed`);
+    return EXIT.failed;
+  }
+  console.log(`${label} applied`);
+  return EXIT.applied;
+}
+
+/** The one line the job's status carries, written where the pipeline reads it (`TG_OUTCOME`). */
+function writeOutcome(env: NodeJS.ProcessEnv | undefined, line: string): void {
+  const file = (env ?? process.env).TG_OUTCOME;
+  if (file) writeFileSync(file, line.slice(0, 135));
+}
