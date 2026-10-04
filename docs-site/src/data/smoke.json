@@ -62,9 +62,9 @@
     {
       "claim": "drift",
       "says": "drift is reported by root",
-      "needs": "terragucci#13",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "rollout",
