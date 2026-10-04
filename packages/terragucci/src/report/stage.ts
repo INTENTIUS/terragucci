@@ -9,9 +9,12 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
+import { planTerragruntWave, type TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { stackOfUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import pkg from "../../package.json" with { type: "json" };
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch } from "../detect";
+import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { describeTips, repoTips } from "../tips";
@@ -48,6 +51,11 @@ export interface StageOptions {
   fetch?: S3Fetch;
   /** Where traces and metrics go. Default: Node's fetch. */
   otlpFetch?: OtlpFetch;
+  /** Plan Terragrunt units, one `run --all` per wave. Default: when the repo is a Terragrunt repo. */
+  terragrunt?: boolean;
+  /** The `terragrunt` executable. Default: `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
+  terragruntPath?: string;
+  terragruntExec?: TerragruntExec;
 }
 
 /** `a,b;c` as layers: commas inside a layer, semicolons between. */
@@ -134,12 +142,69 @@ export function preventDestroyIn(rootDir: string): Set<string> {
 
 const tail = (s: string, n = 40): string => s.trim().split("\n").slice(-n).join("\n");
 
+/** Why a unit is in the plan. Affected selection (Terragrunt's git range and chant's supplements) replaces this. */
+const SELECTED_ALL = "every unit: affected selection is not built yet";
+
+/**
+ * Plan a Terragrunt repo's units, one `terragrunt run --all` per wave, and
+ * read each unit's plan JSON and run-report row.
+ */
+async function planUnits(
+  repo: string,
+  waves: string[][],
+  binary: string,
+  work: string,
+  options: StageOptions,
+  log: (line: string) => void,
+): Promise<{ inputs: RootInput[]; plans: Map<string, { text?: string; json?: string }>; redacted: number }> {
+  const planner = plannerForBinary(binary);
+  const inputs: RootInput[] = [];
+  const plans = new Map<string, { text?: string; json?: string }>();
+  let redacted = 0;
+  const terragrunt = options.terragruntPath ?? (options.env ?? process.env).TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
+  for (const [i, units] of waves.entries()) {
+    const workDir = join(work, `wave-${i + 1}`);
+    const wave = await planTerragruntWave({
+      dir: repo, units, workDir, binary, terragrunt,
+      ...(options.terragruntExec ? { exec: options.terragruntExec } : {}),
+    });
+    if (wave.code !== 0 && wave.code !== 2) log(tail(wave.log));
+    for (const r of wave.results) {
+      // Provisional stays false until chant marks plans built on mock_outputs (chant#3416); a
+      // provisional plan is then reported but never folded into a group of real ones.
+      const unit = { stack: stackOfUnit(r.unit), selection: SELECTED_ALL, provisional: false, run_result: r.result };
+      const file = join(workDir, "json", r.unit, "tfplan.json");
+      let plan: unknown;
+      if (r.status === "succeeded" && existsSync(file)) {
+        try {
+          plan = JSON.parse(readFileSync(file, "utf-8"));
+        } catch {
+          plan = undefined;
+        }
+      }
+      if (plan === undefined) {
+        const error = r.status === "succeeded" ? "Terragrunt reported the unit planned but wrote no plan JSON for it" : (r.error ?? r.result);
+        inputs.push({ path: r.unit, planner, error, preventDestroy: new Set(), terragrunt: unit });
+        log(`${r.unit}: ${error}`);
+        continue;
+      }
+      const safe = redactPlan(plan);
+      redacted += safe.values;
+      plans.set(r.unit, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
+      inputs.push({ path: r.unit, plan, planner, files: { json: planFiles(r.unit).json }, preventDestroy: new Set(), terragrunt: unit });
+      log(`${r.unit}: planned`);
+    }
+  }
+  return { inputs, plans, redacted };
+}
+
 export async function runStage(stage: string, repo: string, options: StageOptions = {}, log: (line: string) => void = console.error): Promise<StageResult> {
   if (stage !== "tf-plan") throw new ConfigError(`terragucci stage ${stage || "<name>"}: the stages built so far are ${STAGES.join(", ")}`);
   const env = options.env ?? process.env;
   const configPath = options.config ?? findConfig(repo);
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
+  if (options.terragrunt ?? detectTerragrunt(repo) !== undefined) return runTerragruntStage(repo, settings, options, env, log);
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
   const layers = (options.layers ?? applyLayers(repo, all))
     .map((l) => (options.root ? l.filter((r) => globMatch(options.root!, r)) : l))
@@ -209,6 +274,67 @@ export async function runStage(stage: string, repo: string, options: StageOption
     if (rest.length) waves.push({ number: waves.length + 1, roots: rest });
   }
 
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer });
+}
+
+interface Planned {
+  binary: string;
+  started: string;
+  inputs: RootInput[];
+  waves: WaveInput[];
+  plans: Map<string, { text?: string; json?: string }>;
+  redacted: number;
+  /** Every root or unit in the repo, and the ones this run planned. */
+  all: string[];
+  roots: string[];
+  observer: StageObserver;
+}
+
+/** A Terragrunt repo's tf-plan: its units by wave, as the pipeline names them or as discovery finds them. */
+async function runTerragruntStage(
+  repo: string,
+  settings: ReturnType<typeof resolveRepo>,
+  options: StageOptions,
+  env: NodeJS.ProcessEnv,
+  log: (line: string) => void,
+): Promise<StageResult> {
+  const binary = options.binary ?? settings.binary ?? detectBinary(repo, []).value;
+  const canary = options.canary ?? settings.waves?.canary ?? [];
+  let waves = options.layers;
+  if (!waves) {
+    const found = await discoverUnits(repo, {
+      exclude: settings.terragrunt?.exclude, binary,
+      ...(options.terragruntPath ? { terragrunt: options.terragruntPath } : {}),
+      ...(options.terragruntExec ? { exec: options.terragruntExec } : {}),
+    });
+    found.notes.forEach((n) => log(`note: ${n}`));
+    waves = unitWaves(found.units, canary);
+  }
+  waves = waves.map((w) => (options.root ? w.filter((u) => globMatch(options.root!, u)) : w)).filter((w) => w.length > 0);
+  if (waves.length === 0) throw new ConfigError(options.root ? `no unit matches ${options.root}` : "found no Terragrunt units");
+  const started = new Date().toISOString();
+  const observer = new StageObserver(telemetryFromEnv(env), "tf-plan", env);
+  const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
+  try {
+    const { inputs, plans, redacted } = await planUnits(repo, waves, binary, work, { ...options, env }, log);
+    const units = waves.flat();
+    return await finish(repo, settings, options, env, log, {
+      binary, started, inputs, plans, redacted, all: units, roots: units, observer,
+      waves: waves.map((roots, i) => ({ number: i + 1, roots })),
+    });
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+async function finish(
+  repo: string,
+  settings: ReturnType<typeof resolveRepo>,
+  options: StageOptions,
+  env: NodeJS.ProcessEnv,
+  log: (line: string) => void,
+  { binary, started, inputs, waves, plans, redacted, all, roots, observer }: Planned,
+): Promise<StageResult> {
   const report = buildReport({
     run: { ...runFacts(repo, env), stage: "tf-plan", binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: pkg.version },
     roots: inputs,

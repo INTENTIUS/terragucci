@@ -5,7 +5,8 @@
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
- *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>]
+ *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt]
+ *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
@@ -29,6 +30,7 @@ import { plan } from "./plan";
 import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { RenderError } from "./render";
+import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
 import { S3Error } from "./report/s3";
@@ -39,7 +41,7 @@ const USAGE = `usage:
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
-  terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>]
+  terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci install tofu|terraform|terragrunt <version>
@@ -59,7 +61,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -131,6 +133,7 @@ export async function main(argv: string[]): Promise<number> {
           ...(str(flags, "layers") ? { layers: parseLayers(str(flags, "layers")!) } : {}),
           ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}),
           ...(str(flags, "canary") ? { canary: str(flags, "canary")!.split(",").filter(Boolean) } : {}),
+          ...(flags.terragrunt === true ? { terragrunt: true } : {}),
           ...(str(flags, "bucket")
             ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } }
             : {}),
@@ -142,6 +145,11 @@ export async function main(argv: string[]): Promise<number> {
         console.log(`report: ${relative(cwd, files.html) || files.html}`);
         if (result.uploaded) console.log(`copied to the bucket under ${result.uploaded.prefix}; index rewritten at ${result.uploaded.indexes.join(" and ")}`);
         return code;
+      }
+      case "auth-provider": {
+        // Terragrunt runs this in each unit's directory and reads the credentials it prints.
+        console.log(JSON.stringify(authProviderOutput(cwd, process.env)));
+        return 0;
       }
       case "install": {
         const [tool, version] = args;
