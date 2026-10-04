@@ -34,16 +34,16 @@
     {
       "claim": "report",
       "says": "the report is JSON and HTML, and links every root to its full plan",
-      "needs": "terragucci#7",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "highlight",
       "says": "destroys and outliers are open, identical groups are folded",
-      "needs": "terragucci#7",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "waves",
@@ -69,23 +69,23 @@
     {
       "claim": "rollout",
       "says": "a module version rolls out one pull request per wave",
-      "needs": "terragucci#8",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "publish",
       "says": "changed modules are published at a new version",
-      "needs": "terragucci#9",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "tips",
       "says": "tips are on by default and name their rule",
-      "needs": "terragucci#10",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "zero-config",
@@ -97,6 +97,20 @@
     {
       "claim": "reconcile",
       "says": "a control repo opens one pull request per project that changes, and the merged pipeline applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "traces",
+      "says": "each plan run is one trace, with a span per root and the binary spans inside it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "metrics",
+      "says": "the metrics of a plan run reach Prometheus with the counts in its report",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
