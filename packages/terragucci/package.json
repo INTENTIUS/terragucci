@@ -16,7 +16,8 @@
   "exports": {
     ".": {
       "types": "./dist/types.d.ts"
-    }
+    },
+    "./report.schema.json": "./dist/report.schema.json"
   },
   "files": [
     "dist",
@@ -43,6 +44,7 @@
     "@intentius/chant-lexicon-forgejo": "0.102.0",
     "@intentius/chant-lexicon-github": "0.102.0",
     "@intentius/chant-lexicon-gitlab": "0.102.0",
+    "@intentius/chant-lexicon-terraform": "0.102.0",
     "@intentius/tsad-reference": "2.1.0"
   }
 }

@@ -4,7 +4,7 @@
 // chant is a build dependency only. The TypeScript folder that a .ts config
 // needs stays external and optional (terragucci#18).
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -28,6 +28,9 @@ await build({
   logLevel: "warning",
 });
 chmodSync(join(dist, "terragucci.mjs"), 0o755);
+
+// The report's JSON Schema, published so a reader can validate terragucci.report/v1.
+copyFileSync(join(pkg, "src/report/report.schema.json"), join(dist, "report.schema.json"));
 
 // The config types, for `import type { TerragucciConfig } from "@intentius/terragucci"`.
 execFileSync(
