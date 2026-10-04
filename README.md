@@ -2,7 +2,7 @@
 
 The whole Terraform and Terragrunt lifecycle, handled. Every pull request gets one grouped plan note, and every merge goes out in approved waves while terragucci watches for drift.
 
-It runs whichever binary you already use; [Which binary you run](https://intentius.io/terragucci/getting-started/binaries/) lists them. Pipelines run on your forge's CI, or a fountain steward takes apply and drift for durable runs.
+It runs whichever binary you already use; [Use OpenTofu, choudoufu or CDK Terrain](https://intentius.io/terragucci/guides/use-a-binary/) lists them. Pipelines run on your forge's CI, or a fountain steward takes apply and drift for durable runs.
 
 ```bash
 npm i -D @intentius/terragucci

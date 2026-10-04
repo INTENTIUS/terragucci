@@ -1,0 +1,136 @@
+---
+title: CLI commands
+description: Every terragucci command, its flags and its exit codes.
+---
+
+`npx terragucci <command>` runs from the root of a repo. A generated pipeline calls the same commands.
+
+| Command | What it does |
+|---|---|
+| `init` | finds roots, binary and forge, and writes the pipeline |
+| `reconcile` | from a control repo, opens a pull request in each project that needs a change |
+| `plan` | plans every root and prints the result |
+| `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
+| `publish` | publishes each changed module at a new version |
+| `rollout` | moves a module's or provider's pin one wave at a time |
+| `respond` | runs the response to a pipeline event |
+| `config check` | validates the config file and lists every problem |
+| `install` | fetches a release of OpenTofu, Terraform or Terragrunt, verified against its checksums |
+| `profiles` | prints the stack profiles a config needs, for the local validation stack |
+
+## init
+
+```bash
+terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--force] [--dry-run]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--forge` | the forge, when the remote cannot tell |
+| `--binary` | the binary, when detection picks the wrong one |
+| `--dry-run` | compute everything and write nothing |
+| `--force` | overwrite a pipeline file terragucci did not write |
+
+A flag that detection cannot find on its own is recorded in `terragucci.yml`.
+
+## reconcile
+
+```bash
+terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
+```
+
+`--mode` defaults to `dry-run`. `--mode apply` opens a pull request in each project that changes. `--project` narrows the run to one project.
+
+## plan and stage
+
+```bash
+terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
+terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>]
+    [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--canary <globs>] [--bucket s3://<b>]
+    [--bucket-endpoint <url>] [--bucket-prefix <p>] [--terragrunt] [--base <ref>]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--root` | plan only the roots matching this glob |
+| `--project` | the project, as `<host>/<path>`, for a run from a control repo |
+| `--config` | the config file, when it is not at the repo root |
+| `--out` | where `stage` writes the report; default `terragucci-report/` |
+| `--report-url` | where the note links the HTML report, when it is not beside the note |
+| `--layers`, `--binary`, `--canary`, `--bucket` | the roots in apply order (layers split by `;`), binary, canary wave and bucket the pipeline was written with; each overrides `terragucci.yml` |
+| `--bucket-endpoint`, `--bucket-prefix` | the store's endpoint and the key prefix |
+| `--terragrunt` | plan Terragrunt units, one `run --all` per wave |
+| `--base` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
+
+`stage` exits 1 when a root refuses to plan, and still writes the report. [The plan report](/terragucci/reference/report/) lists the files.
+
+## publish
+
+```bash
+terragucci publish [--dry-run] [--config <file>]
+```
+
+## rollout
+
+```bash
+terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
+terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
+```
+
+`--mode` defaults to `dry-run`. See [Rolling out a module version](/terragucci/reference/stages/#rolling-out-a-module-version).
+
+## respond
+
+```bash
+terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question [--mode dry-run|apply] [flags]
+```
+
+| Flag | Used by | Meaning |
+|---|---|---|
+| `--mode` | all | `dry-run` (the default) or `apply`, which opens the pull request or pushes the commit |
+| `--report` | `plan` | the report directory |
+| `--approved`, `--current`, `--wave` | `wave-refused` | the approved report, the current report directory and the wave number |
+| `--log` | `apply-failed` | the apply log; `-` reads standard input |
+| `--root`, `--import` | `drift` | one root, and `<address>=<id>` for a resource the state does not hold |
+| `--platform` | `tips` | lock file platforms, comma separated |
+| `--branch` | `fmt` | the branch to format; the default branch is refused |
+| `--module`, `--version` | `publish` | the module, and the release |
+| `--question` | `question` | the reviewer's question |
+| `--out`, `--binary`, `--config`, `--project` | all | as above |
+
+[Responses to pipeline events](/terragucci/reference/responses/) explains each event.
+
+## config check
+
+```bash
+terragucci config check [--config <file>]
+```
+
+Validates `terragucci.yml`, `terragucci.json` or `terragucci.ts` and lists every problem rather than the first.
+
+```text
+terragucci.yml: ok
+```
+
+## install
+
+```bash
+terragucci install tofu|terraform|terragrunt <version>
+```
+
+Fetches the release, checks it against the release's SHA256SUMS, unpacks it and prints the directory. A pipeline uses it when a repo pins a version its image does not carry.
+
+## --json
+
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` and `config check` take `--json`. The command then prints one envelope on stdout and nothing else. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+
+## Exit codes
+
+The codes are the same with or without `--json`.
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 1 | one or more projects or roots failed |
+| 2 | a usage or config error |
+| 3 | waiting on an approval, or on a rollout's pull request |

@@ -16,13 +16,7 @@ Every stage takes the root directories and the binary.
 
 ## Gated waves
 
-A change that touches many roots goes out in waves. Wave 1 is an optional canary list. Later waves follow dependency order, so a root never applies before one it reads from.
-
-Each wave has its own approval. The approval is bound to the wave's set digest, a hash over the plan digest of every root in that wave. If any root's plan changes after the approval, the wave stops and applies nothing.
-
-A wave is planned only after the wave before it has applied. Its plan reads the real outputs of the roots upstream, so an approval never covers placeholder values.
-
-A run that stops at an approval, or after a failed root, carries on from there next time. It never applies a root twice.
+A change that touches many roots goes out in waves, each behind its own approval bound to the wave's set digest. A changed plan stops the wave. [How waves and approvals work](/terragucci/concepts/waves-and-approvals/) explains why, and [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows the steps.
 
 ## Rolling out a module version
 
@@ -41,13 +35,15 @@ terragucci rollout modules/network 1.4.0 --mode apply
 terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
-Name the module by its path or by its source without the pin. With no version, the rollout takes the newest one published. That is the highest `modules/network/vX.Y.Z` tag or the highest tag in the module's OCI repository. The old version is read from the pins; when they disagree, `--from` says which one moves. A pin keeps its shape, so a ref of `modules/network/v1.3.0` becomes `modules/network/v1.4.0`.
+With no version, the rollout takes the newest one published: the highest `modules/network/vX.Y.Z` tag, or the highest tag in the module's OCI repository. The old version is read from the pins, and `--from` says which one moves when they disagree. Each run takes at most one step and exits; the default is a dry run, and `--mode apply` pushes the branches and opens the pull requests with the token from `token_env`. It never merges anything or writes a default branch.
 
-Each wave is a small pull request that the usual stages plan and apply. It changes only that wave's files, so a path-diff selection plans exactly what moved. The canaries in `waves.canary` form wave 1 and dependency order gives the rest. From a control repo, wave 1 holds the canaries of every project. Each project's later waves then follow in config order, with one pull request per project per wave.
+| Exit code | Meaning |
+|---|---|
+| 0 | a step was taken, or the rollout is at its end |
+| 3 | a pull request waits for a merge or an apply |
+| 1 | the rollout stopped, after a closed pull request or a failed apply |
 
-Each run takes at most one step and exits. The next wave opens only on a run after the last wave's pull requests merged and their apply passed on the merge commit. A per-directory `apply/<path>` check decides when there is one; otherwise the pipeline's `apply` job does. A pull request closed without merging stops the rollout and so does a failed apply. Run it on a schedule or after each merge. It never merges anything or writes a default branch.
-
-The default is a dry run that lists the pull requests it would open and their files. `--mode apply` pushes the branches and opens them with the token from `token_env`. The exit code is 0 after a step or at the end, 3 while a pull request waits for a merge or an apply, and 1 when the rollout stopped.
+[Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) walks through a rollout.
 
 A pin the rollout cannot move is reported with its reason and a tip:
 
@@ -65,41 +61,20 @@ Reading module pins needs the HCL parser, which is installed beside terragucci r
 
 ## Publishing modules
 
-Keep your modules beside your roots and let `tf-publish` version them.
-
-```yaml
-modules:
-  path: modules/*
-  publish: oci://registry.example.com/acme/modules
-```
-
-`publish` takes an `oci://` registry address, `git-tags`, or a list of both. OpenTofu roots pin the OCI artifact as an `oci://` source. Terraform has no OCI sources, so its roots pin a git tag per module, such as `modules/network/v1.4.0`.
+`modules.path` names the modules and `modules.publish` takes an `oci://` registry address, `git-tags`, or a list of both. OpenTofu roots pin the OCI artifact as an `oci://` source. Terraform has no OCI sources, so its roots pin a git tag per module, such as `modules/network/v1.4.0`.
 
 ```bash
 terragucci publish --dry-run
 terragucci publish
 ```
 
-A module is published when its content differs from its last release. The next version follows the commits since that release that touched the module: `feat` is a minor bump, `fix` and any other type a patch, and a breaking marker (`feat!:` or a `BREAKING CHANGE:` footer) a major. A module with no release yet starts at `0.1.0`. A `version` file in the module directory overrides the bump; once that version is published, change the file to publish the next content.
+A module is published when its content differs from its last release. The next version follows the commits since that release that touched the module: `feat` is a minor bump, `fix` and any other type a patch, and a breaking marker (`feat!:` or a `BREAKING CHANGE:` footer) a major. A module with no release yet starts at `0.1.0`, and a `version` file in the module directory overrides the bump.
 
-A published version never changes. Each release records the commit it was cut from and a digest of the module's content, so a second run on the same commit publishes nothing, and so does a change that was reverted. The OCI manifest digest is printed with each published version, and a root can pin it: `oci://registry.example.com/acme/modules/network@sha256:...`.
-
-With `modules.publish` set, the pipeline that `init` writes gets a `publish` job. It runs after `apply` on a push to the default branch, with the full history and tags, and it is the only job given `TERRAGUCCI_REGISTRY_USER` and `TERRAGUCCI_REGISTRY_PASSWORD`. Set them as secrets on GitHub and Forgejo, and as protected, masked variables on GitLab. Before choosing a version, git-tag publishing fetches the module's tags from `origin`. A version that `origin` already holds with the same content is reported as unchanged. If its content differs, the run stops and names the tag.
-
-Registry credentials come from `TERRAGUCCI_REGISTRY_USER` and `TERRAGUCCI_REGISTRY_PASSWORD`. A registry without TLS needs `TERRAGUCCI_REGISTRY_INSECURE=1`. Git tags are pushed to `origin`, so check out the full history and the tags.
+A published version never changes. Each release records the commit it was cut from and a digest of the module's content, so a second run on the same commit publishes nothing, and so does a change that was reverted. With `modules.publish` set, the pipeline's `publish` job runs after `apply` on a push to the default branch and is the only job given the registry credentials listed in [Environment variables and credentials](/terragucci/reference/environment/). [Publish your modules](/terragucci/guides/publish-modules/) walks through it.
 
 ## The grouped summary
 
-Nobody reads two hundred plan logs. The summary normalizes each root's changes and groups the roots whose changes are the same.
-
-```
-180 roots: identical change (update aws_iam_role.app, tags)
- 15 roots: the same, plus replace aws_lambda_function.worker
-  5 roots: read these individually
-destroys: prod-eu/db (delete aws_db_instance.main)
-```
-
-Every destroy, replacement and refusal is listed by name and is never folded into a group. The summary comes as text, JSON, or markdown sized for a pull-request note. No approval is bound to it; approvals bind the plan digests underneath. [The plan report](/terragucci/reference/report/) covers the HTML and JSON forms and where they are kept.
+`tf-plan` and `tf-drift` group the roots whose changes are the same, and list every destroy, replacement and refusal by name. The summary comes as text, JSON, or markdown sized for a pull-request note. [Why plans are grouped](/terragucci/concepts/why-plans-are-grouped/) explains the idea, and [The plan report](/terragucci/reference/report/) covers the HTML and JSON forms and where they are kept.
 
 ## Gate policy
 

@@ -1,0 +1,94 @@
+---
+title: Get your first plan note
+description: Add terragucci to a Terraform, OpenTofu or Terragrunt repo and see one grouped plan note on a pull request.
+---
+
+import PlanNote from '../../../components/PlanNote.astro';
+
+## What you end up with
+
+A pipeline file committed to your repo, and a pull request that carries one plan note from terragucci. The note groups the roots a change reaches and names every destroy.
+
+To see it work before touching your own repo, [the tutorial](/terragucci/tutorial/) runs a 15-root example on your laptop. A coding agent can also do these steps for you: [hand it this prompt](/terragucci/getting-started/agents/).
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| a repo with Terraform, OpenTofu or Terragrunt roots, on GitHub, GitLab or Forgejo | terragucci reads the roots and the forge from the repo |
+| Node.js 22 or later, on your machine only | `init` is an npm package; the pipeline itself runs in terragucci's CI image |
+| a way for CI to read your state and providers | the plan job runs `plan`; [Environment variables and credentials](/terragucci/reference/environment/) shows OIDC roles and the variables a job reads |
+| push access to the repo | you commit the generated pipeline |
+
+## Steps
+
+### 1. Install terragucci
+
+From the root of the repo:
+
+```bash
+npm i -D @intentius/terragucci
+```
+
+### 2. Preview what it finds
+
+```bash
+npx terragucci init --dry-run
+```
+
+It writes nothing and prints what it found, with the reason for each choice:
+
+```text
+found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+would write .github/workflows/terragucci.yml
+no terragucci.yml needed (defaults fit)
+dry run: nothing was written
+```
+
+The roots are every directory that declares a backend or configures a provider. The layers are the apply order, read from `terraform_remote_state`. If the binary or the forge is wrong, pass `--binary` or `--forge`. `npx terragucci init --dry-run --json` lists the reason for every root.
+
+### 3. Write the pipeline
+
+```bash
+npx terragucci init
+```
+
+```text
+found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+wrote .github/workflows/terragucci.yml
+no terragucci.yml needed (defaults fit)
+```
+
+The file differs by forge. On GitLab it is `.gitlab-ci.yml`, and on Forgejo it is `.forgejo/workflows/terragucci.yml`. Open the file and read it once. Every job runs in terragucci's CI image for your binary, so no job downloads a tool.
+
+Most repos need no `terragucci.yml`. When you do want one, [Your config file](/terragucci/reference/config/) lists every key.
+
+### 4. Give the pipeline a token
+
+GitHub and Forgejo jobs use the run's own token. On GitLab, add a project access token with the `api` scope as a masked CI/CD variable named `GITLAB_TOKEN`. The plan job uses it to post the note and the commit status.
+
+### 5. Commit and open a pull request
+
+```bash
+git switch -c add-terragucci
+git add .github package.json package-lock.json
+git commit -m "Add terragucci"
+git push -u origin add-terragucci
+```
+
+Open the pull request on your forge. The check and plan jobs start on their own. If the pull request touches no root, there is nothing to plan, so change a line in one root first and push again.
+
+### 6. Read the plan note
+
+When the plan job finishes, the pull request gets one comment and a `terragucci/plan` status. The note looks like this:
+
+<PlanNote />
+
+The note links to the full report, and every root in it links to its plan. [The plan report](/terragucci/reference/report/) shows what each part holds.
+
+## Next
+
+- Merge the pull request. The apply job then applies your roots in dependency order on the default branch.
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/) when a change destroys something.
+- [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) to find changes made outside Terraform.
+- [Govern many repos from one place](/terragucci/guides/govern-many-repos/) once one repo works.
