@@ -1,0 +1,3 @@
+# The CI images build from the repo root but need only the bundle.
+*
+!packages/terragucci/dist/terragucci.mjs

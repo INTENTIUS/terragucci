@@ -14,6 +14,7 @@ terragucci is being built. The rest of this site describes it finished, so this 
 | The tutorial's example | `just example up` boots 15 roots on a local Forgejo and applies them to floci, with the scenarios ready to open as pull requests |
 | The check stage | format and validate on every pull request, failing by file name |
 | `npx terragucci init` | finds a repo's roots, binary and forge, and writes its pipeline for GitHub, GitLab or Forgejo; the pipeline checks every root and applies them in dependency order on the main branch |
+| CI images | one per toolchain (OpenTofu, Terraform, Terragrunt), built and checked on amd64 and arm64; not yet published, so `init` pins them by tag until they are |
 | `terragucci.yml` and `terragucci reconcile` | one config for one repo or many; from a control repo, a pull request in each project that changes |
 | The local validation stack | Forgejo with its runner and floci; GitHub, GitLab and fountain setups are declared but not yet checked |
 

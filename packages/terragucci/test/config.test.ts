@@ -148,3 +148,18 @@ describe("stack profiles", async () => {
     expect(profilesFor(validateConfig(config, "t"))).toEqual(profiles);
   });
 });
+
+describe("the TypeScript folder is optional", () => {
+  it("a .ts config without @intentius/tsad-reference names the install command", async () => {
+    const { vi } = await import("vitest");
+    vi.resetModules();
+    vi.doMock("@intentius/tsad-reference", () => {
+      throw new Error("Cannot find package '@intentius/tsad-reference'");
+    });
+    const { loadConfig: load } = await import("../src/config");
+    const dir = write(tmp(), { "terragucci.ts": "export default { binary: \"tofu\" };\n" });
+    await expect(load(join(dir, "terragucci.ts"))).rejects.toThrow(/npm i -D @intentius\/tsad-reference/);
+    vi.doUnmock("@intentius/tsad-reference");
+    vi.resetModules();
+  });
+});

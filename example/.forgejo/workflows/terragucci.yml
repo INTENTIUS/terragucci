@@ -2,6 +2,7 @@
 # terragucci writes this file from terragucci.yml, or from its defaults when
 # the repo has none. Change terragucci.yml and run `npx terragucci init`
 # rather than editing it here.
+# Every job runs in ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1; init pins its digest once the image is published.
 name: terragucci
 
 on:
@@ -16,21 +17,10 @@ env:
 jobs:
   check:
     runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Install tofu 1.13.1
-        run: |
-          set -eu
-          case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
-          dir="${TOFU_INSTALL_DIR:-${RUNNER_TEMP:-/tmp}/terragucci-bin}/tofu-1.13.1"
-          if [ ! -x "$dir/tofu" ]; then
-            mkdir -p "$dir"
-            tmp="$(mktemp -d "$dir.XXXX")"
-            curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_${arch}.tar.gz" | tar -xz -C "$tmp" tofu
-            mv -f "$tmp/tofu" "$dir/tofu"
-            rm -rf "$tmp"
-          fi
-          echo "$dir" >> "$GITHUB_PATH"
       - name: Format check and validate, every root
         run: |
           set -eu
@@ -42,23 +32,12 @@ jobs:
           done
   apply:
     runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
     needs: check
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Install tofu 1.13.1
-        run: |
-          set -eu
-          case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
-          dir="${TOFU_INSTALL_DIR:-${RUNNER_TEMP:-/tmp}/terragucci-bin}/tofu-1.13.1"
-          if [ ! -x "$dir/tofu" ]; then
-            mkdir -p "$dir"
-            tmp="$(mktemp -d "$dir.XXXX")"
-            curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_${arch}.tar.gz" | tar -xz -C "$tmp" tofu
-            mv -f "$tmp/tofu" "$dir/tofu"
-            rm -rf "$tmp"
-          fi
-          echo "$dir" >> "$GITHUB_PATH"
       - name: Apply every root
         shell: bash
         run: |

@@ -10,10 +10,13 @@
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
  * config error; 3 waiting on an approval.
  */
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, type Binary, type ForgeName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { detectForge } from "./detect";
 import { describeInit, init } from "./init";
+import { install, type Tool } from "./install";
 import { plan } from "./plan";
 import { describeReconcile, reconcile } from "./reconcile";
 import { RenderError } from "./render";
@@ -23,6 +26,7 @@ const USAGE = `usage:
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci rollout <module> <version>
+  terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
 
 Docs: https://intentius.io/terragucci/`;
@@ -91,6 +95,14 @@ export async function main(argv: string[]): Promise<number> {
         const results = await plan(cwd, { root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config") });
         return results.every((r) => r.ok) ? 0 : 1;
       }
+      case "install": {
+        const [tool, version] = args;
+        if (!tool || !version || !["tofu", "terraform", "terragrunt"].includes(tool)) {
+          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt <version>");
+        }
+        console.log(await install(tool as Tool, version));
+        return 0;
+      }
       case "rollout":
         console.error("terragucci rollout is not available yet. https://intentius.io/terragucci/status/ says what is.");
         return 2;
@@ -117,6 +129,16 @@ export async function main(argv: string[]): Promise<number> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("/src/cli.ts")) {
+/** Run when this file is the program, however it was reached (npm links bins through symlinks). */
+function isEntry(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntry()) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
 }

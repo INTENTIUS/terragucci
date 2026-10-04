@@ -1,6 +1,6 @@
 {
   "name": "@intentius/terragucci",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The whole Terraform lifecycle, handled: one config file, generated pipelines for GitHub, GitLab and Forgejo.",
   "license": "Apache-2.0",
   "type": "module",
@@ -11,22 +11,34 @@
   },
   "homepage": "https://intentius.io/terragucci/",
   "bin": {
-    "terragucci": "./bin/terragucci"
+    "terragucci": "./dist/terragucci.mjs"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/types.d.ts"
+    }
   },
   "files": [
-    "bin",
-    "src",
-    "!src/**/*.test.ts",
+    "dist",
     "README.md",
     "LICENSE"
   ],
   "engines": {
     "node": ">=22"
   },
-  "dependencies": {
+  "types": "./dist/types.d.ts",
+  "scripts": {
+    "build": "node ../../scripts/build-cli.mjs"
+  },
+  "peerDependencies": {
+    "@intentius/tsad-reference": "2.x"
+  },
+  "peerDependenciesMeta": {
+    "@intentius/tsad-reference": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
     "@intentius/chant": "0.102.0",
     "@intentius/chant-lexicon-forgejo": "0.102.0",
     "@intentius/chant-lexicon-github": "0.102.0",

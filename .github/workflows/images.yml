@@ -1,0 +1,89 @@
+name: images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+  pull_request: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.platform }})
+    runs-on: '${{ matrix.runner }}'
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Build the images
+        run: just images ${{ matrix.platform }}
+      - name: Run each image's tools and check its size
+        run: just images-check ${{ matrix.platform }}
+  publish:
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-x86_64-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Build the bundle
+        run: just build-cli
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Push both platforms, with provenance and an SBOM
+        run: |
+          set -eu
+          docker buildx create --use --name terragucci
+          npx tsx scripts/images.ts tags | while read -r name ref; do
+            docker buildx build --push --platform linux/amd64,linux/arm64 --provenance=true --sbom=true -f "images/Dockerfile.$name" -t "$ref" .
+            echo "$ref $(docker buildx imagetools inspect "$ref" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          done
