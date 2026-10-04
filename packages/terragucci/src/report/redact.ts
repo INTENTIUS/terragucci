@@ -7,7 +7,7 @@
 import { REDACTED } from "./schema";
 
 type Json = Record<string, unknown>;
-const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
+export const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
 
 export interface Redacted {
   plan: unknown;

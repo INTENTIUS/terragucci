@@ -37,6 +37,9 @@ export interface ProjectOutcome {
   tips?: ReportTip[];
 }
 
+/** The git identity terragucci commits as, with commit signing off. */
+export const IDENTITY = ["-c", "user.name=terragucci", "-c", "user.email=terragucci@users.noreply.intentius.io", "-c", "commit.gpgsign=false"];
+
 /** Where a project is cloned from, and the origin its forge API answers on. */
 export function where(key: string, url: string | undefined): { cloneUrl: string; origin: string } {
   const pk = parseProjectKey(key);
@@ -115,12 +118,7 @@ export async function reconcile(config: TerragucciConfig, options: ReconcileOpti
       const base = await defaultBranch(fetch, target);
       git(dir, ["checkout", "-q", "-B", BRANCH]);
       git(dir, ["add", "-A"]);
-      git(dir, [
-        "-c", "user.name=terragucci",
-        "-c", "user.email=terragucci@users.noreply.intentius.io",
-        "-c", "commit.gpgsign=false",
-        "commit", "-q", "-m", "terragucci: update the pipeline from the control repo",
-      ]);
+      git(dir, [...IDENTITY, "commit", "-q", "-m", "terragucci: update the pipeline from the control repo"]);
       git(dir, ["push", "-q", "--force", "origin", `HEAD:refs/heads/${BRANCH}`], token);
       const pr = await openPullRequest(fetch, target, {
         head: BRANCH,

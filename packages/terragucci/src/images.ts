@@ -5,7 +5,8 @@
  * published; a repo that pins another version installs it in the job with
  * `terragucci install`.
  */
-import pkg from "../package.json" with { type: "json" };
+// A named import, so the bundle carries the version and not the whole package.json.
+import { version as VERSION } from "../package.json";
 import digests from "./image-digests.json" with { type: "json" };
 import type { Binary } from "./config";
 
@@ -25,7 +26,7 @@ export interface ImageRef {
   digest?: string;
 }
 
-export function imageTag(tool: "tofu" | "terraform" | "terragrunt", version = pkg.version): string {
+export function imageTag(tool: "tofu" | "terraform" | "terragrunt", version = VERSION): string {
   if (tool === "terragrunt") return `${version}-tg${TOOL_VERSIONS.terragrunt}-tofu${TOOL_VERSIONS.tofu}`;
   return `${version}-${tool === "tofu" ? "tofu" : "tf"}${TOOL_VERSIONS[tool]}`;
 }
