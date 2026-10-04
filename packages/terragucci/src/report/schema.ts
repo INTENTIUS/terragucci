@@ -141,6 +141,17 @@ export interface ReportHole {
   reason: string;
 }
 
+/** Advice on how the repo is set up. It never fails a run and no digest covers it. */
+export interface ReportTip {
+  /** The rule behind it: a chant rule id such as `TF040`, or a terragucci rule such as `terragucci-no-canary`. */
+  rule: string;
+  /** The root or module the tip is about. Absent when it is about the project. */
+  root?: string;
+  message: string;
+  /** The page that explains the rule. */
+  url: string;
+}
+
 export interface Report {
   schema: typeof REPORT_SCHEMA;
   minor: number;
@@ -156,4 +167,6 @@ export interface Report {
   named: ReportNamed[];
   holes: ReportHole[];
   redaction: { marker: typeof REDACTED; values: number };
+  /** Present when tips are on, even when there are none. Absent with `tips: false`. */
+  tips?: ReportTip[];
 }

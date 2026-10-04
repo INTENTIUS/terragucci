@@ -62,6 +62,9 @@ const finalStage = (name: string, description: string) => ({
   from: NODE,
   run: [
     "apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*",
+    // The HCL parser the tips and rollouts read with. /usr/local/node_modules is on the
+    // bundle's module path, so `terragucci` finds it with no further setup.
+    `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} && npm cache clean --force`,
   ],
   copy: [
     "--from=fetch /out/ /usr/local/bin/",

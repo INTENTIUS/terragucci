@@ -28,6 +28,25 @@ const minifiedYaml = {
   },
 };
 
+// The lint tips parse HCL through the terraform lexicon, whose parser module
+// imports chant's terraform/parse for its HCL loader. That module also imports
+// the dependency graph and the state reader, and through them the carve registry
+// with the AWS, GCP and Kubernetes provider tables (80 KB). terragucci only
+// loads the HCL parser, so those two imports are stubbed out. Remove this once
+// chant keeps the loader apart from the graph.
+const noGraph = {
+  name: "no-terraform-graph",
+  setup(b) {
+    const stubs = {
+      "./graph": "export const buildGraph = () => { throw new Error('not in the bundle'); }; export const collectExpressions = buildGraph;",
+      "./state": "export const readStateInstanceCounts = () => { throw new Error('not in the bundle'); }; export const applyStateCounts = readStateInstanceCounts;",
+    };
+    b.onResolve({ filter: /^\.\/(graph|state)$/ }, (args) =>
+      /chant\/src\/terraform\/parse\.ts$/.test(args.importer) ? { path: args.path, namespace: "stub" } : undefined);
+    b.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({ contents: stubs[args.path], loader: "js" }));
+  },
+};
+
 await build({
   entryPoints: [join(pkg, "src/cli.ts")],
   outfile: join(dist, "terragucci.mjs"),
@@ -38,14 +57,15 @@ await build({
   external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"],
   banner: { js: "#!/usr/bin/env node\nimport { createRequire as __terragucciRequire } from 'node:module';\nconst require = __terragucciRequire(import.meta.url);" },
   legalComments: "none",
-  // Folds constants, drops dead branches and whitespace. Names are kept, and the
-  // linked source map ships beside the bundle: run with `node --enable-source-maps`
-  // to read a stack trace against the sources.
+  // Folds constants, drops dead branches and whitespace. Function and class names are
+  // not kept (that was 17 KB of the budget); the linked source map ships beside
+  // the bundle: run with `node --enable-source-maps` to read a stack trace
+  // against the sources.
   minifySyntax: true,
   minifyWhitespace: true,
-  keepNames: true,
+  keepNames: false,
   sourcemap: "linked",
-  plugins: [minifiedYaml],
+  plugins: [minifiedYaml, noGraph],
   logLevel: "warning",
 });
 chmodSync(join(dist, "terragucci.mjs"), 0o755);

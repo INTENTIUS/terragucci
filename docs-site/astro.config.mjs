@@ -39,6 +39,7 @@ export default defineConfig({
 						{ label: 'Stages', slug: 'reference/stages' },
 						{ label: 'The generated pipeline', slug: 'reference/pipeline' },
 						{ label: 'The plan report', slug: 'reference/report' },
+						{ label: 'Tips', slug: 'reference/tips' },
 						{ label: 'JSON output', slug: 'reference/cli-json' },
 						{ label: 'Traces and metrics', slug: 'reference/observability' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
