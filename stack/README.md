@@ -13,7 +13,7 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 | `github` | floci, a mock GitHub API, `act` on the host | validated: `check`, `apply` and `reconcile` pass |
 | `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply` and `reconcile` pass |
 | `fountain` | floci, fountain, Postgres, waterpark's sandbox runner | declared, not yet validated |
-| `observability` | an OpenTelemetry collector and Prometheus (`stack/observability/`) | used by the `traces` and `metrics` claims; run it beside `forgejo` |
+| `observability` | an OpenTelemetry collector and Prometheus (`stack/observability/`) | started by the `traces` and `metrics` claims when it is not up; `stack/down.sh` removes it |
 
 Declared means the services are in `docker-compose.yml`, readable, with comments on what they still need. `bootstrap.sh` refuses `fountain` unless `TERRAGUCCI_UNVALIDATED=1`, and then only starts its containers. No claim runs on it.
 
