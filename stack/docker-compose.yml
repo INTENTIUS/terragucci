@@ -27,6 +27,7 @@
 #   github    floci + mock GitHub API                  declared, not yet validated
 #   gitlab    floci + GitLab CE + gitlab-runner        declared, not yet validated
 #   fountain  floci + fountain + Postgres + runner     declared, not yet validated
+#   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
 name: terragucci
 
 networks:
@@ -133,6 +134,27 @@ services:
     networks:
       default:
         aliases: [forgejo-runner]
+
+  # ── registry ─────────────────────────────────────────────────────────────
+  # A plain OCI registry with TLS, the shape OpenTofu's oci:// sources need.
+  # The publish smoke claim makes a throwaway CA and certificate for
+  # localhost and registry in a temp directory and points
+  # TERRAGUCCI_REGISTRY_CERTS at it (registry.crt, registry.key); the host
+  # reaches it on localhost:5050 with NODE_EXTRA_CA_CERTS set to that CA.
+  registry:
+    image: registry:2.8.3
+    container_name: terragucci-registry
+    profiles: [registry]
+    environment:
+      REGISTRY_HTTP_TLS_CERTIFICATE: /certs/registry.crt
+      REGISTRY_HTTP_TLS_KEY: /certs/registry.key
+    volumes:
+      - ${TERRAGUCCI_REGISTRY_CERTS:-./registry-certs}:/certs:ro
+    ports:
+      - "${TERRAGUCCI_REGISTRY_PORT:-5050}:5000"
+    networks:
+      default:
+        aliases: [registry]
 
   # ── github: declared, not yet validated ──────────────────────────────────
   # GitHub has no self-hostable edition. The plan (terragucci#4) is `act` on the
