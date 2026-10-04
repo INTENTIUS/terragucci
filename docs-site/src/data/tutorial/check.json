@@ -1,10 +1,10 @@
 {
   "step": "check",
-  "source_hash": "151124018e5db6b4",
+  "source_hash": "6bc1a748ad48161a",
   "commands": [
     {
       "cmd": "just example change unformatted",
-      "output": "[example] pushed change/unformatted at ba058f6b\n[example] run 3 for ba058f6b: failure (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (failure)",
+      "output": "[example] pushed change/unformatted at 1f96f39d\n[example] run 5 for 1f96f39d: failure (http://localhost:3300/terragucci-admin/example/actions/runs/5)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/5 (failure)",
       "exit": 0
     },
     {

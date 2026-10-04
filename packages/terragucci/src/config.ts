@@ -51,6 +51,12 @@ export interface ProjectSettings {
   env?: Record<string, string>;
   tips?: boolean;
   modules?: { path?: string; publish?: string | string[] };
+  /**
+   * Cloud roles the pipeline assumes over OIDC, so no long-lived keys sit in CI.
+   * Plan runs pull-request code and gets the read-only role; apply gets the
+   * write role. The two must differ.
+   */
+  oidc?: { plan_role: string; apply_role: string; audience?: string };
   /** Whether removing the project from a control repo removes its generated files. */
   owned?: boolean;
 }
@@ -103,7 +109,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "tips", "modules", "owned",
+  "reports", "token_env", "env", "tips", "modules", "owned", "oidc",
 ]);
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -155,6 +161,22 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.reports !== undefined && !(isObject(s.reports) && typeof s.reports.bucket === "string")) {
     problems.push(`${where}.reports must name a bucket`);
+  }
+  if (s.oidc !== undefined) {
+    const o = s.oidc;
+    if (!isObject(o)) problems.push(`${where}.oidc must be a map with plan_role and apply_role`);
+    else {
+      for (const k of Object.keys(o)) {
+        if (!["plan_role", "apply_role", "audience"].includes(k)) problems.push(`${where}.oidc.${k} is not a setting (settings: plan_role, apply_role, audience)`);
+      }
+      for (const k of ["plan_role", "apply_role"] as const) {
+        if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.oidc.${k} must name a role, one for plan and one for apply`);
+      }
+      if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.oidc.audience must be a string`);
+      if (typeof o.plan_role === "string" && o.plan_role === o.apply_role) {
+        problems.push(`${where}.oidc.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
+      }
+    }
   }
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
@@ -331,6 +353,7 @@ export function resolveProject(config: TerragucciConfig, key: string): ResolvedS
 function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings {
   const { defaults: _d, projects: _p, ...settings } = over as TerragucciConfig;
   const out: ResolvedSettings = { ...base, ...settings, env: { ...base.env, ...(settings.env ?? {}) } };
+  if (settings.oidc) out.oidc = { ...base.oidc, ...settings.oidc };
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
   return out;
 }
