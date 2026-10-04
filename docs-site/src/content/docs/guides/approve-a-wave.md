@@ -12,21 +12,21 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 - A merge that reached the default branch, so `tf-apply` has started.
 - `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
 - chant installed where you approve: `npm i -D @intentius/chant`.
-- Write access to the repo. The approval is a commit on its `chant/lifecycle` branch.
+- Write access to the repo. What you record is a commit on its `chant/lifecycle` branch.
 - An ssh key of yours listed in `.chant/allowed_signers` on the default branch. [Set up the signers file](#set-up-the-signers-file) once per repo.
-- You are a person. Approvals belong to people, so an agent or a script that approves on your behalf defeats the gate.
+- You are a person. A gate exists so that someone reads the plans; anything that signs off for you defeats it.
 
 ## Steps
 
 ### 1. Find the waiting wave
 
-After a merge, the apply job applies each wave in turn. A wave that needs an approval stops the job with exit code 3 and prints the command to run. The pull request's plan note shows the same command at its foot, for example:
+After a merge, each wave runs in its own job. A wave that has to wait for you stops its job with exit code 3 and prints the command to run. The pull request's plan note shows the same command at its foot, for example:
 
 ```text
 approve wave 2 with chant approve tf-apply wave-2 --sign
 ```
 
-Open the wave's roots in the report linked from the run. The report lists the wave's set digest and the approval state of each wave.
+Open the wave's roots in the report linked from the run. It lists the wave's set digest and whether each wave is waiting or cleared.
 
 ### 2. Read what the wave will do
 
@@ -40,15 +40,15 @@ npx chant approve tf-apply wave-2 --actor github:alice --sign ~/.ssh/id_ed25519
 
 `--actor` is you, named as the signers file names you. `--sign` seals the approval with your key. With no key file, it uses git's `user.signingkey` when `gpg.format` is `ssh`.
 
-The command writes a record to the `chant/lifecycle` branch. The record names the wave's set digest, a hash over the plan digest of every root in it. The approval covers those plans and no others, and the seal covers the record: an edited record no longer verifies.
+The command writes a record that names the wave's set digest, a hash over the plan digest of every root in it. Your sign-off covers those plans and no others, and the seal covers the record, so an edited record no longer verifies.
 
-`terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`, so the apply job counts an approval only when its seal verifies against `.chant/allowed_signers` as the default branch holds it. An unsigned approval, or one sealed with a key the file does not list for its approver, does not let the wave apply. The job prints why the approval does not count.
+`terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`. For those gates the job accepts a record only when its seal verifies against `.chant/allowed_signers` on the default branch. Without such a seal the wave stays put, and the job prints why.
 
 ### 4. Run the stage again
 
-Re-run the apply job from your forge, or push to the default branch. The stage finds the approval and applies the wave. It starts from where it stopped and never applies a root twice. If a later wave also needs an approval, the job stops again at exit code 3 with the next command.
+Re-run the wave's job on your forge, or push to the default branch again. The stage finds your record and the wave goes out. It starts where it stopped and never touches a root twice. A later wave that also has to wait stops at exit code 3 with its own command.
 
-The report now links each wave to its approval record.
+The report now links each cleared wave to its record.
 
 ## Set up the signers file
 
@@ -61,11 +61,11 @@ Once per repo, through a reviewed pull request to the default branch:
    github:bob ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ...
    ```
 
-   The apply job checks Ed25519 keys, Ed25519 security keys (`sk-ssh-ed25519@openssh.com`) and RSA keys. A line with `valid-after`, `valid-before` or `cert-authority`, or a principal pattern, is ignored.
+   Ed25519 keys, including security keys (`sk-ssh-ed25519@openssh.com`), and RSA keys are checked. Lines with options or principal patterns are ignored.
 
-2. Never list an agent's key, a CI job's key or a bot's key. The file says who may approve, and approvals belong to people.
+2. List people only. No key that an agent or a CI job holds belongs in the file.
 
-3. Protect the `chant/lifecycle` branch so that only the apply job's identity can push to it, and block force pushes and deletion. The apply job writes the pending records there. A seal stops a forged approval from counting, and branch protection stops the records from being rewritten or removed.
+3. Protect `chant/lifecycle` so that only the apply job's identity can push to it, and block force pushes and deletion. The job writes its pending records there. A seal stops a forged record from counting, and protection stops records from being rewritten or removed.
 
 The signers file and `chant.workspace.json` are read from the default branch, so a pull request cannot loosen the rule that judges it.
 

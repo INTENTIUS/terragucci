@@ -7,7 +7,7 @@
     "file": "terragucci.yml",
     "ok": false,
     "problems": [
-      "config.bogus is not a setting (settings: roots, binary, version, forge, url, gate, waves, drift, runtime, reports, token_env, env, tips, modules, owned, oidc, terragrunt, respond, agent)",
+      "config.bogus is not a setting (settings: roots, binary, version, forge, url, gate, waves, drift, runtime, reports, token_env, env, telemetry, tips, modules, owned, oidc, terragrunt, respond, agent)",
       "config.binary is \"nope\"; use one of terraform, tofu, choudoufu, cdktn",
       "config.forge is \"svn\"; use one of github, gitlab, forgejo"
     ]
