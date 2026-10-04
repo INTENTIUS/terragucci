@@ -376,14 +376,25 @@ claim_report() {
 
 # ── traces and metrics ────────────────────────────────────────────────────
 # A plan run sends OTLP to the observability profile's collector on the
-# stack's network. Needs the example booted and `just stack-up observability`.
+# stack's network. Needs the example booted; the claims start the
+# observability profile themselves when it is not up.
 
 OTLP_ENDPOINT=http://otel-collector:4318
 PROMETHEUS="http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}"
 
 collector_up() {
-  curl -fsS -o /dev/null "http://localhost:${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}/" \
-    || { echo "no collector; run 'just stack-up observability' first" >&2; return 1; }
+  local health="http://localhost:${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}/" i
+  answers() { curl -fsS -o /dev/null -m 3 "$health" && curl -fsS -o /dev/null -m 3 "$PROMETHEUS/-/ready"; }
+  answers 2>/dev/null && return 0
+  echo "starting the observability profile" >&2
+  # up -d leaves running containers alone, so this is safe when half of it is up.
+  docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile observability up -d >&2 || return 1
+  for i in $(seq 1 30); do
+    answers 2>/dev/null && return 0
+    sleep 2
+  done
+  echo "the collector or Prometheus did not answer after 60s" >&2
+  return 1
 }
 
 claim_traces() {
