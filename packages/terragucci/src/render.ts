@@ -4,8 +4,10 @@
  *
  * check  every push: format check and validate, for every root.
  * plan   pull requests from the same repo: `terragucci stage tf-plan` plans
- *        every root in apply order and writes the plan report, kept as the
- *        job's artifact (and in a bucket when one is named). Its note is the
+ *        the roots the change reaches against the target branch, and the
+ *        roots that read their state, in apply order, and writes the plan
+ *        report, kept as the job's artifact (and in a bucket when one is
+ *        named). Its note, chant's grouped summary across those roots, is the
  *        one plan note and its counts the one terragucci/plan status.
  *        Read-only role.
  * apply  pushes to the default branch: apply every root, a layer at a time,
@@ -344,13 +346,16 @@ const COUNTS_JS =
   'const f=n(["refused"]);' +
   'console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")';
 
+/** The roots (or units) a plan report planned, comma-separated, for the note's first line. */
+const PLANNED_JS = 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))';
+
 /**
- * The pull request stage: `terragucci stage tf-plan` plans every root in
- * apply order and writes the plan report. The report's note is posted as the
- * one plan note, and its counts are the one terragucci/plan status.
+ * The pull request stage: `terragucci stage tf-plan` plans the roots the
+ * change reaches, in apply order, and writes the plan report. The report's
+ * note is posted as the one plan note, and its counts are the one
+ * terragucci/plan status.
  */
 export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
-  const ordered = layers.flat();
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -378,7 +383,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     'if [ -n "${TG_PR:-}" ]; then',
     '  note="$(mktemp)"',
     "  # The first line says which roots the note covers, so an apply can mark it stale.",
-    `  { echo "<!-- terragucci:plan roots=${ordered.join(",")} -->"; cat ${REPORT_DIR}/note.md; } >"$note"`,
+    `  { echo "<!-- terragucci:plan roots=$(node -e '${PLANNED_JS}' ${REPORT_DIR}/report.json) -->"; cat ${REPORT_DIR}/note.md; } >"$note"`,
     '  tg note "$note"',
     "fi",
     'if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi',
@@ -489,7 +494,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const plan = new GitLabJob({
       stage: "plan",
       image: jobImage,
-      variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID", ...(tg ? { GIT_DEPTH: "0" } : {}) },
+      variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens,
       ...(tg ? forgeCache("gitlab") : {}),
@@ -553,7 +558,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // not cancel makes a later run wait instead.
     ...(forge === "forgejo" ? { concurrency: { group: "terragucci-${{ github.ref }}", "cancel-in-progress": false } } : {}),
   } as never);
-  // A Terragrunt plan reads the range from the target branch, so its checkout has the history.
+  // A plan reads the range from the target branch, so its checkout has the history.
   const steps = (main: InstanceType<typeof Step>, cached = false, history = false): InstanceType<typeof Step>[] => [
     new Step({ uses: "actions/checkout@v4", ...(history ? { with: { "fetch-depth": 0 } } : {}) }),
     ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
@@ -580,7 +585,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_PR: "${{ github.event.pull_request.number }}",
     },
     steps: [
-      ...steps(new Step({ name: `Plan every ${what} and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, Boolean(tg)),
+      ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true),
       // The report stays with the run. Forgejo's artifact store speaks the v3 protocol.
       new Step({
         name: "Keep the plan report",

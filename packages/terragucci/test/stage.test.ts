@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { main } from "../src/cli";
 import { readInlineReport } from "../src/report/html";
-import { runStage } from "../src/report/stage";
+import { affectedRoots, runStage } from "../src/report/stage";
 import { tmp, write } from "./helpers";
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
@@ -77,5 +77,50 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan", () => {
     expect(ok).toMatchObject({ schema: 1, command: "stage", exit: 0, status: "ok", results: { stage: "tf-plan", uploaded: null } });
     expect(existsSync(ok.results.files.html)).toBe(true);
     expect(JSON.parse(out[1])).toMatchObject({ command: "stage", exit: 2, status: "usage" });
+  });
+});
+
+describe("affected roots", () => {
+  const state = (key: string) => `terraform {\n  backend "s3" {\n    bucket = "s"\n    key    = "${key}"\n  }\n}\n`;
+  const reads = (key: string) => `data "terraform_remote_state" "up" {\n  backend = "s3"\n  config = {\n    bucket = "s"\n    key    = "${key}"\n  }\n}\n`;
+  const repo = (): string => {
+    const dir = write(tmp(), {
+      "platform/main.tf": state("platform.tfstate"),
+      "app/main.tf": state("app.tfstate") + reads("platform.tfstate"),
+      "web/main.tf": state("web.tfstate") + reads("app.tfstate"),
+      "other/main.tf": state("other.tfstate") + 'module "m" {\n  source = "../modules/m"\n}\n',
+      "modules/m/main.tf": "",
+    });
+    const git = (...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    return dir;
+  };
+  const roots = ["platform", "app", "web", "other"];
+  const commit = (dir: string, files: Record<string, string>): void => {
+    write(dir, files);
+    execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qam", "change"], { stdio: "ignore" });
+  };
+
+  it("a changed root plans with the roots that read its state, followed through, and no other", () => {
+    const dir = repo();
+    commit(dir, { "platform/main.tf": state("platform.tfstate") + "# moved\n" });
+    expect([...affectedRoots(dir, "HEAD~1", roots, roots, () => {})!].sort()).toEqual(["app", "platform", "web"]);
+  });
+
+  it("a change to a local module plans the root that calls it", () => {
+    const dir = repo();
+    commit(dir, { "modules/m/main.tf": "# moved\n" });
+    expect([...affectedRoots(dir, "HEAD~1", roots, roots, () => {})!]).toEqual(["other"]);
+  });
+
+  it("a change outside every root plans nothing, and a range git cannot diff plans every root", () => {
+    const dir = repo();
+    write(dir, { "README.md": "x\n" });
+    execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "add", "-A"], { stdio: "ignore" });
+    execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "docs"], { stdio: "ignore" });
+    expect([...affectedRoots(dir, "HEAD~1", roots, roots, () => {})!]).toEqual([]);
+    expect(affectedRoots(dir, "origin/nowhere", roots, roots, () => {})).toBeUndefined();
   });
 });

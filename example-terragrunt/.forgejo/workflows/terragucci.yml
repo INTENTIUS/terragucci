@@ -58,7 +58,7 @@ jobs:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
           restore-keys: terragucci-tg-
-      - name: Plan every unit and write the plan report
+      - name: Plan the units the change reaches and write the plan report
         shell: bash
         run: |
           set -uo pipefail
@@ -127,7 +127,7 @@ jobs:
           if [ -n "${TG_PR:-}" ]; then
             note="$(mktemp)"
             # The first line says which roots the note covers, so an apply can mark it stale.
-            { echo "<!-- terragucci:plan roots=live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search,live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search -->"; cat terragucci-report/note.md; } >"$note"
+            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >"$note"
             tg note "$note"
           fi
           if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi
