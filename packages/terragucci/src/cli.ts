@@ -6,16 +6,21 @@
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci rollout <module> <version>
  *   terragucci profiles --config <file>
+ *   terragucci config check [--config <file>]
+ *
+ * `--json` on init, reconcile, plan and config check prints one envelope
+ * (see envelope.ts) instead of text.
  *
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
  * config error; 3 waiting on an approval.
  */
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, type Binary, type ForgeName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { detectForge } from "./detect";
-import { describeInit, init } from "./init";
+import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
+import { describeInit, init, initJson } from "./init";
 import { install, type Tool } from "./install";
 import { plan } from "./plan";
 import { describeReconcile, reconcile } from "./reconcile";
@@ -28,6 +33,9 @@ const USAGE = `usage:
   terragucci rollout <module> <version>
   terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
+  terragucci config check [--config <file>]
+
+init, reconcile, plan and config check take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -40,7 +48,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -70,7 +78,13 @@ export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
 export async function main(argv: string[]): Promise<number> {
   const { cmd, flags, args } = parse(argv);
   const cwd = process.cwd();
+  const json = flags.json === true;
+  const emit = (e: Envelope): number => {
+    console.log(JSON.stringify(e, null, 2));
+    return e.exit;
+  };
   try {
+    if (json && !ENVELOPE_COMMANDS.includes(cmd)) throw new ConfigError(`--json is not available on ${cmd || "help"}`);
     switch (cmd) {
       case "init": {
         const forge = str(flags, "forge");
@@ -78,6 +92,7 @@ export async function main(argv: string[]): Promise<number> {
         if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
         if (binary && !BINARIES.includes(binary as Binary)) throw new ConfigError(`--binary must be one of ${BINARIES.join(", ")}`);
         const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, force: flags.force === true, dryRun: flags["dry-run"] === true });
+        if (json) return emit(envelope("init", 0, initJson(cwd, result, flags["dry-run"] === true)));
         console.log(describeInit(cwd, result, flags["dry-run"] === true));
         if (flags["dry-run"] === true) console.log("dry run: nothing was written");
         return 0;
@@ -88,12 +103,15 @@ export async function main(argv: string[]): Promise<number> {
         const mode = (str(flags, "mode") ?? "dry-run") as "dry-run" | "apply";
         if (mode !== "dry-run" && mode !== "apply") throw new ConfigError("--mode must be dry-run or apply");
         const outcomes = await reconcile(await loadConfig(resolve(path)), { mode, project: str(flags, "project") });
+        const code = outcomes.some((o) => o.status === "failed") ? 1 : 0;
+        if (json) return emit(envelope("reconcile", code, { mode, projects: outcomes }));
         console.log(describeReconcile(outcomes, mode));
-        return outcomes.some((o) => o.status === "failed") ? 1 : 0;
+        return code;
       }
       case "plan": {
-        const results = await plan(cwd, { root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config") });
-        return results.every((r) => r.ok) ? 0 : 1;
+        const results = await plan(cwd, { root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config") }, json ? () => {} : console.log);
+        const code = results.every((r) => r.ok) ? 0 : 1;
+        return json ? emit(envelope("plan", code, { roots: results })) : code;
       }
       case "install": {
         const [tool, version] = args;
@@ -111,6 +129,23 @@ export async function main(argv: string[]): Promise<number> {
         console.log(profilesFor(path ? await loadConfig(resolve(path)) : {}, path ? undefined : cwd).join(" "));
         return 0;
       }
+      case "config": {
+        if (args[0] !== "check") throw new ConfigError("usage: terragucci config check [--config <file>] [--json]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        if (!path) throw new ConfigError("no terragucci config here; pass --config <file>");
+        let problems: string[] = [];
+        try {
+          await loadConfig(resolve(path), "check");
+        } catch (e) {
+          if (!(e instanceof ConfigError)) throw e;
+          problems = e.problems ?? [e.message];
+        }
+        const file = relative(cwd, resolve(path)) || path;
+        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems }));
+        if (problems.length === 0) console.log(`${file}: ok`);
+        else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
+        return problems.length ? 2 : 0;
+      }
       case "":
       case "help":
       case "--help":
@@ -122,6 +157,7 @@ export async function main(argv: string[]): Promise<number> {
     }
   } catch (e) {
     if (e instanceof ConfigError || e instanceof RenderError) {
+      if (json) return emit(envelope(cmd, 2, null, e.message));
       console.error(`terragucci: ${e.message}`);
       return 2;
     }
