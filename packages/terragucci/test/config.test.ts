@@ -71,8 +71,32 @@ describe("validation", () => {
     [{ projects: { "github.com/acme": {} } }, /must be <host>\/<owner>\/<name>/],
     [{ binary: "tofu", projects: { "github.com/a/b": {} } }, /keeps shared settings under defaults; move binary there/],
     [{ defaults: { binary: "tofu" } }, /defaults only makes sense with projects/],
+    [{ terragrunt: true }, /config\.terragrunt must be a map/],
+    [{ terragrunt: { verison: "1.1.6" } }, /config\.terragrunt\.verison is not a setting/],
+    [{ terragrunt: { version: "latest" } }, /config\.terragrunt\.version must be a release version/],
+    [{ terragrunt: { version: "0.99.0" } }, /needs Terragrunt 1\.1 or later/],
+    [{ terragrunt: { version: "1.0.4" } }, /needs Terragrunt 1\.1 or later/],
+    [{ terragrunt: { exclude: "catalog/**" } }, /config\.terragrunt\.exclude must be a list of strings/],
+    [{ terragrunt: { parallelism: 0 } }, /config\.terragrunt\.parallelism must be a whole number of 1 or more/],
+    [{ terragrunt: { parallelism: 2.5 } }, /parallelism must be a whole number/],
+    [{ terragrunt: { dependents: "all" } }, /config\.terragrunt\.dependents is "all"; use one of follow, plan/],
+    [{ terragrunt: { credentials: ["live/**"] } }, /credentials must map unit path globs/],
+    [{ terragrunt: { credentials: { "live/**": "arn:x" } } }, /credentials\["live\/\*\*"\] must be a map with plan and apply/],
+    [{ terragrunt: { credentials: { "live/**": { plan: "arn:p" } } } }, /credentials\["live\/\*\*"\]\.apply must name a role/],
+    [{ terragrunt: { credentials: { "live/**": { plan: "arn:p", apply: "arn:a", role: "x" } } } }, /\.role is not a setting \(settings: plan, apply\)/],
+    [{ terragrunt: { credentials: { "live/**": { plan: "arn:x", apply: "arn:x" } } } }, /uses one role for plan and apply/],
+    [{ defaults: { terragrunt: { parallelism: -1 } }, projects: { "github.com/a/b": {} } }, /defaults\.terragrunt\.parallelism/],
   ])("%j is refused", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(message);
+  });
+
+  it.each([
+    [{ terragrunt: {} }],
+    [{ terragrunt: { version: "1.1.6", exclude: ["catalog/**", "live/sandbox/**"], parallelism: 3, dependents: "follow" } }],
+    [{ terragrunt: { version: "1.2.0-rc1", dependents: "plan" } }],
+    [{ binary: "tofu", terragrunt: { credentials: { "live/prod/**": { plan: "arn:aws:iam::111:role/plan", apply: "arn:aws:iam::111:role/apply" } } } }],
+  ])("%j is accepted as written", (raw) => {
+    expect(validateConfig(raw, "t")).toEqual(raw);
   });
 
   it("lists every problem at once", () => {
@@ -97,6 +121,21 @@ describe("resolution", () => {
     ["github.com/a/two", { binary: "tofu", gate: "never", env: { A: "1", B: "2" }, drift: false, tips: true }],
   ])("%s: built-in < defaults < project", (key, expected) => {
     expect(resolveProject(config, key)).toMatchObject(expected);
+  });
+
+  it("a project's terragrunt keys override the defaults' one by one; credentials replace as a whole", () => {
+    const tg = validateConfig(
+      {
+        defaults: { terragrunt: { version: "1.1.6", parallelism: 8, credentials: { "live/**": { plan: "p1", apply: "a1" } } } },
+        projects: { "gitlab.com/a/b": { terragrunt: { parallelism: 3, credentials: { "live/prod/**": { plan: "p2", apply: "a2" } } } } },
+      },
+      "t",
+    );
+    expect(resolveProject(tg, "gitlab.com/a/b").terragrunt).toEqual({
+      version: "1.1.6",
+      parallelism: 3,
+      credentials: { "live/prod/**": { plan: "p2", apply: "a2" } },
+    });
   });
 
   it("one repo gets the built-in defaults under its own keys", () => {

@@ -18,8 +18,10 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
-import { imageFor, imageReference, TOOL_VERSIONS } from "./images";
-import { MARKER, RenderError, renderPipeline } from "./render";
+import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
+import { MARKER, RenderError, renderPipeline, type PipelineInput } from "./render";
+import { terragruntInstalls } from "./render-terragrunt";
+import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -31,6 +33,20 @@ export interface InitOptions {
   settings?: ResolvedSettings;
   /** Compute everything but write nothing. */
   dryRun?: boolean;
+  /** The `terragrunt` executable discovery runs. Default: `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
+  terragrunt?: string;
+}
+
+/** What `init` found in a Terragrunt repo. */
+export interface TerragruntFound {
+  /** The marker that turned Terragrunt mode on, or terragucci.yml's block. */
+  reason: string;
+  version: { value: string; reason: string };
+  parallelism: { value: number; reason: string };
+  /** How the units were found: Terragrunt's discovery, or a walk for terragrunt.hcl files. */
+  source: string;
+  /** Directories with a terragrunt.stack.hcl. */
+  stacks: string[];
 }
 
 export interface FileChange {
@@ -44,6 +60,8 @@ export interface InitResult {
   /** Why each root was found. */
   rootReasons: RootReason[];
   layers: string[][];
+  /** Set when the repo is a Terragrunt repo: `roots` are its units and `layers` its waves. */
+  terragrunt?: TerragruntFound;
   binary: { value: Binary; reason: string };
   image?: string;
   version: { value: string; reason: string };
@@ -63,25 +81,73 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const configPath = options.settings ? undefined : findConfig(repo);
   const settings: ResolvedSettings = options.settings ?? resolveRepo(configPath ? await loadConfig(configPath) : {});
 
-  const rootReasons = findRootsWithReasons(repo, settings.roots);
-  const roots = rootReasons.map((r) => r.root);
-  if (roots.length === 0) {
-    throw new ConfigError(
-      settings.roots
-        ? `no directory matches roots ${JSON.stringify(settings.roots)}`
-        : "found no roots: no directory has Terraform files with a backend or a provider block",
-    );
+  const notes: string[] = [];
+  const detectedTg = detectTerragrunt(repo);
+  if (settings.terragrunt && !detectedTg) {
+    throw new ConfigError("terragucci.yml has a terragrunt block, but the repo has no root.hcl, terragrunt.hcl or terragrunt.stack.hcl");
   }
-  const layers = applyLayers(repo, roots);
+  const tgMode = detectedTg !== undefined;
 
-  const detectedBinary = detectBinary(repo, roots);
+  // In Terragrunt mode the binary is what Terragrunt calls, and the units carry no .tf files to read it from.
+  const detectedBinary = detectBinary(repo, []);
   const binary = settings.binary
     ? { value: settings.binary, reason: "terragucci.yml" }
     : options.binary
       ? { value: options.binary, reason: "--binary" }
       : detectedBinary;
 
-  const pinned = detectVersion(repo, roots);
+  let rootReasons: RootReason[];
+  let layers: string[][];
+  let terragrunt: TerragruntFound | undefined;
+  if (detectedTg) {
+    // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
+    const tgSettings = settings.terragrunt ?? {};
+    if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; the units come from Terragrunt's discovery, narrowed by terragrunt.exclude");
+    const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
+    notes.push(...found.notes);
+    if (found.units.length === 0) {
+      throw new ConfigError(`found no Terragrunt units (${detectedTg.reason} turned Terragrunt mode on): no directory outside catalog/ holds a terragrunt.hcl`);
+    }
+    if (detectedTg.stacks.length > 0) {
+      notes.push(`explicit stacks are not run yet: the units ${detectedTg.stacks.join(", ")} would generate from terragrunt.stack.hcl are left out; implicit-stack units run as usual`);
+    }
+    if (tgSettings.dependents === "plan") {
+      notes.push("terragrunt.dependents is plan; a provisional preview of dependents needs affected selection, which is not built yet, so every unit is planned");
+    }
+    rootReasons = found.units.map((u) => ({ root: u.path, reason: found.source === "terragrunt find" ? "terragrunt find" : "terragrunt.hcl" }));
+    try {
+      layers = unitWaves(found.units, settings.waves?.canary);
+    } catch (e) {
+      throw new ConfigError((e as Error).message);
+    }
+    const pinnedTg = pinnedTerragrunt(repo);
+    terragrunt = {
+      reason: detectedTg.reason,
+      version: tgSettings.version
+        ? { value: tgSettings.version, reason: "terragucci.yml" }
+        : pinnedTg
+          ? { value: pinnedTg, reason: "terragrunt_version_constraint" }
+          : { value: TOOL_VERSIONS.terragrunt, reason: "the image" },
+      parallelism: parallelism(repo, tgSettings),
+      source: found.source,
+      stacks: detectedTg.stacks,
+    };
+  } else {
+    rootReasons = findRootsWithReasons(repo, settings.roots);
+    if (rootReasons.length === 0) {
+      throw new ConfigError(
+        settings.roots
+          ? `no directory matches roots ${JSON.stringify(settings.roots)}`
+          : "found no roots: no directory has Terraform files with a backend or a provider block",
+      );
+    }
+    layers = applyLayers(repo, rootReasons.map((r) => r.root));
+  }
+  const roots = rootReasons.map((r) => r.root);
+  // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
+  if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
+
+  const pinned = tgMode ? undefined : detectVersion(repo, roots);
   const version = settings.version
     ? { value: settings.version, reason: "terragucci.yml" }
     : pinned
@@ -98,7 +164,23 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError("cannot tell which forge this repo is on; pass --forge github, gitlab or forgejo");
   }
 
-  const ref = imageFor(binary.value);
+  let ref: ImageRef | undefined;
+  let tgInput: PipelineInput["terragrunt"];
+  if (terragrunt) {
+    if (binary.value !== "tofu" && binary.value !== "terraform") {
+      throw new RenderError(`Terragrunt runs tofu or terraform in terragucci's pipeline; ${binary.value} is not supported with Terragrunt yet`);
+    }
+    ref = terragruntImage();
+    tgInput = {
+      version: terragrunt.version.value,
+      parallelism: terragrunt.parallelism.value,
+      exclude: settings.terragrunt?.exclude ?? [],
+      ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
+      installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, TOOL_VERSIONS),
+    };
+  } else {
+    ref = imageFor(binary.value);
+  }
   if (!ref) throw new RenderError(`terragucci has no CI image for ${binary.value} yet; set binary to tofu or terraform`);
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   const pipeline = renderPipeline({
@@ -106,7 +188,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     binary: binary.value,
     version: version.value,
     image: imageReference(ref),
-    install: version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
+    install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
+    ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,
     oidc: settings.oidc,
@@ -137,9 +220,14 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
 
-  const notes: string[] = [];
   if (settings.drift) notes.push("drift is scheduled, but tf-drift is not built yet, so the pipeline has no drift job");
-  if (settings.waves?.canary?.length) notes.push("waves.canary is set; gated waves are not built yet, so every root applies in dependency order");
+  if (settings.waves?.canary?.length) {
+    notes.push(
+      terragrunt
+        ? "waves.canary is set; the canary units apply first, then the rest, with no approval between them until gated waves are built"
+        : "waves.canary is set; gated waves are not built yet, so every root applies in dependency order",
+    );
+  }
   if (settings.runtime === "fountain") notes.push("runtime fountain is not built yet; the pipeline runs on the forge");
   if (settings.reports) notes.push("reports is set; the plan report is not built yet");
 
@@ -150,16 +238,22 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
 }
 
 /** What `init` prints. */
 export function describeInit(repo: string, r: InitResult, dryRun = false): string {
   const verb = (s: FileChange["status"]): string =>
     s === "unchanged" ? "unchanged" : dryRun ? (s === "created" ? "would write" : "would update") : s === "created" ? "wrote" : "updated";
+  const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const tg = r.terragrunt;
   const lines = [
-    `found ${r.roots.length} root${r.roots.length === 1 ? "" : "s"} in ${r.layers.length} layer${r.layers.length === 1 ? "" : "s"}, ` +
-      `${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`,
+    tg
+      ? `found Terragrunt (${tg.reason}): ${plural(r.roots.length, "unit")} in ${plural(r.layers.length, "wave")} from ${tg.source}, ` +
+        `terragrunt ${tg.version.value} (${tg.version.reason}) calling ${r.binary.value} ${r.version.value} (${r.binary.reason}), ` +
+        `parallelism ${tg.parallelism.value} (${tg.parallelism.reason}), forge ${r.forge.value} (${r.forge.reason})`
+      : `found ${plural(r.roots.length, "root")} in ${plural(r.layers.length, "layer")}, ` +
+        `${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`,
     ...r.files.map((f) => `${verb(f.status)} ${relative(repo, f.path)}`),
     r.configNote,
     ...r.notes.map((n) => `note: ${n}`),
@@ -173,6 +267,7 @@ export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<s
     dryRun,
     roots: r.rootReasons.map(({ root, reason }) => ({ path: root, reason })),
     layers: r.layers,
+    ...(r.terragrunt ? { terragrunt: r.terragrunt } : {}),
     binary: r.binary,
     version: r.version,
     forge: r.forge,
