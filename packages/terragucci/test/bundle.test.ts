@@ -1,7 +1,7 @@
 // The released shape (terragucci#18): dist/terragucci.mjs alone, copied where no
 // node_modules can be found, does everything the source does.
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
@@ -21,10 +21,11 @@ function runIn(cwd: string, bin: string, ...args: string[]) {
 }
 
 describe.skipIf(!existsSync(DIST))("the bundle", () => {
-  it("init in the example with no terragucci.yml writes the example's own pipeline", () => {
+  it("init in the example with only its drift schedule in terragucci.yml writes the example's own pipeline", () => {
     const repo = tmp();
     cpSync(EXAMPLE, repo, { recursive: true });
-    rmSync(join(repo, "terragucci.yml"));
+    // Everything else is found from the repo. A schedule cannot be, so it is the one line kept.
+    writeFileSync(join(repo, "terragucci.yml"), 'drift: "0 6 * * *"\n');
     const r = runIn(repo, isolated(), "init");
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("unchanged .forgejo/workflows/terragucci.yml");

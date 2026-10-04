@@ -60,7 +60,7 @@ projects:
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
 | `waves.canary` | none | roots that go out first, as wave 1 |
-| `drift` | off | a cron schedule for `tf-drift` |
+| `drift` | off | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `runtime` | `forge` | `fountain` runs apply and drift on a steward; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | CI artifact | a bucket to copy reports to; see [The plan report](/terragucci/reference/report/) |
 | `version` | detected | the binary's version |

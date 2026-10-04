@@ -493,3 +493,44 @@ describe("two concurrent pushes to main on forgejo", () => {
     });
   });
 });
+
+describe("the drift stage", () => {
+  const withDrift = (forge: ForgeName, oidc?: typeof OIDC): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, drift: "0 6 * * *" }).content;
+
+  it.each(FORGES)("%s: no drift job unless drift names a schedule", (forge) => {
+    expect(render(forge)).not.toContain("tf-drift");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: a scheduled run, or a manual one, runs drift and neither push job", (forge) => {
+    const doc = body(withDrift(forge));
+    expect(doc.on.schedule).toEqual([{ cron: "0 6 * * *" }]);
+    expect(doc.on.workflow_dispatch).toBeDefined();
+    expect(doc.jobs.drift.if).toBe("github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'");
+    expect(doc.jobs.apply.if).toContain("github.event_name == 'push'");
+    expect(doc.jobs.check.if).toContain("github.event_name == 'push'");
+    expect(doc.jobs.plan.if).toContain("pull_request");
+    const run = doc.jobs.drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    expect(run).toContain("terragucci stage tf-drift");
+    expect(run).toContain("--forge " + forge);
+    // It reads; nothing in it applies.
+    expect(run).not.toMatch(/\bapply\b/);
+  });
+
+  it("github: drift can write issues and nothing else, and takes the read-only role", () => {
+    const text = withDrift("github", OIDC);
+    const drift = body(text).jobs.drift;
+    expect(drift.permissions).toEqual({ contents: "read", issues: "write", "id-token": "write" });
+    const run = drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    expect(run).toContain(OIDC.plan_role);
+    expect(run).not.toContain(OIDC.apply_role);
+  });
+
+  it("gitlab: drift runs for scheduled pipelines only, and check and apply skip them", () => {
+    const doc = body(withDrift("gitlab"));
+    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule"' }]);
+    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
+    expect(doc.apply.rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
+    expect(doc.drift.script.join("\n")).toContain("terragucci stage tf-drift");
+  });
+});

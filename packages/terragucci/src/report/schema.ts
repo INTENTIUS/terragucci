@@ -219,3 +219,12 @@ export interface Report {
   /** Present when tips are on, even when there are none. Absent with `tips: false`. */
   tips?: ReportTip[];
 }
+
+/**
+ * The word for a named change. In a drift report a delete is something gone
+ * from the real world, not something a plan will destroy.
+ */
+export function actionWord(stage: ReportStage, action: NamedAction): string {
+  if (stage === "tf-drift" && action === "delete") return "deleted outside Terraform";
+  return { delete: "destroy", replace: "replace", refused: "refused to plan", forget: "forget", import: "import" }[action];
+}

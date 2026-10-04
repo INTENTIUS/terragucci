@@ -62,9 +62,9 @@
     {
       "claim": "drift",
       "says": "drift is reported by root",
-      "needs": "terragucci#13",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "rollout",
@@ -89,7 +89,7 @@
     },
     {
       "claim": "zero-config",
-      "says": "with no terragucci.yml, init writes the same pipeline",
+      "says": "with no more than a drift schedule in terragucci.yml, init writes the same pipeline",
       "needs": null,
       "verdict": "pass",
       "break": "caught"

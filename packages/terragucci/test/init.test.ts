@@ -83,7 +83,7 @@ describe("init", () => {
   it("settings the pipeline cannot act on yet are named", async () => {
     const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'drift: "0 6 * * *"\nwaves:\n  canary: ["network"]\n' });
     const r = await init(dir, { binary: "tofu" });
-    expect(r.notes.join("\n")).toMatch(/tf-drift is not built yet[\s\S]*gated waves are not built yet/);
+    expect(r.notes.join("\n")).toMatch(/gated waves are not built yet/);
   });
 
   it("a repo with no roots is an error that says what a root is", async () => {

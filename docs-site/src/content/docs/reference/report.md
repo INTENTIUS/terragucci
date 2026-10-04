@@ -29,6 +29,8 @@ It plans every root and prints the grouped summary. It also writes the run's rep
 
 `--out <dir>` writes it somewhere else, and `--root <glob>` plans only matching roots. [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the rest of the flags. A Terragrunt repo's units are planned with one `terragrunt run --all` per wave. The stage exits 1 when a root refuses to plan, and still writes the report.
 
+A `tf-drift` run writes the same files, and `issue.md` besides: the body of the drift issue. Its report holds what changed outside Terraform where a plan report holds proposed changes, and it has no waves. A deleted object is listed as "deleted outside Terraform". See [Drift](/terragucci/reference/stages/#drift).
+
 ## What a reviewer sees
 
 | View | Where | What it shows |

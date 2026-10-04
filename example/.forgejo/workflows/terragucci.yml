@@ -10,6 +10,9 @@ on:
     branches:
       - '**'
   pull_request: {}
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
 
 env:
   TF_IN_AUTOMATION: '1'
@@ -132,7 +135,7 @@ jobs:
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
     needs: check
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
       group: terragucci-apply-${{ github.repository }}
       cancel-in-progress: false
@@ -265,3 +268,25 @@ jobs:
           apply_together 'envs/dev/email' 'envs/dev/orders' 'envs/dev/payments' 'envs/dev/search' 'envs/prod/email' 'envs/prod/orders' 'envs/prod/payments' 'envs/prod/search' 'envs/staging/email' 'envs/staging/orders' 'envs/staging/payments' 'envs/staging/search' || failed
           tg status terragucci/apply success "15 roots in 2 groups applied"
           echo "all roots applied"
+  drift:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    env:
+      TG_TOKEN: '${{ github.token }}'
+      TG_SHA: '${{ github.sha }}'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Plan every root against what exists, and keep the drift issue
+        shell: bash
+        run: |
+          set -uo pipefail
+          terragucci stage tf-drift --out terragucci-report --binary tofu --forge forgejo --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Keep the drift report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report-drift
+          path: terragucci-report/
+          if-no-files-found: ignore
