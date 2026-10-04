@@ -7,7 +7,7 @@ import { builtinModules } from "node:module";
 import { join } from "node:path";
 
 const BUDGET_BYTES = 300 * 1024;
-const OPTIONAL = new Set(["@intentius/tsad-reference"]);
+const OPTIONAL = new Set(["@intentius/tsad-reference", "@cdktn/hcl2json"]);
 
 const pkgDir = join(import.meta.dirname, "../packages/terragucci");
 const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
@@ -34,4 +34,4 @@ if (problems.length) {
   for (const p of problems) console.log(`FAIL  ${p}`);
   process.exit(1);
 }
-console.log(`  ✓ bundle ${Math.round(size / 1024)} KB of ${BUDGET_BYTES / 1024} KB, no dependencies, imports only ${[...specifiers].length} Node modules and the optional TypeScript folder`);
+console.log(`  ✓ bundle ${Math.round(size / 1024)} KB of ${BUDGET_BYTES / 1024} KB, no dependencies, imports only ${[...specifiers].length} Node modules and the optional TypeScript folder and HCL parser`);

@@ -6,11 +6,12 @@
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>]
- *   terragucci rollout <module> <version>
+ *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
+ *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
  *
- * `--json` on init, reconcile, plan, stage and config check prints one envelope
+ * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
  *
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
@@ -31,6 +32,7 @@ import { RenderError } from "./render";
 import { renderText } from "./report/views";
 import { runStage } from "./report/stage";
 import { S3Error } from "./report/s3";
+import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--force] [--dry-run]
@@ -38,12 +40,13 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>]
-  terragucci rollout <module> <version>
+  terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
+  terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
 
-init, reconcile, plan, stage and config check take --json: one envelope on stdout.
+init, reconcile, plan, stage, rollout and config check take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -149,9 +152,13 @@ export async function main(argv: string[]): Promise<number> {
         console.log(describePublish(results));
         return 0;
       }
-      case "rollout":
-        console.error("terragucci rollout is not available yet. https://intentius.io/terragucci/status/ says what is.");
-        return 2;
+      case "rollout": {
+        const result = await rollout(cwd, rolloutArgs(args, flags));
+        const code = rolloutExit(result);
+        if (json) return emit(envelope("rollout", code, result));
+        console.log(describeRollout(result));
+        return code;
+      }
       case "profiles": {
         const path = str(flags, "config") ?? findConfig(cwd);
         console.log(profilesFor(path ? await loadConfig(resolve(path)) : {}, path ? undefined : cwd).join(" "));

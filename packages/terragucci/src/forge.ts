@@ -39,13 +39,16 @@ function apiBase(t: ForgeTarget): string {
 
 function headers(t: ForgeTarget): Record<string, string> {
   const h: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
+  // A public repo answers reads without a token.
+  if (!t.token) return h;
   if (t.forge === "github") h.authorization = `Bearer ${t.token}`;
   else if (t.forge === "gitlab") h["private-token"] = t.token;
   else h.authorization = `token ${t.token}`;
   return h;
 }
 
-async function call(fetch: Fetch, t: ForgeTarget, method: string, path: string, body?: unknown): Promise<unknown> {
+/** One API call; a status other than 2xx throws a ForgeError naming it. */
+export async function call(fetch: Fetch, t: ForgeTarget, method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(`${apiBase(t)}${path}`, { method, headers: headers(t), body: body === undefined ? undefined : JSON.stringify(body) });
   if (!res.ok) throw new ForgeError(`${method} ${path} on ${t.origin} answered ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return res.json();

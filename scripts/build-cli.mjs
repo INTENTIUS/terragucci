@@ -2,9 +2,10 @@
 // no runtime dependencies, and the config types for a terragucci.ts.
 //   node scripts/build-cli.mjs
 // chant is a build dependency only. The TypeScript folder that a .ts config
-// needs stays external and optional (terragucci#18).
+// needs, and the HCL parser a module rollout needs, stay external and optional.
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -15,6 +16,18 @@ const dist = join(pkg, "dist");
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 
+// chant's YAML reader (@intentius/chant/yaml) imports js-yaml's default
+// export, an object holding the whole library, so esbuild can drop none of
+// it: 101 KB as the ES module. js-yaml's own minified build is the same code
+// at 43 KB, so the bundle takes that one.
+const require = createRequire(import.meta.url);
+const minifiedYaml = {
+  name: "minified-js-yaml",
+  setup(b) {
+    b.onResolve({ filter: /^js-yaml$/ }, () => ({ path: join(dirname(require.resolve("js-yaml")), "dist/js-yaml.min.js") }));
+  },
+};
+
 await build({
   entryPoints: [join(pkg, "src/cli.ts")],
   outfile: join(dist, "terragucci.mjs"),
@@ -22,9 +35,12 @@ await build({
   platform: "node",
   format: "esm",
   target: "node22",
-  external: ["@intentius/tsad-reference", "typescript"],
+  external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"],
   banner: { js: "#!/usr/bin/env node\nimport { createRequire as __terragucciRequire } from 'node:module';\nconst require = __terragucciRequire(import.meta.url);" },
   legalComments: "none",
+  // Folds constants and drops dead branches; names and layout stay readable.
+  minifySyntax: true,
+  plugins: [minifiedYaml],
   logLevel: "warning",
 });
 chmodSync(join(dist, "terragucci.mjs"), 0o755);
