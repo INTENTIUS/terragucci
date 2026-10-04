@@ -33,7 +33,7 @@ describe("images", () => {
   ] as const)("a %s pipeline runs every job in the pinned image", (forge, shape) => {
     const image = `ghcr.io/intentius/terragucci-tofu:${imageTag("tofu")}@${DIGEST}`;
     const out = renderPipeline({ forge, binary: "tofu", version: TOOL_VERSIONS.tofu, image, layers: [["a"]], env: {} }).content;
-    expect(out.split(shape + image).length - 1).toBe(2);
+    expect(out.split(shape + image).length - 1).toBe(3);
     expect(out).toContain("pinned by digest");
     expect(out).not.toContain("terragucci install");
     expect(out).not.toMatch(/curl|unzip/);
@@ -46,7 +46,7 @@ describe("images", () => {
     const r = await init(dir, { binary: "tofu" });
     const text = readFileSync(r.files[0].path, "utf-8");
     expect(r.version).toEqual({ value: "1.12.0", reason: "required_version" });
-    expect(text.split('dir="$(terragucci install tofu 1.12.0)"').length - 1).toBe(2);
+    expect(text.split('dir="$(terragucci install tofu 1.12.0)"').length - 1).toBe(3);
     expect(text).toContain('export PATH="$dir:$PATH"');
   });
 });

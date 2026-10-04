@@ -38,8 +38,13 @@ await build({
   external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"],
   banner: { js: "#!/usr/bin/env node\nimport { createRequire as __terragucciRequire } from 'node:module';\nconst require = __terragucciRequire(import.meta.url);" },
   legalComments: "none",
-  // Folds constants and drops dead branches; names and layout stay readable.
+  // Folds constants, drops dead branches and whitespace. Names are kept, and the
+  // linked source map ships beside the bundle: run with `node --enable-source-maps`
+  // to read a stack trace against the sources.
   minifySyntax: true,
+  minifyWhitespace: true,
+  keepNames: true,
+  sourcemap: "linked",
   plugins: [minifiedYaml],
   logLevel: "warning",
 });
