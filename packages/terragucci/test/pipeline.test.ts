@@ -534,3 +534,27 @@ describe("the drift stage", () => {
     expect(doc.drift.script.join("\n")).toContain("terragucci stage tf-drift");
   });
 });
+
+describe("telemetry headers secret", () => {
+  const withHeaders = (forge: ForgeName): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, headersSecret: "OTLP_HEADERS" }).content;
+
+  it.each(["github", "forgejo"] as const)("%s: the secret is mapped into the job environment", (forge) => {
+    expect(body(withHeaders(forge)).env.OTEL_EXPORTER_OTLP_HEADERS).toBe("${{ secrets.OTLP_HEADERS }}");
+  });
+
+  it("gitlab: the CI/CD variable is mapped on every job", () => {
+    const doc = body(withHeaders("gitlab"));
+    for (const job of ["check", "plan", "apply"]) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBe("$OTLP_HEADERS");
+  });
+
+  it.each(FORGES)("%s: no headers setting renders no header variable", (forge) => {
+    expect(render(forge)).not.toContain("OTEL_EXPORTER_OTLP_HEADERS");
+  });
+
+  it("validates the setting", () => {
+    expect(validateConfig({ telemetry: { headers_secret: "OTLP_HEADERS" } }, "t").telemetry).toEqual({ headers_secret: "OTLP_HEADERS" });
+    expect(() => validateConfig({ telemetry: { headers_secret: "not a name" } }, "t")).toThrow(/headers_secret/);
+    expect(() => validateConfig({ telemetry: {} }, "t")).toThrow(/headers_secret/);
+  });
+});

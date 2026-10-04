@@ -96,6 +96,8 @@ export interface ProjectSettings {
   token_env?: string;
   /** Environment variables every job gets. Values only, never secrets. */
   env?: Record<string, string>;
+  /** The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, such as a collector's API key. */
+  telemetry?: { headers_secret: string };
   tips?: boolean;
   modules?: { path?: string; publish?: string | string[] };
   /**
@@ -170,7 +172,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "tips", "modules", "owned", "oidc", "terragrunt", "respond", "agent",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "terragrunt", "respond", "agent",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -220,6 +222,16 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.env !== undefined) {
     if (!isObject(s.env) || !Object.values(s.env).every((x) => typeof x === "string")) {
       problems.push(`${where}.env must map names to string values`);
+    }
+  }
+  if (s.telemetry !== undefined) {
+    const t = s.telemetry;
+    if (!isObject(t)) problems.push(`${where}.telemetry must be a map with headers_secret`);
+    else {
+      for (const k of Object.keys(t)) if (k !== "headers_secret") problems.push(`${where}.telemetry.${k} is not a setting (settings: headers_secret)`);
+      if (typeof t.headers_secret !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t.headers_secret)) {
+        problems.push(`${where}.telemetry.headers_secret must name the secret holding the OTLP headers, such as OTLP_HEADERS`);
+      }
     }
   }
   if (s.reports !== undefined && !(isObject(s.reports) && typeof s.reports.bucket === "string")) {
