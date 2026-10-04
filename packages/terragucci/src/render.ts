@@ -74,6 +74,8 @@ export interface PipelineInput {
   oidc?: { plan_role: string; apply_role: string; audience?: string };
   /** The environment variable holding the forge token, where the forge's own job token cannot post statuses (GitLab). */
   tokenEnv?: string;
+  /** The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, mapped into every job's environment. */
+  headersSecret?: string;
   /** A bucket for plan reports, besides the job's artifact. */
   reports?: PlanReportInput["reports"];
   /** Set when `modules.publish` is: the pipeline gets a job that publishes changed modules after apply. */
@@ -444,7 +446,7 @@ function text(result: string | { primary: string }): string {
 }
 
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
-  const { forge, binary, image, install, layers, env, oidc, tokenEnv } = input;
+  const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
   // A job asks the forge for an OIDC token when it assumes a role, by oidc or by unit path.
@@ -459,7 +461,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const drift = tg ? undefined : input.drift;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError(tg ? "there are no Terragrunt units to run" : "there are no roots to run");
-  const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env };
+  const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env, ...(headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {}) };
   const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
