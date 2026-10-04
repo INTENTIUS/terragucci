@@ -41,3 +41,18 @@ export const installJust = (): InstanceType<typeof Step> =>
       `just --version`,
     ].join("\n"),
   });
+
+export const ACT_VERSION = "0.2.89";
+
+/** `act` runs the github profile's workflows on the runner; a pinned release binary. */
+export const installAct = (): InstanceType<typeof Step> =>
+  new Step({
+    name: "Install act",
+    run: [
+      `arch=$(uname -m); [ "$arch" = aarch64 ] && arch=arm64`,
+      `curl -fsSL -o /tmp/act.tar.gz https://github.com/nektos/act/releases/download/v${ACT_VERSION}/act_Linux_$arch.tar.gz`,
+      `tar -xzf /tmp/act.tar.gz -C /tmp act`,
+      `sudo mv /tmp/act /usr/local/bin/act`,
+      `act --version`,
+    ].join("\n"),
+  });

@@ -24,8 +24,8 @@
 # Profiles:
 #   aws       floci                                    validated
 #   forgejo   floci + Forgejo + forgejo-runner         validated
-#   github    floci + mock GitHub API                  declared, not yet validated
-#   gitlab    floci + GitLab CE + gitlab-runner        declared, not yet validated
+#   github    floci + mock GitHub API (+ act on the host)
+#   gitlab    floci + GitLab CE + gitlab-runner
 #   fountain  floci + fountain + Postgres + runner     declared, not yet validated
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
 #   observability  an OpenTelemetry collector and Prometheus   used by the traces and metrics smoke claims
@@ -192,38 +192,44 @@ services:
       default:
         aliases: [prometheus]
 
-  # ── github: declared, not yet validated ──────────────────────────────────
-  # GitHub has no self-hostable edition. The plan (terragucci#4) is `act` on the
-  # host with event payloads and the job containers on this network, plus
-  # github-warden's stateful mock API for the PR-comment calls. The mock is
-  # dependency-free node, mounted from a github-warden checkout next to this
-  # one (override with TERRAGUCCI_MOCK_GITHUB_DIR). It covers warden's
-  # endpoints, not PR comments yet. Nothing has been run here.
+  # ── github ───────────────────────────────────────────────────────────────
+  # GitHub has no self-hostable edition. The runner is `act` on the host (see
+  # validate.sh), with its job containers on this network; this service is the
+  # forge: mock-github/server.mjs answers the API calls terragucci makes and
+  # serves the repos' git over smart HTTP. The full node image is used because
+  # the mock shells out to git.
   mock-github:
-    image: node:22-alpine
+    image: node:22-bookworm
     container_name: terragucci-mock-github
     profiles: [github]
     command: ["node", "/srv/server.mjs"]
     volumes:
-      - ${TERRAGUCCI_MOCK_GITHUB_DIR:-../../github-warden/e2e/mock-github}:/srv:ro
+      - ./mock-github:/srv:ro
     environment:
       PORT: "8188"
+      MOCK_TOKEN: ${TERRAGUCCI_GITHUB_TOKEN:-tg-mock-github-token}
+      MOCK_PUBLIC_URL: http://localhost:${TERRAGUCCI_GITHUB_PORT:-8198}
     ports:
       - "${TERRAGUCCI_GITHUB_PORT:-8198}:8188"
     networks:
       default:
         aliases: [mock-github]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8188/__mock/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
-  # ── gitlab: declared, not yet validated ──────────────────────────────────
-  # Lifted from choudoufu examples/ci-pipelines/e2e/gitlab. external_url is
-  # the service name, and the runner must be registered with
-  # --docker-network-mode terragucci. GitLab 17 has no registration tokens:
-  # create the runner with POST /api/v4/user/runners and pass the glrt- token
-  # it returns to `gitlab-runner register --token`. The GitLab CE image is
-  # linux/amd64 only, so on arm64 it runs under emulation; cold boot is
-  # minutes. bootstrap.sh does not drive this profile yet.
+  # ── gitlab ───────────────────────────────────────────────────────────────
+  # From gitlab-warden's e2e stack. external_url is the service name, and the
+  # runner is registered with --docker-network-mode terragucci. GitLab 17 has
+  # no registration tokens: bootstrap.sh creates the runner with
+  # POST /api/v4/user/runners and passes the glrt- token it returns to
+  # `gitlab-runner register --token`. The GitLab CE image is linux/amd64 only,
+  # so on arm64 it runs under emulation; cold boot is several minutes.
   gitlab:
     image: gitlab/gitlab-ce:17.11.0-ce.0
+    platform: linux/amd64
     container_name: terragucci-gitlab
     profiles: [gitlab]
     shm_size: "256m"
@@ -236,6 +242,7 @@ services:
         prometheus_monitoring['enable'] = false
         puma['worker_processes'] = 0
         sidekiq['max_concurrency'] = 3
+        gitlab_rails['gitlab_default_can_create_group'] = true
     ports:
       - "${TERRAGUCCI_GITLAB_PORT:-8939}:8929"
     networks:
@@ -256,6 +263,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - gitlab-runner-config:/etc/gitlab-runner
+      - job-cache:/cache
     networks:
       default:
         aliases: [gitlab-runner]

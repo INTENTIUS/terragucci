@@ -4,21 +4,23 @@
 # validation run needs.
 #
 #   stack/bootstrap.sh forgejo        floci + Forgejo + forgejo-runner
+#   stack/bootstrap.sh github         floci + the mock GitHub API (the runner is act, on the host)
+#   stack/bootstrap.sh gitlab         floci + GitLab CE + gitlab-runner (GitLab runs under emulation on arm64)
 #   stack/bootstrap.sh aws            floci alone
 #   stack/bootstrap.sh observability  an OpenTelemetry collector and Prometheus
 #
-# For forgejo it also mints an admin and an API token, registers the runner
-# and creates the repo the claims push to. Re-running it is safe: the admin is
-# reused, the token is replaced, a runner that is already online is kept, and
-# an existing repo is left alone.
+# For each forge it also mints a token, registers the runner where there is
+# one to register, and creates the repo the claims push to. Re-running it is
+# safe: the admin is reused, the token is replaced, a runner that is already
+# online is kept, and an existing repo is left alone.
 #
 # The env vars go to stdout as `export` lines and to stack/.state/<profile>.env,
 # which stack/validate.sh reads, so `eval "$(stack/bootstrap.sh forgejo)"` is
 # optional. Progress goes to stderr.
 #
-# github, gitlab and fountain are declared in docker-compose.yml but not
-# validated; this script refuses them unless TERRAGUCCI_UNVALIDATED=1, and then
-# only starts their containers.
+# fountain is declared in docker-compose.yml but not validated; this script
+# refuses it unless TERRAGUCCI_UNVALIDATED=1, and then only starts its
+# containers.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +30,8 @@ COMPOSE=(docker compose -f "$HERE/docker-compose.yml" --project-name terragucci)
 
 FORGEJO_PORT="${TERRAGUCCI_FORGEJO_PORT:-3300}"
 FLOCI_PORT="${TERRAGUCCI_FLOCI_PORT:-4580}"
+GITHUB_PORT="${TERRAGUCCI_GITHUB_PORT:-8198}"
+GITLAB_PORT="${TERRAGUCCI_GITLAB_PORT:-8939}"
 FORGEJO_URL="http://localhost:${FORGEJO_PORT}"
 FLOCI_URL="http://localhost:${FLOCI_PORT}"
 NETWORK="terragucci"
@@ -73,8 +77,8 @@ write_env() { # profile, then KEY=VALUE pairs
 }
 
 case "$PROFILE" in
-  aws|forgejo) ;;
-  github|gitlab|fountain)
+  aws|forgejo|github|gitlab) ;;
+  fountain)
     if [ "${TERRAGUCCI_UNVALIDATED:-}" != "1" ]; then
       die "the $PROFILE profile is declared but not validated yet (see stack/README.md). Set TERRAGUCCI_UNVALIDATED=1 to start its containers anyway."
     fi
@@ -93,6 +97,20 @@ case "$PROFILE" in
   *) die "unknown profile '$PROFILE' (aws, forgejo, observability, github, gitlab, fountain)" ;;
 esac
 
+# The pipelines terragucci generates run in its tofu image. Before an image is
+# published, build it into the local daemon, where both runners find it
+# without pulling.
+ensure_ci_image() {
+  local ref
+  ref="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  if ! docker image inspect "$ref" >/dev/null 2>&1; then
+    log "building the CI images (a few minutes the first time)…"
+    (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null && npx tsx scripts/images.ts build >/dev/null 2>&1) \
+      || die "the CI images did not build; run 'just images' to see why"
+  fi
+  CI_IMAGE="$ref"
+}
+
 started=$(date +%s)
 log "starting the $PROFILE profile…"
 "${COMPOSE[@]}" --profile "$PROFILE" up -d >&2
@@ -100,6 +118,111 @@ wait_http "$FLOCI_URL/" "floci" 60
 
 if [ "$PROFILE" = "aws" ]; then
   write_env aws "TERRAGUCCI_FLOCI_URL=$FLOCI_URL"
+  log "ready in $(( $(date +%s) - started ))s"
+  exit 0
+fi
+
+# ── github ─────────────────────────────────────────────────────────────────
+if [ "$PROFILE" = "github" ]; then
+  command -v act >/dev/null 2>&1 || die "act is not installed; the github profile runs workflows with it (brew install act)"
+  GITHUB_URL="http://localhost:${GITHUB_PORT}"
+  GITHUB_TOKEN="${TERRAGUCCI_GITHUB_TOKEN:-tg-mock-github-token}"
+  GITHUB_USER="terragucci-admin"
+  wait_http "$GITHUB_URL/__mock/health" "the mock GitHub" 60
+  # An existing repo answers 422 and is kept.
+  curl -s -o /dev/null -H "Authorization: Bearer $GITHUB_TOKEN" -H 'content-type: application/json' \
+    -d "{\"name\":\"$REPO\",\"default_branch\":\"main\"}" "$GITHUB_URL/api/v3/user/repos"
+  ensure_ci_image
+  write_env github \
+    "TERRAGUCCI_GITHUB_URL=$GITHUB_URL" \
+    "TERRAGUCCI_GITHUB_TOKEN=$GITHUB_TOKEN" \
+    "TERRAGUCCI_GITHUB_USER=$GITHUB_USER" \
+    "TERRAGUCCI_GITHUB_REPO=$GITHUB_USER/$REPO" \
+    "TERRAGUCCI_FLOCI_URL=$FLOCI_URL"
+  log "ready in $(( $(date +%s) - started ))s"
+  exit 0
+fi
+
+# ── gitlab ─────────────────────────────────────────────────────────────────
+if [ "$PROFILE" = "gitlab" ]; then
+  GITLAB_URL="http://localhost:${GITLAB_PORT}"
+  # A throwaway token on a throwaway instance, minted through gitlab-rails the
+  # way gitlab-warden's e2e does.
+  GITLAB_TOKEN="glpat-terragucci-local-0001"
+  # Poll the sign-in page, not /-/health: the monitoring endpoints are
+  # restricted by IP and a request from the host arrives from the bridge gateway.
+  # Cold boot under emulation takes ten minutes or more.
+  log "waiting for GitLab to serve (cold boot under emulation is slow)…"
+  for i in $(seq 1 360); do
+    curl -fsS -o /dev/null -m 5 "$GITLAB_URL/users/sign_in" 2>/dev/null && { log "serving after ~$((i * 5))s"; break; }
+    sleep 5
+    [ $((i % 24)) -eq 0 ] && log "still booting… ~$((i * 5))s"
+    if [ "$i" = 360 ]; then "${COMPOSE[@]}" --profile gitlab logs --tail=60 gitlab >&2 || true; die "GitLab did not serve in 30 minutes"; fi
+  done
+  log "minting a root token with gitlab-rails…"
+  for i in $(seq 1 30); do
+    if "${COMPOSE[@]}" exec -T gitlab gitlab-rails runner "
+      u = User.find_by_username('root')
+      u.personal_access_tokens.where(name: 'terragucci').delete_all
+      t = u.personal_access_tokens.create!(scopes: ['api'], name: 'terragucci', expires_at: 1.day.from_now)
+      t.set_token('${GITLAB_TOKEN}'); t.save!
+    " >/dev/null 2>&1; then break; fi
+    sleep 10
+    [ "$i" = 30 ] && die "could not mint a token with gitlab-rails"
+  done
+  glapi() { curl -fsS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$@"; }
+  for i in $(seq 1 12); do glapi -o /dev/null "$GITLAB_URL/api/v4/version" 2>/dev/null && break; sleep 5; done
+  glapi -o /dev/null "$GITLAB_URL/api/v4/version" || die "the token does not authenticate"
+  log "GitLab $(glapi "$GITLAB_URL/api/v4/version" | jq -r .version)"
+
+  ensure_ci_image
+  runner_online() { glapi "$GITLAB_URL/api/v4/runners/all?status=online" | jq -e 'map(select(.description == "terragucci-docker")) | length > 0' >/dev/null 2>&1; }
+  if runner_online; then
+    log "the runner is already registered and online"
+  else
+    # Runners from an earlier registration that are no longer polling.
+    for stale in $(glapi "$GITLAB_URL/api/v4/runners/all" | jq -r '.[] | select(.description == "terragucci-docker") | .id'); do
+      glapi -o /dev/null -X DELETE "$GITLAB_URL/api/v4/runners/$stale" || true
+    done
+    log "registering gitlab-runner…"
+    RUNNER_TOKEN="$(glapi -X POST "$GITLAB_URL/api/v4/user/runners" \
+      --data-urlencode "runner_type=instance_type" --data-urlencode "description=terragucci-docker" \
+      --data-urlencode "run_untagged=true" | jq -r .token)"
+    [ -n "$RUNNER_TOKEN" ] && [ "$RUNNER_TOKEN" != null ] || die "runner creation returned no token"
+    "${COMPOSE[@]}" exec -T gitlab-runner rm -f /etc/gitlab-runner/config.toml
+    # network mode: job containers join the terragucci network. The cache
+    # volume holds the provider plugin cache. Every job's AWS is floci.
+    "${COMPOSE[@]}" exec -T gitlab-runner gitlab-runner register --non-interactive \
+      --url http://gitlab:8929 --token "$RUNNER_TOKEN" --executor docker \
+      --docker-image "$CI_IMAGE" --docker-pull-policy if-not-present \
+      --docker-network-mode "$NETWORK" --docker-volumes "terragucci-job-cache:/cache" \
+      --env TF_PLUGIN_CACHE_DIR=/cache \
+      --env AWS_ENDPOINT_URL=http://floci:4566 --env AWS_ACCESS_KEY_ID=test \
+      --env AWS_SECRET_ACCESS_KEY=test --env AWS_REGION=us-east-1 >&2
+    # A reconcile run leaves a pipeline running on an untouched project; let
+    # the one the claim waits on start beside it.
+    "${COMPOSE[@]}" exec -T gitlab-runner sed -i 's/^concurrent = .*/concurrent = 4/' /etc/gitlab-runner/config.toml
+    "${COMPOSE[@]}" restart gitlab-runner >&2
+    log "waiting for the runner to come online…"
+    for i in $(seq 1 60); do
+      runner_online && { log "runner online after ~$((i * 2))s"; break; }
+      sleep 2
+      if [ "$i" = 60 ]; then "${COMPOSE[@]}" logs --tail=40 gitlab-runner >&2 || true; die "the runner did not come online"; fi
+    done
+  fi
+
+  log "creating root/$REPO (an existing one is kept)…"
+  if ! glapi -o /dev/null "$GITLAB_URL/api/v4/projects/root%2F$REPO" 2>/dev/null; then
+    glapi -o /dev/null -X POST "$GITLAB_URL/api/v4/projects" \
+      --data-urlencode "name=$REPO" --data-urlencode "visibility=public" --data-urlencode "initialize_with_readme=false" \
+      --data-urlencode "default_branch=main"
+  fi
+  write_env gitlab \
+    "TERRAGUCCI_GITLAB_URL=$GITLAB_URL" \
+    "TERRAGUCCI_GITLAB_TOKEN=$GITLAB_TOKEN" \
+    "TERRAGUCCI_GITLAB_USER=root" \
+    "TERRAGUCCI_GITLAB_REPO=root/$REPO" \
+    "TERRAGUCCI_FLOCI_URL=$FLOCI_URL"
   log "ready in $(( $(date +%s) - started ))s"
   exit 0
 fi

@@ -39,3 +39,88 @@ jobs:
         run: just check
       - name: Workflows match their declarations
         run: just ci-check
+  validate-aws:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Install
+        run: npm ci
+      - name: Start the aws profile
+        run: just stack-up aws
+      - name: Run the aws claims
+        run: just validate-forge aws
+      - name: Stop the stack
+        if: always()
+        run: just stack-down
+  validate-forgejo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Install
+        run: npm ci
+      - name: Start the forgejo profile
+        run: just stack-up forgejo
+      - name: Run the forgejo claims
+        run: just validate-forge forgejo
+      - name: Stop the stack
+        if: always()
+        run: just stack-down
+  validate-github:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Install
+        run: npm ci
+      - name: Install act
+        run: |
+          arch=$(uname -m); [ "$arch" = aarch64 ] && arch=arm64
+          curl -fsSL -o /tmp/act.tar.gz https://github.com/nektos/act/releases/download/v0.2.89/act_Linux_$arch.tar.gz
+          tar -xzf /tmp/act.tar.gz -C /tmp act
+          sudo mv /tmp/act /usr/local/bin/act
+          act --version
+      - name: Start the github profile
+        run: just stack-up github
+      - name: Run the github claims
+        run: just validate-forge github
+      - name: Stop the stack
+        if: always()
+        run: just stack-down

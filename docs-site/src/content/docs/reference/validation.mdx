@@ -3,14 +3,24 @@ title: Validation
 description: Every pipeline terragucci generates runs on a real forge and runner before it ships.
 ---
 
+import ValidationClaims from '../../../components/ValidationClaims.astro';
+
 A pipeline that only parses has not been tested. Before a release, every pipeline terragucci generates runs on a real forge, with a real runner, against an AWS emulator. Each feature has a check that must pass, and each check is also broken on purpose to show it fails when it should.
 
 | Forge | What runs |
 |---|---|
 | Forgejo | a Forgejo server and its runner |
-| GitHub | the GitHub workflow dialect, with `act` and a mock GitHub API |
+| GitHub | the generated workflow, run by `act` against a mock GitHub API |
 | GitLab | GitLab CE and its runner |
 | fountain | a fountain steward, its database and a sandbox runner |
+
+Forgejo, GitHub and the AWS emulator are checked on every pull request to terragucci. GitLab is checked every night, because its server is heavy. fountain is opt-in and is not part of these checks yet.
+
+## The claims
+
+Each claim runs once as it should, and once with the property it checks broken on purpose; the claim must then fail. `reconcile` runs `terragucci reconcile` from a control repo and follows the pull or merge request it opens through its check, its merge and the apply that follows.
+
+<ValidationClaims />
 
 The same setup runs on your laptop. [The tutorial](/terragucci/tutorial/) boots it with one command and walks through each feature, and [Status](/terragucci/status/) shows which checks pass today.
 
@@ -21,5 +31,7 @@ just stack-up forgejo
 just smoke
 just stack-down
 ```
+
+To run a single claim on a forge, use `just validate <forge> <claim>`. To run all of a forge's claims, plain and broken, use `just validate-forge <forge>`. After a full run, `just validation-record` rewrites the table above.
 
 `just smoke` prints one line per check. `BREAK=1 just smoke <check>` breaks the property on purpose, and the line must then say `caught`.

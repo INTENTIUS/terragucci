@@ -16,6 +16,7 @@
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
     "capture/**/*.ts",
+    "nightly/**/*.ts",
     "workflows/**/*.ts",
     "test/**/*.ts",
     "chant.config.ts"

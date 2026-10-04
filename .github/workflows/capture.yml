@@ -15,7 +15,7 @@ concurrency:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     permissions:
       contents: write
       pull-requests: write
@@ -37,8 +37,17 @@ jobs:
           just --version
       - name: Build the CI images
         run: just images
+      - name: Install act
+        run: |
+          arch=$(uname -m); [ "$arch" = aarch64 ] && arch=arm64
+          curl -fsSL -o /tmp/act.tar.gz https://github.com/nektos/act/releases/download/v0.2.89/act_Linux_$arch.tar.gz
+          tar -xzf /tmp/act.tar.gz -C /tmp act
+          sudo mv /tmp/act /usr/local/bin/act
+          act --version
       - name: Record the smoke claims
         run: just smoke-record
+      - name: Record the validation claims
+        run: just validation-record
       - name: Capture the tutorial
         run: CHROME=google-chrome just tutorial-capture
       - name: Stop the stack

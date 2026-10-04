@@ -18,7 +18,7 @@ terragucci is being built. The rest of this site describes it finished, so this 
 | `terragucci stage tf-plan` | plans every root and writes the plan report: JSON, HTML, the pull-request note and GitLab's counts, with each root's full plan beside it, sensitive values redacted; with `reports.bucket`, copies it to the bucket and updates the index. The generated pipeline's plan job runs it on every pull request, posts its note and keeps it as the job's artifact |
 | Traces and metrics | with an OTLP endpoint set, `tf-plan` sends one trace per run, with a span per wave, root and binary run, and OpenTofu's own spans inside it; and its metrics, read from the report |
 | `terragucci.yml` and `terragucci reconcile` | one config for one repo or many; from a control repo, a pull request in each project that changes |
-| The local validation stack | Forgejo with its runner and floci; GitHub, GitLab and fountain setups are declared but not yet checked |
+| The local validation stack | floci with Forgejo, GitHub (`act` and a mock API) or GitLab, each with its claims on the [validation page](/terragucci/reference/validation/); a fountain setup is declared but not yet checked |
 
 ## What the checks show
 
@@ -38,7 +38,6 @@ Each feature on this site has one check, run against the [tutorial's example](/t
 | Tips | in development |
 | Terragrunt support | in development |
 | Dashboards and alert rules, declared with chant's grafana and prometheus lexicons | in development |
-| GitHub and GitLab pipelines, checked locally | in development |
 | A fountain steward started by a pull request | planned after launch |
 
 The tutorial grows a page each time one of these passes its check.

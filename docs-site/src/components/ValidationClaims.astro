@@ -1,0 +1,78 @@
+---
+// The validation claims, as last recorded by `just validation-record`.
+import record from '../data/validation.json';
+
+const claims = record.claims as Array<{
+	forge: string;
+	claim: string;
+	says: string;
+	verdict: string;
+	break: string | null;
+}>;
+
+const names: Record<string, string> = { aws: 'AWS emulator', forgejo: 'Forgejo', github: 'GitHub', gitlab: 'GitLab' };
+
+const result = (c: (typeof claims)[number]) => {
+	if (c.verdict === 'pending') return 'not run yet';
+	if (c.verdict === 'pass' && c.break === 'caught') return 'passes, and fails when broken';
+	if (c.verdict === 'pass') return 'passes';
+	return 'fails';
+};
+---
+<div class="tg-validation not-content">
+	<table>
+		<thead>
+			<tr><th>Forge</th><th>Claim</th><th>What it shows</th><th>Result</th></tr>
+		</thead>
+		<tbody>
+			{claims.map((c) => (
+				<tr>
+					<td>{names[c.forge] ?? c.forge}</td>
+					<td><code>{c.claim}</code></td>
+					<td>{c.says}</td>
+					<td class={`v-${c.verdict}`}>{result(c)}</td>
+				</tr>
+			))}
+		</tbody>
+	</table>
+</div>
+
+<style>
+	.tg-validation {
+		overflow-x: auto;
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.9rem;
+	}
+	th {
+		text-align: left;
+		font-weight: 500;
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
+		padding: 0.5rem 0.75rem 0.5rem 0;
+		border-bottom: 1px solid var(--tg-rule);
+	}
+	td {
+		padding: 0.55rem 0.75rem 0.55rem 0;
+		border-bottom: 1px solid var(--tg-rule);
+		vertical-align: top;
+	}
+	code {
+		font-family: var(--sl-font-mono);
+		font-size: 0.85em;
+		white-space: nowrap;
+	}
+	.v-pass {
+		color: var(--sl-color-white);
+		font-weight: 500;
+	}
+	.v-pending {
+		color: var(--sl-color-gray-3);
+	}
+	.v-fail {
+		color: var(--tg-warn);
+		font-weight: 600;
+	}
+</style>
