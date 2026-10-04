@@ -13,8 +13,14 @@
  *        applies after it. One apply per project at a time; posts one
  *        terragucci/apply status and marks plan notes the push made stale.
  *
- * The stages terragucci is building (grouped plans, gated waves, drift) take
- * these jobs' place as they ship; the file stays where it is.
+ * drift  only when `drift:` names a schedule: `terragucci stage tf-drift` plans
+ *        every root with -refresh-only, keeps the same report, and opens,
+ *        updates or closes the project's one drift issue. It never applies.
+ *        Read-only role. On GitLab the schedule itself is set in the
+ *        project's CI/CD schedules; the job runs for scheduled pipelines.
+ *
+ * The stages terragucci is building (gated waves) take these jobs' place as
+ * they ship; the file stays where it is.
  */
 // Each lexicon's serializer and generated entities, never its entry point: the
 // entry points carry lint rules, codegen and the TypeScript compiler, which the
@@ -72,6 +78,8 @@ export interface PipelineInput {
   reports?: PlanReportInput["reports"];
   /** Set when `modules.publish` is: the pipeline gets a job that publishes changed modules after apply. */
   publish?: boolean;
+  /** A cron schedule: the pipeline gets a drift job that runs on it. */
+  drift?: string;
 }
 
 export interface RenderedPipeline {
@@ -394,6 +402,30 @@ export function publishScript(forge: ForgeName): string {
   ].join("\n");
 }
 
+/**
+ * The scheduled stage: `terragucci stage tf-drift` plans every root with
+ * -refresh-only, writes the plan report, and keeps the drift issue. A root
+ * that cannot be refreshed fails the job; drift alone does not.
+ */
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
+  const args = [
+    "--out", REPORT_DIR,
+    "--binary", binary,
+    "--forge", forge,
+    "--layers", sh(layers.map((l) => l.join(",")).join(";")),
+    "--report-url", reportUrl(forge),
+    ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
+    ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
+    ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
+  ];
+  return [
+    "set -uo pipefail",
+    // The stage keeps the issue itself; the forge calls here are only for the OIDC token.
+    ...(oidc ? [forgeApi(forge), oidcScript(forge, oidc.plan_role, "terragucci-drift", oidc.audience)] : []),
+    `terragucci stage tf-drift ${args.join(" ")}`,
+  ].join("\n");
+}
+
 function header(image: string): string {
   return [
     MARKER,
@@ -423,6 +455,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(input.reports ? { reports: input.reports } : {}),
     ...(tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n") } } : {}),
   };
+  // Drift plans Terraform and OpenTofu roots; a Terragrunt repo gets no drift job yet.
+  const drift = tg ? undefined : input.drift;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError(tg ? "there are no Terragrunt units to run" : "there are no roots to run");
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env };
@@ -445,7 +479,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_BRANCH: "$CI_DEFAULT_BRANCH",
     };
     const idTokens = needsToken ? { id_tokens: { TERRAGUCCI_OIDC: { aud: audience } } } : {};
-    const check = new GitLabJob({ stage: "check", image: jobImage, variables: jobEnv, script: script(checkBody) });
+    const notScheduled = drift ? { rules: [new Rule({ if: '$CI_PIPELINE_SOURCE != "schedule"' })] } : {};
+    const check = new GitLabJob({ stage: "check", image: jobImage, variables: jobEnv, ...notScheduled, script: script(checkBody) } as never);
     // Plan runs a merge request's code, so it gets the read-only role, and never
     // runs for a merge request from a fork.
     const plan = new GitLabJob({
@@ -463,7 +498,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       stage: "apply",
       image: jobImage,
       variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA" },
-      rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+      rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
       resource_group: "terragucci-apply",
       ...idTokens,
       ...(tg ? forgeCache("gitlab") : {}),
@@ -483,6 +518,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: script(bash("PUBLISH", publishScript(forge))),
       } as never) as never);
     }
+    if (drift) {
+      jobs.set("drift", new GitLabJob({
+        stage: "drift",
+        image: jobImage,
+        variables: gitlabEnv,
+        rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "schedule"' })],
+        ...idTokens,
+        script: script(bash("DRIFT", driftScript(binary, layers, forge, oidc, report))),
+        artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`] },
+      } as never) as never);
+    }
     const out = text(gitlabSerializer.serialize(jobs));
     return { path: PIPELINE_PATHS.gitlab, content: header(image) + out };
   }
@@ -491,7 +537,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const isFork = "github.event.pull_request.head.repo.full_name != github.repository";
   const workflow = new Workflow({
     name: "terragucci",
-    on: { push: { branches: ["**"] }, pull_request: {} },
+    on: {
+      push: { branches: ["**"] },
+      pull_request: {},
+      ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
+    },
     env: jobEnv,
     permissions: { contents: "read" },
     // Forgejo cancels the runs of an earlier push to a branch, even one that is
@@ -540,7 +590,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     "runs-on": "ubuntu-latest",
     container: { image },
     needs: "check",
-    if: "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
+    if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     // One apply per project at a time; a push that waits is not cancelled.
     concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
@@ -576,6 +626,28 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
         ...(installStep && install ? [new Step({ name: `Install ${install.binary} ${install.version}`, run: installStep })] : []),
         new Step({ name: "Publish the modules that changed", shell: "bash", run: publishScript(forge) }),
+      ],
+    } as never) as never);
+  }
+  if (drift) {
+    // Reads every root, so it takes the plan job's read-only role, and writes only the issue.
+    entities.set("drift", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+      permissions: { contents: "read", issues: "write", ...(oidc ? { "id-token": "write" } : {}) },
+      env: {
+        TG_TOKEN: "${{ github.token }}",
+        TG_SHA: "${{ github.sha }}",
+      },
+      steps: [
+        ...steps(new Step({ name: "Plan every root against what exists, and keep the drift issue", shell: "bash", run: driftScript(binary, layers, forge, oidc, report) })),
+        new Step({
+          name: "Keep the drift report",
+          if: "always()",
+          uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
+          with: { name: `${REPORT_DIR}-drift`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
+        }),
       ],
     } as never) as never);
   }

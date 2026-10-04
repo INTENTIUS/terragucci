@@ -10,7 +10,7 @@
  * links to its root's full plan and to the CI job that produced it.
  */
 import { groupAnchor, rootAnchor } from "./build";
-import type { Report, ReportChange, ReportGroup, ReportNamed, ReportRoot } from "./schema";
+import { actionWord, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot } from "./schema";
 
 const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -112,13 +112,12 @@ function groupBlock(report: Report, g: ReportGroup, roots: Map<string, ReportRoo
   return `<details class="group" id="${esc(groupAnchor(g.id))}" data-group="${esc(g.id)}" data-roots="${esc(g.units.join(" "))}" data-actions="${esc(actions.join(" "))}" data-wave="${esc(waves.join(" "))}"${g.fold === "open" ? " open" : ""}><summary>${esc(title)} ${why}</summary>${changeLines(g)}${varies}${rep}${list}</details>`;
 }
 
-const ACTION_WORD: Record<ReportNamed["action"], string> = { delete: "destroy", replace: "replace", refused: "refused to plan", forget: "forget", import: "import" };
 
-function namedRow(n: ReportNamed, roots: Map<string, ReportRoot>): string {
+function namedRow(n: ReportNamed, roots: Map<string, ReportRoot>, stage: Report["run"]["stage"]): string {
   const r = roots.get(n.root);
   const forced = n.replace_paths?.length ? ` <span class="why">forced by ${n.replace_paths.map((p) => `<code>${esc(p.join("."))}</code>`).join(", ")}</span>` : "";
   const reason = n.reason ? ` <span class="why">${esc(n.reason.split(/\s+/).join(" "))}</span>` : "";
-  return `<li class="named a-${esc(n.action)}"><span class="tag ${n.action === "delete" || n.action === "replace" || n.action === "refused" ? "bad" : ""}">${esc(ACTION_WORD[n.action])}</span> <a href="#${esc(rootAnchor(n.root))}"><code>${esc(n.root)}</code></a>${n.address ? ` <code>${esc(n.address)}</code>` : ""}${n.deposed !== undefined ? ` (deposed ${esc(n.deposed)})` : ""}${forced}${reason} ${r ? planLinks(r) : ""}</li>`;
+  return `<li class="named a-${esc(n.action)}"><span class="tag ${n.action === "delete" || n.action === "replace" || n.action === "refused" ? "bad" : ""}">${esc(actionWord(stage, n.action))}</span> <a href="#${esc(rootAnchor(n.root))}"><code>${esc(n.root)}</code></a>${n.address ? ` <code>${esc(n.address)}</code>` : ""}${n.deposed !== undefined ? ` (deposed ${esc(n.deposed)})` : ""}${forced}${reason} ${r ? planLinks(r) : ""}</li>`;
 }
 
 const CSS = `
@@ -172,7 +171,7 @@ export function renderHtml(report: Report): string {
 
   const pinnedNamed = report.named.filter((n) => n.action === "delete" || n.action === "replace" || n.action === "refused");
   const otherNamed = report.named.filter((n) => !pinnedNamed.includes(n));
-  const pinned = `<section class="pinned" id="pinned"><h2>Destroys, replacements and refusals (${pinnedNamed.length})</h2>${pinnedNamed.length ? `<ul>${pinnedNamed.map((n) => namedRow(n, roots)).join("")}</ul>` : "<p>None. Nothing in this run destroys, replaces or refuses.</p>"}${otherNamed.length ? `<h2>Imports and forgets (${otherNamed.length})</h2><ul>${otherNamed.map((n) => namedRow(n, roots)).join("")}</ul>` : ""}</section>`;
+  const pinned = `<section class="pinned" id="pinned"><h2>${run.stage === "tf-drift" ? "Deleted, replaced and refused" : "Destroys, replacements and refusals"} (${pinnedNamed.length})</h2>${pinnedNamed.length ? `<ul>${pinnedNamed.map((n) => namedRow(n, roots, run.stage)).join("")}</ul>` : (run.stage === "tf-drift" ? "<p>None. Nothing was deleted or replaced outside Terraform.</p>" : "<p>None. Nothing in this run destroys, replaces or refuses.</p>")}${otherNamed.length ? `<h2>Imports and forgets (${otherNamed.length})</h2><ul>${otherNamed.map((n) => namedRow(n, roots, run.stage)).join("")}</ul>` : ""}</section>`;
 
   const outliers = report.roots.filter((r) => r.why.some((w) => w.startsWith("outlier")));
   const highlighted = report.roots.flatMap((r) => r.highlights.filter((h) => h.action !== "delete" && h.action !== "replace").map((h) => ({ root: r.path, ...h })));
