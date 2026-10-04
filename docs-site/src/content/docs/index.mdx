@@ -1,28 +1,19 @@
 ---
 title: terragucci
-description: The whole Terraform and Terragrunt lifecycle, handled. Grouped plans, gated waves and drift for Terraform, OpenTofu and Terragrunt.
+description: CI and observability for Terraform, Terragrunt, and OpenTofu. Grouped plans on every pull request, applies in gated waves, and drift reports.
 template: splash
-hero:
-  title: The whole Terraform and Terragrunt lifecycle, handled.
-  tagline: Plan every pull request in one readable note. Apply in waves that only go out once approved. Catch drift before it catches you.
-  actions:
-    - text: Try the tutorial
-      link: /terragucci/tutorial/
-      icon: right-arrow
-    - text: Get started
-      link: /terragucci/getting-started/overview/
-      variant: minimal
-    - text: Set up with an agent
-      link: /terragucci/getting-started/agents/
-      variant: minimal
 ---
 
+import Landing from '../../components/Landing.astro';
 import Lifecycle from '../../components/Lifecycle.astro';
 import PlanNote from '../../components/PlanNote.astro';
 import Waves from '../../components/Waves.astro';
 import Runtimes from '../../components/Runtimes.astro';
 import KeepYours from '../../components/KeepYours.astro';
 import Validated from '../../components/Validated.astro';
+
+<Landing />
+
 
 ## The lifecycle around your roots
 

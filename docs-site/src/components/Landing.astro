@@ -1,0 +1,145 @@
+---
+// The top of the home page: the wordmark, the prompt to hand a coding agent,
+// and the one-line description. The prompt is the same one the agents page
+// and the README carry.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const prompt = [
+	'Set up terragucci in this repository.',
+	'Read https://intentius.io/terragucci/llms.txt first, then',
+	'https://intentius.io/terragucci/getting-started/agents/ and follow it.',
+	'Check https://intentius.io/terragucci/status/ before using any feature.',
+	'Do not apply anything. Open a pull request with the result.',
+].join('\n');
+---
+<section class="tg-landing not-content">
+	<p class="wordmark">TERRAGUCCI</p>
+
+	<figure class="agent">
+		<figcaption>
+			<span>Paste into your coding agent</span>
+			<button type="button" class="copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
+		</figcaption>
+		<pre><code>{prompt}</code></pre>
+	</figure>
+
+	<h1 class="claim">CI and observability for Terraform, Terragrunt, and OpenTofu</h1>
+
+	<p class="paths">
+		<a href={`${base}/tutorial/`}>Try it on your laptop</a>
+		<a href={`${base}/getting-started/overview/`}>Set it up yourself</a>
+		<a href={`${base}/getting-started/agents/`}>What the agent does</a>
+	</p>
+</section>
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('.tg-landing .copy')) {
+		button.addEventListener('click', async () => {
+			const text = button.dataset.copy ?? '';
+			try {
+				await navigator.clipboard.writeText(text);
+				button.textContent = 'Copied';
+			} catch {
+				const code = button.closest('figure')?.querySelector('code');
+				if (code) window.getSelection()?.selectAllChildren(code);
+				button.textContent = 'Selected';
+			}
+			setTimeout(() => (button.textContent = 'Copy'), 1600);
+		});
+	}
+</script>
+
+<style>
+	.tg-landing {
+		display: grid;
+		justify-items: center;
+		gap: 2rem;
+		padding-block: clamp(3rem, 10vw, 6rem) clamp(2rem, 6vw, 4rem);
+		text-align: center;
+	}
+	.wordmark {
+		margin: 0;
+		font-family: var(--tg-display);
+		font-weight: 600;
+		font-size: clamp(2.6rem, 9vw, 5.5rem);
+		letter-spacing: 0.14em;
+		line-height: 1;
+		color: var(--sl-color-white);
+		/* Optical centre: the tracking adds space after the last letter. */
+		padding-left: 0.14em;
+	}
+	.agent {
+		margin: 0;
+		width: min(100%, 44rem);
+		text-align: left;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.75rem;
+		background: var(--tg-panel);
+		overflow: hidden;
+	}
+	figcaption {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.6rem 0.9rem;
+		border-bottom: 1px solid var(--tg-rule);
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
+	}
+	.copy {
+		font: inherit;
+		font-weight: 500;
+		color: var(--sl-color-white);
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.4rem;
+		padding: 0.2rem 0.7rem;
+		cursor: pointer;
+	}
+	.copy:hover {
+		border-color: var(--tg-accent);
+	}
+	pre {
+		margin: 0;
+		padding: 1rem 1.1rem;
+		overflow-x: auto;
+		font-family: var(--sl-font-mono);
+		font-size: 0.85rem;
+		line-height: 1.65;
+		color: var(--sl-color-gray-1);
+		white-space: pre;
+	}
+	@media (max-width: 40rem) {
+		pre {
+			white-space: pre-wrap;
+			overflow-wrap: anywhere;
+		}
+	}
+	.claim {
+		margin: 0;
+		max-width: 34rem;
+		font-family: var(--tg-display);
+		font-weight: 500;
+		font-size: clamp(1.25rem, 3vw, 1.7rem);
+		line-height: 1.3;
+		letter-spacing: -0.015em;
+		color: var(--sl-color-gray-2);
+		text-wrap: balance;
+	}
+	.paths {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.5rem 1.5rem;
+		font-size: 0.95rem;
+	}
+	.paths a {
+		color: var(--sl-color-accent-high);
+		text-decoration: none;
+		font-weight: 500;
+	}
+	.paths a:hover {
+		text-decoration: underline;
+	}
+</style>

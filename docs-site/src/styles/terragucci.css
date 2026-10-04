@@ -178,3 +178,9 @@ code, pre, kbd, samp {
 .starlight-aside a {
 	color: var(--sl-color-accent-high);
 }
+
+/* The home page (the only page without a sidebar) carries its own heading
+   in the landing block, so Starlight's title panel is hidden there. */
+:root:not([data-has-sidebar]) main > .content-panel:first-child:has(h1#_top) {
+	display: none;
+}
