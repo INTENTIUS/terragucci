@@ -11,14 +11,14 @@
     "lint-docs": "node scripts/lint-docs.mjs"
   },
   "devDependencies": {
-    "@intentius/chant": "0.102.0",
-    "@intentius/chant-lexicon-github": "0.102.0",
+    "@intentius/chant": "0.103.1",
+    "@intentius/chant-lexicon-github": "0.103.1",
     "@types/node": "^24.0.0",
     "sentences": "0.5.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7",
     "esbuild": "0.28.2",
-    "@intentius/chant-lexicon-docker": "0.102.0"
+    "@intentius/chant-lexicon-docker": "0.103.1"
   },
   "workspaces": [
     "packages/*"
