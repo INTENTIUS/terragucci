@@ -38,6 +38,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Stages', slug: 'reference/stages' },
 						{ label: 'The plan report', slug: 'reference/report' },
+						{ label: 'JSON output', slug: 'reference/cli-json' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
 						{ label: 'Validation', slug: 'reference/validation' },
 					],

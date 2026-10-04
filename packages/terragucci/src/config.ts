@@ -81,9 +81,12 @@ export const BUILT_IN: ResolvedSettings = {
 };
 
 export class ConfigError extends Error {
-  constructor(message: string) {
+  /** Every problem found, when the error is a validation failure. */
+  readonly problems?: string[];
+  constructor(message: string, problems?: string[]) {
     super(message);
     this.name = "ConfigError";
+    this.problems = problems;
   }
 }
 
@@ -182,7 +185,7 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   }
   if (defaults !== undefined) checkSettings(defaults, "defaults", problems);
   if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
-  if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`);
+  if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
   // JSON's view: an undefined property is the same as an absent one.
   return JSON.parse(JSON.stringify(raw)) as TerragucciConfig;
 }
