@@ -43,7 +43,8 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import type { Binary, ForgeName, Gate, RolePair } from "./config";
+import { responseTo, type Binary, type ForgeName, type Gate, type RespondEvent, type RolePair } from "./config";
+import { DEFAULT_TOKEN_ENV } from "./forge";
 import { applyWaves } from "./apply";
 import type { Tool } from "./install";
 import {
@@ -93,6 +94,8 @@ export interface PipelineInput {
   canary?: string[];
   /** When a wave waits for an approval. Default on-destroy. Plain roots only. */
   gate?: Gate;
+  /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
+  respond?: Partial<Record<RespondEvent, string>>;
 }
 
 export interface RenderedPipeline {
@@ -101,6 +104,30 @@ export interface RenderedPipeline {
 }
 
 export class RenderError extends Error {}
+
+/** Whether the pipeline calls `terragucci respond` for an event: its setting is not off. */
+const responds = (r: PipelineInput["respond"], event: RespondEvent): boolean => responseTo({ respond: r }, event) !== "off";
+
+/**
+ * A response that pushes or opens a pull request needs the forge token under the
+ * name respond reads, and on GitLab a remote that can push. A response that
+ * fails never fails the job: it is help on top of a result already decided.
+ */
+function respondSetup(forge: ForgeName, tokenEnv?: string): string[] {
+  return [
+    `export ${tokenEnv ?? DEFAULT_TOKEN_ENV[forge]}="$TG_TOKEN"`,
+    ...(forge === "gitlab" ? ['git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"'] : []),
+  ];
+}
+
+/** The fmt commit after a failing check, on a branch other than the default branch. Never an approval, never a push to the default branch. */
+export function fmtScript(binary: Binary, forge: ForgeName, tokenEnv?: string): string {
+  return [
+    "set -u",
+    ...respondSetup(forge, tokenEnv),
+    `terragucci respond fmt --mode apply --binary ${binary} --branch "${forge === "gitlab" ? "$CI_COMMIT_BRANCH" : "$GITHUB_REF_NAME"}" || true`,
+  ].join("\n");
+}
 
 const sh = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -265,6 +292,8 @@ export interface ApplyWaveInput {
   /** Globs for wave 1, from `waves.canary`. */
   canary?: string[];
   gate?: Gate;
+  /** The response to each event; apply-failed and wave-refused are called from the wave's exit code. */
+  respond?: PipelineInput["respond"];
 }
 
 /**
@@ -288,6 +317,8 @@ export function applyScript(
   const count = applyWaves(layers, input.canary).length;
   const first = input.wave === 1;
   const last = input.wave === count;
+  const triage = responds(input.respond, "apply-failed");
+  const refused = responds(input.respond, "wave-refused");
   const args = [
     "--wave", String(input.wave),
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
@@ -307,13 +338,15 @@ export function applyScript(
     // A waiting wave records what it planned on the chant/lifecycle branch, so the job's checkout must be able to push.
     ...(forge === "gitlab" && gate !== "never" ? ['git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"'] : []),
     'outcome="$(mktemp)"',
-    `TG_OUTCOME="$outcome" terragucci stage tf-apply ${args.join(" ")}`,
-    "rc=$?",
+    ...(triage ? ['log="$(mktemp)"'] : []),
+    `TG_OUTCOME="$outcome" terragucci stage tf-apply ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
+    triage ? "rc=${PIPESTATUS[0]}" : "rc=$?",
     'case "$rc" in',
     "  0) ;;",
     '  3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;',
-    '  4) tg status terragucci/apply failure "$(cat "$outcome")"; exit 4 ;;',
-    '  *) tg status terragucci/apply failure "an apply failed"; exit 1 ;;',
+    // A wave waiting at a gate (3) is not a failure. A refused wave (4) and a failed apply are, and each gets its response before the job fails.
+    `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${input.wave} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}exit 4 ;;`,
+    `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}exit 1 ;;`,
     "esac",
     ...(last
       ? [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
@@ -443,7 +476,7 @@ export function publishScript(forge: ForgeName): string {
  * -refresh-only, writes the plan report, and keeps the drift issue. A root
  * that cannot be refreshed fails the job; drift alone does not.
  */
-export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -461,6 +494,10 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(oidc ? [forgeApi(forge), oidcScript(forge, oidc.plan_role, "terragucci-drift", oidc.audience)] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
+    // The drift pull request: a person reviews and merges it, or closes it.
+    ...(pullRequest
+      ? ["rc=$?", ...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`, 'exit "$rc"']
+      : []),
   ].join("\n");
 }
 
@@ -507,12 +544,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const waveCount = tg ? 1 : applyWaves(layers, input.canary).length;
   const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
     name: tg ? "apply" : `apply-wave-${i + 1}`,
-    body: tg ? terragruntApplyScript(layers, forge, oidc, credentials) : applyScript(binary, layers, forge, oidc, { wave: i + 1, canary: input.canary, gate }),
+    body: tg ? terragruntApplyScript(layers, forge, oidc, credentials) : applyScript(binary, layers, forge, oidc, { wave: i + 1, canary: input.canary, gate, respond: input.respond }),
   }));
   const lastApply = applyJobs[applyJobs.length - 1].name;
   // A wave that waits records its plan on the chant/lifecycle branch.
   const writesLedger = !tg && gate !== "never";
   const what = tg ? "unit" : "root";
+  // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
+  const fmtOn = !tg && responds(input.respond, "fmt");
+  const driftPr = !tg && responds(input.respond, "drift") ? { tokenEnv } : undefined;
 
   if (forge === "gitlab") {
     const jobImage = new Image({ name: image });
@@ -526,7 +566,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     };
     const idTokens = needsToken ? { id_tokens: { TERRAGUCCI_OIDC: { aud: audience } } } : {};
     const notScheduled = drift ? { rules: [new Rule({ if: '$CI_PIPELINE_SOURCE != "schedule"' })] } : {};
-    const check = new GitLabJob({ stage: "check", image: jobImage, variables: jobEnv, ...notScheduled, script: script(checkBody) } as never);
+    const check = new GitLabJob({
+      stage: "check",
+      image: jobImage,
+      variables: fmtOn ? { ...jobEnv, TG_TOKEN: gitlabEnv.TG_TOKEN } : jobEnv,
+      ...notScheduled,
+      script: script(checkBody),
+      // After a failing check on a branch, commit the formatting; the job's own result stands.
+      ...(fmtOn
+        ? { after_script: [...(installStep ? [installStep] : []), bash("FMT", `if [ "$CI_JOB_STATUS" = failed ] && [ -n "$CI_COMMIT_BRANCH" ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then\n${fmtScript(binary, forge, tokenEnv)}\nfi`)] }
+        : {}),
+    } as never);
     // Plan runs a merge request's code, so it gets the read-only role, and never
     // runs for a merge request from a fork.
     const plan = new GitLabJob({
@@ -575,7 +625,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "schedule"' })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
-        script: script(bash("DRIFT", driftScript(binary, layers, forge, oidc, report))),
+        script: script(bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))),
         artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`] },
       } as never) as never);
     }
@@ -611,8 +661,20 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'push' || ${isFork}`,
-    steps: steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody })),
-  });
+    ...(fmtOn ? { permissions: { contents: "write" }, env: { TG_TOKEN: "${{ github.token }}" } } : {}),
+    steps: [
+      ...steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody })),
+      // After a failing check on a branch, commit the formatting to it; a fork's pull request has no push here.
+      ...(fmtOn
+        ? [new Step({
+            name: "Commit the formatting",
+            if: "failure() && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)",
+            shell: "bash",
+            run: fmtScript(binary, forge, tokenEnv),
+          })]
+        : []),
+    ],
+  } as never);
   // Plan runs a pull request's code, so it gets the read-only role, and never
   // runs for a fork, whose pull requests carry no token and no OIDC.
   const plan = new Job({
@@ -688,13 +750,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       "runs-on": "ubuntu-latest",
       container: { image },
       if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
-      permissions: { contents: "read", issues: "write", ...(oidc ? { "id-token": "write" } : {}) },
+      permissions: { contents: driftPr ? "write" : "read", issues: "write", ...(driftPr ? { "pull-requests": "write" } : {}), ...(oidc ? { "id-token": "write" } : {}) },
       env: {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
       },
       steps: [
-        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report) }), true),
+        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true),
         new Step({
           name: "Keep the drift report",
           if: "always()",
