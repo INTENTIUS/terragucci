@@ -47,7 +47,7 @@ jobs:
       TG_PR: '${{ github.event.pull_request.number }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Plan every root
+      - name: Plan every root and write the plan report
         shell: bash
         run: |
           set -uo pipefail
@@ -105,45 +105,28 @@ jobs:
             if (cmd === "oidc") process.exit(1);
           }' -- "$@"; }
           tg status terragucci/plan pending "planning"
-          dirs=('envs/dev/platform' 'envs/prod/platform' 'envs/staging/platform' 'envs/dev/email' 'envs/dev/orders' 'envs/dev/payments' 'envs/dev/search' 'envs/prod/email' 'envs/prod/orders' 'envs/prod/payments' 'envs/prod/search' 'envs/staging/email' 'envs/staging/orders' 'envs/staging/payments' 'envs/staging/search')
-          planned=0 destroys=0 failed=0 rows= summaries=
-          for dir in "${dirs[@]}"; do
-            log="$(mktemp)"
-            if tofu -chdir="$dir" init -input=false -no-color >"$log" 2>&1 &&
-              tofu -chdir="$dir" plan -input=false -no-color -lock=false >>"$log" 2>&1; then
-              summary="$(grep -E '^(Plan: |No changes\.)' "$log" | tail -1)"
-              summary="${summary:-planned}"
-            else
-              failed=$((failed + 1))
-              summary="failed"
-              sed 's/^/    /' "$log"
-            fi
-            d="$(printf '%s' "$summary" | sed -n 's/.* \([0-9][0-9]*\) to destroy.*/\1/p')"
-            destroys=$((destroys + ${d:-0}))
-            planned=$((planned + 1))
-            echo "$dir: $summary"
-            rows="$rows| $dir | $summary |"$'\n'
-            summaries="$summaries$summary"$'\n'
-            rm -f "$log"
-          done
-          groups="$(printf '%s' "$summaries" | sort -u | grep -c . || true)"
-          counts="$planned roots, $groups groups, $destroys destroys"
+          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          rc=$?
+          if [ ! -f terragucci-report/report.json ]; then
+            tg status terragucci/plan failure "the plan report was not written"
+            exit 1
+          fi
+          counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
           if [ -n "${TG_PR:-}" ]; then
             note="$(mktemp)"
-            {
-              echo "<!-- terragucci:plan roots=$(IFS=,; echo "${dirs[*]}") -->"
-              echo "## terragucci plan"
-              echo
-              echo "$counts. Planned at $TG_SHA."
-              echo
-              echo "| root | plan |"
-              echo "| --- | --- |"
-              printf '%s' "$rows"
-            } >"$note"
+            # The first line says which roots the note covers, so an apply can mark it stale.
+            { echo "<!-- terragucci:plan roots=envs/dev/platform,envs/prod/platform,envs/staging/platform,envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search -->"; cat terragucci-report/note.md; } >"$note"
             tg note "$note"
           fi
-          if [ "$failed" -ne 0 ]; then tg status terragucci/plan failure "$failed failed: $counts"; exit 1; fi
+          if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi
           tg status terragucci/plan success "$counts"
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report
+          path: terragucci-report/
+          if-no-files-found: ignore
   apply:
     runs-on: docker
     container:

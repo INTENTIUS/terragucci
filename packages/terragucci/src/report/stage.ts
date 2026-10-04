@@ -28,9 +28,29 @@ export interface StageOptions {
   out?: string;
   /** Where the note links report.html. Default the relative `report.html`. */
   reportUrl?: string;
+  /**
+   * The roots in apply order, as the pipeline that runs the stage was written
+   * with them, so the stage plans exactly what the pipeline names. Default:
+   * the roots found in the repo.
+   */
+  layers?: string[][];
+  /** The binary, when the pipeline names it. Default: the config's, then detection. */
+  binary?: string;
+  /** Where to copy the report, when the pipeline names a bucket. Default: the config's `reports`. */
+  reports?: { bucket: string; endpoint?: string; prefix?: string };
+  /** Globs for wave 1. Default: the config's `waves.canary`. */
+  canary?: string[];
   env?: NodeJS.ProcessEnv;
   fetch?: S3Fetch;
 }
+
+/** `a,b;c` as layers: commas inside a layer, semicolons between. */
+export function parseLayers(text: string): string[][] {
+  return text.split(";").map((l) => l.split(",").map((r) => r.trim()).filter(Boolean)).filter((l) => l.length > 0);
+}
+
+/** Layers as `--layers` takes them. */
+export const formatLayers = (layers: string[][]): string => layers.map((l) => l.join(",")).join(";");
 
 export interface StageResult {
   report: Report;
@@ -66,7 +86,7 @@ export function runFacts(repo: string, env: NodeJS.ProcessEnv): Pick<ReportRun, 
     const remote = git(repo, "remote", "get-url", "origin");
     return remote ? projectFromRemote(remote) : undefined;
   })() ?? basename(resolve(repo));
-  const commit = env.GITHUB_SHA ?? env.CI_COMMIT_SHA ?? git(repo, "rev-parse", "HEAD") ?? "unknown";
+  const commit = env.TG_SHA || env.GITHUB_SHA || env.CI_COMMIT_SHA || git(repo, "rev-parse", "HEAD") || "unknown";
   const base = env.GITHUB_BASE_REF || env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME || undefined;
   return { project, commit, ...(base ? { base } : {}), ...(job_url ? { job_url } : {}) };
 }
@@ -114,13 +134,13 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const configPath = options.config ?? findConfig(repo);
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
-  const all = findRoots(repo, settings.roots);
-  const layers = applyLayers(repo, all)
+  const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
+  const layers = (options.layers ?? applyLayers(repo, all))
     .map((l) => (options.root ? l.filter((r) => globMatch(options.root!, r)) : l))
     .filter((l) => l.length > 0);
   const roots = layers.flat();
   if (roots.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
-  const binary = settings.binary ?? detectBinary(repo, all).value;
+  const binary = options.binary ?? settings.binary ?? detectBinary(repo, all).value;
   const planner = plannerForBinary(binary);
   const started = new Date().toISOString();
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
@@ -139,7 +159,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
         log(`${root}: init failed`);
         continue;
       }
-      const p = run("plan", "-input=false", "-no-color", `-out=${planFile}`);
+      // A plan never writes state, so it takes no lock and never blocks an apply.
+      const p = run("plan", "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
       if (p.status !== 0 || !existsSync(planFile)) {
         inputs.push({ path: root, planner, error: `plan failed:\n${tail(p.stderr || p.stdout)}`, preventDestroy: new Set() });
         log(`${root}: plan failed`);
@@ -166,7 +187,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   }
 
   // Wave 1 is the canary list, when there is one; later waves follow apply order.
-  const canary = settings.waves?.canary ?? [];
+  const canary = options.canary ?? settings.waves?.canary ?? [];
   const isCanary = (r: string) => canary.some((g) => globMatch(g, r));
   const waves: WaveInput[] = [];
   if (roots.some(isCanary)) waves.push({ number: 1, roots: roots.filter(isCanary) });
@@ -184,9 +205,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const dir = resolve(repo, options.out ?? "terragucci-report");
   writeReportDir(dir, report, plans, { ...(options.reportUrl ? { reportUrl: options.reportUrl } : {}) });
   let uploaded: Uploaded | undefined;
-  if (settings.reports?.bucket) {
-    const s3 = new S3Client(s3FromEnv(settings.reports, env), options.fetch);
-    uploaded = await uploadReport(s3, dir, report, settings.reports.prefix);
+  const reports = options.reports ?? settings.reports;
+  if (reports?.bucket) {
+    const s3 = new S3Client(s3FromEnv(reports, env), options.fetch);
+    uploaded = await uploadReport(s3, dir, report, reports.prefix);
   }
   return { report, dir, ...(uploaded ? { uploaded } : {}), failed: report.roots.some((r) => r.status === "failed") };
 }
