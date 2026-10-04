@@ -22,7 +22,7 @@ Set `drift` in `terragucci.yml` to a cron schedule and the pipeline gets a `drif
 drift: "0 6 * * *"
 ```
 
-The job runs `terragucci stage tf-drift`. It plans every root with `-refresh-only`, so the plan compares the state with the real objects and ignores the code. A change merged to the default branch but not yet applied is not drift. Only an object that was changed, or deleted, outside Terraform is.
+The job runs `terragucci stage tf-drift`, which plans each root with `-refresh-only`. That plan compares the state with the real objects and leaves the code out, so a change merged to the default branch but not yet applied is not drift. An object changed or deleted outside Terraform is.
 
 The report is the one [the plan report](/terragucci/reference/report/) describes, with the stage set to `tf-drift`. It groups roots whose drift is the same, and a deleted object is listed by name with its root. The job keeps it as an artifact like the plan job does.
 
