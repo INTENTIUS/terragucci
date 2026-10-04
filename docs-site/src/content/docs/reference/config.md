@@ -1,20 +1,13 @@
 ---
-title: Your config file
-description: One file, terragucci.yml, for one repo or for every repo you run. Most repos need none.
+title: terragucci.yml keys
+description: Every key of the config file, its default, and the defaults terragucci uses when there is no file.
 ---
 
-terragucci reads one file, `terragucci.yml`. The same schema works in a single repo and in a control repo that governs many, and most single repos need no file at all.
+terragucci reads one file, `terragucci.yml`. The same schema works in a single repo and in a control repo that governs many, and most single repos need no file at all. `terragucci config check` validates a file and lists every problem at once.
 
-## No file
+## Defaults with no file
 
-Install terragucci and let it read the repo:
-
-```bash
-npm i -D @intentius/terragucci
-npx terragucci init
-```
-
-`init` writes the pipeline for your forge and prints what it found. Every job runs in terragucci's CI image for your binary, pinned by digest, so no job downloads a tool. With no `terragucci.yml`, it starts from these defaults:
+With no `terragucci.yml`, `init` starts from these defaults:
 
 | Setting | Default |
 |---|---|
@@ -28,9 +21,9 @@ npx terragucci init
 | Runtime | your forge's CI |
 | Reports | a CI artifact, linked from the pull-request note |
 
-Commit the pipeline, and your next pull request runs it. Running `init` again changes nothing unless the repo changed.
+Running `init` again changes nothing unless the repo changed.
 
-## One repo
+## A file for one repo
 
 Put `terragucci.yml` at the repo root to change only what the defaults got wrong:
 
@@ -41,9 +34,9 @@ waves:
 drift: "17 4 * * *"
 ```
 
-## Many repos from one place
+## A file for many repos
 
-A control repo lists each project by its address on the forge. `defaults` apply to every project, and a project's own keys override them.
+In a control repo, `defaults` apply to every project and a project's own keys override them. [Govern many repos from one place](/terragucci/guides/govern-many-repos/) walks through it.
 
 ```yaml
 defaults:
@@ -57,15 +50,6 @@ projects:
     drift: "17 4 * * *"
   codeberg.org/acme/edge: {}
 ```
-
-Preview what each project's pipeline would become, then open a pull request in each project that changes:
-
-```bash
-npx terragucci reconcile --config terragucci.yml
-npx terragucci reconcile --config terragucci.yml --mode apply
-```
-
-A dry run is the default. terragucci writes to each project through a pull request, never straight to its main branch, and the project's own pipeline does the applying. A repo you leave out is never touched.
 
 ## Keys
 
@@ -92,6 +76,28 @@ A dry run is the default. terragucci writes to each project through a pull reque
 | `agent` | none | `via` (`forge` or `fountain`), `token_env` and an optional read-only `role`: where an event set to `agent` runs |
 
 The file can also be `terragucci.ts`, typed with `TerragucciConfig`. terragucci folds it to plain data without running it, so a value that reads the environment is refused with its line number.
+
+## The terragrunt block
+
+```yaml
+terragrunt:
+  version: 1.1.6
+  exclude: ["live/sandbox/**"]
+  parallelism: 16
+  dependents: follow
+  credentials:
+    "live/prod/**": { plan: arn:aws:iam::111:role/plan, apply: arn:aws:iam::111:role/apply }
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | the version `terragrunt_version_constraint` pins exactly, or terragucci's | the Terragrunt release the jobs run |
+| `exclude` | none | unit globs to leave out; `catalog/**` and `.terragrunt-cache` are always left out |
+| `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once |
+| `dependents` | `follow` | `follow` plans dependents in later waves; `plan` also previews them on the pull request, marked provisional and left out of every digest |
+| `credentials` | none | plan and apply roles by unit path glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
+
+Terragrunt 1.1 or later is required. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers what changes in a Terragrunt repo.
 
 ## Parameters
 

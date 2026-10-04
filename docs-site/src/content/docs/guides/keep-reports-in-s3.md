@@ -1,0 +1,67 @@
+---
+title: Keep reports in S3
+description: Copy every plan report to a bucket, so they outlive your CI's artifact retention and share one index.
+---
+
+## What you end up with
+
+Every run's report in a bucket under one path per run, and an `index.html` that lists every plan you have run.
+
+## Before you start
+
+- An S3-compatible bucket. Google Cloud Storage and MinIO work too.
+- Credentials for the plan job that can write to it, as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN` when you use temporary ones. Keep them in your forge's secrets.
+- By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. This guide is for when that is too short.
+
+## Steps
+
+### 1. Name the bucket
+
+Put it in `terragucci.yml`.
+
+```yaml
+reports:
+  bucket: s3://acme-terragucci
+  prefix: reports
+```
+
+For a store that is not AWS, add `endpoint`. When it is absent, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
+
+### 2. Write the pipeline again
+
+```bash
+npx terragucci init
+```
+
+The plan job now passes the bucket to `terragucci stage tf-plan`. Commit the result.
+
+### 3. Pass the credentials
+
+Add `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as secrets or protected variables in your forge, and expose them to the plan job. If the job already assumes a role through `oidc`, give that role write access to the bucket and skip the keys.
+
+### 4. Open a pull request
+
+When the plan job finishes, its log says where the report went:
+
+```text
+report: terragucci-report/report.html
+copied to the bucket under reports/github.com/acme/infra/2026/10/4f1a9c0/tf-plan; index rewritten at reports/github.com/acme/infra/index.html and reports/index.html
+```
+
+Reports land under one path per run, the plans beside them. Links inside a report are relative, so they work in the bucket as they do in the CI artifact:
+
+```text
+reports/github.com/acme/infra/2026/10/4f1a9c0/tf-plan/report.html
+reports/github.com/acme/infra/2026/10/4f1a9c0/tf-apply-wave-2/report.json
+```
+
+### 5. Serve the index
+
+Every upload rewrites `index.html` and `index.json` twice. One pair sits at the project's path and covers that project. The other sits at the top of the prefix and covers every project. Each run gets a row with its counts and destroys, linked to its report. Serve the bucket as a static site and the index is the home page for every plan you have run.
+
+Retention is your bucket's lifecycle rule.
+
+## Next
+
+- [The plan report](/terragucci/reference/report/) shows what a report holds.
+- [Report JSON schema](/terragucci/reference/report-schema/) is the format a script reads from the bucket.

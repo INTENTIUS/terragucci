@@ -1,5 +1,5 @@
 ---
-title: For agents
+title: Set up with a coding agent
 description: How a coding agent adopts terragucci in a repository, and the prompt to hand it.
 ---
 
@@ -31,7 +31,7 @@ The site describes the finished product, and the status page is the only record 
 
 1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run --json`. It lists what it found, with a reason for each. Show the user.
 2. Check what it found. When the binary or the forge is wrong, pass `--binary` or `--forge`, or ask the user.
-3. Decide whether the repo needs a config file. With one binary and no canary preference, it needs none. Otherwise write the smallest `terragucci.yml` that corrects the defaults; [Your config file](/terragucci/getting-started/config/) lists every key and its default.
+3. Decide whether the repo needs a config file. With one binary and no canary preference, it needs none. Otherwise write the smallest `terragucci.yml` that corrects the defaults; [terragucci.yml keys](/terragucci/reference/config/) lists every key and its default.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
 5. Open a pull request with the config and the generated pipeline. The default branch is the user's to change. Applying and approving are theirs too, so the agent runs no `apply`, `chant approve` or `--mode apply`.
 6. Read the tips the dry run prints about pins and lock files. Report them, and offer each fix as its own pull request.
@@ -44,3 +44,7 @@ The site describes the finished product, and the status page is the only record 
 - Responses to pipeline events need no model. [Responses to pipeline events](/terragucci/reference/responses/) shows how a project opts in, one event at a time.
 - Credentials stay in the forge's secrets. The config names environment variables (`token_env`) and never holds a value.
 - Ask before choosing a runtime other than the forge. A fountain steward is opt-in.
+
+## Next
+
+To have an agent work after setup, read the recipes: [explain a plan](/terragucci/guides/agent-explain-a-plan/), [summarize a refused wave](/terragucci/guides/agent-refused-wave/) and [propose drift fixes](/terragucci/guides/agent-drift-fixes/). Each uses a read-only token.
