@@ -58,7 +58,7 @@ Each response is a command. A dry run is the default, and `--mode apply` opens t
 
 ```bash
 terragucci respond plan --report terragucci-report
-terragucci respond wave-refused --approved approved/report.json --current terragucci-report --wave 2
+terragucci respond wave-refused --approved terragucci-report/approved --current terragucci-report/current --wave 2
 terragucci respond apply-failed --log apply.log
 terragucci respond drift --mode apply
 terragucci respond drift --root envs/prod/orders --import aws_sqs_queue.extra=https://sqs.us-east-1.amazonaws.com/123456789012/extra --mode apply
@@ -71,7 +71,7 @@ terragucci respond publish --module modules/network
 
 ### Wave refused
 
-An approval binds a wave's set digest. When a root's plan changes after the approval, the wave applies nothing. The diff reads the report the approval was given on and the current one. It lists each root whose plan digest moved and the changes and attributes that moved inside it. Approve again only once the new plan is the one you want.
+An approval binds a wave's set digest. When a root's plan changes after the approval, the wave applies nothing. The diff reads the report the approval was given on and the current one. A waiting wave keeps the first on the `chant/lifecycle` branch next to its pending gate record, and the refused apply job writes both to `terragucci-report/approved` and `terragucci-report/current` before it runs this response. It lists each root whose plan digest moved and the changes and attributes that moved inside it. Approve again only once the new plan is the one you want.
 
 ### Apply failed
 

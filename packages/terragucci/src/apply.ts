@@ -31,7 +31,7 @@
  * waits for an approval; 4 the wave's plans changed after approval.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describeChangedWave, waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
@@ -39,6 +39,8 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { ConfigError, GATES, type Gate } from "./config";
 import { globMatch } from "./detect";
+import { buildReport } from "./report/build";
+import { runFacts } from "./report/stage";
 import { sealRefusal, sealRule } from "./seal";
 
 /** The op every wave gate is recorded under. */
@@ -196,8 +198,16 @@ export function readLedger(repo: string): GateLedger {
   return parseLedger(show.status === 0 ? show.stdout : "");
 }
 
-/** Append a pending fact to the ledger and push it, retrying when another writer moved the branch. */
-export function appendPending(repo: string, record: PendingRecord): void {
+/**
+ * Where a waiting wave keeps the report of the plans it asked approval for,
+ * next to the ledger, so a later run refused for another digest can say what
+ * moved since. Sensitive values are never in it: the plan's change set does
+ * not carry them.
+ */
+export const approvedPath = (wave: number, digest: string): string => `_gates/${APPLY_OP}/${waveGate(wave)}/${digest.replace(":", "_")}.json`;
+
+/** Append a pending fact to the ledger and push it, with any `files` beside it, retrying when another writer moved the branch. */
+export function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}): void {
   const line = JSON.stringify(record);
   for (let attempt = 0; attempt < 5; attempt++) {
     const exists = fetchLifecycle(repo);
@@ -209,7 +219,8 @@ export function appendPending(repo: string, record: PendingRecord): void {
     const scratch = mkdtempSync(join(tmpdir(), "terragucci-ledger-"));
     const env = { ...process.env, ...GIT_ID, GIT_INDEX_FILE: join(scratch, "index") };
     if (parent) git(repo, ["read-tree", parent], undefined, env);
-    git(repo, ["update-index", "--add", "--cacheinfo", `100644,${blob},${LEDGER_PATH}`], undefined, env);
+    for (const [path, b] of [[LEDGER_PATH, blob], ...Object.entries(files).map(([f, t]) => [f, git(repo, ["hash-object", "-w", "--stdin"], t).stdout.trim()])])
+      git(repo, ["update-index", "--add", "--cacheinfo", `100644,${b},${path}`], undefined, env);
     const tree = git(repo, ["write-tree"], undefined, env).stdout.trim();
     const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", `Pending gate record: ${record.op} ${record.gate}`], undefined, env).stdout.trim();
     rmSync(scratch, { recursive: true, force: true });
@@ -243,6 +254,7 @@ interface PlannedRoot {
   planFile: string;
   env: NodeJS.ProcessEnv;
   member?: WaveMember;
+  plan?: unknown;
   changes: number;
   destroys: number;
   summary: string;
@@ -273,6 +285,7 @@ async function planRoot(repo: string, binary: string, root: string, work: string
   return {
     ...base,
     member: { member: root, planDigest: part.member.planDigest ?? "" },
+    plan: json,
     changes: changed.length,
     destroys: changed.filter((e) => e.action === "delete" || e.action === "replace").length,
     summary: plan.out.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned",
@@ -356,8 +369,15 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string): P
     if (decision.status === "approved") {
       console.log(`${label}: approved by ${decision.by} for this digest`);
     } else {
+      const env = options.env ?? process.env;
+      // The report of this wave's plans, as respond wave-refused reads it.
+      const report = (): string =>
+        JSON.stringify(buildReport({
+          run: { ...runFacts(repo, env), stage: "tf-apply", wave, binary, runtime: "forge", started: now, finished: now },
+          roots: planned.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(binary) })),
+          waves: [{ number: wave, roots }],
+        }));
       if (!decision.standing) {
-        const env = options.env ?? process.env;
         const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
         appendPending(repo, {
           version: 1,
@@ -371,13 +391,22 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string): P
           ...(runId ? { runId } : {}),
           members,
           neverOverMcp: true,
-        });
+        }, { [approvedPath(wave, digest)]: report() });
       }
       if (decision.status === "refused") {
         const approvedFact = [...ledger.pending].reverse().find((p) => p.gate === name && p.members && samePlanDigest(p.planDigest, decision.approved));
         const moved = approvedFact ? movedMembers(approvedFact.members!, members) : roots.slice().sort();
         console.log(describeChangedWave({ wave, op: APPLY_OP, gate: name, digest, approved: decision.approved }));
         console.log(`${label}: approved by ${decision.by}, but these roots planned differently since: ${moved.join(", ")}`);
+        // What respond wave-refused compares: the plans approved, as the run that waited for them kept them, and the plans made now.
+        const was = approvedFact?.planDigest ?? decision.approved;
+        const approved = was && git(repo, ["show", `${REMOTE_REF}:${approvedPath(wave, was)}`]);
+        for (const [dir, text] of [["current", report()], ["approved", approved && approved.status === 0 ? approved.stdout : ""]]) {
+          if (!text) continue;
+          mkdirSync(join(repo, "terragucci-report", dir), { recursive: true });
+          writeFileSync(join(repo, "terragucci-report", dir, "report.json"), text);
+        }
+        if (!approved || approved.status !== 0) console.log(`${label}: the approved plans were not kept, so only the roots that moved can be named`);
         writeOutcome(options.env, `wave ${wave} changed after approval: ${moved.join(", ")}`);
         return EXIT.refused;
       }
