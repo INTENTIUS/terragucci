@@ -177,18 +177,71 @@ function run(script: string, env: Record<string, string>): Promise<{ status: num
   });
 }
 
-const PLAN_TEXT = (add: number, destroy: number): string => `Plan: ${add} to add, 0 to change, ${destroy} to destroy.`;
+/**
+ * A fake binary for the plan stage: `plan -out=FILE` writes the root's name
+ * into FILE, `show -json FILE` prints a plan for it from $PLANS/<root>.json,
+ * and a root named in $FAIL fails to plan.
+ */
+const FAKE_TOFU = `#!/usr/bin/env bash
+dir="\${1#-chdir=}"; shift; root="$(basename "$dir")"
+case "$1" in
+  init) exit 0 ;;
+  plan)
+    case " \${FAIL:-} " in *" $root "*) echo "Error: no credentials" >&2; exit 1 ;; esac
+    for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done
+    echo "Plan: planned $root"; exit 0 ;;
+  show)
+    file="\${@: -1}"; r="$(cat "$file")"
+    if [ "$2" = "-json" ]; then cat "$PLANS/$r.json"; else echo "plan text of $r"; fi ;;
+esac
+`;
+
+const rc = (address: string, actions: string[], before: unknown, after: unknown) => {
+  const [type, name] = address.split(".");
+  return { address, mode: "managed", type, name, change: { actions, before, after, after_unknown: {}, before_sensitive: {}, after_sensitive: {} } };
+};
+const planOf = (changes: unknown[]) => JSON.stringify({ format_version: "1.2", resource_changes: changes, output_changes: {}, errored: false });
+
+let CLI: string | undefined;
+/** A `terragucci` on the path, bundled from this tree as the CI image carries it. */
+async function terragucciBin(bin: string): Promise<void> {
+  if (!CLI) {
+    const { build } = await import("esbuild");
+    CLI = join(tmp("tg-cli-"), "terragucci.mjs");
+    await build({
+      entryPoints: [join(import.meta.dirname, "../src/cli.ts")], outfile: CLI, bundle: true, platform: "node", format: "esm", target: "node22",
+      external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"], logLevel: "silent",
+      banner: { js: "import { createRequire as __r } from 'node:module';\nconst require = __r(import.meta.url);" },
+    });
+  }
+  writeFileSync(join(bin, "terragucci"), `#!/usr/bin/env bash\nexec node ${JSON.stringify(CLI)} "$@"\n`);
+  chmodSync(join(bin, "terragucci"), 0o755);
+}
+
+async function planRepo(): Promise<{ repo: string; env: Record<string, string> }> {
+  const { dir, env } = fakeBin(FAKE_TOFU);
+  await terragucciBin(join(dir, "bin"));
+  const repo = tmp("tg-repo-");
+  const plans = join(dir, "plans");
+  mkdirSync(plans);
+  const queue = (r: string) => rc("aws_sqs_queue.jobs", ["update"], { name: "jobs", delay: 1 }, { name: "jobs", delay: 2 });
+  writeFileSync(join(plans, "network.json"), planOf([queue("network")]));
+  writeFileSync(join(plans, "app.json"), planOf([queue("app")]));
+  writeFileSync(join(plans, "cache.json"), planOf([queue("cache"), rc("aws_db_instance.main", ["delete"], { id: "db" }, null), rc("aws_db_instance.old", ["delete"], { id: "old" }, null)]));
+  for (const r of ["network", "app", "cache"]) mkdirSync(join(repo, r));
+  return { repo, env: { ...env, PLANS: plans } };
+}
 
 describe("the plan stage", () => {
-  it("posts one status with root, group and destroy counts, and one note", async () => {
-    const { env } = fakeBin(`#!/usr/bin/env bash\ncase "$*" in *" plan "*) case "$*" in *network*|*app*) echo "${PLAN_TEXT(1, 0)}" ;; *) echo "${PLAN_TEXT(0, 2)}" ;; esac ;; esac\nexit 0\n`);
+  it("runs the plan report, posts its note as the one plan note, and one status from its counts", async () => {
+    const { repo, env } = await planRepo();
     const api = await stubApi(() => []);
     try {
-      const r = await run(planScript("tofu", [["network"], ["app", "cache"]], "github"), {
+      const r = await run(`cd ${JSON.stringify(repo)}\n${planScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
         ...env, TG_TOKEN: "t", TG_SHA: "abc123", TG_PR: "7", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra",
         GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "9",
       });
-      expect(r.status).toBe(0);
+      expect(r.status, r.out).toBe(0);
       const statuses = api.hits.filter((h) => h.url.includes("/statuses/"));
       expect(statuses.map((h) => [h.url, h.body.context, h.body.state])).toEqual([
         ["/repos/acme/infra/statuses/abc123", "terragucci/plan", "pending"],
@@ -196,27 +249,55 @@ describe("the plan stage", () => {
       ]);
       expect(statuses[1].body.description).toBe("3 roots, 2 groups, 2 destroys");
       const note = api.hits.find((h) => h.method === "POST" && h.url === "/repos/acme/infra/issues/7/comments")!;
-      expect(note.body.body.split("\n")[0]).toBe("<!-- terragucci:plan roots=network,app,cache -->");
-      expect(note.body.body).toContain("| cache | Plan: 0 to add, 0 to change, 2 to destroy. |");
+      const lines = note.body.body.split("\n");
+      expect(lines[0]).toBe("<!-- terragucci:plan roots=network,app,cache -->");
+      expect(note.body.body).toBe(`${lines[0]}\n${readFileSync(join(repo, "terragucci-report/note.md"), "utf-8")}`);
+      expect(note.body.body).toContain("(http://forge/acme/infra/actions/runs/9#root-cache) (destroy)");
+      const report = JSON.parse(readFileSync(join(repo, "terragucci-report/report.json"), "utf-8"));
+      expect(report.run).toMatchObject({ commit: "abc123", project: "forge/acme/infra", binary: "tofu" });
+      expect(report.roots.map((x: { path: string }) => x.path)).toEqual(["network", "app", "cache"].sort());
+      expect(readFileSync(join(repo, "terragucci-report/roots/cache/plan.txt"), "utf-8")).toBe("plan text of cache\n");
     } finally {
       api.close();
     }
   });
 
-  it("a root that fails to plan fails the stage and its status", async () => {
-    const { env } = fakeBin(`#!/usr/bin/env bash\ncase "$*" in *" plan "*) exit 1 ;; esac\nexit 0\n`);
+  it("a root that fails to plan fails the stage and its status, and the note still goes up", async () => {
+    const { repo, env } = await planRepo();
     const api = await stubApi(() => []);
     try {
-      const r = await run(planScript("tofu", [["a"]], "github"), { ...env, TG_TOKEN: "t", TG_SHA: "s", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "o/r" });
+      const r = await run(`cd ${JSON.stringify(repo)}\n${planScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
+        ...env, FAIL: "app", TG_TOKEN: "t", TG_SHA: "s", TG_PR: "7", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "o/r", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
+      });
       expect(r.status).toBe(1);
-      expect(api.hits.at(-1)!.body).toMatchObject({ context: "terragucci/plan", state: "failure" });
+      expect(api.hits.at(-1)!.body).toMatchObject({ context: "terragucci/plan", state: "failure", description: "1 failed: 3 roots, 2 groups, 2 destroys" });
+      expect(api.hits.some((h) => h.url === "/repos/o/r/issues/7/comments" && h.body.body.includes("refused to plan"))).toBe(true);
     } finally {
       api.close();
     }
   });
 
-  it("plans without taking the state lock, so a pull request never blocks an apply", () => {
-    expect(planScript("tofu", layers, "github")).toContain("-lock=false");
+  it("names the stage's roots, binary and bucket, so it plans what the pipeline names", () => {
+    const s = planScript("tofu", layers, "github", undefined, { reports: { bucket: "s3://r", endpoint: "http://minio:9000", prefix: "p" }, canary: ["network"] });
+    expect(s).toContain("terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'network;app,cache'");
+    expect(s).toContain("--canary 'network' --bucket 's3://r' --bucket-endpoint 'http://minio:9000' --bucket-prefix 'p'");
+  });
+
+  it.each(FORGES)("%s: the plan job keeps the report with the job", (forge) => {
+    const doc = body(render(forge));
+    if (forge === "gitlab") {
+      expect(doc.plan.artifacts).toEqual({ name: "terragucci-report", when: "always", paths: ["terragucci-report/"], reports: { terraform: "terragucci-report/gitlab-terraform.json" } });
+      expect(doc.plan.script.join("\n")).toContain('--report-url "$CI_JOB_URL/artifacts/file/terragucci-report/report.html"');
+    } else {
+      const keep = doc.jobs.plan.steps.at(-1);
+      expect(keep.if).toBe("always()");
+      expect(keep.uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
+      expect(keep.with).toMatchObject({ name: "terragucci-report", path: "terragucci-report/" });
+    }
+  });
+
+  it("the stage plans without taking the state lock, so a pull request never blocks an apply", () => {
+    expect(readFileSync(join(import.meta.dirname, "../src/report/stage.ts"), "utf-8")).toContain('"-lock=false"');
   });
 });
 

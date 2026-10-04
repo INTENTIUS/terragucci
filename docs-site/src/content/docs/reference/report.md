@@ -7,7 +7,9 @@ Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one report. The report
 
 ## Running it
 
-The pipeline runs the stage for you. To run it yourself, from the repo:
+The pipeline's plan job runs the stage for every pull request and merge request. The report's note becomes the one plan note, and the `terragucci/plan` status takes its counts from the report. GitHub and Forgejo keep the report as the run's `terragucci-report` artifact, and the note links to the run. GitLab keeps it with the job's artifacts, where the note links to the HTML report. Its merge-request widget reads `gitlab-terraform.json`.
+
+To run the stage yourself, from the repo:
 
 ```bash
 npx terragucci stage tf-plan
@@ -25,7 +27,7 @@ It plans every root, prints the grouped summary, and writes the run's report to 
 | `roots/<root>/plan.txt` | the root's full plan, as the binary printed it |
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 
-`--out <dir>` writes it somewhere else. `--report-url <url>` is where the note links the HTML report, when it is not beside the note. `--root <glob>` plans only matching roots. `--json` prints one result object instead of the summary. The stage exits 1 when a root refuses to plan, and still writes the report.
+`--out <dir>` writes it somewhere else. `--report-url <url>` is where the note links the HTML report, when it is not beside the note. `--root <glob>` plans only matching roots. `--layers`, `--binary`, `--canary` and `--bucket` (with `--bucket-endpoint` and `--bucket-prefix`) are how the pipeline passes the roots, binary, canary wave and bucket it was written with; each overrides `terragucci.yml`. `--json` prints one result object instead of the summary. The stage exits 1 when a root refuses to plan, and still writes the report.
 
 ## What a reviewer sees
 
@@ -109,9 +111,9 @@ A change to a write-only attribute's version (`*_wo_version`) is labelled as suc
 
 ## Where reports are kept
 
-By default a report is a CI artifact, kept as long as your forge keeps artifacts.
+By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts.
 
-To keep them longer, name a bucket. Any S3-compatible store works, Google Cloud Storage and MinIO included. The job reads its credentials from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and, when set, `AWS_SESSION_TOKEN`. Set `endpoint` for a store that is not AWS; without it, `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL` is used when set.
+To keep them longer, name a bucket in `terragucci.yml` and run `npx terragucci init` again; the plan job then copies each report there as well. Any S3-compatible store works, Google Cloud Storage and MinIO included. The job reads its credentials from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and, when set, `AWS_SESSION_TOKEN`. Set `endpoint` for a store that is not AWS; without it, `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL` is used when set.
 
 ```yaml
 reports:
