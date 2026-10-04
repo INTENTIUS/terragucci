@@ -73,6 +73,12 @@ export interface PendingRecord {
   url?: string;
   /** terragucci's addition: each root's plan digest, so a later refusal can name the roots that moved. */
   members?: WaveMember[];
+  /**
+   * The gate is never resolved over MCP or ACP (chant#3485). tf-apply is no
+   * Op chant can discover, so the record carries the rule: `op-approve`
+   * refuses the gate whichever channel reached it.
+   */
+  neverOverMcp?: true;
 }
 
 export interface ResolutionRecord {
@@ -344,6 +350,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string): P
           description: `${label}: ${roots.join(", ")}`,
           ...(runId ? { runId } : {}),
           members,
+          neverOverMcp: true,
         });
       }
       if (decision.status === "refused") {
