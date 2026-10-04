@@ -9,6 +9,7 @@ import { changeSetDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetP
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { changeKind, foldChange } from "./highlight";
+import { isObject } from "./redact";
 import {
   REDACTED, REPORT_MINOR, REPORT_SCHEMA,
   type ReportUnit,
@@ -18,7 +19,6 @@ import {
 } from "./schema";
 
 type Json = Record<string, unknown>;
-const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
 
 export interface RootInput {
   /** The root's directory, relative to the repo. */

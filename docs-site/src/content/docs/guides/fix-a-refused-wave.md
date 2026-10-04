@@ -32,7 +32,7 @@ The response lists each root whose plan digest moved, with the changes and attri
 
 ### 4. Decide
 
-- The moved plan is the one you want: record a new approval with `npx chant approve tf-apply wave-2`, then run the stage again. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) has the steps.
+- The moved plan is the one you want: record a new approval with `npx chant approve tf-apply wave-2 --sign`, then run the stage again. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) has the steps.
 - The moved plan is not what you meant to apply: find the change that moved it, revert it on the default branch, and let the pipeline plan the wave again. The earlier approval still counts if the digest matches again.
 
 An agent may summarize the diff for you, but it does not re-approve. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) sets that up.

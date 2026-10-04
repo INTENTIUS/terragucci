@@ -24,7 +24,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -121,8 +121,7 @@ export async function main(argv: string[]): Promise<number> {
       case "reconcile": {
         const path = str(flags, "config") ?? findConfig(cwd);
         if (!path) throw new ConfigError("reconcile needs --config <file>");
-        const mode = (str(flags, "mode") ?? "dry-run") as "dry-run" | "apply";
-        if (mode !== "dry-run" && mode !== "apply") throw new ConfigError("--mode must be dry-run or apply");
+        const mode = checkMode(str(flags, "mode") ?? "dry-run");
         const outcomes = await reconcile(await loadConfig(resolve(path)), { mode, project: str(flags, "project") });
         const code = outcomes.some((o) => o.status === "failed") ? 1 : 0;
         if (json) return emit(envelope("reconcile", code, { mode, projects: outcomes }));

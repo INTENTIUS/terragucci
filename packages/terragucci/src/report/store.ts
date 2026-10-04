@@ -9,7 +9,7 @@
  */
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { renderHtml } from "./html";
+import { esc, renderHtml } from "./html";
 import type { S3Client } from "./s3";
 import type { Report } from "./schema";
 import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
@@ -101,8 +101,6 @@ export function addToIndex(existing: string | undefined, entry: IndexEntry): Rep
   reports.sort((a, b) => (a.finished < b.finished ? 1 : a.finished > b.finished ? -1 : a.path < b.path ? -1 : 1));
   return { schema: INDEX_SCHEMA, reports };
 }
-
-const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 export function renderIndexHtml(index: ReportIndex, title: string): string {
   const rows = index.reports.map((r) => {

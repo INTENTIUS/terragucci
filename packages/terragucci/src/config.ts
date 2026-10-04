@@ -159,6 +159,12 @@ export class ConfigError extends Error {
   }
 }
 
+/** A `--mode` value: dry-run or apply. */
+export function checkMode(mode: string): "dry-run" | "apply" {
+  if (mode !== "dry-run" && mode !== "apply") throw new ConfigError("--mode must be dry-run or apply");
+  return mode;
+}
+
 export const CONFIG_NAMES = ["terragucci.yml", "terragucci.yaml", "terragucci.json", "terragucci.ts"];
 
 /** The config file in `dir`, or undefined. Two of them is an error. */

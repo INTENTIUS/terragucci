@@ -9,12 +9,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
-import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings } from "../config";
+import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings } from "../config";
 import { detectBinary, findRoots, globMatch } from "../detect";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import type { Report } from "../report/schema";
-import { forgeOf, git, IDENTITY, propose, worktree, type Proposed } from "./change";
+import { forgeOf, git, propose, worktree, type Proposed } from "./change";
+import { IDENTITY } from "../reconcile";
 import { codify, driftOf, hasQuery, importBlocks, type Codified, type Left } from "./drift";
 import { moduleNotes } from "./notes";
 import { describeRefused, refusedDiff } from "./refused";
@@ -80,7 +81,7 @@ const tail = (s: string): string => s.trim().split("\n").slice(-20).join("\n");
 const said = (p: Proposed): string => `${p.title}: ${p.state}${p.pullRequest ? ` ${p.pullRequest}` : ""} (${p.branch}: ${p.files.join(", ") || "no files"})`;
 
 export async function respond(event: string, repo: string, o: RespondOptions = {}): Promise<RespondResult> {
-  if (o.mode && o.mode !== "dry-run" && o.mode !== "apply") throw new ConfigError("--mode must be dry-run or apply");
+  if (o.mode) checkMode(o.mode);
   if (!(event in RESPONSES)) throw new ConfigError(`terragucci respond ${event}: the events are ${EVENTS.join(", ")}`);
   const ev = event as RespondEvent;
   const env = o.env ?? process.env;

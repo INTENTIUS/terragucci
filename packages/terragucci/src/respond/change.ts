@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { ConfigError, type ResolvedSettings } from "../config";
 import { detectForge } from "../detect";
 import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch, type ForgeTarget } from "../forge";
+import { IDENTITY } from "../reconcile";
 import { targetOfRemote } from "../rollout";
 
 export interface Proposal {
@@ -46,8 +47,6 @@ export function git(dir: string, args: string[]): string {
     throw new ConfigError(`git ${args[0]}: ${String((e as { stderr?: string }).stderr || (e as Error).message).trim()}`);
   }
 }
-
-export const IDENTITY = ["-c", "user.name=terragucci", "-c", "user.email=terragucci@users.noreply.intentius.io", "-c", "commit.gpgsign=false"];
 
 /** The forge the repo's origin is on, with the token from `token_env`. */
 export function forgeOf(repo: string, settings: ResolvedSettings, env: NodeJS.ProcessEnv): ForgeTarget {

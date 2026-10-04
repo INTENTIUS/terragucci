@@ -28,6 +28,7 @@ report|the report is JSON and HTML, and links every root to its full plan|
 highlight|destroys and outliers are open, identical groups are folded|
 waves|each wave goes out only once approved|
 refuse|a wave whose plans changed after approval applies nothing|
+sealed|a wave counts only an approval sealed by a key the signers file lists|
 drift|drift is reported by root|
 rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
@@ -228,6 +229,12 @@ gated_repo() { # name -> a fresh repo $USER/<name>, the fixture in $work/tree wi
   find "$work/tree" -name main.tf -exec sed -i.bak "s#@PREFIX@#$name#" {} \;
   find "$work/tree" -name '*.bak' -delete
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  # init lists every wave gate under identity.gates, so an approval counts only
+  # when its seal verifies against the signers file at base. The approver's key
+  # goes in it; an agent's never does.
+  ssh-keygen -q -t ed25519 -N "" -C smoke-approver -f "$work/approver" || return 1
+  mkdir -p "$work/tree/.chant"
+  echo "smoke-approver $(cut -d' ' -f1,2 "$work/approver.pub")" > "$work/tree/.chant/allowed_signers"
 }
 
 gated_applied() { # name -> the roots with state under <name>/, space-separated
@@ -242,7 +249,7 @@ gated_approve() { # name, wave
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$1.git" "$clone" || return 1
   git -C "$clone" config user.name smoke-approver
   git -C "$clone" config user.email smoke-approver@terragucci.local
-  (cd "$clone" && "$CHANT" approve tf-apply "wave-$2" --approver smoke-approver) >&2 || { log "chant approve tf-apply wave-$2 failed"; return 1; }
+  (cd "$clone" && "$CHANT" approve tf-apply "wave-$2" --approver smoke-approver --sign "$work/approver") >&2 || { log "chant approve tf-apply wave-$2 failed"; return 1; }
 }
 
 claim_waves() {
@@ -282,6 +289,76 @@ claim_waves() {
   fi
   rm -rf "$work"
   [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
+  return $rc
+}
+
+# The smoke stands in for a job or an agent that can push to chant/lifecycle
+# but holds no key the signers file lists: it writes a resolution line for
+# wave 1's standing plan itself, unsealed or sealed with its own key, in the
+# approver's name. Neither may let the wave proceed.
+gated_forge() { # name, wave, "unsealed" | key file
+  local clone="$work/forge-$2-$RANDOM" gate="wave-$2" digest now line payload sig
+  git clone -q -b chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$1.git" "$clone" || return 1
+  digest="$(jq -rs --arg g "$gate" '[.[] | select(.kind == "pending" and .gate == $g)] | last | .planDigest' "$clone/_gates/tf-apply.jsonl")"
+  now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+  line="$(jq -cn --arg g "$gate" --arg d "$digest" --arg t "$now" '{version: 1, kind: "resolution", op: "tf-apply", gate: $g, resolvedBy: "smoke-approver", timestamp: $t, planDigest: $d}')"
+  if [ "$3" != unsealed ]; then
+    payload="$(printf 'tf-apply\n%s\n\n%s\nsmoke-approver\n%s' "$gate" "$digest" "$now")"
+    sig="$(printf '%s' "$payload" | ssh-keygen -q -Y sign -n chant-gate -f "$3")" || return 1
+    line="$(jq -c --arg s "$sig" '. + {seal: {signer: "smoke-approver", key: "SHA256:agent", signature: $s}}' <<<"$line")"
+  fi
+  printf '%s\n' "$line" >> "$clone/_gates/tf-apply.jsonl"
+  git -C "$clone" -c user.name=agent -c user.email=agent@terragucci.local -c commit.gpgsign=false commit -q -am "an approval no person sealed" || return 1
+  git -C "$clone" push -q origin chant/lifecycle || return 1
+}
+
+claim_sealed() {
+  # Push the fixture; wave 1 waits. Write an unsealed approval of its plan, and
+  # one sealed with an agent's key the signers file does not list, both in the
+  # approver's name, and push again: nothing applies, and the run says the
+  # approvals do not count. Then the approver runs chant approve --sign with
+  # the listed key, and canary/one applies.
+  # BREAK: chant.workspace.json is left out of the pushed tree, so no gate needs
+  # a seal and the unsealed approval lets wave 1 apply.
+  log() { echo "[smoke sealed] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/sealed" sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  gated_repo sealed || { rm -rf "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  ssh-keygen -q -t ed25519 -N "" -C agent -f "$work/agent" || rc=1
+  sha="$(push_tree "$work/tree" "$repo" main "sealed: first")"
+  wait_run "$repo" "$sha"
+  if [ $rc = 0 ]; then
+    gated_forge sealed 1 unsealed || rc=1
+    gated_forge sealed 1 "$work/agent" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "sealed: after an unsealed and an agent-sealed approval")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied sealed)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after the unsealed and agent-sealed approvals: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a root applied on an approval no listed key sealed"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "an approval does not count: the approval by smoke-approver is not signed" <<<"$logs" || { log "the run did not say the unsealed approval does not count"; rc=1; }
+    grep -q "an approval does not count: the seal by smoke-approver does not verify" <<<"$logs" || { log "the run did not say the agent's seal does not verify"; rc=1; }
+    grep -q -- "--sign" <<<"$logs" || { log "the approval command the run printed has no --sign"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    gated_approve sealed 1 || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "sealed: after a sealed approval")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied sealed)"
+    log "after the sealed approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply on the sealed approval"; rc=1; }
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] && log "unsealed and agent-sealed approvals let nothing apply; the sealed one let wave 1 apply"
   return $rc
 }
 

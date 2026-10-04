@@ -20,7 +20,8 @@ import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intenti
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
 // Path rules only: no HCL parser, no compiler.
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
-import pkg from "../../package.json" with { type: "json" };
+// A named import, so the bundle carries the version and not the whole package.json.
+import { version as VERSION } from "../../package.json";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type ForgeName } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
@@ -582,7 +583,7 @@ async function finish(
 ): Promise<StageResult> {
   const drift = stage === "tf-drift";
   const report = buildReport({
-    run: { ...runFacts(repo, env), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: pkg.version },
+    run: { ...runFacts(repo, env), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: inputs,
     waves,
     redacted,

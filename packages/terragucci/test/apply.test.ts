@@ -1,8 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave, applyWaves, decideGate, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
-import { git, tmp } from "./helpers";
+import { gateSealPayload } from "../src/seal";
+import { git, tmp, write } from "./helpers";
+import { signerLine, sshsig, sshKey } from "./sshsig";
 
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
 const pending = (gate: string, digest: string, at: number, hours = 48): PendingRecord => ({
@@ -85,13 +88,16 @@ exit 0
 describe("a wave behind its gate", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  function setup(): { work: string; origin: string; bin: string; log: string } {
+  /** `files` are committed on main, the base the seal rule reads. */
+  function setup(files: Record<string, string> = {}): { work: string; origin: string; bin: string; log: string } {
     const dir = tmp("tg-wave-");
     const origin = join(dir, "origin.git");
     git(dir, "init", "-q", "--bare", origin);
     const work = join(dir, "work");
     mkdirSync(join(work, "a"), { recursive: true });
     git(work, "init", "-q", "-b", "main");
+    write(work, files);
+    git(work, "add", "-A");
     git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
     git(work, "remote", "add", "origin", origin);
     git(work, "push", "-q", "origin", "main");
@@ -120,6 +126,79 @@ describe("a wave behind its gate", () => {
 
     expect(await applyWave(work, { ...opts, now: T(2) })).toBe(3);
     expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending).toHaveLength(1);
+  });
+
+  /** Append one resolution line to origin's ledger, as `chant approve` would from a person's machine. */
+  function approve(origin: string, line: Record<string, unknown>): void {
+    const clone = join(tmp("tg-approve-"), "l");
+    execFileSync("git", ["clone", "-q", "-b", "chant/lifecycle", origin, clone]);
+    const file = join(clone, "_gates/tf-apply.jsonl");
+    writeFileSync(file, `${readFileSync(file, "utf-8").replace(/\n$/, "")}\n${JSON.stringify(line)}`);
+    git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "approve");
+    git(clone, "push", "-q", "origin", "chant/lifecycle");
+  }
+
+  describe("when chant.workspace.json names the gate under identity.gates", () => {
+    const alice = sshKey();
+    const agent = sshKey();
+    const base = {
+      "chant.workspace.json": JSON.stringify({ name: "x", schema: 1, minReader: "0.102.0", members: [], identity: { gates: { "wave-1": {} } } }),
+      // The agent's key is not here: agent keys never go in the signers file.
+      ".chant/allowed_signers": `${signerLine("alice", alice)}\n`,
+    };
+
+    async function waiting(): Promise<{ work: string; origin: string; bin: string; log: string; digest: string; opts: Parameters<typeof applyWave>[1] }> {
+      const s = setup(base);
+      const opts = { wave: 1, layers: [["a"]], binary: s.bin, gate: "always" as const, env: {} };
+      expect(await applyWave(s.work, { ...opts, now: T(1) })).toBe(3);
+      const digest = parseLedger(git(s.origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+      return { ...s, digest, opts };
+    }
+
+    const approval = (digest: string, by: string) => ({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: by, timestamp: T(2), planDigest: digest });
+    const sealed = (digest: string, by: string, key: ReturnType<typeof sshKey>) => {
+      const a = approval(digest, by);
+      return { ...a, seal: { signer: by, key: "SHA256:test", signature: sshsig(key, gateSealPayload(a), "chant-gate") } };
+    };
+
+    it("an unsealed approval of the digest does not let the wave proceed, and the wave says why", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, log, digest, opts } = await waiting();
+      approve(origin, approval(digest, "alice"));
+      expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+      expect(lines.join("\n")).toMatch(/not signed/);
+      expect(lines.join("\n")).toContain(`--plan ${digest} --sign`);
+    });
+
+    it("an approval sealed by a key the signers file does not list does not let the wave proceed", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { work, origin, log, digest, opts } = await waiting();
+      approve(origin, sealed(digest, "agent", agent));
+      expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
+      // Nor does the agent's key pass for alice.
+      approve(origin, sealed(digest, "alice", agent));
+      expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+    });
+
+    it("an approval sealed by alice's key, which the signers file at base lists, lets the wave apply", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { work, origin, log, digest, opts } = await waiting();
+      approve(origin, sealed(digest, "alice", alice));
+      expect(await applyWave(work, { ...opts, now: T(3) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+    });
+
+    it("a sealed approval whose digest was edited after sealing does not count", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { work, origin, log, digest, opts } = await waiting();
+      const s = sealed("sha256:other", "alice", alice);
+      approve(origin, { ...s, planDigest: digest });
+      expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+    });
   });
 
   it("gate never applies the wave's plans without reading the ledger", async () => {

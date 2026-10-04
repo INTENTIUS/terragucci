@@ -21,7 +21,7 @@ describe("init", () => {
   ])("a repo whose origin is %s gets %s", async (remote, path) => {
     const dir = withRemote(remote);
     const r = await init(dir, { binary: "tofu" });
-    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"]]);
+    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"], ["chant.workspace.json", "created"]]);
     const text = readFileSync(join(dir, path), "utf-8");
     expect(text.startsWith(MARKER)).toBe(true);
     const parsed = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, unknown>;
@@ -44,7 +44,7 @@ describe("init", () => {
     const dir = withRemote("https://github.com/acme/infra.git");
     await init(dir, { binary: "tofu" });
     const again = await init(dir, { binary: "tofu" });
-    expect(again.files.map((f) => f.status)).toEqual(["unchanged"]);
+    expect(again.files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 
   it("refuses to overwrite a pipeline file it did not write, unless forced", async () => {
@@ -60,7 +60,7 @@ describe("init", () => {
     const r = await init(dir, { forge: "gitlab" });
     expect(r.configNote).toMatch(/records forge/);
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("forge: gitlab\n");
-    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged"]);
+    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 
   it("a detectable choice is not written to terragucci.yml", async () => {
@@ -91,6 +91,31 @@ describe("init", () => {
     expect(text).toContain("terragucci stage tf-apply --wave 1 --layers 'network;app' --canary 'app' --binary tofu --gate always");
     expect(text).toContain("apply-wave-2:");
     expect(text).not.toContain("apply-wave-3:");
+  });
+
+  it("chant.workspace.json lists every wave gate under identity.gates, so each needs a sealed approval", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'waves:\n  canary: ["app"]\n' });
+    await init(dir, { binary: "tofu" });
+    expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toEqual({
+      name: "infra",
+      schema: 1,
+      minReader: "0.102.0",
+      members: [],
+      identity: { gates: { "wave-1": {}, "wave-2": {}, "wave-3": {} } },
+    });
+  });
+
+  it("an existing chant.workspace.json keeps what it has and gains the gates it lacks", async () => {
+    const mine = { name: "shop", schema: 1, minReader: "0.90.0", members: [{ name: "app", path: "app" }], identity: { gates: { "wave-1": { class: "human" } } } };
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "chant.workspace.json": JSON.stringify(mine) });
+    const r = await init(dir, { binary: "tofu" });
+    expect(r.files.map((f) => f.status)).toEqual(["created", "updated"]);
+    expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toEqual({
+      ...mine,
+      minReader: "0.102.0",
+      identity: { gates: { "wave-1": { class: "human" }, "wave-2": {} } },
+    });
+    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 
   it("a repo with no roots is an error that says what a root is", async () => {

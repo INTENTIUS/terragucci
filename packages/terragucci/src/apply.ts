@@ -20,6 +20,11 @@
  * that moved. With no approval the wave records a pending fact for its digest,
  * so `chant approve tf-apply wave-<k>` has the plan to approve, and stops.
  *
+ * A wave gate that `chant.workspace.json` at base names under `identity.gates`
+ * (terragucci init lists every wave there) counts only a sealed approval:
+ * one made with `chant approve --sign` whose seal verifies against the
+ * signers file at base (./seal.ts). Any other approval of it is ignored.
+ *
  * Nothing here records an approval. A person does, with `chant approve`.
  *
  * Exit codes: 0 applied (or nothing to apply); 1 a root failed; 3 the wave
@@ -34,13 +39,14 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { ConfigError, GATES, type Gate } from "./config";
 import { globMatch } from "./detect";
+import { sealRefusal, sealRule } from "./seal";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
 /** The gate wave `k` waits on. */
 export const waveGate = (wave: number): string => `wave-${wave}`;
-/** The approval command a waiting wave prints, bound to the digest it planned. */
-export const approveLine = (wave: number, digest: string): string => `chant approve ${APPLY_OP} ${waveGate(wave)} --plan ${digest}`;
+/** The approval command a waiting wave prints, bound to the digest it planned and sealed with the approver's key. */
+export const approveLine = (wave: number, digest: string): string => `chant approve ${APPLY_OP} ${waveGate(wave)} --plan ${digest} --sign`;
 
 /** Exit codes of `stage tf-apply`. */
 export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
@@ -89,6 +95,10 @@ export interface ResolutionRecord {
   resolvedBy: string;
   timestamp: string;
   planDigest?: string;
+  /** The fields below are what a seal covers or is (chant#3163). */
+  environment?: string;
+  relayedBy?: string;
+  seal?: { signer?: unknown; key?: unknown; signature?: unknown } | null;
 }
 
 export interface GateLedger {
@@ -332,6 +342,16 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string): P
     const name = waveGate(wave);
     const now = options.now ?? new Date().toISOString();
     const ledger = readLedger(repo);
+    const rule = sealRule(repo);
+    if (rule.gates.has(name)) {
+      // identity.gates names this gate: an approval counts only when its seal verifies.
+      ledger.resolutions = ledger.resolutions.filter((r) => {
+        if (r.gate !== name) return true;
+        const why = sealRefusal(rule.signers, rule.signersPath, r);
+        if (why !== null && samePlanDigest(r.planDigest, digest)) console.log(`${label}: an approval does not count: ${why}`);
+        return why === null;
+      });
+    }
     const decision = decideGate(ledger, name, digest, now);
     if (decision.status === "approved") {
       console.log(`${label}: approved by ${decision.by} for this digest`);

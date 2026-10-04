@@ -5,6 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { forgeFromHost, type Binary, type ForgeName } from "./config";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
@@ -64,21 +65,13 @@ function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"])(#|\/\/).*$/gm, "$1");
 }
 
-/** Glob match on `/`-separated paths: `*` within a segment, `**` across segments, `?` one character. */
+/**
+ * Glob match on `/`-separated paths: `*` within a segment, `**` across
+ * segments, `?` one character. chant's unit glob, which reads the glob the
+ * same way; the path is made `/`-separated here, without a trailing slash.
+ */
 export function globMatch(glob: string, path: string): boolean {
-  const g = posix(glob).replace(/^\.\//, "").replace(/\/+$/, "");
-  let re = "";
-  for (let i = 0; i < g.length; i++) {
-    const c = g[i];
-    if (c === "*" && g[i + 1] === "*") {
-      const slash = g[i + 2] === "/";
-      re += slash ? "(?:.*/)?" : ".*";
-      i += slash ? 2 : 1;
-    } else if (c === "*") re += "[^/]*";
-    else if (c === "?") re += "[^/]";
-    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${re}$`).test(posix(path).replace(/\/+$/, ""));
+  return matchesUnitGlob(posix(path).replace(/\/+$/, ""), glob);
 }
 
 /**
