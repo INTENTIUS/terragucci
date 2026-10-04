@@ -30,3 +30,28 @@ oidc:
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Apply gets the write role and runs only on the default branch. Forks get no plan job, so nothing reaches their pull requests.
 
 GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs ask the runner's token endpoint.
+
+### Terragrunt
+
+In a Terragrunt repo, each environment can have its own pair of roles, chosen by the unit's path:
+
+```yaml
+terragrunt:
+  credentials:
+    "live/prod/**": { plan: arn:aws:iam::111122223333:role/prod-plan, apply: arn:aws:iam::111122223333:role/prod-apply }
+    "live/dev/**": { plan: arn:aws:iam::444455556666:role/dev-plan, apply: arn:aws:iam::444455556666:role/dev-apply }
+```
+
+The pipeline runs Terragrunt with an auth provider command that terragucci writes. For each unit, it hands Terragrunt the role of the first glob the unit's path matches, with the job's identity token. A unit that sets its own `iam_role` keeps it, and Terragrunt assumes that role with the same token. terragucci never sets `TG_IAM_ASSUME_ROLE`, so no single role overrides every unit.
+
+## Terragrunt jobs
+
+In a Terragrunt repo the same three jobs run Terragrunt:
+
+| Job | Runs |
+|---|---|
+| check | `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs` |
+| plan | `terragucci stage tf-plan`, one `terragrunt run --all` per wave |
+| apply | one `terragrunt run --all` per wave, filtered to exactly that wave's units |
+
+The jobs run Terragrunt without prompts, with `binary` as the tool it calls and its provider cache on. Sources and providers are kept in `.terragrunt-cache/` at the repo root and cached between runs. GitLab-managed state limits concurrent inits, so a repo using it runs 3 units at once. Other backends run 16.

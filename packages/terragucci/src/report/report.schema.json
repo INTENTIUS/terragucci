@@ -64,6 +64,17 @@
         "required": ["path", "status", "plan_digest", "counts", "plan", "changes", "highlights", "fold", "why"],
         "properties": {
           "path": { "type": "string" },
+          "terragrunt": {
+            "description": "Set when the root is a Terragrunt unit (minor 1).",
+            "type": "object",
+            "required": ["stack", "selection", "provisional", "run_result"],
+            "properties": {
+              "stack": { "type": "string" },
+              "selection": { "type": "string" },
+              "provisional": { "type": "boolean" },
+              "run_result": { "type": "string" }
+            }
+          },
           "status": { "enum": ["planned", "failed"] },
           "error": { "type": "string" },
           "plan_digest": { "type": ["string", "null"] },

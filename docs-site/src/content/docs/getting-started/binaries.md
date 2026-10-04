@@ -22,15 +22,30 @@ terragucci notices Terragrunt on its own: a `root.hcl`, `terragrunt.hcl` or `ter
 | Units that depend on a changed unit | they go out in later waves, planned only after the units they read from have applied |
 | `mock_outputs` | a wave whose plans would use mock values is refused, so no approval covers a placeholder |
 | Each wave | one `terragrunt run --all` over exactly that wave's units |
-| Credentials | each unit keeps its `iam_role` |
+| Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
 
-An optional `terragrunt:` block in `terragucci.yml` sets the version, exclusions and parallelism. Terragrunt 1.1 or later is required.
+An optional `terragrunt:` block in `terragucci.yml` tunes it. Terragrunt 1.1 or later is required.
 
 ```yaml
 binary: tofu
 terragrunt:
-  exclude: ["catalog/**"]
+  version: 1.1.6
+  exclude: ["live/sandbox/**"]
+  parallelism: 16
+  dependents: follow
+  credentials:
+    "live/prod/**": { plan: arn:aws:iam::111:role/plan, apply: arn:aws:iam::111:role/apply }
 ```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | the version `terragrunt_version_constraint` pins exactly, or terragucci's | the Terragrunt release the jobs run |
+| `exclude` | none | unit globs to leave out; `catalog/**` and `.terragrunt-cache` are always left out |
+| `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once |
+| `dependents` | `follow` | `follow` plans dependents in later waves; `plan` also previews them on the pull request, marked provisional |
+| `credentials` | none | plan and apply roles by unit path glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
+
+Units come from `terragrunt find`, so `.terragrunt-filters` is honoured. Implicit stacks, directories of units, are labels in the report.
 
 ## What choudoufu is
 

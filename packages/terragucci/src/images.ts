@@ -38,6 +38,13 @@ export function imageFor(binary: Binary, table: Record<string, string> = digests
   return { repository, tag, digest: table[`${repository}:${tag}`] };
 }
 
+/** The image a Terragrunt repo's pipeline runs in: Terragrunt and OpenTofu. */
+export function terragruntImage(table: Record<string, string> = digests): ImageRef {
+  const repository = `${REGISTRY}/terragucci-terragrunt`;
+  const tag = imageTag("terragrunt");
+  return { repository, tag, digest: table[`${repository}:${tag}`] };
+}
+
 /** How a pipeline names the image: by digest when it is known, with the tag kept beside it. */
 export function imageReference(ref: ImageRef): string {
   return ref.digest ? `${ref.repository}:${ref.tag}@${ref.digest}` : `${ref.repository}:${ref.tag}`;

@@ -20,11 +20,39 @@ export const BINARIES = ["terraform", "tofu", "choudoufu", "cdktn"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
 export const GATES = ["always", "on-destroy", "never"] as const;
 export const RUNTIMES = ["forge", "fountain"] as const;
+export const DEPENDENTS = ["follow", "plan"] as const;
 
 export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
 export type Gate = (typeof GATES)[number];
 export type Runtime = (typeof RUNTIMES)[number];
+export type Dependents = (typeof DEPENDENTS)[number];
+
+/** A plan role and an apply role, for the units under one path. */
+export interface RolePair {
+  plan: string;
+  apply: string;
+}
+
+/**
+ * Terragrunt settings. Terragrunt mode is detected (`root.hcl`,
+ * `terragrunt.hcl` or `terragrunt.stack.hcl`); this block only tunes it.
+ */
+export interface TerragruntSettings {
+  /** The Terragrunt release the pipeline installs. Default: the one terragucci's image carries. */
+  version?: string;
+  /** Unit globs discovery leaves out, beside `catalog/**` and the module cache. */
+  exclude?: string[];
+  /** How many units one `run --all` runs at once. Default: from the state backend. */
+  parallelism?: number;
+  /** Units that depend on a changed unit: `follow` plans them in later waves, `plan` also previews them at pull-request time. */
+  dependents?: Dependents;
+  /**
+   * Plan and apply roles by unit path glob, assumed over OIDC through a
+   * generated auth-provider-cmd. A unit that sets its own `iam_role` keeps it.
+   */
+  credentials?: Record<string, RolePair>;
+}
 
 /** The settings one project (or one repo) can carry. Every key is optional. */
 export interface ProjectSettings {
@@ -59,6 +87,8 @@ export interface ProjectSettings {
   oidc?: { plan_role: string; apply_role: string; audience?: string };
   /** Whether removing the project from a control repo removes its generated files. */
   owned?: boolean;
+  /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
+  terragrunt?: TerragruntSettings;
 }
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
@@ -109,8 +139,10 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "tips", "modules", "owned", "oidc",
+  "reports", "token_env", "env", "tips", "modules", "owned", "oidc", "terragrunt",
 ]);
+
+const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -178,6 +210,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       }
     }
   }
+  if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
     else {
@@ -187,6 +220,50 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
         if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t))) {
           problems.push(`${where}.modules.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
         }
+      }
+    }
+  }
+}
+
+function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
+  if (!isObject(t)) {
+    problems.push(`${where} must be a map (settings: ${TERRAGRUNT_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(t)) {
+    if (!TERRAGRUNT_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${TERRAGRUNT_KEYS.join(", ")})`);
+  }
+  if (t.version !== undefined) {
+    const m = typeof t.version === "string" ? /^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.]+)?$/.exec(t.version) : null;
+    if (!m) problems.push(`${where}.version must be a release version such as 1.1.6`);
+    else if (Number(m[1]) < 1 || (Number(m[1]) === 1 && Number(m[2]) < 1)) {
+      problems.push(`${where}.version is ${t.version}; terragucci needs Terragrunt 1.1 or later`);
+    }
+  }
+  stringList(t.exclude, `${where}.exclude`, problems);
+  if (t.parallelism !== undefined && !(Number.isInteger(t.parallelism) && (t.parallelism as number) >= 1)) {
+    problems.push(`${where}.parallelism must be a whole number of 1 or more`);
+  }
+  oneOf(t.dependents, DEPENDENTS, `${where}.dependents`, problems);
+  if (t.credentials !== undefined) {
+    if (!isObject(t.credentials)) {
+      problems.push(`${where}.credentials must map unit path globs to a plan role and an apply role`);
+      return;
+    }
+    for (const [glob, pair] of Object.entries(t.credentials)) {
+      const at = `${where}.credentials["${glob}"]`;
+      if (!isObject(pair)) {
+        problems.push(`${at} must be a map with plan and apply`);
+        continue;
+      }
+      for (const k of Object.keys(pair)) {
+        if (k !== "plan" && k !== "apply") problems.push(`${at}.${k} is not a setting (settings: plan, apply)`);
+      }
+      for (const k of ["plan", "apply"] as const) {
+        if (typeof pair[k] !== "string" || pair[k] === "") problems.push(`${at}.${k} must name a role`);
+      }
+      if (typeof pair.plan === "string" && pair.plan === pair.apply) {
+        problems.push(`${at} uses one role for plan and apply; plan runs pull-request code, so give it a read-only role of its own`);
       }
     }
   }
@@ -354,6 +431,7 @@ function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings 
   const { defaults: _d, projects: _p, ...settings } = over as TerragucciConfig;
   const out: ResolvedSettings = { ...base, ...settings, env: { ...base.env, ...(settings.env ?? {}) } };
   if (settings.oidc) out.oidc = { ...base.oidc, ...settings.oidc };
+  if (base.terragrunt || settings.terragrunt) out.terragrunt = { ...base.terragrunt, ...settings.terragrunt };
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
   return out;
 }

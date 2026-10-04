@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 0;
+export const REPORT_MINOR = 1;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -91,8 +91,22 @@ export interface ReportChange {
   why?: string;
 }
 
+/** What a Terragrunt run adds about a unit (minor 1). */
+export interface ReportUnit {
+  /** The unit's stack: its parent directory, a label for grouping and filters. */
+  stack: string;
+  /** Why the run selected the unit. */
+  selection: string;
+  /** A preview planned before its upstream units applied. Its digest never binds an approval. */
+  provisional: boolean;
+  /** The unit's result in Terragrunt's run report (`succeeded`, `failed`, `early exit`), or `not run`. */
+  run_result: string;
+}
+
 export interface ReportRoot {
   path: string;
+  /** Set when the root is a Terragrunt unit. */
+  terragrunt?: ReportUnit;
   status: "planned" | "failed";
   error?: string;
   /** The digest a gate on this root binds, over the unredacted plan. Null when it failed. */

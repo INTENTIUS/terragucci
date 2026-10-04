@@ -32,11 +32,23 @@ export function planSummaryOf(report: Report): PlanSummary {
       ...(g.extends ? { extends: g.extends } : {}),
       ...(g.plus ? { plus: g.plus } : {}),
       destroys: destroysOf(g.units),
+      sideEffects: [],
     })),
     failed: report.named.filter((n) => n.action === "refused").map((n) => ({ member: n.root, reason: n.reason ?? "the root did not plan" })),
     destroys,
+    // Newer chant summaries also carry imports, forgets and side effects.
+    imports: report.named
+      .filter((n) => n.action === "import" && n.address !== undefined)
+      .map((n) => ({
+        member: n.root, address: n.address!, type: n.type ?? "unknown",
+        action: report.roots.find((r) => r.path === n.root)?.changes.find((c) => c.address === n.address)?.action ?? "no-op",
+      })),
+    forgets: report.named
+      .filter((n) => n.action === "forget" && n.address !== undefined)
+      .map((n) => ({ member: n.root, address: n.address!, type: n.type ?? "unknown", ...(n.deposed !== undefined ? { deposed: n.deposed } : {}) })),
+    sideEffects: [],
     holes: report.holes.map((h) => ({ member: h.root, address: h.address, ...(h.type ? { type: h.type } : {}), reason: h.reason })),
-  };
+  } as PlanSummary;
 }
 
 /** The job-log view: chant's grouped summary. */

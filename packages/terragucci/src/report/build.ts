@@ -11,6 +11,7 @@ import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/chang
 import { changeKind, foldChange } from "./highlight";
 import {
   REDACTED, REPORT_MINOR, REPORT_SCHEMA,
+  type ReportUnit,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
 } from "./schema";
 
@@ -30,6 +31,8 @@ export interface RootInput {
   job_url?: string;
   /** `type.name` of every resource declared with `prevent_destroy = true`. */
   preventDestroy?: ReadonlySet<string>;
+  /** Set when the root is a Terragrunt unit. */
+  terragrunt?: ReportUnit;
 }
 
 export interface WaveInput {
@@ -139,7 +142,7 @@ export function buildReport(input: BuildInput): Report {
   const byPath = new Map(input.roots.map((r) => [r.path, r]));
   const parts = input.roots.map((r) =>
     r.plan !== undefined && r.error === undefined
-      ? terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform" })
+      ? terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform", ...(r.terragrunt ? { scope: r.terragrunt.stack } : {}) })
       : failedPart(r),
   );
   const doc = composeChangeSet(parts);
@@ -181,6 +184,7 @@ export function buildReport(input: BuildInput): Report {
     const group = memberGroup.get(m.member);
     return {
       path: m.member,
+      ...(src.terragrunt ? { terragrunt: src.terragrunt } : {}),
       status: m.status,
       ...(m.error ? { error: m.error } : {}),
       plan_digest: m.planDigest,

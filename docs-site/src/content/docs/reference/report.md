@@ -27,7 +27,7 @@ It plans every root, prints the grouped summary, and writes the run's report to 
 | `roots/<root>/plan.txt` | the root's full plan, as the binary printed it |
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 
-`--out <dir>` writes it somewhere else. `--report-url <url>` is where the note links the HTML report, when it is not beside the note. `--root <glob>` plans only matching roots. `--layers`, `--binary`, `--canary` and `--bucket` (with `--bucket-endpoint` and `--bucket-prefix`) are how the pipeline passes the roots, binary, canary wave and bucket it was written with; each overrides `terragucci.yml`. `--json` prints one result object instead of the summary. The stage exits 1 when a root refuses to plan, and still writes the report.
+`--out <dir>` writes it somewhere else. `--report-url <url>` is where the note links the HTML report, when it is not beside the note. `--root <glob>` plans only matching roots. `--layers`, `--binary`, `--canary` and `--bucket` (with `--bucket-endpoint` and `--bucket-prefix`) are how the pipeline passes the roots, binary, canary wave and bucket it was written with; each overrides `terragucci.yml`. A Terragrunt repo's units are planned with one `terragrunt run --all` per wave. `--json` prints one result object instead of the summary. The stage exits 1 when a root refuses to plan, and still writes the report.
 
 ## What a reviewer sees
 
@@ -96,6 +96,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `waves[]` | number, roots, set digest, approval state and a link to the approval record |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
+| `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
 
