@@ -156,7 +156,8 @@ validate forge="forgejo" claim="apply":
 
 # ── the example and its smoke claims ───────────────────────────────────────
 # example/ is the shop's 15 roots; stack/example.sh runs them on the forgejo
-# profile against floci. stack/smoke.sh holds one claim per feature.
+# profile against floci. example-terragrunt/ is the same shop as 15 Terragrunt
+# units, run by stack/example-terragrunt.sh. stack/smoke.sh holds one claim per feature.
 
 [doc("Run every claim of one forge plain and under BREAK=1 on a running profile; fails when one is not as expected.")]
 validate-forge forge:
@@ -169,6 +170,10 @@ validation-record *forges:
 [doc("The example: up [--fresh], verify, change <scenario>, reset, down.")]
 example *args="up":
     stack/example.sh {{args}}
+
+[doc("The Terragrunt example: up, verify, change <scenario>, reset.")]
+example-terragrunt *args="up":
+    stack/example-terragrunt.sh {{args}}
 
 [doc("Run every smoke claim, or one. BREAK=1 breaks the property and the claim must print caught.")]
 smoke claim="":
@@ -195,6 +200,6 @@ images platform="":
 images-check platform="":
     npx tsx scripts/images.ts check {{ if platform == "" { "" } else { "--platform " + platform } }}
 
-[doc("Rebuild example/changes/*.patch from the example as committed.")]
+[doc("Rebuild both examples' changes/*.patch from the examples as committed.")]
 example-patches:
     python3 stack/example-patches.py

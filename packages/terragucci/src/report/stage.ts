@@ -9,8 +9,9 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
-import { planTerragruntWave, type TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { stackOfUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
 import pkg from "../../package.json" with { type: "json" };
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch } from "../detect";
@@ -22,7 +23,7 @@ import { redactPlan } from "./redact";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
 import { StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportRun } from "./schema";
+import type { Report, ReportDeferred, ReportMockRead, ReportRun } from "./schema";
 import { uploadReport, writeReportDir, type Uploaded } from "./store";
 
 export const STAGES = ["tf-plan"] as const;
@@ -56,6 +57,8 @@ export interface StageOptions {
   /** The `terragrunt` executable. Default: `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
   terragruntPath?: string;
   terragruntExec?: TerragruntExec;
+  /** The base of the range affected selection reads (`origin/main`). Default: the pull request's target branch. */
+  base?: string;
 }
 
 /** `a,b;c` as layers: commas inside a layer, semicolons between. */
@@ -148,34 +151,41 @@ const SELECTED_ALL = "every unit: affected selection is not built yet";
 /**
  * Plan a Terragrunt repo's units, one `terragrunt run --all` per wave, and
  * read each unit's plan JSON and run-report row.
+ *
+ * A wave whose plans would read `mock_outputs` is refused by chant before
+ * anything is planned. The refused units come out and the rest of the wave
+ * plans. A unit whose upstream has no outputs yet waits: it plans in a later
+ * wave, after the upstream applied. With `dependents: plan` it is also
+ * previewed here, marked provisional, so no digest or group of real plans
+ * takes it. A unit whose block always reads its mocks (`skip_outputs`,
+ * `enabled = false`) fails.
  */
 async function planUnits(
   repo: string,
   waves: string[][],
   binary: string,
   work: string,
-  options: StageOptions,
+  options: StageOptions & { dependents?: "follow" | "plan"; selection: (unit: string) => string; preview: string[] },
   log: (line: string) => void,
-): Promise<{ inputs: RootInput[]; plans: Map<string, { text?: string; json?: string }>; redacted: number }> {
+): Promise<{ inputs: RootInput[]; plans: Map<string, { text?: string; json?: string }>; redacted: number; mockReads: ReportMockRead[]; waiting: string[] }> {
   const planner = plannerForBinary(binary);
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
+  const mockReads: ReportMockRead[] = [];
   let redacted = 0;
   const terragrunt = options.terragruntPath ?? (options.env ?? process.env).TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-  for (const [i, units] of waves.entries()) {
-    const workDir = join(work, `wave-${i + 1}`);
-    const wave = await planTerragruntWave({
-      dir: repo, units, workDir, binary, terragrunt,
-      ...(options.terragruntExec ? { exec: options.terragruntExec } : {}),
-    });
+  const run = { dir: repo, binary, terragrunt, ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) };
+
+  const read = (workDir: string, wave: TerragruntWavePlan, provisional: boolean): void => {
     if (wave.code !== 0 && wave.code !== 2) log(tail(wave.log));
-    for (const r of wave.results) {
-      // Provisional stays false until chant marks plans built on mock_outputs (chant#3416); a
-      // provisional plan is then reported but never folded into a group of real ones.
-      const unit = { stack: stackOfUnit(r.unit), selection: SELECTED_ALL, provisional: false, run_result: r.result };
-      const file = join(workDir, "json", r.unit, "tfplan.json");
+    const results = new Map(wave.results.map((r) => [r.unit, r]));
+    for (const part of wave.parts) {
+      const path = part.member.member;
+      const result = results.get(path);
+      const unit = { stack: stackOfUnit(path), selection: options.selection(path), provisional, run_result: result?.result ?? "not run" };
+      const file = join(workDir, "json", path, "tfplan.json");
       let plan: unknown;
-      if (r.status === "succeeded" && existsSync(file)) {
+      if (part.member.status !== "failed" && existsSync(file)) {
         try {
           plan = JSON.parse(readFileSync(file, "utf-8"));
         } catch {
@@ -183,19 +193,60 @@ async function planUnits(
         }
       }
       if (plan === undefined) {
-        const error = r.status === "succeeded" ? "Terragrunt reported the unit planned but wrote no plan JSON for it" : (r.error ?? r.result);
-        inputs.push({ path: r.unit, planner, error, preventDestroy: new Set(), terragrunt: unit });
-        log(`${r.unit}: ${error}`);
+        const error = part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it";
+        inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: unit });
+        log(`${path}: ${error.split("\n")[0]}`);
         continue;
       }
       const safe = redactPlan(plan);
       redacted += safe.values;
-      plans.set(r.unit, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
-      inputs.push({ path: r.unit, plan, planner, files: { json: planFiles(r.unit).json }, preventDestroy: new Set(), terragrunt: unit });
-      log(`${r.unit}: planned`);
+      plans.set(path, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
+      inputs.push({ path, plan, planner, files: { json: planFiles(path).json }, preventDestroy: new Set(), terragrunt: unit });
+      log(`${path}: ${provisional ? "previewed (provisional)" : "planned"}`);
+    }
+  };
+
+  const allWaiting: string[] = [];
+  for (const [i, wave] of waves.entries()) {
+    let units = [...wave];
+    const waiting: string[] = [];
+    // Each refusal names every read of the units it checked, so one pass takes them all out.
+    for (let attempt = 0; units.length > 0 && attempt < 2; attempt++) {
+      const workDir = join(work, `wave-${i + 1}${attempt ? `-${attempt}` : ""}`);
+      try {
+        read(workDir, await planTerragruntWave({ ...run, units, workDir }), false);
+        units = [];
+      } catch (e) {
+        if (!(e instanceof TerragruntMockRefusal)) {
+          const error = (e as Error).message;
+          for (const path of units) {
+            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: false, run_result: "not run" } });
+          }
+          log(`wave ${i + 1}: ${error}`);
+          units = [];
+          break;
+        }
+        log(`wave ${i + 1}: ${e.message}`);
+        mockReads.push(...e.reads.map((r) => ({ unit: r.unit, dependency: r.dependency, upstream: r.upstream, reason: r.reason, ...(r.keys ? { keys: r.keys } : {}) })));
+        // Each refused unit waits; mock_reads says why, and which upstream it waits for.
+        const refused = new Set(e.reads.map((r) => r.unit));
+        waiting.push(...refused);
+        units = units.filter((u) => !refused.has(u));
+      }
+    }
+    allWaiting.push(...waiting);
+  }
+  // Dependents of changed units, and units waiting for an upstream, previewed when the project asks.
+  const preview = options.dependents === "plan" ? [...new Set([...options.preview, ...allWaiting])].sort() : [];
+  if (preview.length > 0) {
+    const workDir = join(work, "provisional");
+    try {
+      read(workDir, await planTerragruntWave({ ...run, units: preview, workDir, provisional: true }), true);
+    } catch (e) {
+      log(`no provisional preview: ${(e as Error).message}`);
     }
   }
-  return { inputs, plans, redacted };
+  return { inputs, plans, redacted, mockReads, waiting: allWaiting };
 }
 
 export async function runStage(stage: string, repo: string, options: StageOptions = {}, log: (line: string) => void = console.error): Promise<StageResult> {
@@ -284,6 +335,10 @@ interface Planned {
   waves: WaveInput[];
   plans: Map<string, { text?: string; json?: string }>;
   redacted: number;
+  mockReads?: ReportMockRead[];
+  deferred?: ReportDeferred[];
+  /** Directories read for code tips only (a Terragrunt repo's root.hcl). */
+  configDirs?: string[];
   /** Every root or unit in the repo, and the ones this run planned. */
   all: string[];
   roots: string[];
@@ -300,31 +355,81 @@ async function runTerragruntStage(
 ): Promise<StageResult> {
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, []).value;
   const canary = options.canary ?? settings.waves?.canary ?? [];
-  let waves = options.layers;
-  if (!waves) {
-    const found = await discoverUnits(repo, {
-      exclude: settings.terragrunt?.exclude, binary,
-      ...(options.terragruntPath ? { terragrunt: options.terragruntPath } : {}),
-      ...(options.terragruntExec ? { exec: options.terragruntExec } : {}),
-    });
+  const tool = {
+    ...(options.terragruntPath ? { terragrunt: options.terragruntPath } : env.TERRAGUCCI_TERRAGRUNT ? { terragrunt: env.TERRAGUCCI_TERRAGRUNT } : {}),
+    ...(options.terragruntExec ? { exec: options.terragruntExec } : {}),
+  };
+  const base = options.base ?? baseRef(env);
+  // Discovery gives the edges that dependents and the canary wave need.
+  let units: TerragruntUnit[] | undefined;
+  if (!options.layers || base) {
+    const found = await discoverUnits(repo, { exclude: settings.terragrunt?.exclude, binary, ...tool });
     found.notes.forEach((n) => log(`note: ${n}`));
-    waves = unitWaves(found.units, canary);
+    units = found.units;
   }
+  let waves = options.layers ?? unitWaves(units!, canary);
   waves = waves.map((w) => (options.root ? w.filter((u) => globMatch(options.root!, u)) : w)).filter((w) => w.length > 0);
   if (waves.length === 0) throw new ConfigError(options.root ? `no unit matches ${options.root}` : "found no Terragrunt units");
+
+  // Affected selection: Terragrunt's git range plus what it misses. Without a base, every unit.
+  const reasons = new Map<string, string>();
+  let everyUnit = SELECTED_ALL;
+  const deferred: ReportDeferred[] = [];
+  let preview: string[] = [];
+  if (base && units) {
+    try {
+      const affected = await findTerragruntAffected({ dir: repo, base, binary, units, exclude: settings.terragrunt?.exclude, ...tool });
+      affected.notes.forEach((n) => log(`note: ${n}`));
+      for (const u of affected.units) reasons.set(u.path, u.reasons.map(describeTerragruntAffectedReason).join("; "));
+      const changed = [...reasons.keys()];
+      const dependents = terragruntDependents(units, changed);
+      for (const d of dependents) {
+        const after = changed.filter((c) => terragruntDependents(units!, [c]).includes(d));
+        reasons.set(d, `depends on ${after.join(", ")}, which changed`);
+        deferred.push({ unit: d, after, why: "depends on a changed unit", previewed: settings.terragrunt?.dependents === "plan" });
+      }
+      preview = dependents;
+      const selected = new Set(changed);
+      waves = waves.map((w) => w.filter((u) => selected.has(u))).filter((w) => w.length > 0);
+      log(`affected: ${changed.length} of ${units.length} units against ${base}, ${dependents.length} dependents after them`);
+    } catch (e) {
+      everyUnit = `every unit: affected selection failed (${(e as Error).message.split("\n")[0]})`;
+      log(everyUnit);
+    }
+  }
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), "tf-plan", env);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
   try {
-    const { inputs, plans, redacted } = await planUnits(repo, waves, binary, work, { ...options, env }, log);
-    const units = waves.flat();
+    const planned = await planUnits(repo, waves, binary, work, {
+      ...options, env, dependents: settings.terragrunt?.dependents, preview,
+      selection: (u) => reasons.get(u) ?? everyUnit,
+    }, log);
+    const { inputs, plans, redacted, mockReads } = planned;
+    for (const u of planned.waiting) {
+      const after = [...new Set(mockReads.filter((r) => r.unit === u).map((r) => r.upstream))].sort();
+      deferred.push({ unit: u, after, why: "would read mock_outputs", previewed: settings.terragrunt?.dependents === "plan" });
+    }
+    const all = (units ?? []).map((u) => u.path);
+    const plannedPaths = inputs.map((r) => r.path);
+    // A wave covers what it planned for real: no unit that waits for its upstream, and no preview.
+    const real = new Set(inputs.filter((r) => !r.terragrunt?.provisional).map((r) => r.path));
     return await finish(repo, settings, options, env, log, {
-      binary, started, inputs, plans, redacted, all: units, roots: units, observer,
-      waves: waves.map((roots, i) => ({ number: i + 1, roots })),
+      binary, started, inputs, plans, redacted, all: all.length ? all : plannedPaths, roots: plannedPaths, observer, mockReads,
+      deferred: deferred.sort((a, b) => (a.unit < b.unit ? -1 : 1)),
+      ...(existsSync(join(repo, "root.hcl")) ? { configDirs: ["."] } : {}),
+      waves: waves.map((w) => w.filter((u) => real.has(u))).filter((w) => w.length > 0).map((roots, i) => ({ number: i + 1, roots })),
     });
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+/** The base of a pull request's range, from the forge's environment: `origin/<target branch>`. */
+export function baseRef(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.TG_BASE) return env.TG_BASE;
+  const branch = env.GITHUB_BASE_REF || env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
+  return branch ? `origin/${branch}` : undefined;
 }
 
 async function finish(
@@ -333,13 +438,15 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs, waves, plans, redacted, all, roots, observer }: Planned,
+  { binary, started, inputs, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs }: Planned,
 ): Promise<StageResult> {
   const report = buildReport({
     run: { ...runFacts(repo, env), stage: "tf-plan", binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: pkg.version },
     roots: inputs,
     waves,
     redacted,
+    ...(mockReads?.length ? { mockReads } : {}),
+    ...(deferred?.length ? { deferred } : {}),
   });
   // Tips are advice: they read the repo and the finished report, and change neither.
   if (settings.tips) {
@@ -347,7 +454,7 @@ async function finish(
     if (!parser) log("tips: the HCL parser is not installed, so the lint tips are left out (npm i -D @cdktn/hcl2json)");
     const destroying = [...new Set(report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => n.root))];
     try {
-      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length });
+      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}) });
     } catch (e) {
       log(`tips: skipped, ${(e as Error).message}`);
       report.tips = [];
@@ -363,6 +470,6 @@ async function finish(
     uploaded = await uploadReport(s3, dir, report, reports.prefix);
   }
   await observer.finish(report, env, log, options.otlpFetch);
-  return { report, dir, ...(uploaded ? { uploaded } : {}), failed: report.roots.some((r) => r.status === "failed") };
+  return { report, dir, ...(uploaded ? { uploaded } : {}), failed: report.roots.some((r) => r.status === "failed" && !r.terragrunt?.provisional) };
 }
 

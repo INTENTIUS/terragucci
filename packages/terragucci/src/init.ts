@@ -102,17 +102,14 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (detectedTg) {
     // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
     const tgSettings = settings.terragrunt ?? {};
-    if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; the units come from Terragrunt's discovery, narrowed by terragrunt.exclude");
+    if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; use terragrunt.exclude");
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {
       throw new ConfigError(`found no Terragrunt units (${detectedTg.reason} turned Terragrunt mode on): no directory outside catalog/ holds a terragrunt.hcl`);
     }
     if (detectedTg.stacks.length > 0) {
-      notes.push(`explicit stacks are not run yet: the units ${detectedTg.stacks.join(", ")} would generate from terragrunt.stack.hcl are left out; implicit-stack units run as usual`);
-    }
-    if (tgSettings.dependents === "plan") {
-      notes.push("terragrunt.dependents is plan; a provisional preview of dependents needs affected selection, which is not built yet, so every unit is planned");
+      notes.push(`explicit stacks are not run yet, so ${detectedTg.stacks.join(", ")} is left out`);
     }
     rootReasons = found.units.map((u) => ({ root: u.path, reason: found.source === "terragrunt find" ? "terragrunt find" : "terragrunt.hcl" }));
     try {

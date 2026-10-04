@@ -103,6 +103,29 @@ export interface ReportUnit {
   run_result: string;
 }
 
+/** A unit that plans after the units it waits for have applied (minor 1). */
+export interface ReportDeferred {
+  unit: string;
+  /** The units it waits for. */
+  after: string[];
+  why: string;
+  /** Whether this run also planned it as a provisional preview. */
+  previewed: boolean;
+}
+
+/** One dependency that would have planned on `mock_outputs` (minor 1). */
+export interface ReportMockRead {
+  /** The unit that reads it. */
+  unit: string;
+  /** The `dependency` block's label. */
+  dependency: string;
+  upstream: string;
+  /** `no-outputs` and `partial` wait for the upstream to apply; `skip-outputs` and `disabled` need the block fixed. */
+  reason: "no-outputs" | "partial" | "skip-outputs" | "disabled";
+  /** For `partial`: the mock keys the upstream's outputs lack. */
+  keys?: string[];
+}
+
 export interface ReportRoot {
   path: string;
   /** Set when the root is a Terragrunt unit. */
@@ -181,6 +204,18 @@ export interface Report {
   named: ReportNamed[];
   holes: ReportHole[];
   redaction: { marker: typeof REDACTED; values: number };
+  /**
+   * Dependencies that would have planned on `mock_outputs`, so their units
+   * were not planned as real (Terragrunt). A unit that only waits for its
+   * upstream to apply is in no `roots[]` entry unless it was previewed.
+   */
+  mock_reads?: ReportMockRead[];
+  /**
+   * Units this run did not plan as real because they plan after other units
+   * apply (Terragrunt): dependents of a changed unit, and units whose
+   * upstream has no outputs yet. Each names what it waits for.
+   */
+  deferred?: ReportDeferred[];
   /** Present when tips are on, even when there are none. Absent with `tips: false`. */
   tips?: ReportTip[];
 }
