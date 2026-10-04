@@ -44,6 +44,7 @@ tg-affected|only the units a change reaches are planned, including a file a modu
 tg-mock-lint|a dependency whose mock_outputs can stand in for apply is named by a tip|
 tg-refuse|a unit whose plan would read mock_outputs is not planned; it waits for its upstream to apply|
 tg-mock-trap|a new upstream and its dependent merge together and apply in order, so no mock reaches real state|
+tg-drift|drift is reported by unit in a Terragrunt repo, with the same tracking issue|
 respond-refused|a refused wave names each root whose plan moved and the attributes that moved|
 respond-triage|a failed apply is triaged from the known-error table|
 respond-drift|drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged|
@@ -1016,6 +1017,10 @@ tg_image() { (cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "terr
 # way the plan job runs it: the base is the example as committed, the head is
 # the base plus the named patches. REPORT_CONFIG is appended to terragucci.yml;
 # TG_EDIT is a shell command run in the copy before the head commit.
+# TG_STAGE names another stage (tf-drift); TG_RUN_EXTRA holds more `docker run`
+# arguments and TG_STAGE_ARGS more stage arguments.
+TG_RUN_EXTRA=()
+TG_STAGE_ARGS=()
 tg_report_run() { # work, patches...
   local work="$1"; shift
   local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p base
@@ -1036,7 +1041,8 @@ tg_report_run() { # work, patches...
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
     -e TG_BASE="${TG_BASE_OVERRIDE-$base}" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$image" terragucci stage tf-plan --terragrunt --binary tofu >&2
+    ${TG_RUN_EXTRA[@]+"${TG_RUN_EXTRA[@]}"} \
+    "$image" terragucci stage "${TG_STAGE:-tf-plan}" --terragrunt --binary tofu ${TG_STAGE_ARGS[@]+"${TG_STAGE_ARGS[@]}"} >&2
 }
 
 # The last run on the Terragrunt example's main, and one of its jobs' whole log.
@@ -1226,6 +1232,60 @@ claim_tg_mock_trap() {
   "$HERE/example-terragrunt.sh" reset >&2 || true
   rm -rf "$work"
   [ $rc = 0 ] && log "ledger applied before billing; billing's state names shop-tg-dev-ledger and holds no mock"
+  return $rc
+}
+
+claim_tg_drift() {
+  # The Terragrunt example is applied (run 'just example-terragrunt up' first).
+  # Staging orders' jobs queue is deleted from floci, outside Terraform. A
+  # tf-drift run over every unit, one refresh-only run --all per wave, must
+  # report that unit and that queue as the only delete, and keep exactly one
+  # open drift issue that names them. Run again it updates the issue.
+  # floci keeps no tags or object metadata, so every unit shows tag and
+  # metadata drift; the claim holds the deletes exact and every other drifted
+  # attribute to that known set, as claim_drift does.
+  # BREAK: the queue is not deleted, so there is no drift to name.
+  log() { echo "[smoke tg-drift] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 n issues body r unit="live/staging/orders" queue="shop-tg-staging-orders-jobs" repo="$USER/$TG_REPO_NAME" deletes extra
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
+  drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
+    local TG_STAGE=tf-drift
+    local -a TG_STAGE_ARGS=(--forge forgejo --report-url "http://forgejo:3000/$repo/actions")
+    local -a TG_RUN_EXTRA=(-e "GITHUB_REPOSITORY=$repo" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN")
+    mkdir -p "$1"
+    tg_report_run "$1"
+  }
+  for n in $(open_issues | jq -r '.[].number'); do
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/issues/$n"
+  done
+  if [ -z "${BREAK:-}" ]; then
+    extra="$(curl -fsS -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.GetQueueUrl' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')" || extra=""
+    [ -n "$extra" ] || { log "$queue is not in floci; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
+    curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.DeleteQueue' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$extra\"}" || { rm -rf "$work"; return 1; }
+  fi
+
+  drift_run "$work/run1" || { log "the drift run failed"; rm -rf "$work"; return 1; }
+  r="$work/run1/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
+  jq -e '.run.stage == "tf-drift"' "$r" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
+  deletes="$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$r")"
+  [ "$deletes" = "$unit aws_sqs_queue.jobs" ] || { log "the deletes are not exactly $unit's queue: $deletes"; rc=1; }
+  [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$r")" = "" ] \
+    || { log "attributes other than tags and metadata drifted"; rc=1; }
+  issues="$(open_issues)"
+  [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
+  body="$(jq -r '.[0].body // ""' <<<"$issues")"
+  grep -q "$unit" <<<"$body" && grep -q "$queue" <<<"$body" || { log "the issue does not name $unit and $queue"; rc=1; }
+  if [ $rc = 0 ]; then
+    drift_run "$work/run2" || { log "the second drift run failed"; rc=1; }
+    [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rc=1; }
+  fi
+  rm -rf "$work"
+  "$HERE/example-terragrunt.sh" reset >&2 || log "could not apply the example again"
+  [ $rc = 0 ] && log "$unit and $queue named, one issue kept, a second run updated it"
   return $rc
 }
 

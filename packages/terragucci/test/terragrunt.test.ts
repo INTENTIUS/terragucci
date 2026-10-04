@@ -90,6 +90,7 @@ function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
       const empty = Object.values(opts.noOutputs ?? {}).includes(unit);
       return { code: 0, stdout: empty ? "{}" : JSON.stringify({ id: { value: `${unit}-id` } }), stderr: "" };
     }
+    const refresh = args.includes("-refresh-only");
     const units = args.flatMap((a, i) => (args[i - 1] === "--filter" && a.startsWith("{./") ? [a.slice(3, -1)] : []));
     const out = argOf(args, "--out-dir")!;
     const json = argOf(args, "--json-out-dir")!;
@@ -97,7 +98,9 @@ function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
       if (opts.fail?.includes(u)) return { Name: u, Result: "failed", Reason: "run error", Cause: "Error: boom" };
       for (const [dir, f, body] of [
         [out, "tfplan.tfplan", "binary"],
-        [json, "tfplan.json", JSON.stringify({ format_version: "1.2", resource_changes: [rc("terraform_data.this", ["create"], null, { input: u })] })],
+        [json, "tfplan.json", JSON.stringify(refresh
+          ? { format_version: "1.2", resource_changes: [], resource_drift: u === "live/dev/vpc" ? [rc("terraform_data.this", ["update"], { input: "a", name: "vpc-a" }, { input: "b", name: "vpc-a" })] : [] }
+          : { format_version: "1.2", resource_changes: [rc("terraform_data.this", ["create"], null, { input: u })] })],
       ] as const) {
         mkdirSync(join(dir, u), { recursive: true });
         writeFileSync(join(dir, u, f), body);
@@ -404,6 +407,63 @@ describe("terragucci stage tf-plan in a Terragrunt repo", () => {
     expect(r.report.roots.map((u) => u.path)).toEqual(["live/dev/vpc"]);
     expect(r.report.roots[0].terragrunt?.selection).toMatch(/live\/dev\/vpc\/terragrunt\.hcl/);
     expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: false }]);
+  });
+});
+
+describe("terragucci stage tf-drift in a Terragrunt repo", () => {
+  it("refresh-plans every unit, one run --all per wave, and reports drift by unit", async () => {
+    const repo = liveRepo();
+    const calls: string[][] = [];
+    const r = await runStage("tf-drift", repo, {
+      out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main",
+      layers: [["live/dev/vpc", "live/dev/app"], ["live/prod/vpc", "live/prod/app"]],
+      terragruntExec: fakeTerragrunt({ calls }), env: {},
+    }, () => {});
+    const runs = calls.filter((c) => c[0] === "run" && c[1] === "--all");
+    expect(runs).toHaveLength(2);
+    for (const run of runs) expect(run.slice(run.indexOf("--"), run.indexOf("--") + 3)).toEqual(["--", "plan", "-refresh-only"]);
+    expect(calls.filter((c) => c[0] === "render").every((c) => !c.includes("-refresh-only"))).toBe(true);
+    expect(r.report.run.stage).toBe("tf-drift");
+    expect(r.report.waves).toEqual([]);
+    const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
+    expect(units["live/dev/vpc"].changes).toHaveLength(1);
+    expect(units["live/dev/app"].changes).toHaveLength(0);
+    expect(r.report.roots).toHaveLength(4);
+    expect(r.failed).toBe(false);
+    expect(readFileSync(join(repo, "out/issue.md"), "utf-8")).toContain("live/dev/vpc");
+  });
+
+  it("a plain tf-plan does not refresh-only", async () => {
+    const repo = liveRepo();
+    const calls: string[][] = [];
+    await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc"]], terragruntExec: fakeTerragrunt({ calls }), env: {} }, () => {});
+    expect(calls.flat()).not.toContain("-refresh-only");
+  });
+
+  it("a unit whose upstream has no outputs fails the run instead of waiting", async () => {
+    const repo = liveRepo();
+    const exec = fakeTerragrunt({ noOutputs: { "live/dev/app": "live/dev/vpc" } });
+    const r = await runStage("tf-drift", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/app", "live/dev/vpc"]], terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.roots.find((u) => u.path === "live/dev/app")).toMatchObject({ status: "failed" });
+    expect(r.failed).toBe(true);
+  });
+});
+
+describe("the pipeline's drift job in a Terragrunt repo", () => {
+  it.each(["github", "gitlab"] as const)("%s: drift runs tf-drift --terragrunt with the cache, and nothing else changes", async (forge) => {
+    const repo = liveRepo({ "terragucci.yml": `drift: "0 6 * * *"\n${forge === "gitlab" ? "forge: gitlab\n" : ""}` });
+    const doc = body((await init(repo, { binary: "tofu", forge, terragrunt: "/nonexistent/terragrunt" })).files[0].content);
+    const job = forge === "github" ? doc.jobs.drift : doc.drift;
+    const script = forge === "github" ? job.steps.map((s: any) => s.run).filter(Boolean).join("\n") : job.script.join("\n");
+    expect(script).toContain("terragucci stage tf-drift");
+    expect(script).toContain("--terragrunt");
+    expect(script).toContain("TG_DOWNLOAD_DIR");
+    expect(forge === "github" ? job.steps.some((s: any) => s.uses === "actions/cache@v4") : job.cache[0].paths).toBeTruthy();
+  });
+
+  it("without drift there is no drift job", async () => {
+    const doc = body((await init(liveRepo(), { binary: "tofu", forge: "github", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
+    expect(doc.jobs.drift).toBeUndefined();
   });
 });
 
