@@ -2,7 +2,7 @@
 
 terragucci's pipelines are meant to be run before they ship, on a real forge with a real runner, against an AWS emulator, all on one Docker network. This directory is that stack. [terragucci#4](https://github.com/INTENTIUS/terragucci/issues/4) is the design and lists every claim it should eventually check.
 
-terragucci's stages are not built yet, so the one workflow run here is hand-written (`fixtures/s3-bucket/.forgejo/workflows/tofu.yml`). When the stages exist, the generated workflow replaces it and the claims stay the same.
+The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/workflows/tofu.yml`). The github and gitlab claims run the pipeline `terragucci init` writes for that forge into the same fixture, so they check the generated file.
 
 ## What runs today
 
@@ -10,15 +10,15 @@ terragucci's stages are not built yet, so the one workflow run here is hand-writ
 |---|---|---|
 | `aws` | floci | validated: starts, answers S3 |
 | `forgejo` | floci, Forgejo, forgejo-runner (docker executor) | validated: the `check` and `apply` claims pass |
-| `github` | floci, github-warden's mock GitHub API | declared, not yet validated |
-| `gitlab` | floci, GitLab CE, gitlab-runner | declared, not yet validated |
+| `github` | floci, a mock GitHub API, `act` on the host | validated: `check`, `apply` and `reconcile` pass |
+| `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply` and `reconcile` pass |
 | `fountain` | floci, fountain, Postgres, waterpark's sandbox runner | declared, not yet validated |
 | `observability` | an OpenTelemetry collector and Prometheus (`stack/observability/`) | used by the `traces` and `metrics` claims; run it beside `forgejo` |
 
-Declared means the services are in `docker-compose.yml`, readable, with comments on what they still need. `bootstrap.sh` refuses those profiles unless `TERRAGUCCI_UNVALIDATED=1`, and then only starts their containers. No claim runs on them.
+Declared means the services are in `docker-compose.yml`, readable, with comments on what they still need. `bootstrap.sh` refuses `fountain` unless `TERRAGUCCI_UNVALIDATED=1`, and then only starts its containers. No claim runs on it.
 
-- `github`: the plan is `act` on the host with event payloads, job containers on this network, and the mock API for PR comments. The mock is mounted from a github-warden checkout next to this one (`TERRAGUCCI_MOCK_GITHUB_DIR` overrides the path). It covers warden's endpoints today and has no issue-comment routes yet.
-- `gitlab`: copied from choudoufu's `examples/ci-pipelines/e2e/gitlab`. The runner still has to be created over the API and registered with `--docker-network-mode terragucci`. The GitLab CE image is linux/amd64 only, so on an arm64 Mac it runs under emulation.
+- `github`: GitHub has no self-hostable edition. `mock-github/server.mjs` is a small stateful GitHub: it creates repos, serves their git over smart HTTP (`git http-backend`), opens, lists and merges pull requests, and stores issue comments. The runner is `act` on the host, which runs the repo's real workflow file with its job containers on the `terragucci` network. A push is a git push to the mock, and a run is `act push` on a fresh clone of the pushed commit with a push event for that branch, so `github.ref` and the default-branch condition behave as on GitHub. `act` has to be installed (`brew install act`).
+- `gitlab`: GitLab CE 17.11 and gitlab-runner 17.11 with the docker executor, taken from gitlab-warden's e2e stack. The GitLab image is linux/amd64 only, so on Apple silicon it runs under emulation and cold boot takes a few minutes. Speed does not matter here, and the runner and the job containers are native. `bootstrap.sh` mints a root token with `gitlab-rails runner`, creates an instance runner over `POST /api/v4/user/runners` and registers it with `--docker-network-mode terragucci`.
 - `fountain`: copied from waterpark's `compose/`. The runner needs an API key that exists only after an account is registered.
 
 ## The example and the smoke claims
@@ -49,6 +49,9 @@ Facts measured on floci that the example relies on: SQS `visibility_timeout_seco
 |---|---|---|
 | `forgejo check` | a push of the fixture goes green, and a push of the fixture plus an unformatted file goes red with that file named in the job log | the push that should be clean carries the unformatted file |
 | `forgejo apply` | with the bucket deleted from floci first, a push to `main` goes green and the bucket then exists when asked from the host | removes the `tofu apply` step, so the run is green and only the host check can catch it |
+| `github check`, `gitlab check` | the same, with the pipeline `terragucci init` wrote | the same |
+| `github apply`, `gitlab apply` | the same, with the generated pipeline | removes the generated `apply` job |
+| `github reconcile`, `gitlab reconcile` | `terragucci reconcile --mode apply` on a control repo of two projects opens one pull (merge) request on the project with no pipeline and leaves the in-line project alone; the request's check goes green; merged, its pipeline applies both roots, network before app | runs `--mode dry-run`, which opens nothing |
 
 `validate.sh` finds the run by the pushed commit's sha (`GET /repos/{owner}/{repo}/actions/runs?head_sha=`), polls it every 3s up to `TERRAGUCCI_VALIDATE_TIMEOUT` (900s), and prints each job's log through `/actions/jobs/{id}/logs` when a run is not what it expected.
 
@@ -60,9 +63,17 @@ just validate forgejo check
 just validate forgejo apply
 BREAK=1 just validate forgejo check   # must fail
 just stack-down                    # stack/down.sh: down -v, every profile
+
+just stack-up gitlab               # one profile at a time; GitLab is the heavy one
+just validate gitlab reconcile
+just stack-for terragucci.yml      # only the profiles a config names
 ```
 
+`stack/validate-generated.sh` holds the github and gitlab claims. Each forge supplies a small driver (`forge-github.sh`, `forge-gitlab.sh`) with the same functions: reset a repo, push a tree, run the pipeline for a commit, open and merge a request. GitLab projects are kept between runs and reset (open merge requests closed, `main` reseeded and unprotected), because deleting one holds its name for a while. The mock's repos are deleted and created each time.
+
 `bootstrap.sh` is safe to run again. It reuses the admin, replaces the API token, keeps a runner that is already online, and leaves the repo alone. It prints the env vars a run needs and writes them to `stack/.state/<profile>.env`, which `validate.sh` reads when they are not already set:
+
+The github and gitlab profiles write `github.env` and `gitlab.env` the same way, with `TERRAGUCCI_GITHUB_*` (mock URL, token, user, repo) and `TERRAGUCCI_GITLAB_*`.
 
 | Variable | Value |
 |---|---|
@@ -110,7 +121,9 @@ These came from choudoufu's GitLab run and hold here too.
 | job image | `node:22-bookworm` |
 | OpenTofu | 1.13.1, in the fixture workflow's `TOFU_VERSION` |
 | AWS provider | `hashicorp/aws` 6.67.0, with `.terraform.lock.hcl` for linux_arm64, linux_amd64 and darwin_arm64 |
-| GitLab (declared) | `gitlab/gitlab-ce:17.11.0-ce.0`, `gitlab/gitlab-runner:v17.11.0` |
+| mock GitHub | `node:22-bookworm` running `mock-github/server.mjs` |
+| act | 0.2.89 on the host |
+| GitLab | `gitlab/gitlab-ce:17.11.0-ce.0`, `gitlab/gitlab-runner:v17.11.0` |
 | fountain (declared) | `ghcr.io/binarybourbon/fountain:sha-7f8d16af…`, `postgres:16`, `ghcr.io/intentius/waterpark-runner:latest` |
 
-Jobs fetch `actions/checkout@v4` from data.forgejo.org and OpenTofu from GitHub releases, so the forgejo profile needs network access.
+Jobs fetch `actions/checkout@v4` from data.forgejo.org and OpenTofu from GitHub releases, so the forgejo profile needs network access. The github and gitlab pipelines run in terragucci's tofu image, built into the local daemon by `bootstrap.sh` when it is missing; they download the AWS provider on every run.

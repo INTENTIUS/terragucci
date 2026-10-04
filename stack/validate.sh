@@ -40,14 +40,15 @@ BUCKET="terragucci-validate"
 
 log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
-usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: forgejo check, forgejo apply)" >&2; exit 2; }
+usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: forgejo check|apply, github and gitlab check|apply|reconcile)" >&2; exit 2; }
 
 command -v docker >/dev/null 2>&1 || { echo "SKIP: docker is not installed"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: the docker daemon is not reachable"; exit 0; }
 
 case "$FORGE:$CLAIM" in
   forgejo:check|forgejo:apply) ;;
-  github:*|gitlab:*|fountain:*)
+  github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
+  fountain:*)
     echo "the $FORGE profile is declared but not validated yet; no claims run on it (see stack/README.md)" >&2; exit 2 ;;
   forgejo:*)
     echo "claim '$CLAIM' is not implemented for forgejo yet (implemented: check, apply)" >&2; exit 2 ;;
