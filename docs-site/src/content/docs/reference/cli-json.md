@@ -54,6 +54,7 @@ Exit codes are the same with or without `--json`: 0 done, 1 one or more projects
 | `changes` | The files, as in `init`'s `files`. |
 | `pullRequest` | The pull request's URL, when one was opened. |
 | `error` | Why the project failed. |
+| `tips` | On a dry run with `tips` on, advice on the project's setup, as `rule`, `root`, `message` and `url`. |
 
 The exit code is 1 when any project failed.
 

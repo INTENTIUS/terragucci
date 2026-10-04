@@ -130,7 +130,7 @@ reports/github.com/acme/infra/2026/10/4f1a9c0/tf-apply-wave-2/report.json
 
 ## Tips
 
-With `tips` on, which is the default, the report ends with advice on how your roots are set up. It flags modules and providers that float instead of pinning, a missing lock file, a local module so widely shared that every change to it plans every root, and a project with no canary wave. Each tip names the rule behind it, and the code rules are the same ones `chant lint` runs. A tip never fails a run or changes a gate. The plan note shows only how many there are.
+With `tips` on, which is the default, the report ends with advice on how your roots are set up. It flags modules and providers that float instead of pinning, a missing lock file, a local module so widely shared that every change to it plans every root, and a project with no canary wave. Each tip names the rule behind it, and the code rules are the same ones `chant lint` runs. A tip never fails a run or changes a gate. The plan note shows only how many there are. `tips: false` removes all of it. The rules are listed on [Tips](/terragucci/reference/tips/).
 
 ## The report index
 

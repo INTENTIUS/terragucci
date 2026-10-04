@@ -28,6 +28,19 @@ const minifiedYaml = {
   },
 };
 
+// The lint tips parse HCL through the terraform lexicon, whose parser module
+// reaches chant's carve registry and with it the AWS, GCP and Kubernetes
+// provider tables (50 KB). terragucci never carves, so the registry starts
+// empty here. Remove this once chant loads the tables only when carving.
+const noCarveProviders = {
+  name: "no-carve-providers",
+  setup(b) {
+    b.onResolve({ filter: /^\.\/providers$/ }, (args) =>
+      /chant\/src\/terraform\/carve-provider\.ts$/.test(args.importer) ? { path: "carve-providers", namespace: "empty" } : undefined);
+    b.onLoad({ filter: /.*/, namespace: "empty" }, () => ({ contents: "export const BUILTIN_CARVE_PROVIDERS = [];", loader: "js" }));
+  },
+};
+
 await build({
   entryPoints: [join(pkg, "src/cli.ts")],
   outfile: join(dist, "terragucci.mjs"),
@@ -45,7 +58,7 @@ await build({
   minifyWhitespace: true,
   keepNames: true,
   sourcemap: "linked",
-  plugins: [minifiedYaml],
+  plugins: [minifiedYaml, noCarveProviders],
   logLevel: "warning",
 });
 chmodSync(join(dist, "terragucci.mjs"), 0o755);

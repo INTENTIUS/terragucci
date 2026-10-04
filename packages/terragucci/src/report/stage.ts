@@ -13,6 +13,8 @@ import pkg from "../../package.json" with { type: "json" };
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch } from "../detect";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
+import { loadHclParser } from "../rollout/parser";
+import { describeTips, repoTips } from "../tips";
 import { redactPlan } from "./redact";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
 import { StageObserver } from "./observe";
@@ -213,6 +215,19 @@ export async function runStage(stage: string, repo: string, options: StageOption
     waves,
     redacted,
   });
+  // Tips are advice: they read the repo and the finished report, and change neither.
+  if (settings.tips) {
+    const parser = await loadHclParser().catch(() => undefined);
+    if (!parser) log("tips: the HCL parser is not installed, so the lint tips are left out (npm i -D @cdktn/hcl2json)");
+    const destroying = [...new Set(report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => n.root))];
+    try {
+      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length });
+    } catch (e) {
+      log(`tips: skipped, ${(e as Error).message}`);
+      report.tips = [];
+    }
+    for (const line of describeTips(report.tips)) log(line);
+  }
   const dir = resolve(repo, options.out ?? "terragucci-report");
   writeReportDir(dir, report, plans, { ...(options.reportUrl ? { reportUrl: options.reportUrl } : {}) });
   let uploaded: Uploaded | undefined;
