@@ -24,7 +24,7 @@ terragucci runs the lifecycle around your Terraform roots. Your Terraform code a
 
 ## Who it is for
 
-Anyone running Terraform or OpenTofu who wants these stages without writing them per repository. choudoufu users get the same stages plus three of their own; see [Which binary you run](/terragucci/getting-started/binaries/).
+Anyone running Terraform, OpenTofu or Terragrunt who wants these stages without writing them per repository. [Which binary you run](/terragucci/getting-started/binaries/) covers each one.
 
 ## What it is built on
 

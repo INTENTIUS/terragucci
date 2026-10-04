@@ -39,7 +39,7 @@ export async function pages() {
 
 export const PREAMBLE = `# terragucci
 
-> The whole Terraform lifecycle, handled: grouped plans on every pull request, applies in gated waves, drift reports, module publishing and rollouts, for Terraform, OpenTofu, choudoufu and CDK Terrain on GitHub, GitLab or Forgejo.
+> The whole Terraform lifecycle, handled: grouped plans on every pull request, applies in gated waves, drift reports, module publishing and rollouts, for Terraform, OpenTofu and Terragrunt on GitHub, GitLab or Forgejo.
 
 The docs describe the finished product in the present tense. The status page (${SITE}/status/) is the only record of what is built today. Before you run a command or promise a feature to a user, check it there, and say plainly when something is not built yet.
 
