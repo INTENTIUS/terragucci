@@ -5,7 +5,6 @@
 // needs, and the HCL parser a module rollout needs, stay external and optional.
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -15,37 +14,6 @@ const pkg = join(root, "packages/terragucci");
 const dist = join(pkg, "dist");
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
-
-// chant's YAML reader (@intentius/chant/yaml) imports js-yaml's default
-// export, an object holding the whole library, so esbuild can drop none of
-// it: 101 KB as the ES module. js-yaml's own minified build is the same code
-// at 43 KB, so the bundle takes that one.
-const require = createRequire(import.meta.url);
-const minifiedYaml = {
-  name: "minified-js-yaml",
-  setup(b) {
-    b.onResolve({ filter: /^js-yaml$/ }, () => ({ path: join(dirname(require.resolve("js-yaml")), "dist/js-yaml.min.js") }));
-  },
-};
-
-// The lint tips parse HCL through the terraform lexicon, whose parser module
-// imports chant's terraform/parse for its HCL loader. That module also imports
-// the dependency graph and the state reader, and through them the carve registry
-// with the AWS, GCP and Kubernetes provider tables (80 KB). terragucci only
-// loads the HCL parser, so those two imports are stubbed out. Remove this once
-// chant keeps the loader apart from the graph.
-const noGraph = {
-  name: "no-terraform-graph",
-  setup(b) {
-    const stubs = {
-      "./graph": "export const buildGraph = () => { throw new Error('not in the bundle'); }; export const collectExpressions = buildGraph;",
-      "./state": "export const readStateInstanceCounts = () => { throw new Error('not in the bundle'); }; export const applyStateCounts = readStateInstanceCounts;",
-    };
-    b.onResolve({ filter: /^\.\/(graph|state)$/ }, (args) =>
-      /chant\/src\/terraform\/parse\.ts$/.test(args.importer) ? { path: args.path, namespace: "stub" } : undefined);
-    b.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({ contents: stubs[args.path], loader: "js" }));
-  },
-};
 
 await build({
   entryPoints: [join(pkg, "src/cli.ts")],
@@ -57,17 +25,14 @@ await build({
   external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"],
   banner: { js: "#!/usr/bin/env node\nimport { createRequire as __terragucciRequire } from 'node:module';\nconst require = __terragucciRequire(import.meta.url);" },
   legalComments: "none",
-  // Folds constants, drops dead branches and whitespace, and shortens local names.
-  // Function and class names are not kept (that was 17 KB of the budget), and
-  // nothing reads a function's name at run time. The linked source map ships
-  // beside the bundle: run with `node --enable-source-maps` to read a stack
-  // trace against the sources.
+  // Folds constants, drops dead branches and whitespace, and shortens names. The
+  // linked source map ships beside the bundle: run with
+  // `node --enable-source-maps` to read a stack trace against the sources.
   minifySyntax: true,
   minifyWhitespace: true,
   minifyIdentifiers: true,
   keepNames: false,
   sourcemap: "linked",
-  plugins: [minifiedYaml, noGraph],
   logLevel: "warning",
 });
 chmodSync(join(dist, "terragucci.mjs"), 0o755);
