@@ -111,6 +111,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     env: settings.env,
     oidc: settings.oidc,
     tokenEnv: settings.token_env,
+    ...(settings.modules?.publish ? { publish: true } : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);

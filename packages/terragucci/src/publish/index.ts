@@ -50,6 +50,8 @@ export interface PublishOptions {
 interface Target {
   label: string;
   latest(name: string): Promise<Release | undefined>;
+  /** Called before a write: the content digest of a version the target already holds, when it does. */
+  existing?(name: string, version: Semver): Promise<{ ref: string; content: string } | undefined>;
   publish(name: string, version: Semver, ctx: { dir: string; rel: string; revision: string; content: string; tar: Buffer }): Promise<string>;
 }
 
@@ -88,10 +90,15 @@ const tagFor = (rel: string, v: Semver): string => `${rel}/v${formatSemver(v)}`;
 
 function gitTagTarget(repo: string, push: boolean, modules: Module[]): Target {
   const byName = new Map(modules.map((m) => [m.name, m.rel]));
+  const hasOrigin = (): boolean => push && tryGit(repo, ["remote", "get-url", "origin"]) !== undefined;
+  const contentOf = (tag: string): string => /^content: (sha256:[0-9a-f]+)$/m.exec(git(repo, ["tag", "--list", "--format=%(contents)", tag]))?.[1] ?? "";
   return {
     label: "git-tags",
     async latest(name) {
       const rel = byName.get(name)!;
+      // A clone can lack the release tags (a fresh checkout, a shallow CI clone),
+      // and a version chosen without them may already be on the remote.
+      if (hasOrigin()) tryGit(repo, ["fetch", "--quiet", "--no-tags", "origin", `+refs/tags/${rel}/v*:refs/tags/${rel}/v*`]);
       const tags = git(repo, ["tag", "--list", `${rel}/v*`]).split("\n").filter(Boolean);
       let best: { v: Semver; tag: string } | undefined;
       for (const tag of tags) {
@@ -102,6 +109,13 @@ function gitTagTarget(repo: string, push: boolean, modules: Module[]): Target {
       const message = git(repo, ["tag", "--list", "--format=%(contents)", best.tag]);
       const content = /^content: (sha256:[0-9a-f]+)$/m.exec(message)?.[1] ?? "";
       return { version: best.v, revision: git(repo, ["rev-list", "-n", "1", best.tag]), content };
+    },
+    async existing(name, version) {
+      const tag = tagFor(byName.get(name)!, version);
+      if (hasOrigin() && tryGit(repo, ["ls-remote", "--tags", "origin", `refs/tags/${tag}`])) {
+        tryGit(repo, ["fetch", "--quiet", "--no-tags", "origin", `+refs/tags/${tag}:refs/tags/${tag}`]);
+      }
+      return tryGit(repo, ["rev-parse", "--verify", "--quiet", `refs/tags/${tag}`]) ? { ref: tag, content: contentOf(tag) } : undefined;
     },
     async publish(name, version, ctx) {
       const tag = tagFor(ctx.rel, version);
@@ -209,6 +223,14 @@ export async function publish(repo: string, settings: Pick<ResolvedSettings, "mo
       }
       if (opts.dryRun) {
         results.push({ ...row, status: "published", version: formatSemver(version), detail: "dry run: would publish" });
+        continue;
+      }
+      const held = await target.existing?.(mod.name, version);
+      if (held) {
+        if (held.content !== content) {
+          throw new ConfigError(`${held.ref} already exists with different content; the version is taken, so change ${mod.rel}/version or remove the tag if it was a mistake`);
+        }
+        results.push({ ...row, status: "unchanged", version: formatSemver(version), detail: `${held.ref} is already published with this content` });
         continue;
       }
       const digest = await target.publish(mod.name, version, { dir, rel: mod.rel, revision: head, content, tar });

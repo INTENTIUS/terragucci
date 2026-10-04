@@ -84,6 +84,8 @@ A module is published when its content differs from its last release. The next v
 
 A published version never changes. Each release records the commit it was cut from and a digest of the module's content, so a second run on the same commit publishes nothing, and so does a change that was reverted. The OCI manifest digest is printed with each published version, and a root can pin it: `oci://registry.example.com/acme/modules/network@sha256:...`.
 
+With `modules.publish` set, the pipeline that `init` writes gets a `publish` job. It runs after `apply` on a push to the default branch, with the full history and tags, and it is the only job given `TERRAGUCCI_REGISTRY_USER` and `TERRAGUCCI_REGISTRY_PASSWORD`. Set them as secrets on GitHub and Forgejo, and as protected, masked variables on GitLab. Before choosing a version, git-tag publishing fetches the module's tags from `origin`. A version that `origin` already holds with the same content is reported as unchanged. If its content differs, the run stops and names the tag.
+
 Registry credentials come from `TERRAGUCCI_REGISTRY_USER` and `TERRAGUCCI_REGISTRY_PASSWORD`. A registry without TLS needs `TERRAGUCCI_REGISTRY_INSECURE=1`. Git tags are pushed to `origin`, so check out the full history and the tags.
 
 ## The grouped summary

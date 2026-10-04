@@ -389,15 +389,20 @@ claim_highlight() {
 }
 
 claim_publish() {
-  # A module changed on the default branch is published to a TLS registry and
-  # as a git tag; an unchanged module is not published again, and re-running on
-  # the same commit publishes nothing. BREAK: lose the git tags between runs,
-  # so the second run has no record of the release and publishes again.
+  # The pipeline's publish job, on a Forgejo repo: a merge to the default branch
+  # publishes each changed module to a TLS registry and as a git tag, a push
+  # that changes nothing publishes nothing, and a change to one module moves
+  # only that module. A clone that lacks the release tags is told the version
+  # is already published. BREAK: the release tags are deleted from the remote
+  # between pushes, so the git-tags target has no record of the release.
   log() { echo "[smoke publish] $*" >&2; }
-  local work port="${TERRAGUCCI_REGISTRY_PORT:-5050}" repo out tags
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work port="${TERRAGUCCI_REGISTRY_PORT:-5050}" repo="$USER/publish" sha out before t
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
-  repo="acme/modules-$(date +%s)"
-  mkdir -p "$work/certs" "$work/tree/modules/service" "$work/tree/modules/queue"
+  answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
+  settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
+  mkdir -p "$work/certs" "$work/tree/modules/service" "$work/tree/modules/queue" "$work/tree/envs/dev"
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,DNS:registry,IP:127.0.0.1" \
     -keyout "$work/certs/registry.key" -out "$work/certs/registry.crt" >/dev/null 2>&1 \
@@ -412,27 +417,55 @@ claim_publish() {
   done
   curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 \
     || { log "the registry did not come up"; rm -rf "$work"; return 1; }
-  printf 'resource "terraform_data" "service" {}\n' > "$work/tree/modules/service/main.tf"
-  printf 'resource "terraform_data" "queue" {}\n' > "$work/tree/modules/queue/main.tf"
-  printf 'modules:\n  path: modules/*\n  publish:\n    - oci://localhost:%s/%s\n    - git-tags\n' "$port" "$repo" > "$work/tree/terragucci.yml"
-  git init -q -b main "$work/remote.git" --bare
-  (cd "$work/tree" && git init -q -b main && git remote add origin "$work/remote.git" \
-    && git add -A && git -c user.name=t -c user.email=t@t commit -q -m "feat: modules") || { rm -rf "$work"; return 1; }
-  export NODE_EXTRA_CA_CERTS="$work/certs/registry.crt"
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
+  settle "repos/$repo" 404 || { rm -rf "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d '{"name":"publish","private":false,"auto_init":false,"default_branch":"main"}' "$URL/api/v1/user/repos"
+  settle "repos/$repo" 200 || { rm -rf "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  # The registry takes any credentials; the job still has to be handed them.
+  for t in TERRAGUCCI_REGISTRY_USER TERRAGUCCI_REGISTRY_PASSWORD; do
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"data":"smoke"}' "$URL/api/v1/repos/$repo/actions/secrets/$t" \
+      || { log "could not set the $t secret"; rm -rf "$work"; return 1; }
+  done
+  # The job container reaches the registry as registry:5000 on the stack network
+  # and trusts its certificate from the repo's copy, a path relative to the checkout.
+  local tree="$work/tree" remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  cp "$work/certs/registry.crt" "$tree/registry.crt"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  printf 'resource "terraform_data" "service" {}\n' > "$tree/modules/service/main.tf"
+  printf 'resource "terraform_data" "queue" {}\n' > "$tree/modules/queue/main.tf"
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "publish/dev.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "dev" {}\n' > "$tree/envs/dev/main.tf"
+  printf 'binary: tofu\nforge: forgejo\nenv:\n  NODE_EXTRA_CA_CERTS: registry.crt\nmodules:\n  path: modules/*\n  publish:\n    - oci://registry:5000/%s\n    - git-tags\n' "$repo" > "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { rm -rf "$work"; return 1; }
+  grep -q "terragucci publish" "$tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no publish job"; rm -rf "$work"; return 1; }
   tags() { curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/$repo/$1/tags/list" | jq -r '.tags // [] | sort | join(",")'; }
-  (cd "$work/tree" && "$TERRAGUCCI" publish) >&2 || { rm -rf "$work"; return 1; }
-  [ "$(tags service)" = "0.1.0" ] && [ "$(tags queue)" = "0.1.0" ] || { log "first run: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
-  [ "$(git -C "$work/remote.git" tag --list | sort | paste -sd, -)" = "modules/queue/v0.1.0,modules/service/v0.1.0" ] \
-    || { log "first run: the remote has tags '$(git -C "$work/remote.git" tag --list | paste -sd, -)'"; rm -rf "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && git -C "$work/tree" tag --list | xargs git -C "$work/tree" tag -d >/dev/null
-  out="$(cd "$work/tree" && "$TERRAGUCCI" publish 2>&1)" || { echo "$out" >&2; rm -rf "$work"; return 1; }
+  gittags() { git ls-remote --tags "$remote" 'refs/tags/modules/*' | sed -E 's#.*refs/tags/##; /\^\{\}$/d' | sort | paste -sd, -; }
+  run() { # message: push the tree and wait for the run on it
+    sha="$(push_tree "$tree" "$repo" main "$1")"
+    wait_run "$repo" "$sha"
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run for '$1' ended $RUN_STATUS"; return 1; }
+  }
+  run "feat: modules" || { rm -rf "$work"; return 1; }
+  [ "$(tags service)" = "0.1.0" ] && [ "$(tags queue)" = "0.1.0" ] || { print_logs "$repo" "$RUN_ID" >&2; log "first merge: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
+  [ "$(gittags)" = "modules/queue/v0.1.0,modules/service/v0.1.0" ] || { log "first merge: the remote has tags '$(gittags)'"; rm -rf "$work"; return 1; }
+  # A clone without the release tags is told the version is published, and exits 0.
+  git clone -q --no-tags "$remote" "$work/clone" || { rm -rf "$work"; return 1; }
+  printf 'modules:\n  path: modules/*\n  publish: git-tags\n' > "$work/git-only.yml"
+  out="$(cd "$work/clone" && "$TERRAGUCCI" publish --config "$work/git-only.yml" 2>&1)" || { echo "$out" >&2; log "a clone without tags did not exit 0"; rm -rf "$work"; return 1; }
   echo "$out" >&2
-  grep -q ": published" <<<"$out" && { log "a second run on the same commit published again"; rm -rf "$work"; return 1; }
-  printf 'output "id" { value = terraform_data.service.id }\n' > "$work/tree/modules/service/outputs.tf"
-  (cd "$work/tree" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m "feat(service): an id output") || { rm -rf "$work"; return 1; }
-  (cd "$work/tree" && "$TERRAGUCCI" publish) >&2 || { rm -rf "$work"; return 1; }
-  [ "$(tags service)" = "0.1.0,0.2.0" ] && [ "$(tags queue)" = "0.1.0" ] || { log "after a change: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
-  log "both modules published to the registry and as tags, a rerun published nothing, and a change to service alone moved it to 0.2.0"
+  grep -q ": published" <<<"$out" && { log "a clone without tags published again"; rm -rf "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    for t in $(gittags | tr ',' ' '); do git -C "$tree" push -q "$remote" ":refs/tags/$t"; done
+  fi
+  before="$(git ls-remote --tags "$remote" 'refs/tags/modules/*' | sort)"
+  run "chore: nothing changed" || { rm -rf "$work"; return 1; }
+  [ "$(tags service)" = "0.1.0" ] && [ "$(tags queue)" = "0.1.0" ] && [ "$(git ls-remote --tags "$remote" 'refs/tags/modules/*' | sort)" = "$before" ] \
+    || { print_logs "$repo" "$RUN_ID" >&2; log "a push that changed nothing published: registry '$(tags service)' '$(tags queue)', remote tags '$(gittags)'"; rm -rf "$work"; return 1; }
+  printf 'output "id" { value = terraform_data.service.id }\n' > "$tree/modules/service/outputs.tf"
+  run "feat(service): an id output" || { rm -rf "$work"; return 1; }
+  [ "$(tags service)" = "0.1.0,0.2.0" ] && [ "$(tags queue)" = "0.1.0" ] || { print_logs "$repo" "$RUN_ID" >&2; log "after a change: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
+  log "the pipeline published both modules on merge, a rerun published nothing, and a change to service alone moved it to 0.2.0"
   rm -rf "$work"
 }
 

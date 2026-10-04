@@ -43,6 +43,35 @@ describe("apply concurrency", () => {
   });
 });
 
+describe("publish job", () => {
+  const withPublish = (forge: ForgeName): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true }).content;
+
+  it.each(FORGES)("%s: no publish job unless modules.publish is set", (forge) => {
+    expect(render(forge)).not.toContain("terragucci publish");
+    expect(render(forge)).not.toContain("TERRAGUCCI_REGISTRY");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: runs after apply on the default branch, with the registry credentials in that job only", (forge) => {
+    const jobs = body(withPublish(forge)).jobs;
+    expect(jobs.publish.needs).toBe("apply");
+    expect(jobs.publish.if).toContain("default_branch");
+    expect(jobs.publish.env.TERRAGUCCI_REGISTRY_USER).toContain("secrets.TERRAGUCCI_REGISTRY_USER");
+    expect(jobs.publish.steps[0].with["fetch-depth"]).toBe(0);
+    expect(jobs.publish.steps.at(-1).run).toContain("terragucci publish");
+    for (const name of ["check", "plan", "apply"]) expect(JSON.stringify(jobs[name])).not.toContain("REGISTRY");
+  });
+
+  it("gitlab: a publish job after apply, on the default branch, with full history", () => {
+    const doc = body(withPublish("gitlab"));
+    expect(doc.publish.needs).toEqual(["apply"]);
+    expect(doc.publish.rules[0].if).toContain("CI_DEFAULT_BRANCH");
+    expect(doc.publish.variables.GIT_DEPTH).toBe("0");
+    expect(doc.publish.script.join("\n")).toContain("terragucci publish");
+    expect(JSON.stringify(doc.apply)).not.toContain("terragucci publish");
+  });
+});
+
 describe("statuses", () => {
   it.each(FORGES)("%s: one status per stage, never one per root", (forge) => {
     const text = render(forge);
