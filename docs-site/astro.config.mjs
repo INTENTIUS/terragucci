@@ -40,6 +40,7 @@ export default defineConfig({
 						{ label: 'The generated pipeline', slug: 'reference/pipeline' },
 						{ label: 'The plan report', slug: 'reference/report' },
 						{ label: 'JSON output', slug: 'reference/cli-json' },
+						{ label: 'Traces and metrics', slug: 'reference/observability' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
 						{ label: 'Validation', slug: 'reference/validation' },
 					],
