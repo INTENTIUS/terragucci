@@ -1,9 +1,9 @@
 ---
 title: The CLI's JSON output
-description: The envelope that init, reconcile, plan, stage and config check print with --json, and the exit codes behind it.
+description: The envelope that init, reconcile, plan, stage, rollout and config check print with --json, and the exit codes behind it.
 ---
 
-`init`, `reconcile`, `plan`, `stage` and `config check` take `--json`. With it, the command prints one JSON object on stdout and nothing else, so a script or an agent can parse the whole output. Text, progress and tool output stay off stdout.
+`init`, `reconcile`, `plan`, `stage`, `rollout` and `config check` take `--json`. With it, the command prints one JSON object on stdout and nothing else, so a script or an agent can parse the whole output. Text, progress and tool output stay off stdout.
 
 ## The envelope
 
@@ -20,7 +20,7 @@ description: The envelope that init, reconcile, plan, stage and config check pri
 | Field | Holds |
 |---|---|
 | `schema` | The envelope version. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `command` | `init`, `reconcile`, `plan`, `stage` or `config check`. |
+| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout` or `config check`. |
 | `exit` | The process exit code. |
 | `status` | `ok` for 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
 | `results` | What the command found or did, as below. `null` when the command could not run. |
@@ -64,6 +64,23 @@ The exit code is 1 when any project failed.
 ## stage
 
 `results` holds `stage`, `change_set` (the run's set digest), `files` (the paths of `report.html`, `report.json` and `note.md`) and `uploaded`, which is null unless `reports.bucket` is set. Then it holds the run's key prefix in the bucket and the indexes it rewrote. The exit code is 1 when a root refused to plan; the report is written either way.
+
+## rollout
+
+`results` is the rollout as the run left it.
+
+| Field | Holds |
+|---|---|
+| `kind`, `name` | `module` or `provider`, and the module or provider address. |
+| `from`, `to` | The version that moves and the one it moves to. |
+| `discovered` | Where `to` was found, when no version was named: a tag, or an OCI repository. |
+| `mode` | `dry-run` or `apply`. |
+| `status` | `complete`, `opened`, `would-open`, `waiting` or `stopped`, with `stop` saying why it stopped. |
+| `waves` | Each wave as `wave`, `canary` and `parts`, one part per project: `project`, `roots`, `branch`, `state`, `pullRequest`, and `pending`, `failed` or `files` when they apply. |
+| `roots` | Each root that names the module or provider: `project`, `root`, `state` (`from`, `to`, `refused` or `elsewhere`), `version` and `reason`. |
+| `tips` | Each refused root's tip, as `rule`, `project`, `root` and `message`. |
+
+A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`, `waiting-apply`, `failed`, `closed` or `not-reached`. The exit code is 3 while a pull request waits for a merge or an apply, and 1 when the rollout stopped.
 
 ## config check
 

@@ -32,14 +32,19 @@
     "build": "node ../../scripts/build-cli.mjs"
   },
   "peerDependencies": {
-    "@intentius/tsad-reference": "2.x"
+    "@intentius/tsad-reference": "2.x",
+    "@cdktn/hcl2json": "0.x"
   },
   "peerDependenciesMeta": {
     "@intentius/tsad-reference": {
       "optional": true
+    },
+    "@cdktn/hcl2json": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "@cdktn/hcl2json": "0.24.0",
     "@intentius/chant": "0.103.1",
     "@intentius/chant-lexicon-forgejo": "0.103.1",
     "@intentius/chant-lexicon-github": "0.103.1",

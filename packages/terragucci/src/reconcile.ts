@@ -31,7 +31,8 @@ export interface ProjectOutcome {
   error?: string;
 }
 
-function where(key: string, url: string | undefined): { cloneUrl: string; origin: string } {
+/** Where a project is cloned from, and the origin its forge API answers on. */
+export function where(key: string, url: string | undefined): { cloneUrl: string; origin: string } {
   const pk = parseProjectKey(key);
   if (!url) return { cloneUrl: `https://${pk.host}/${pk.path}.git`, origin: `https://${pk.host}` };
   // A local path or file:// URL is cloned as it is; the API is still the host's.
@@ -40,7 +41,8 @@ function where(key: string, url: string | undefined): { cloneUrl: string; origin
   return { cloneUrl: url.endsWith(".git") ? url : `${url}.git`, origin: `${u.protocol}//${u.host}` };
 }
 
-function withToken(cloneUrl: string, token: string | undefined): string {
+/** The clone URL with the token in it, for an http(s) remote. */
+export function withToken(cloneUrl: string, token: string | undefined): string {
   if (!token || !/^https?:\/\//.test(cloneUrl)) return cloneUrl;
   return cloneUrl.replace(/^(https?:\/\/)/, `$1oauth2:${encodeURIComponent(token)}@`);
 }

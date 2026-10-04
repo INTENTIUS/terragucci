@@ -29,7 +29,7 @@ highlight|destroys and outliers are open, identical groups are folded|
 waves|each wave goes out only once approved|chant#3049
 refuse|a wave whose plans changed after approval applies nothing|chant#3049
 drift|drift is reported by root|terragucci#13
-rollout|a module version rolls out one pull request per wave|terragucci#8
+rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
 tips|tips are on by default and name their rule|terragucci#10
 zero-config|with no terragucci.yml, init writes the same pipeline|
@@ -354,6 +354,94 @@ claim_publish() {
   [ "$(tags service)" = "0.1.0,0.2.0" ] && [ "$(tags queue)" = "0.1.0" ] || { log "after a change: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
   log "both modules published to the registry and as tags, a rerun published nothing, and a change to service alone moved it to 0.2.0"
   rm -rf "$work"
+}
+
+claim_rollout() {
+  # One repo, three roots taking modules/network by git tag: dev/app (the
+  # canary), prod/net, and prod/app, which reads prod/net's state. The module
+  # changes and tf-publish tags 0.2.0. A dry run with no version must find
+  # 0.2.0; then each run opens at most one wave's pull request, changing only
+  # that wave's root, and never opens a wave before the last one merged and its
+  # apply passed on the merge commit. BREAK: the opening runs are dry runs, so
+  # no pull request opens.
+  log() { echo "[smoke rollout] $*" >&2; }
+  fail() { log "FAIL: $*"; return 1; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/rollout" mode=apply out rc pr sha n files
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
+  settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
+  settle "repos/$repo" 404 || return 1
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d '{"name":"rollout","private":false,"auto_init":false,"default_branch":"main"}' "$URL/api/v1/user/repos"
+  settle "repos/$repo" 200 || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+
+  local tree="$work/tree" remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  local source="git::http://forgejo:3000/$repo.git//modules/network?ref=modules/network/v0.1.0"
+  mkdir -p "$tree/modules/network" "$tree/dev/app" "$tree/prod/net" "$tree/prod/app"
+  printf 'variable "name" {}\n\noutput "name" {\n  value = var.name\n}\n' > "$tree/modules/network/main.tf"
+  root() { # dir, state key, extra
+    printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "rollout/%s.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\n%bmodule "network" {\n  source = "%s"\n  name   = "%s"\n}\n\noutput "name" {\n  value = module.network.name\n}\n' "$2" "$3" "$source" "$2" > "$tree/$1/main.tf"
+  }
+  root dev/app dev-app ""
+  root prod/net prod-net ""
+  root prod/app prod-app 'data "terraform_remote_state" "net" {\n  backend = "s3"\n  config = {\n    bucket         = "shop-terraform-state"\n    key            = "rollout/prod-net.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\n'
+  printf 'binary: tofu\nforge: forgejo\nurl: %s/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\nwaves:\n  canary: ["dev/*"]\nmodules:\n  path: modules/*\n  publish: git-tags\n' "$URL" "$repo" > "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { rm -rf "$work"; return 1; }
+  ( cd "$tree" && git init -q -b main && git remote add origin "$remote" && git add -A \
+    && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat: three roots on modules/network 0.1.0" \
+    && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.1.0 -m "modules/network 0.1.0" \
+    && git push -q origin refs/tags/modules/network/v0.1.0 main ) 2>/dev/null || { log "could not push the repo"; rm -rf "$work"; return 1; }
+  sha="$(git -C "$tree" rev-parse HEAD)"
+  wait_run "$repo" "$sha"
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first apply ended $RUN_STATUS"; rm -rf "$work"; return 1; }
+
+  # A new module version, published by tf-publish as a git tag.
+  printf '\noutput "version" {\n  value = "0.2.0"\n}\n' >> "$tree/modules/network/main.tf"
+  ( cd "$tree" && git add -A && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat(network): a version output" \
+    && git push -q origin main ) 2>/dev/null || { rm -rf "$work"; return 1; }
+  wait_run "$repo" "$(git -C "$tree" rev-parse HEAD)"
+  (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" publish) >&2 || { rm -rf "$work"; return 1; }
+
+  ro() { (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout modules/network "$@" 2>&1); }
+  out="$(ro)" || { echo "$out" >&2; rm -rf "$work"; return 1; }
+  echo "$out" >&2
+  grep -q "modules/network 0.1.0 -> 0.2.0 (newest published: tag modules/network/v0.2.0): would-open" <<<"$out" \
+    || { log "the dry run did not find 0.2.0 on its own"; rm -rf "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && mode=dry-run
+
+  pr_for() { api "$URL/api/v1/repos/$repo/pulls?state=all&limit=50" | jq -r --arg b "terragucci/rollout/modules-network-0.2.0/wave-$1" '.[] | select(.head.ref == $b) | .number' | head -1; }
+  local wave expect=("" "dev/app/main.tf" "prod/net/main.tf" "prod/app/main.tf")
+  for wave in 1 2 3; do
+    out="$(ro --mode "$mode")"; rc=$?
+    echo "$out" >&2
+    pr="$(pr_for "$wave")"
+    [ -n "$pr" ] || { log "wave $wave: no pull request opened"; rm -rf "$work"; return 1; }
+    files="$(api "$URL/api/v1/repos/$repo/pulls/$pr/files" | jq -r '[.[].filename] | join(",")')"
+    [ "$files" = "${expect[$wave]}" ] || { log "wave $wave's pull request changes '$files', not ${expect[$wave]}"; rm -rf "$work"; return 1; }
+    # Open: the next run waits and opens nothing.
+    out="$(ro --mode "$mode")"; rc=$?
+    [ $rc = 3 ] && [ -z "$(pr_for $((wave + 1)))" ] || { echo "$out" >&2; log "wave $wave open: exit $rc, or the next wave opened"; rm -rf "$work"; return 1; }
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge"
+    sha="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merge_commit_sha)"
+    # Merged, apply not yet reported: still nothing opens.
+    out="$(ro --mode "$mode")"; rc=$?
+    if [ -n "$(pr_for $((wave + 1)))" ]; then
+      n="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context | test("/ apply"))] | max_by(.id) | .status // "none"')"
+      [ "$n" = success ] || { echo "$out" >&2; log "wave $((wave + 1)) opened while wave $wave's apply was '$n'"; rm -rf "$work"; return 1; }
+    fi
+    wait_run "$repo" "$sha"
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "wave $wave's apply ended $RUN_STATUS"; rm -rf "$work"; return 1; }
+  done
+  out="$(ro --mode "$mode")"; rc=$?
+  echo "$out" >&2
+  rm -rf "$work"
+  [ $rc = 0 ] && grep -q ": complete" <<<"$out" || { log "after three waves the rollout is not complete (exit $rc)"; return 1; }
+  log "0.2.0 found from its tag; three waves, one pull request each moving only its root, each opened only after the last applied"
 }
 
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
