@@ -16,10 +16,14 @@ Someone deletes a queue in the console. This scenario does the same through the 
 just example change drift
 ```
 
-The example's `terragucci.yml` schedules drift for six every morning. The pipeline's `drift` job runs then, and you can start it by hand from the Actions tab. It plans every root with `-refresh-only`: each root's state is compared with what exists in floci, and the code is ignored. Staging orders reports its queue as deleted outside Terraform. No other root is listed, so the report has one drifted root.
+The example's `terragucci.yml` schedules drift for six every morning. The pipeline's `drift` job runs then, and you can start it by hand from the Actions tab. It plans every root with `-refresh-only`: each root's state is compared with what exists in floci, and the code is ignored. The report lists the deleted queue under deletes, in root `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
+
+:::note
+floci, the local AWS stand-in, does not keep tags. On it, tags show as drifted on every root, and the report lists them beside the queue. On AWS they would not. Look for the entry marked deleted outside Terraform.
+:::
 
 The job opens one issue, `terragucci: drift found`. It names `envs/staging/orders` and the queue `shop-staging-orders-jobs`. Run the job again and the same issue is updated, not duplicated.
 
-A change waiting on main is not drift. Merge a pull request from the earlier steps without applying it, and the next drift run still reports only the queue, because a refresh-only plan never reads the code.
+A change waiting on main is not drift. Merge a pull request from the earlier steps without applying it, and the next drift run reports the same drift as before, because a refresh-only plan never reads the code.
 
-Correct the drift the way you correct anything else. Applying the code recreates the queue, which `just example reset` does. The next drift run finds nothing and closes the issue.
+Correct the drift the way you correct anything else. Applying the code recreates the queue, which `just example reset` does. On AWS the next drift run then finds nothing and closes the issue; on floci the tag entries keep it open.

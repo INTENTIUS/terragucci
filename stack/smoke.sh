@@ -308,7 +308,7 @@ report_run() {
   image="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
-  cp -R "$EXAMPLE/." "$work/"
+  cp -R "${REPORT_TREE:-$EXAMPLE}/." "$work/"
   rm -rf "$work/.git"
   git -C "$work" init -q -b main
   for p in "$@"; do git -C "$work" apply "$EXAMPLE/changes/$p.patch" || return 1; done
@@ -513,6 +513,11 @@ claim_drift() {
   # root and that queue and nothing else, and keep exactly one open issue that
   # names them. Run again it updates the issue instead of opening a second.
   # Once the example is applied again, a run finds none and closes the issue.
+  # floci keeps no tags or object metadata, so a refresh-only plan shows tags
+  # (and an S3 object's metadata) drifted on every root, applied or not. That is
+  # the emulator, not the reading: the claim holds the deletes exact and every
+  # other drifted attribute to that known set. Because tag drift never clears
+  # here, the close is shown on a scratch root that has no resources.
   # BREAK: the queue is not deleted, so there is no drift to name.
   log() { echo "[smoke drift] $*" >&2; }
   # shellcheck source=lib.sh
@@ -525,7 +530,7 @@ claim_drift() {
     local REPORT_STAGE=tf-drift
     local -a REPORT_ARGS=(--forge forgejo --report-url "http://forgejo:3000/$USER/example/actions")
     local -a REPORT_EXTRA=(-e "GITHUB_REPOSITORY=$USER/example" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN")
-    report_run "$1" one-root
+    if [ -n "${REPORT_TREE:-}" ]; then report_run "$1"; else report_run "$1" one-root; fi
   }
   # Start with no drift issue open, so the claim reads only this run's.
   for n in $(open_issues | jq -r '.[].number'); do
@@ -537,13 +542,13 @@ claim_drift() {
   dir="$work/run1/terragucci-report"
   [ -f "$dir/report.json" ] || { log "no report"; rm -rf "$work"; return 1; }
   jq -e '.run.stage == "tf-drift"' "$dir/report.json" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
-  jq -e --arg r "$root" --arg q "module.service.aws_sqs_queue.jobs" '[.roots[] | select(.path == $r) | .changes[] | select(.action == "delete" and (.address | endswith($q)))] | length == 1' "$dir/report.json" >/dev/null \
-    || { log "the report does not name $root and its queue"; rc=1; }
-  # Only the deleted queue drifted: the one-root change waiting on main is not drift.
-  [ "$(jq '[.roots[] | select(.changes | length > 0)] | length' "$dir/report.json")" = 1 ] \
-    || { log "more than $root drifted: $(jq -r '[.roots[] | select(.changes | length > 0) | .path] | join(",")' "$dir/report.json")"; rc=1; }
-  jq -e '[.roots[] | select(.path == "envs/dev/orders") | .changes | length] == [0]' "$dir/report.json" >/dev/null \
-    || { log "envs/dev/orders, whose change is only on main, shows as drift"; rc=1; }
+  # Exactly one object is gone, and it is this queue in this root.
+  [ "$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")" = "$root module.service.aws_sqs_queue.jobs" ] \
+    || { log "the deletes are not exactly $root's queue: $(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")"; rc=1; }
+  # Everything else that drifted is a tag or object metadata. Anything more would be a real
+  # difference, such as dev orders' retention change that is only on main.
+  [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")" = "" ] \
+    || { log "attributes other than tags and metadata drifted: $(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")"; rc=1; }
   issues="$(open_issues)"
   [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
   body="$(jq -r '.[0].body // ""' <<<"$issues")"
@@ -554,14 +559,19 @@ claim_drift() {
   drift_run "$work/run2" || { log "the second drift run failed"; rm -rf "$work"; return 1; }
   [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rm -rf "$work"; return 1; }
 
-  # The example applied again recreates the queue; the next run finds no drift and closes the issue.
+  # The example applied again recreates the queue, so no delete is left.
   "$HERE/example.sh" reset >&2 || { log "could not apply the example again"; rm -rf "$work"; return 1; }
   drift_run "$work/run3" || { log "the third drift run failed"; rm -rf "$work"; return 1; }
-  jq -e '[.roots[] | select(.changes | length > 0)] | length == 0' "$work/run3/terragucci-report/report.json" >/dev/null \
-    || { log "drift remains after the example was applied again"; rm -rf "$work"; return 1; }
+  [ "$(jq '[.roots[].changes[] | select(.action == "delete")] | length' "$work/run3/terragucci-report/report.json")" = 0 ] \
+    || { log "a deleted object remains after the example was applied again"; rm -rf "$work"; return 1; }
+  # A run that finds no drift closes the issue. The scratch root has no resources, so none can drift.
+  mkdir -p "$work/clean/envs/empty"
+  printf 'terraform {\n  backend "local" {}\n}\n' > "$work/clean/envs/empty/main.tf"
+  REPORT_TREE="$work/clean" drift_run "$work/run4" || { log "the clean drift run failed"; rm -rf "$work"; return 1; }
+  [ "$(jq '[.roots[].changes[]] | length' "$work/run4/terragucci-report/report.json")" = 0 ] || { log "the clean run reports drift"; rm -rf "$work"; return 1; }
   [ "$(open_issues | jq length)" = 0 ] || { log "the drift issue is still open with no drift"; rm -rf "$work"; return 1; }
   rm -rf "$work"
-  log "$root and $queue named in the report and one issue; a pending change on main was not drift; the next run found none and closed the issue"
+  log "$root and $queue named in the report and one issue; a pending change on main was not drift; a run with none closed the issue"
 }
 
 claim_tips() {
