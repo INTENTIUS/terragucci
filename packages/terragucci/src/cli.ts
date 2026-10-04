@@ -4,6 +4,7 @@
  *   terragucci init [--forge f] [--binary b] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
+ *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci rollout <module> <version>
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
@@ -17,12 +18,13 @@
 import { realpathSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, type Binary, type ForgeName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, type Binary, type ForgeName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { install, type Tool } from "./install";
 import { plan } from "./plan";
+import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { RenderError } from "./render";
 
@@ -30,6 +32,7 @@ const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
+  terragucci publish [--dry-run] [--config <file>]
   terragucci rollout <module> <version>
   terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
@@ -119,6 +122,13 @@ export async function main(argv: string[]): Promise<number> {
           throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt <version>");
         }
         console.log(await install(tool as Tool, version));
+        return 0;
+      }
+      case "publish": {
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const results = await publish(cwd, settings, { dryRun: flags["dry-run"] === true });
+        console.log(describePublish(results));
         return 0;
       }
       case "rollout":

@@ -30,7 +30,7 @@ waves|each wave goes out only once approved|chant#3049
 refuse|a wave whose plans changed after approval applies nothing|chant#3049
 drift|drift is reported by root|terragucci#13
 rollout|a module version rolls out one pull request per wave|terragucci#8
-publish|changed modules are published at a new version|terragucci#9
+publish|changed modules are published at a new version|
 tips|tips are on by default and name their rule|terragucci#10
 zero-config|with no terragucci.yml, init writes the same pipeline|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|'
@@ -192,6 +192,54 @@ YML
     [ "$(curl -s -o /dev/null -w '%{http_code}' -I "$FLOCI/$b")" = 200 ] || { log "$b is not in floci"; return 1; }
   done
   log "one pull request on $repo, check green, merged, both roots applied in order; in-line unchanged"
+}
+
+claim_publish() {
+  # A module changed on the default branch is published to a TLS registry and
+  # as a git tag; an unchanged module is not published again, and re-running on
+  # the same commit publishes nothing. BREAK: lose the git tags between runs,
+  # so the second run has no record of the release and publishes again.
+  log() { echo "[smoke publish] $*" >&2; }
+  local work port="${TERRAGUCCI_REGISTRY_PORT:-5050}" repo out tags
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  repo="acme/modules-$(date +%s)"
+  mkdir -p "$work/certs" "$work/tree/modules/service" "$work/tree/modules/queue"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:registry,IP:127.0.0.1" \
+    -keyout "$work/certs/registry.key" -out "$work/certs/registry.crt" >/dev/null 2>&1 \
+    || { log "openssl could not make a certificate"; rm -rf "$work"; return 1; }
+  chmod 644 "$work/certs/registry.key"
+  TERRAGUCCI_REGISTRY_CERTS="$work/certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+    --profile registry up -d --force-recreate registry >&2 || { rm -rf "$work"; return 1; }
+  local i
+  for i in $(seq 1 30); do
+    curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 \
+    || { log "the registry did not come up"; rm -rf "$work"; return 1; }
+  printf 'resource "terraform_data" "service" {}\n' > "$work/tree/modules/service/main.tf"
+  printf 'resource "terraform_data" "queue" {}\n' > "$work/tree/modules/queue/main.tf"
+  printf 'modules:\n  path: modules/*\n  publish:\n    - oci://localhost:%s/%s\n    - git-tags\n' "$port" "$repo" > "$work/tree/terragucci.yml"
+  git init -q -b main "$work/remote.git" --bare
+  (cd "$work/tree" && git init -q -b main && git remote add origin "$work/remote.git" \
+    && git add -A && git -c user.name=t -c user.email=t@t commit -q -m "feat: modules") || { rm -rf "$work"; return 1; }
+  export NODE_EXTRA_CA_CERTS="$work/certs/registry.crt"
+  tags() { curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/$repo/$1/tags/list" | jq -r '.tags // [] | sort | join(",")'; }
+  (cd "$work/tree" && "$TERRAGUCCI" publish) >&2 || { rm -rf "$work"; return 1; }
+  [ "$(tags service)" = "0.1.0" ] && [ "$(tags queue)" = "0.1.0" ] || { log "first run: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
+  [ "$(git -C "$work/remote.git" tag --list | sort | paste -sd, -)" = "modules/queue/v0.1.0,modules/service/v0.1.0" ] \
+    || { log "first run: the remote has tags '$(git -C "$work/remote.git" tag --list | paste -sd, -)'"; rm -rf "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && git -C "$work/tree" tag --list | xargs git -C "$work/tree" tag -d >/dev/null
+  out="$(cd "$work/tree" && "$TERRAGUCCI" publish 2>&1)" || { echo "$out" >&2; rm -rf "$work"; return 1; }
+  echo "$out" >&2
+  grep -q ": published" <<<"$out" && { log "a second run on the same commit published again"; rm -rf "$work"; return 1; }
+  printf 'output "id" { value = terraform_data.service.id }\n' > "$work/tree/modules/service/outputs.tf"
+  (cd "$work/tree" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m "feat(service): an id output") || { rm -rf "$work"; return 1; }
+  (cd "$work/tree" && "$TERRAGUCCI" publish) >&2 || { rm -rf "$work"; return 1; }
+  [ "$(tags service)" = "0.1.0,0.2.0" ] && [ "$(tags queue)" = "0.1.0" ] || { log "after a change: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
+  log "both modules published to the registry and as tags, a rerun published nothing, and a change to service alone moved it to 0.2.0"
+  rm -rf "$work"
 }
 
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
