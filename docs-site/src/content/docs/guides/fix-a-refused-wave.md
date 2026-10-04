@@ -10,7 +10,7 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 ## Before you start
 
 - A wave that stopped with a refusal. The apply job fails with a message that the wave's set digest no longer matches its approval, and nothing in that wave was applied.
-- The report of the run that gave the approval, and the report of the run that refused.
+- The apply job's log. Unless `respond.wave-refused` is `off`, the job prints the diff from step 3 itself.
 
 ## Steps
 
@@ -20,12 +20,20 @@ An approval binds a wave's set digest. If any root's plan changes after the appr
 
 ### 2. Get the two reports
 
-Download the `terragucci-report` artifact of the run that was approved into `approved/`, and the artifact of the refused run into `terragucci-report/`. On GitLab, take them from each job's artifacts. If you keep reports in a bucket, copy the two run folders instead.
+When a wave waits for an approval, it keeps the report of the plans it asks you to approve on the `chant/lifecycle` branch, at `_gates/tf-apply/wave-<k>/<digest>.json` with the `:` in the digest written as `_`. The refused job writes that report to `terragucci-report/approved/report.json` and the report of the plans it made to `terragucci-report/current/report.json`. To print the diff on your own machine, take the approved report from the branch:
+
+```bash
+git fetch origin chant/lifecycle
+mkdir -p approved
+git show origin/chant/lifecycle:_gates/tf-apply/wave-2/sha256_<hex>.json > approved/report.json
+```
+
+The current report stays in the refused job's workspace, so step 3 is easiest to read in the job's log. The log also names every root whose plan moved.
 
 ### 3. Print the diff
 
 ```bash
-npx terragucci respond wave-refused --approved approved/report.json --current terragucci-report --wave 2
+npx terragucci respond wave-refused --approved approved --current terragucci-report/current --wave 2
 ```
 
 The response lists each root whose plan digest moved, with the changes and attributes that moved inside it. Roots whose plan did not move are left out. `--json` prints the same as one envelope.

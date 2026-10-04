@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, applyWaves, decideGate, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
+import { applyWave, applyWaves, approvedPath, decideGate, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
+import { refusedDiff } from "../src/respond/refused";
 import { gateSealPayload } from "../src/seal";
 import { git, tmp, write } from "./helpers";
 import { signerLine, sshsig, sshKey } from "./sshsig";
@@ -126,6 +127,24 @@ describe("a wave behind its gate", () => {
 
     expect(await applyWave(work, { ...opts, now: T(2) })).toBe(3);
     expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending).toHaveLength(1);
+  });
+
+  it("a wave refused for a moved plan writes the approved and current reports, and respond wave-refused names the root and attribute that moved", async () => {
+    const { work, origin, bin, log } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
+    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    // The waiting run kept the report of the plans it asked approval for, beside the ledger.
+    expect(JSON.parse(git(origin, "show", `chant/lifecycle:${approvedPath(1, digest)}`)).waves[0]).toMatchObject({ number: 1, set_digest: digest });
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+    writeFileSync(join(work, "..", "plans", "a.json"), JSON.stringify({ resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["create"], before: null, after: { input: "2" }, after_unknown: {} } }] }));
+    expect(await applyWave(work, { ...opts, now: T(3) })).toBe(4);
+    expect(existsSync(log)).toBe(false);
+    const read = (d: string) => JSON.parse(readFileSync(join(work, "terragucci-report", d, "report.json"), "utf-8"));
+    const diff = refusedDiff(read("approved"), read("current"), 1);
+    expect(diff.approved_set).toBe(digest);
+    expect(diff.roots.map((r) => [r.root, r.changes.map((c) => [c.address, c.attributes])])).toEqual([["a", [["terraform_data.x", ["input"]]]]]);
   });
 
   /** Append one resolution line to origin's ledger, as `chant approve` would from a person's machine. */
