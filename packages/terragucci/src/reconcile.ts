@@ -9,9 +9,13 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, type TerragucciConfig } from "./config";
+import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch, type ForgeTarget } from "./forge";
+import { findRoots } from "./detect";
 import { init, type FileChange } from "./init";
+import { loadHclParser } from "./rollout/parser";
+import type { ReportTip } from "./report/schema";
+import { describeTips, repoTips } from "./tips";
 
 export const BRANCH = "terragucci/pipeline";
 
@@ -29,6 +33,8 @@ export interface ProjectOutcome {
   changes: FileChange[];
   pullRequest?: string;
   error?: string;
+  /** Advice on the project's setup. Present on a dry run with tips on. */
+  tips?: ReportTip[];
 }
 
 /** Where a project is cloned from, and the origin its forge API answers on. */
@@ -53,6 +59,15 @@ function git(dir: string, args: string[], token?: string): string {
   } catch (e) {
     const msg = String((e as { stderr?: string }).stderr ?? (e as Error).message);
     throw new Error(token ? msg.split(token).join("***") : msg);
+  }
+}
+
+async function tipsOf(dir: string, settings: ResolvedSettings): Promise<ReportTip[]> {
+  try {
+    const parser = await loadHclParser().catch(() => undefined);
+    return await repoTips(dir, findRoots(dir, settings.roots), { settings, ...(parser ? { parser } : {}) });
+  } catch {
+    return [];
   }
 }
 
@@ -83,12 +98,16 @@ export async function reconcile(config: TerragucciConfig, options: ReconcileOpti
       const changes = result.files.map((f) => ({ ...f, path: relative(dir, f.path) }));
       const changed = changes.filter((f) => f.status !== "unchanged");
 
+      // A dry run also says what the project's setup could do better.
+      const tips = options.mode === "dry-run" && settings.tips ? await tipsOf(dir, settings) : undefined;
+      const extra = tips ? { tips } : {};
+
       if (changed.length === 0) {
-        outcomes.push({ key, status: "unchanged", changes });
+        outcomes.push({ key, status: "unchanged", changes, ...extra });
         continue;
       }
       if (options.mode === "dry-run") {
-        outcomes.push({ key, status: "would-change", changes });
+        outcomes.push({ key, status: "would-change", changes, ...extra });
         continue;
       }
 
@@ -133,6 +152,7 @@ export function describeReconcile(outcomes: ProjectOutcome[], mode: "dry-run" | 
     else if (o.status === "would-change") lines.push(`${o.key}: would write ${files.join(", ")}`);
     else if (o.status === "pull-request") lines.push(`${o.key}: ${files.join(", ")} -> ${o.pullRequest}`);
     else lines.push(`${o.key}: FAILED ${o.error}`);
+    for (const line of describeTips(o.tips ?? [])) lines.push(`  ${line}`);
   }
   const failed = outcomes.filter((o) => o.status === "failed").length;
   lines.push(

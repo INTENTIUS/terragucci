@@ -11,7 +11,7 @@ import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/chang
 import { changeKind, foldChange } from "./highlight";
 import {
   REDACTED, REPORT_MINOR, REPORT_SCHEMA,
-  type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportWave,
+  type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
 } from "./schema";
 
 type Json = Record<string, unknown>;
@@ -45,6 +45,8 @@ export interface BuildInput {
   waves?: WaveInput[];
   /** How many sensitive values were redacted from the stored plans. */
   redacted?: number;
+  /** Advice to carry. Not part of any digest. Leave out with `tips: false`. */
+  tips?: ReportTip[];
 }
 
 /** The files a root's full plan is kept in, relative to the report: `roots/<root>/plan.{txt,json}`. */
@@ -248,5 +250,6 @@ export function buildReport(input: BuildInput): Report {
     named,
     holes: summary.holes.map((h) => ({ root: h.member, address: h.address, ...(h.type ? { type: h.type } : {}), reason: h.reason })),
     redaction: { marker: REDACTED, values: input.redacted ?? 0 },
+    ...(input.tips ? { tips: input.tips } : {}),
   };
 }

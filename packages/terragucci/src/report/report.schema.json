@@ -183,6 +183,19 @@
         "marker": { "const": "(sensitive, redacted by terragucci)" },
         "values": { "type": "integer" }
       }
+    },
+    "tips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule", "message", "url"],
+        "properties": {
+          "rule": { "type": "string" },
+          "root": { "type": "string" },
+          "message": { "type": "string" },
+          "url": { "type": "string" }
+        }
+      }
     }
   },
   "$defs": {

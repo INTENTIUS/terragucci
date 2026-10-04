@@ -88,6 +88,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   const parts = [plural(report.groups.length, "group"), plural(destroys, "destroy or replacement", "destroys or replacements")];
   if (refused > 0) parts.push(`${refused} refused`);
   head.push(`${plural(report.units, unitWord)}: ${parts.join(", ")}. [Full report](${url})`, "");
+  if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the [full report](${url}#tips).`, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
 
   const blocks: { text: string; group: boolean; units: number }[] = [];

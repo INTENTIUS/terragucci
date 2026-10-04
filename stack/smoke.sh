@@ -31,7 +31,7 @@ refuse|a wave whose plans changed after approval applies nothing|chant#3049
 drift|drift is reported by root|terragucci#13
 rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
-tips|tips are on by default and name their rule|terragucci#10
+tips|tips are on by default and name their rule|
 zero-config|with no terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
@@ -476,6 +476,40 @@ claim_highlight() {
   rm -rf "$work"
   [ $rc = 0 ] || return 1
   log "named $del (delete) and $rep (replace), both roots open; group $big folded"
+}
+
+claim_tips() {
+  # Dev search's AWS provider is let float to "~> 6.0". With tips on, which is
+  # the default, the report carries a tip that names its rule and links the
+  # rule's page, the HTML has a Tips section and the note counts them. A second
+  # run with `tips: false` has none of that, and both runs have the same change
+  # set digest and the same plan digest for every root.
+  # BREAK: the first run turns tips off, so the report has no tip to name.
+  log() { echo "[smoke tips] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 on off cfg=""
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  mkdir -p "$work/on" "$work/off"
+  [ -n "${BREAK:-}" ] && cfg="tips: false"
+  REPORT_CONFIG="$cfg" report_run "$work/on" float || true
+  REPORT_CONFIG="tips: false" report_run "$work/off" float || true
+  on="$work/on/terragucci-report"; off="$work/off/terragucci-report"
+  [ -f "$on/report.json" ] && [ -f "$off/report.json" ] || { log "a run wrote no report"; rm -rf "$work"; return 1; }
+  jq -e '.tips[] | select(.rule == "terragucci-floating-range" and .root == "envs/dev/search" and (.url | startswith("https://")))' "$on/report.json" >/dev/null \
+    || { log "the floating provider in envs/dev/search is not tipped with its rule and page"; rc=1; }
+  grep -q 'id="tips"' "$on/report.html" || { log "the HTML has no Tips section"; rc=1; }
+  grep -q ' tip' "$on/note.md" || { log "the note does not count the tips"; rc=1; }
+  jq -e 'has("tips") | not' "$off/report.json" >/dev/null || { log "tips: false left tips in the report"; rc=1; }
+  grep -q 'id="tips"' "$off/report.html" && { log "tips: false left a Tips section in the HTML"; rc=1; }
+  grep -q ' tip' "$off/note.md" && { log "tips: false left a tip line in the note"; rc=1; }
+  if ! diff <(jq -S '{change_set, digests: [.roots[] | {path, plan_digest}], sets: [.waves[] | .set_digest]}' "$on/report.json") \
+            <(jq -S '{change_set, digests: [.roots[] | {path, plan_digest}], sets: [.waves[] | .set_digest]}' "$off/report.json") >&2; then
+    log "tips changed a plan digest or a set digest"; rc=1
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] || return 1
+  log "terragucci-floating-range names envs/dev/search; tips: false removes it; the digests match"
 }
 
 claim_publish() {

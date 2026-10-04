@@ -1,0 +1,46 @@
+---
+title: Tips
+description: The advice terragucci gives about how a repo is set up, and the rule behind each tip.
+---
+
+Tips are on by default. They appear in the [plan report](/terragucci/reference/report/#tips), as one line in the pull request note, and in the `terragucci reconcile` dry run. `tips: false` in `terragucci.yml` removes all of them.
+
+A tip is advice. It cannot fail a run or change a gate, and no plan digest or set digest covers it, so a run with tips and a run without them produce the same digests.
+
+Each tip names its rule. Code tips come from chant's terraform lint and link to that rule's page, so `chant lint` and a report agree. They need the HCL parser (`npm i -D @cdktn/hcl2json`); without it the report leaves them out and says so in the job log.
+
+## Code tips
+
+| Rule | The tip |
+|---|---|
+| [TF002](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002) | a provider with no version in `required_providers` |
+| [TF003](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003) | no `required_version` |
+| [TF004](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf004) | a registry module with no `version` |
+| [TF005](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf005) | a git module with no fixed `?ref=` |
+| [TF038](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf038) | an `oci://` module with no tag, or the `latest` tag |
+| [TF039](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf039) | a registry module with a version range |
+| [TF040](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040) | no committed `.terraform.lock.hcl` |
+
+## Rollout tips
+
+### terragucci-shared-module
+
+A local module is included by ten or more roots, so a change under it plans every one of them. Publish it with `tf-publish` and pin it in each root. Only the roots whose pin moves are planned, and `tf-rollout` moves them in waves.
+
+### terragucci-floating-range
+
+A module call is pinned to a range such as `~> 1.4`. A range cannot be bumped by a pin, so a rollout cannot move it. Pin one version.
+
+The same rule covers a provider constrained to a range in `required_providers`. `tf-rollout --provider` moves the lock file, and a version outside the range fails `init`, so the rollout cannot cross it. Pin the exact version, or widen the range on purpose. When chant's TF038 or TF039 already names the call, only that tip is given.
+
+### terragucci-no-canary
+
+A project has more than five roots and no `waves.canary`. The first wave is the riskiest, so name the roots that go first.
+
+### terragucci-ungated-destroy
+
+`gate` is `never` and a root's plan destroys or replaces something. Nothing stops the destroy except the forge's own reviewers. Use `gate: on-destroy`.
+
+### terragucci-many-roots
+
+A hundred or more roots are planned on every change. Publishing shared modules and pinning them shrinks the set a change reaches.
