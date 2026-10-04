@@ -14,11 +14,14 @@
 #
 # Callers define log() and fail() before sourcing.
 
+# A caller that defines no fail() gets this one.
+declare -F fail >/dev/null || fail() { echo "$*" >&2; return 1; }
+
 LIB_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMEOUT="${TERRAGUCCI_VALIDATE_TIMEOUT:-900}"
 
 if [ -z "${TERRAGUCCI_FORGEJO_TOKEN:-}" ]; then
-  [ -f "$LIB_HERE/.state/forgejo.env" ] || fail "no stack/.state/forgejo.env; run 'just stack-up forgejo' first"
+  [ -f "$LIB_HERE/.state/forgejo.env" ] || fail "no stack/.state/forgejo.env; run 'just stack-up forgejo' first" || return 1
   # shellcheck disable=SC1091
   . "$LIB_HERE/.state/forgejo.env"
 fi
@@ -30,7 +33,7 @@ FLOCI="$TERRAGUCCI_FLOCI_URL"
 api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
 
 api -o /dev/null "$URL/api/v1/user" 2>/dev/null \
-  || fail "Forgejo at $URL does not accept the token; run 'just stack-up forgejo' again"
+  || fail "Forgejo at $URL does not accept the token; run 'just stack-up forgejo' again" || return 1
 
 push_tree() { # dir, repo, branch, message -> prints the pushed sha
   local dir="$1" repo="$2" branch="$3" message="$4"
@@ -77,7 +80,7 @@ wait_run() { # repo, sha
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       [ -n "$run" ] && print_logs "$repo" "$(echo "$run" | jq -r '.id')" >&2
-      fail "no finished run for $sha after ${TIMEOUT}s (last status: ${status:-none})"
+      fail "no finished run for $sha after ${TIMEOUT}s (last status: ${status:-none})" || return 1
     fi
     sleep 3
   done

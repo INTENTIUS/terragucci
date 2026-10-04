@@ -31,6 +31,11 @@ describe("apply concurrency", () => {
     expect(doc.check.resource_group).toBeUndefined();
   });
 
+  it("forgejo names a workflow-level group that does not cancel, or a later push cancels a run that is applying", () => {
+    expect(body(render("forgejo")).concurrency).toEqual({ group: "terragucci-${{ github.ref }}", "cancel-in-progress": false });
+    expect(body(render("github")).concurrency).toBeUndefined();
+  });
+
   it("forgejo also takes a lock on the remote, because the runner ignores concurrency", () => {
     expect(render("forgejo")).toContain("refs/tags/terragucci-apply-lock");
     expect(render("github")).not.toContain("terragucci-apply-lock");
@@ -315,5 +320,66 @@ describe("two concurrent pushes to main on forgejo", () => {
     expect(r.status).toBe(0);
     expect(r.out).toContain("standing down");
     expect(existsSync(log)).toBe(false);
+  });
+
+  describe("a holder that died without releasing the lock", () => {
+    function held(lease: string): { origin: string; work: string; sha: string } {
+      const origin = tmp("tg-origin-");
+      git(origin, "init", "-q", "--bare");
+      const work = tmp("tg-work-");
+      git(work, "init", "-q", "-b", "main");
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
+      git(work, "remote", "add", "origin", origin);
+      git(work, "push", "-q", "origin", "main");
+      const sha = git(work, "rev-parse", "HEAD").trim();
+      const tree = git(work, "mktree").trim();
+      const dead = git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", tree, "-m", lease).trim();
+      git(work, "push", "-q", "origin", `${dead}:refs/tags/terragucci-apply-lock`);
+      return { origin, work, sha };
+    }
+    const env = (sha: string, extra: Record<string, string> = {}): Record<string, string> => ({
+      TG_BRANCH: "main", GITHUB_REF_NAME: "main", GITHUB_SHA: sha, TG_SHA: sha, GITHUB_RUN_ID: "5", TG_LOCK_POLL: "0.2", ...extra,
+    });
+
+    it("is taken over when its run is no longer running, per the forge API", async () => {
+      const { origin, work, sha } = held(`run 99 ${Math.floor(Date.now() / 1000)}`);
+      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+      const api = await stubApi((h) => (h.url === "/repos/acme/infra/actions/runs/99" ? { status: "cancelled" } : {}));
+      try {
+        const r = await run(`cd ${work} && ${applyScript("tofu", [["a"]], "forgejo")}`, env(sha, { ...bin, TG_TOKEN: "t", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra" }));
+        expect(r.status).toBe(0);
+        expect(r.out).toContain("run 99, which is gone; taking it over");
+        expect(r.out).toContain("all roots applied");
+        expect(git(origin, "tag", "--list").trim()).toBe("");
+      } finally {
+        api.close();
+      }
+    });
+
+    it("is taken over when its lease is stale, with no forge API to ask", async () => {
+      const { origin, work, sha } = held("run 99 1000");
+      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+      const r = await run(`cd ${work} && ${applyScript("tofu", [["a"]], "forgejo")}`, env(sha, bin));
+      expect(r.status).toBe(0);
+      expect(r.out).toContain("taking it over");
+      expect(git(origin, "tag", "--list").trim()).toBe("");
+    });
+
+    it("is respected while its run is still running", async () => {
+      const { work, sha } = held(`run 99 ${Math.floor(Date.now() / 1000)}`);
+      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+      const api = await stubApi((h) => (h.url === "/repos/acme/infra/actions/runs/99" ? { status: "running" } : {}));
+      try {
+        const p = spawn("bash", ["-c", `cd ${work} && ${applyScript("tofu", [["a"]], "forgejo")}`], { env: { ...process.env, ...env(sha, { ...bin, TG_TOKEN: "t", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra" }) } });
+        let out = "";
+        p.stdout.on("data", (c) => (out += c));
+        await new Promise((ok) => setTimeout(ok, 2500));
+        p.kill();
+        expect(out).not.toContain("all roots applied");
+        expect(out).not.toContain("taking it over");
+      } finally {
+        api.close();
+      }
+    });
   });
 });

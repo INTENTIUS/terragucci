@@ -15,6 +15,10 @@ env:
   TF_IN_AUTOMATION: '1'
   TF_INPUT: '0'
 
+concurrency:
+  group: terragucci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: docker
@@ -79,6 +83,9 @@ jobs:
               } else if (cmd === "note") {
                 const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
                 if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "alive") {
+                const run = await call("GET", repo + "/actions/runs/" + a[0]);
+                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
               } else if (cmd === "stale") {
                 const moved = a[0].split(",");
                 const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
@@ -189,6 +196,9 @@ jobs:
               } else if (cmd === "note") {
                 const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
                 if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "alive") {
+                const run = await call("GET", repo + "/actions/runs/" + a[0]);
+                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
               } else if (cmd === "stale") {
                 const moved = a[0].split(",");
                 const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
@@ -220,13 +230,22 @@ jobs:
           tg stale "$moved" "${TG_BRANCH:-}"
           lock_ref="refs/tags/terragucci-apply-lock"
           empty="$(git mktree </dev/null)"
-          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$}")"
+          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
           tries=0
           until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
-            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour; delete the tag if none is running" >&2; exit 1; fi
+            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
+            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
+              lease="$(git log -1 --format=%s "$lock_ref")"
+              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
+              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
+                echo "the apply lock was held by run $holder, which is gone; taking it over"
+                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
+              fi
+            fi
+            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
             sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
           done
-          trap 'git push -q origin ":$lock_ref" || true' EXIT
+          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
           tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
           if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"

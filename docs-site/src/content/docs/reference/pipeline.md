@@ -5,7 +5,7 @@ description: Apply order, commit statuses, stale plan notes and cloud credential
 
 ## One apply at a time
 
-A project applies one push at a time. GitHub holds the apply job in a concurrency group that is not cancelled while it runs. GitLab uses a resource group. Forgejo's runner ignores concurrency, so its apply job takes a lock on the remote first. There, a run whose commit is no longer the branch tip stands down, because the newer push applies the whole tree.
+A project applies one push at a time. GitHub holds the apply job in a concurrency group that is not cancelled while it runs. GitLab uses a resource group. Forgejo cancels the earlier runs of a branch when a push arrives, even one that is applying, unless the workflow names a group, so the workflow names one that does not cancel. For runners that ignore concurrency, the Forgejo apply job also takes a lock on the remote. The lock carries a lease, and a waiter takes it over once the holder's run has ended or the lease is two hours old. A run whose commit is no longer the branch tip stands down, because the newer push applies the whole tree.
 
 A waiting push applies after the one ahead of it. Pull requests take no locks, so there is nothing to release by hand.
 

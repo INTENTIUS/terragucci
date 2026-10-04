@@ -111,7 +111,7 @@ claim_apply_serial() {
   log() { echo "[smoke apply-serial] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/serial" sha1 sha2 i marks bucket=shop-terraform-state mark
+  local work repo="$USER/serial" sha1 sha2 i listing marks bucket=shop-terraform-state mark
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local n; for n in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
@@ -122,8 +122,8 @@ claim_apply_serial() {
   settle "repos/$repo" 200 || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket"
-  # Clear marks from an earlier run.
-  for mark in $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" | grep -o '<Key>[^<]*</Key>' | sed 's#</\?Key>##g'); do
+  # Clear marks and state (with its lock file) from an earlier run.
+  for mark in $(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
     curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$mark" || true
   done
   mkdir -p "$work/app"
@@ -152,13 +152,17 @@ resource "terraform_data" "slow" {
 TF
   echo 1 > "$work/app/rev.txt"
   (cd "$work" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null && rm -f terragucci.yml)
-  if [ -n "${BREAK:-}" ]; then
-    sed -i.bak 's#^\( *\)until git push -q origin .*; do#\1until true; do#' "$work/.forgejo/workflows/terragucci.yml"
-    rm -f "$work/.forgejo/workflows/terragucci.yml.bak"
-  fi
+  # BREAK=1 cuts all three guards; BREAK=lock,group,job names the ones to cut.
+  local wf="$work/.forgejo/workflows/terragucci.yml" cut="${BREAK:-}"
+  [ "$cut" = 1 ] && cut=lock,group,job
+  case ",$cut," in *,lock,*) sed -i.bak 's#^\( *\)until git push -q origin .*; do#\1until true; do#' "$wf" ;; esac
+  case ",$cut," in *,group,*) awk '/^concurrency:/ {skip=1; next} skip && /^ / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf" ;; esac
+  case ",$cut," in *,job,*) awk '/^    concurrency:/ {skip=1; next} skip && /^      / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf" ;; esac
+  rm -f "$wf.bak"
   sha1="$(push_tree "$work" "$repo" main "serial: first")"
   for i in $(seq 1 120); do
-    curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" | grep -q -- '-start</Key>' && break
+    listing="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" || true)"
+    case "$listing" in *-start\</Key\>*) break ;; esac
     sleep 2
   done
   echo 2 > "$work/app/rev.txt"
@@ -166,13 +170,13 @@ TF
   wait_run "$repo" "$sha1"
   wait_run "$repo" "$sha2"
   [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the second run ended $RUN_STATUS"; rm -rf "$work"; return 1; }
-  marks="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" | grep -o '<Key>[^<]*</Key>' | sed 's#</\?Key>##g; s#.*/[0-9]*-##' | tr '\n' ' ')"
+  marks="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g; s#.*/[0-9]*-##' | tr '\n' ' ')"
   log "marks in key order: $marks"
   rm -rf "$work"
   # Keys sort by millisecond timestamp, so the listing is the order they happened in.
   [ "$marks" = "start end start end " ] || { log "the applies overlapped or one did not run"; return 1; }
   local statuses
-  statuses="$(api "$URL/api/v1/repos/$repo/commits/$sha2/statuses" | jq -r '[.[] | select(.context == "terragucci/apply")] | map(.status + ":" + .description) | join(",")')"
+  statuses="$(api "$URL/api/v1/repos/$repo/commits/$sha2/statuses" | jq -r '[.[] | select(.context == "terragucci/apply")] | sort_by(.id) | last | .status + ":" + .description')"
   log "terragucci/apply on the second commit: $statuses"
   [ "$statuses" = "success:1 roots in 1 groups applied" ] || { log "expected one success status for the stage"; return 1; }
 }

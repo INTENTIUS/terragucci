@@ -120,6 +120,9 @@ const FORGE_API_JS = [
   '    } else if (cmd === "note") {',
   "      const body = readFileSync(a[0], \"utf-8\"), old = await find(e.TG_PR);",
   '      if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });',
+  '    } else if (cmd === "alive") {',
+  '      const run = await call("GET", repo + "/actions/runs/" + a[0]);',
+  '      console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");',
   '    } else if (cmd === "stale") {',
   '      const moved = a[0].split(",");',
   '      const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");',
@@ -173,21 +176,34 @@ function movedRoots(roots: string[]): string {
 }
 
 /**
- * Applies on Forgejo run one at a time through a tag on the remote, because the
- * runner ignores `concurrency`. A run that finds a newer push on the branch
- * stands down, since that push applies the whole tree.
+ * Applies on Forgejo run one at a time through a tag on the remote. The tag
+ * points at a commit whose subject is the holder's lease, "run <id> <epoch>".
+ * A runner that kills a job never runs its exit trap, so a waiter takes the
+ * lock over, atomically, when the holder's run is no longer running or the
+ * lease is older than TG_LOCK_STALE seconds. A run that finds a newer push on
+ * the branch stands down, since that push applies the whole tree.
  */
 function forgejoLock(): string {
+  const id = '${GITHUB_RUN_ID:-$$}';
   return [
     'lock_ref="refs/tags/terragucci-apply-lock"',
     'empty="$(git mktree </dev/null)"',
-    'mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$}")"',
+    `mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${id} $(date +%s)")"`,
     "tries=0",
     'until git push -q origin "$mine:$lock_ref" 2>/dev/null; do',
-    '  if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour; delete the tag if none is running" >&2; exit 1; fi',
+    '  held="$(git ls-remote origin "$lock_ref" | cut -f1)"',
+    '  if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then',
+    '    lease="$(git log -1 --format=%s "$lock_ref")"',
+    '    holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"',
+    '    if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then',
+    '      echo "the apply lock was held by run $holder, which is gone; taking it over"',
+    '      git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break',
+    "    fi",
+    "  fi",
+    '  if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi',
     '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
     "done",
-    "trap 'git push -q origin \":$lock_ref\" || true' EXIT",
+    "trap 'git push -q --force-with-lease=\"$lock_ref:$mine\" origin \":$lock_ref\" || true' EXIT",
     'tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"',
     'if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then',
     '  echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"',
@@ -359,6 +375,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     on: { push: { branches: ["**"] }, pull_request: {} },
     env: jobEnv,
     permissions: { contents: "read" },
+    // Forgejo cancels the runs of an earlier push to a branch, even one that is
+    // applying, unless the workflow names a concurrency group. A group that does
+    // not cancel makes a later run wait instead.
+    ...(forge === "forgejo" ? { concurrency: { group: "terragucci-${{ github.ref }}", "cancel-in-progress": false } } : {}),
   } as never);
   const steps = (main: InstanceType<typeof Step>): InstanceType<typeof Step>[] => [
     new Step({ uses: "actions/checkout@v4" }),
