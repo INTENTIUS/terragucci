@@ -15,7 +15,7 @@ terragucci is being built. The rest of this site describes it finished, so this 
 | The check stage | format and validate on every pull request, failing by file name |
 | `npx terragucci init` | finds a repo's roots, binary and forge, and writes its pipeline for GitHub, GitLab or Forgejo; the pipeline checks every root and applies them in dependency order on the main branch |
 | CI images | one per toolchain (OpenTofu, Terraform, Terragrunt), built and checked on amd64 and arm64; not yet published, so `init` pins them by tag until they are |
-| `terragucci stage tf-plan` | plans every root and writes the plan report: JSON, HTML, the pull-request note and GitLab's counts, with each root's full plan beside it, sensitive values redacted; with `reports.bucket`, copies it to the bucket and updates the index. The generated pipeline does not run it yet |
+| `terragucci stage tf-plan` | plans every root and writes the plan report: JSON, HTML, the pull-request note and GitLab's counts, with each root's full plan beside it, sensitive values redacted; with `reports.bucket`, copies it to the bucket and updates the index. The generated pipeline's plan job runs it on every pull request, posts its note and keeps it as the job's artifact |
 | `terragucci.yml` and `terragucci reconcile` | one config for one repo or many; from a control repo, a pull request in each project that changes |
 | The local validation stack | Forgejo with its runner and floci; GitHub, GitLab and fountain setups are declared but not yet checked |
 
@@ -31,7 +31,6 @@ Each feature on this site has one check, run against the [tutorial's example](/t
 |---|---|
 | Plans for only the roots a change reaches | in development |
 | One grouped note for many plans | in development |
-| The plan report in the generated pipeline, posted on the pull request | in development |
 | Applies in gated waves | in development |
 | Drift reports | in development |
 | Module publishing and pin-bump rollouts | in development |

@@ -3,8 +3,11 @@
  * lexicons so GitHub, Forgejo and GitLab get the same jobs in their own syntax.
  *
  * check  every push: format check and validate, for every root.
- * plan   pull requests from the same repo: plan every root in apply order,
- *        post one terragucci/plan status and one plan note. Read-only role.
+ * plan   pull requests from the same repo: `terragucci stage tf-plan` plans
+ *        every root in apply order and writes the plan report, kept as the
+ *        job's artifact (and in a bucket when one is named). Its note is the
+ *        one plan note and its counts the one terragucci/plan status.
+ *        Read-only role.
  * apply  pushes to the default branch: apply every root, a layer at a time,
  *        roots in one layer together. A root that reads another's state
  *        applies after it. One apply per project at a time; posts one
@@ -53,6 +56,8 @@ export interface PipelineInput {
   oidc?: { plan_role: string; apply_role: string; audience?: string };
   /** The environment variable holding the forge token, where the forge's own job token cannot post statuses (GitLab). */
   tokenEnv?: string;
+  /** A bucket for plan reports, besides the job's artifact. */
+  reports?: PlanReportInput["reports"];
 }
 
 export interface RenderedPipeline {
@@ -256,52 +261,67 @@ export function applyScript(binary: Binary, layers: string[][], forge: ForgeName
   ].join("\n");
 }
 
-/** The pull request stage: plan every root in apply order, post one status and one note. */
-export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"]): string {
+/** Where a plan job's report is kept, and what the stage needs beyond the roots. */
+export interface PlanReportInput {
+  /** Copy the report to this bucket as well as keeping it with the job. */
+  reports?: { bucket: string; endpoint?: string; prefix?: string };
+  /** Globs for the canary wave the report shows. */
+  canary?: string[];
+}
+
+/** The plan report's directory in the job's workspace. */
+export const REPORT_DIR = "terragucci-report";
+
+/** Where the note links the HTML report: the job's artifact on GitLab, the run (and its artifact) elsewhere. */
+function reportUrl(forge: ForgeName): string {
+  return forge === "gitlab"
+    ? `"$CI_JOB_URL/artifacts/file/${REPORT_DIR}/report.html"`
+    : '"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"';
+}
+
+/** The status line from the report: roots, groups, destroys and replacements, and refusals. */
+const COUNTS_JS =
+  'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));' +
+  'const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;' +
+  'const f=n(["refused"]);' +
+  'console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")';
+
+/**
+ * The pull request stage: `terragucci stage tf-plan` plans every root in
+ * apply order and writes the plan report. The report's note is posted as the
+ * one plan note, and its counts are the one terragucci/plan status.
+ */
+export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
   const ordered = layers.flat();
+  const args = [
+    "--out", REPORT_DIR,
+    "--binary", binary,
+    "--layers", sh(layers.map((l) => l.join(",")).join(";")),
+    "--report-url", reportUrl(forge),
+    ...(report.canary?.length ? ["--canary", sh(report.canary.join(","))] : []),
+    ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
+    ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
+    ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
+  ];
   return [
     "set -uo pipefail",
     forgeApi(forge),
     ...(oidc ? [oidcScript(forge, oidc.plan_role, "terragucci-plan", oidc.audience)] : []),
     'tg status terragucci/plan pending "planning"',
-    `dirs=(${ordered.map(sh).join(" ")})`,
-    "planned=0 destroys=0 failed=0 rows= summaries=",
-    'for dir in "${dirs[@]}"; do',
-    '  log="$(mktemp)"',
-    `  if ${binary} -chdir="$dir" init -input=false -no-color >"$log" 2>&1 &&`,
-    `    ${binary} -chdir="$dir" plan -input=false -no-color -lock=false >>"$log" 2>&1; then`,
-    "    summary=\"$(grep -E '^(Plan: |No changes\\.)' \"$log\" | tail -1)\"",
-    '    summary="${summary:-planned}"',
-    "  else",
-    "    failed=$((failed + 1))",
-    '    summary="failed"',
-    "    sed 's/^/    /' \"$log\"",
-    "  fi",
-    "  d=\"$(printf '%s' \"$summary\" | sed -n 's/.* \\([0-9][0-9]*\\) to destroy.*/\\1/p')\"",
-    "  destroys=$((destroys + ${d:-0}))",
-    "  planned=$((planned + 1))",
-    '  echo "$dir: $summary"',
-    "  rows=\"$rows| $dir | $summary |\"$'\\n'",
-    "  summaries=\"$summaries$summary\"$'\\n'",
-    '  rm -f "$log"',
-    "done",
-    "groups=\"$(printf '%s' \"$summaries\" | sort -u | grep -c . || true)\"",
-    'counts="$planned roots, $groups groups, $destroys destroys"',
+    `terragucci stage tf-plan ${args.join(" ")}`,
+    "rc=$?",
+    `if [ ! -f ${REPORT_DIR}/report.json ]; then`,
+    '  tg status terragucci/plan failure "the plan report was not written"',
+    "  exit 1",
+    "fi",
+    `counts="$(node -e '${COUNTS_JS}' ${REPORT_DIR}/report.json)"`,
     'if [ -n "${TG_PR:-}" ]; then',
     '  note="$(mktemp)"',
-    "  {",
-    '    echo "<!-- terragucci:plan roots=$(IFS=,; echo "${dirs[*]}") -->"',
-    '    echo "## terragucci plan"',
-    "    echo",
-    '    echo "$counts. Planned at $TG_SHA."',
-    "    echo",
-    '    echo "| root | plan |"',
-    '    echo "| --- | --- |"',
-    "    printf '%s' \"$rows\"",
-    '  } >"$note"',
+    "  # The first line says which roots the note covers, so an apply can mark it stale.",
+    `  { echo "<!-- terragucci:plan roots=${ordered.join(",")} -->"; cat ${REPORT_DIR}/note.md; } >"$note"`,
     '  tg note "$note"',
     "fi",
-    'if [ "$failed" -ne 0 ]; then tg status terragucci/plan failure "$failed failed: $counts"; exit 1; fi',
+    'if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi',
     'tg status terragucci/plan success "$counts"',
   ].join("\n");
 }
@@ -325,6 +345,9 @@ function text(result: string | { primary: string }): string {
 
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv } = input;
+  // The canary wave comes from the repo's terragucci.yml at plan time, so a repo
+  // with no config file gets the same pipeline as one whose config only sets waves.
+  const report: PlanReportInput = input.reports ? { reports: input.reports } : {};
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError("there are no roots to run");
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...env };
@@ -351,7 +374,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID" },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens,
-      script: script(bash("PLAN", planScript(binary, layers, forge, oidc))),
+      script: script(bash("PLAN", planScript(binary, layers, forge, oidc, report))),
+      // The report stays with the job; its counts feed the merge request's widget.
+      artifacts: { name: REPORT_DIR, when: "always", paths: [`${REPORT_DIR}/`], reports: { terraform: `${REPORT_DIR}/gitlab-terraform.json` } },
     } as never);
     const apply = new GitLabJob({
       stage: "apply",
@@ -404,7 +429,16 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_SHA: "${{ github.event.pull_request.head.sha }}",
       TG_PR: "${{ github.event.pull_request.number }}",
     },
-    steps: steps(new Step({ name: "Plan every root", shell: "bash", run: planScript(binary, layers, forge, oidc) })),
+    steps: [
+      ...steps(new Step({ name: "Plan every root and write the plan report", shell: "bash", run: planScript(binary, layers, forge, oidc, report) })),
+      // The report stays with the run. Forgejo's artifact store speaks the v3 protocol.
+      new Step({
+        name: "Keep the plan report",
+        if: "always()",
+        uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
+        with: { name: REPORT_DIR, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
+      }),
+    ],
   } as never);
   const apply = new Job({
     "runs-on": "ubuntu-latest",

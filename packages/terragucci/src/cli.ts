@@ -5,7 +5,7 @@
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
- *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>]
+ *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>]
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
@@ -30,7 +30,7 @@ import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { RenderError } from "./render";
 import { renderText } from "./report/views";
-import { runStage } from "./report/stage";
+import { parseLayers, runStage } from "./report/stage";
 import { S3Error } from "./report/s3";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 
@@ -39,7 +39,7 @@ const USAGE = `usage:
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
-  terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>]
+  terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci install tofu|terraform|terragrunt <version>
@@ -128,6 +128,12 @@ export async function main(argv: string[]): Promise<number> {
         const result = await runStage(args[0] ?? "", cwd, {
           root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config"),
           out: str(flags, "out"), reportUrl: str(flags, "report-url"),
+          ...(str(flags, "layers") ? { layers: parseLayers(str(flags, "layers")!) } : {}),
+          ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}),
+          ...(str(flags, "canary") ? { canary: str(flags, "canary")!.split(",").filter(Boolean) } : {}),
+          ...(str(flags, "bucket")
+            ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } }
+            : {}),
         }, json ? () => {} : console.error);
         const code = result.failed ? 1 : 0;
         const files = { html: `${result.dir}/report.html`, json: `${result.dir}/report.json`, note: `${result.dir}/note.md` };

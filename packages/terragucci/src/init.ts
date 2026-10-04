@@ -111,6 +111,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     env: settings.env,
     oidc: settings.oidc,
     tokenEnv: settings.token_env,
+    ...(settings.reports ? { reports: settings.reports } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
