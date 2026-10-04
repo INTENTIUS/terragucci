@@ -34,7 +34,8 @@ export const installJust = (): InstanceType<typeof Step> =>
   new Step({
     name: "Install just",
     run: [
-      `curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz`,
+      // x86_64 or aarch64, so the step works on GitHub's arm64 runners too.
+      `curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz`,
       `tar -xzf /tmp/just.tar.gz -C /tmp just`,
       `sudo mv /tmp/just /usr/local/bin/just`,
       `just --version`,
