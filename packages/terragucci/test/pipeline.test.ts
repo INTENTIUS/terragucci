@@ -568,3 +568,26 @@ describe("telemetry headers secret", () => {
     expect(() => validateConfig({ telemetry: {} }, "t")).toThrow(/headers_secret/);
   });
 });
+
+describe("respond steps", () => {
+  const withRespond = (forge: ForgeName, respond?: Record<string, string>): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", ...(respond ? { respond } : {}) }).content;
+
+  it.each(FORGES)("%s: triage, the refused wave, drift and fmt run by default", (forge) => {
+    const text = withRespond(forge);
+    expect(text).toContain('terragucci respond apply-failed --log "$log"');
+    expect(text).toContain("terragucci respond wave-refused --wave 1");
+    expect(text).toContain("terragucci respond drift --mode apply");
+    expect(text).toContain("terragucci respond fmt --mode apply");
+  });
+
+  it.each(FORGES)("%s: a response set to off is not in the pipeline", (forge) => {
+    const text = withRespond(forge, { "apply-failed": "off", "wave-refused": "off", drift: "off", fmt: "off" });
+    expect(text).not.toContain("terragucci respond");
+  });
+
+  it("a wave waiting at a gate (exit 3) gets no response", () => {
+    const script = applyScript("tofu", layers, "github", undefined, { wave: 1 });
+    expect(script).toMatch(/3\) tg status terragucci\/apply pending "\$\(cat "\$outcome"\)"; exit 3 ;;/);
+  });
+});
