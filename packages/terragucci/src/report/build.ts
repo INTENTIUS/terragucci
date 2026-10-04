@@ -12,6 +12,8 @@ import { changeKind, foldChange } from "./highlight";
 import {
   REDACTED, REPORT_MINOR, REPORT_SCHEMA,
   type ReportUnit,
+  type ReportMockRead,
+  type ReportDeferred,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
 } from "./schema";
 
@@ -50,6 +52,10 @@ export interface BuildInput {
   redacted?: number;
   /** Advice to carry. Not part of any digest. Leave out with `tips: false`. */
   tips?: ReportTip[];
+  /** Terragrunt dependencies that would have planned on mock_outputs. */
+  mockReads?: ReportMockRead[];
+  /** Terragrunt units that plan after other units apply. */
+  deferred?: ReportDeferred[];
 }
 
 /** The files a root's full plan is kept in, relative to the report: `roots/<root>/plan.{txt,json}`. */
@@ -144,6 +150,9 @@ export function buildReport(input: BuildInput): Report {
     r.plan !== undefined && r.error === undefined
       ? terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform", ...(r.terragrunt ? { scope: r.terragrunt.stack } : {}) })
       : failedPart(r),
+  ).map((p, i) =>
+    // A provisional plan stays out of the change set's digest and out of every group of real plans.
+    input.roots[i].terragrunt?.provisional ? { ...p, member: { ...p.member, provisional: true as const } } : p,
   );
   const doc = composeChangeSet(parts);
   const summary = groupChangeSet(doc);
@@ -229,7 +238,8 @@ export function buildReport(input: BuildInput): Report {
   named.sort((a, b) => order[a.action] - order[b.action] || (a.root < b.root ? -1 : a.root > b.root ? 1 : 0) || ((a.address ?? "") < (b.address ?? "") ? -1 : 1));
 
   const waves: ReportWave[] = (input.waves ?? []).map((w) => {
-    const members = doc.members.filter((m) => w.roots.includes(m.member));
+    // A provisional member is a preview: no wave's set digest covers it.
+    const members = doc.members.filter((m) => w.roots.includes(m.member) && !m.provisional);
     const failed = members.some((m) => m.planDigest === null);
     return {
       number: w.number,
@@ -254,6 +264,8 @@ export function buildReport(input: BuildInput): Report {
     named,
     holes: summary.holes.map((h) => ({ root: h.member, address: h.address, ...(h.type ? { type: h.type } : {}), reason: h.reason })),
     redaction: { marker: REDACTED, values: input.redacted ?? 0 },
+    ...(input.mockReads?.length ? { mock_reads: input.mockReads } : {}),
+    ...(input.deferred?.length ? { deferred: input.deferred } : {}),
     ...(input.tips ? { tips: input.tips } : {}),
   };
 }

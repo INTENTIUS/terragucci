@@ -1,0 +1,12 @@
+diff --git a/live/staging/email/terragrunt.hcl b/live/staging/email/terragrunt.hcl
+index 9ec8ff5..a810b28 100644
+--- a/live/staging/email/terragrunt.hcl
++++ b/live/staging/email/terragrunt.hcl
+@@ -28,4 +28,7 @@ inputs = {
+   name                  = "email"
+   logs_bucket           = dependency.platform.outputs.logs_bucket
+   job_retention_seconds = local.common.locals.job_retention_seconds
++
++  # Email in staging no longer keeps records.
++  records_table = false
+ }

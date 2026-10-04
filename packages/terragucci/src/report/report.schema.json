@@ -187,6 +187,35 @@
         }
       }
     },
+    "mock_reads": {
+      "description": "Terragrunt dependencies that would have planned on mock_outputs (minor 1).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["unit", "dependency", "upstream", "reason"],
+        "properties": {
+          "unit": { "type": "string" },
+          "dependency": { "type": "string" },
+          "upstream": { "type": "string" },
+          "reason": { "enum": ["no-outputs", "partial", "skip-outputs", "disabled"] },
+          "keys": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "deferred": {
+      "description": "Terragrunt units that plan after the units they wait for apply (minor 1).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["unit", "after", "why", "previewed"],
+        "properties": {
+          "unit": { "type": "string" },
+          "after": { "type": "array", "items": { "type": "string" } },
+          "why": { "type": "string" },
+          "previewed": { "type": "boolean" }
+        }
+      }
+    },
     "redaction": {
       "type": "object",
       "required": ["marker", "values"],

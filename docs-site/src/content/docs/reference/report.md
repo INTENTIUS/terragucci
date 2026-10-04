@@ -96,6 +96,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `waves[]` | number, roots, set digest, approval state and a link to the approval record |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
+| `deferred[]` | Terragrunt units planned after the units they wait for apply, and what each waits for |
+| `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |

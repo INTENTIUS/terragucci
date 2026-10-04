@@ -70,10 +70,12 @@ export function terragruntInstalls(
 const filters = (exclude: string[]): string =>
   [...TERRAGRUNT_DISCOVERY_EXCLUDES, ...exclude].map((g) => `--filter ${sh(excludeFilter(g))}`).join(" ");
 
-export function terragruntCheckScript(tg: TerragruntPipelineInput): string {
+export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binary): string {
   return [
     "set -eu",
     cacheExports(),
+    // The modules units call are plain Terraform: the binary formats them, Terragrunt formats its own files.
+    `${binary} fmt -check -recursive -diff .`,
     "terragrunt hcl fmt --check --diff --no-color",
     `terragrunt hcl validate --inputs --no-color ${filters(tg.exclude)}`,
     'echo "every unit is formatted and its inputs match its module"',
@@ -92,8 +94,6 @@ export function credentialsScript(
   return [
     ...(token ? ['export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', token] : []),
     `export TERRAGUCCI_REPO="$PWD" TERRAGUCCI_PHASE=${phase} ${ROLES_ENV}=${sh(JSON.stringify(rolesFor(credentials, phase)))}`,
-    "# Each unit's role comes from its path. A unit with its own iam_role keeps it,",
-    "# and Terragrunt assumes it with the job's token.",
     'export TG_AUTH_PROVIDER_CMD="terragucci auth-provider"',
     'export TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN="$AWS_WEB_IDENTITY_TOKEN_FILE"',
   ].join("\n");

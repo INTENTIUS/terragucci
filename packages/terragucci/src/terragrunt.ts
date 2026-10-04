@@ -91,7 +91,7 @@ export function walkUnits(repo: string, exclude: readonly string[] = []): Terrag
   walk(repo, (dir, names) => {
     const rel = posix(relative(repo, dir));
     if (!rel || !names.includes("terragrunt.hcl")) return;
-    if (globs.some((g) => matchesUnitGlob(rel, g.replace(/\/\*\*$/, "")) || matchesUnitGlob(rel, g))) return;
+    if (globs.some((g) => matchesUnitGlob(rel, g))) return;
     out.push({ path: rel, dependencies: [] });
   });
   return out.sort((a, b) => (a.path < b.path ? -1 : 1));
@@ -115,7 +115,7 @@ export async function discoverUnits(repo: string, options: DiscoverOptions = {})
   return {
     units: walkUnits(repo, options.exclude),
     source: "terragrunt.hcl files",
-    notes: [`units come from terragrunt.hcl files, with no dependency edges, because Terragrunt discovery did not run: ${fallback.split("\n")[0]}`],
+    notes: [`units come from terragrunt.hcl files, with no edges: Terragrunt discovery did not run (${fallback.split("\n")[0]})`],
   };
 }
 
@@ -127,8 +127,9 @@ export async function discoverUnits(repo: string, options: DiscoverOptions = {})
 export function unitWaves(units: readonly TerragruntUnit[], canary: readonly string[] = []): string[][] {
   terragruntWaves(units, { canary }); // throws on a canary that reads a later unit, or a cycle
   const isCanary = (p: string): boolean => canary.some((g) => matchesUnitGlob(p, g));
-  const first = units.filter((u) => isCanary(u.path)).map((u) => u.path);
-  const rest = units.filter((u) => !isCanary(u.path)).map((u) => u.path);
+  // Sorted, so the pipeline is the same whether discovery ran or fell back to a file walk.
+  const first = units.filter((u) => isCanary(u.path)).map((u) => u.path).sort();
+  const rest = units.filter((u) => !isCanary(u.path)).map((u) => u.path).sort();
   return [first, rest].filter((w) => w.length > 0);
 }
 
@@ -182,16 +183,12 @@ export function unitSetsRole(repoDir: string, unitDir: string): boolean {
       return false;
     }
   };
-  if (sets(join(unitDir, "terragrunt.hcl"))) return true;
   const top = resolve(repoDir);
-  for (let d = dirname(resolve(unitDir)); d.startsWith(top); d = dirname(d)) {
-    let names: string[] = [];
-    try {
-      names = readdirSync(d);
-    } catch {
-      /* unreadable */
-    }
-    if (names.some((n) => n.endsWith(".hcl") && n !== "terragrunt.hcl" && n !== ".terraform.lock.hcl" && sets(join(d, n)))) return true;
+  const unit = resolve(unitDir);
+  for (let d = unit; d.startsWith(top); d = dirname(d)) {
+    // The unit's own config, and any other .hcl above it (root.hcl, env.hcl) it may include.
+    const names = d === unit ? ["terragrunt.hcl"] : readdirSync(d).filter((n) => /^[^.].*\.hcl$/.test(n) && n !== "terragrunt.hcl");
+    if (names.some((n) => sets(join(d, n)))) return true;
     if (d === top) break;
   }
   return false;
