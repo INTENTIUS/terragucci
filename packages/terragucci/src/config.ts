@@ -318,6 +318,9 @@ function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
         problems.push(`${at} uses one role for plan and apply; plan runs pull-request code, so give it a read-only role of its own`);
       }
     }
+  }
+}
+
 /**
  * An `agent` response needs somewhere to run, and the agent never holds the
  * apply role: at most a forge token and read-only cloud credentials.
