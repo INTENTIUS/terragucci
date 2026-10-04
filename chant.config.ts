@@ -3,13 +3,12 @@ import type { ChantConfig } from "@intentius/chant";
 /**
  * terragucci's own config.
  *
- * Today the repo declares only its two workflows (ci/ and pages/), so the one
- * lexicon it needs is github. The kit's lifecycle Ops will add the terraform
- * lexicon, and the steward preset the fountain lexicon, when they land; see
- * INTENTIUS/chant#3341.
+ * The repo declares its workflows (ci/, pages/, capture/, image-ci/) with the
+ * github lexicon and its CI images (images/) with the docker lexicon. The
+ * kit's lifecycle Ops will add the terraform lexicon when they land.
  */
 export default {
-  lexicons: ["github"],
+  lexicons: ["github", "docker"],
 
   lint: {
     rules: {
@@ -20,6 +19,10 @@ export default {
       // Workflow files export jobs for the build to collect, not for each
       // other, so "never referenced in this file" is the normal case.
       COR004: "off",
+      // CI images run as root: GitHub runs container jobs as root and
+      // actions/checkout writes the mounted workspace, and GitLab and Forgejo
+      // jobs expect the same. The images hold no secrets of their own.
+      DKRD012: "off",
     },
   },
 } satisfies ChantConfig;

@@ -74,7 +74,8 @@ describe("init", () => {
     const r = await init(dir);
     expect(r.roots).toEqual(["network"]);
     const text = readFileSync(r.files[0].path, "utf-8");
-    expect(text).toContain("terraform_1.14.0_linux_");
+    expect(text).toContain("ghcr.io/intentius/terragucci-terraform:");
+    expect(text).not.toContain("terragucci install");
     expect(text).toContain("AWS_REGION: eu-west-1");
     expect(text).not.toContain("'app'");
   });

@@ -13,6 +13,8 @@ typecheck:
 lint:
     npx chant lint ci
     npx chant lint pages
+    npx chant lint image-ci
+    npx chant lint images
     npx chant lint capture
 
 [doc("Run the unit tests.")]
@@ -27,8 +29,12 @@ lint-docs strictness="2" limit="8":
 tutorial-check:
     node scripts/tutorial-check.mjs
 
-[doc("Typecheck, lint, test, lint the docs and check the tutorial. What CI runs.")]
-check: typecheck lint test lint-docs tutorial-check
+[doc("Build the bundle and hold it to its shape: no dependencies, under budget, Node imports only.")]
+bundle-check: build-cli
+    node scripts/bundle-check.mjs
+
+[doc("Typecheck, lint, test, lint the docs, check the tutorial and the bundle. What CI runs.")]
+check: typecheck lint bundle-check test lint-docs tutorial-check
 
 # ── this repo's workflows ──────────────────────────────────────────────────
 
@@ -38,8 +44,20 @@ ci:
     npx chant build ci -o .github/workflows/ci.yml --format yaml
     npx chant build pages -o .github/workflows/pages.yml --format yaml
     npx chant build capture -o .github/workflows/capture.yml --format yaml
+    npx chant build image-ci -o .github/workflows/images.yml --format yaml
+    just render-images
 
-[doc("Fail if any committed workflow has drifted from its declaration.")]
+[doc("Render the CI images' Dockerfiles from images/images.ts into images/.")]
+render-images:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$(mktemp -d -t terragucci-images-XXXX)"
+    npx chant build images -o "$dir/compose.yml" --format yaml >/dev/null
+    cp "$dir"/Dockerfile.* images/
+    rm -rf "$dir"
+    echo "  ✓ images/Dockerfile.* rendered"
+
+[doc("Fail if any committed workflow or Dockerfile has drifted from its declaration.")]
 ci-check:
     #!/usr/bin/env bash
     # GitHub reads the YAML, so the rendered file is committed. This gate keeps
@@ -48,7 +66,7 @@ ci-check:
     out="$(mktemp -t terragucci-ci-XXXX.yml)"
     trap 'rm -f "$out"' EXIT
     rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml"; do
+    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "image-ci:.github/workflows/images.yml"; do
       src="${pair%%:*}"; committed="${pair#*:}"
       npx chant build "$src" -o "$out" --format yaml >/dev/null
       if diff -u "$committed" "$out"; then
@@ -58,6 +76,19 @@ ci-check:
         rc=1
       fi
     done
+    # The Dockerfiles: the docker lexicon writes them beside its (empty) compose output.
+    dir="$(mktemp -d -t terragucci-images-XXXX)"
+    npx chant build images -o "$dir/compose.yml" --format yaml >/dev/null
+    for f in "$dir"/Dockerfile.*; do
+      name="$(basename "$f")"
+      if diff -u "images/$name" "$f"; then
+        echo "  ✓ images/$name matches images/images.ts"
+      else
+        echo "  images/$name is not what images/images.ts renders. Run 'just ci' and commit the result."
+        rc=1
+      fi
+    done
+    rm -rf "$dir"
     exit $rc
 
 # ── the published site ─────────────────────────────────────────────────────
@@ -140,6 +171,19 @@ smoke-record:
 [doc("Run the tutorial's steps against the example and record their output and screenshots.")]
 tutorial-capture:
     stack/tutorial-capture.sh
+
+[doc("Build the terragucci CLI into one bundled file, as a release does.")]
+build-cli:
+    node scripts/build-cli.mjs
+
+[doc("Build the three CI images for one platform (default: this machine's) into the local Docker daemon.")]
+images platform="":
+    just build-cli
+    npx tsx scripts/images.ts build {{ if platform == "" { "" } else { "--platform " + platform } }}
+
+[doc("Run each CI image's tools and hold each image to its size budget in images/budget.json.")]
+images-check platform="":
+    npx tsx scripts/images.ts check {{ if platform == "" { "" } else { "--platform " + platform } }}
 
 [doc("Rebuild example/changes/*.patch from the example as committed.")]
 example-patches:

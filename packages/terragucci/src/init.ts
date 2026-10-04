@@ -18,7 +18,8 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRoots } from "./detect";
-import { DEFAULT_VERSIONS, MARKER, renderPipeline } from "./render";
+import { imageFor, imageReference, TOOL_VERSIONS } from "./images";
+import { MARKER, RenderError, renderPipeline } from "./render";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -42,6 +43,7 @@ export interface InitResult {
   roots: string[];
   layers: string[][];
   binary: { value: Binary; reason: string };
+  image?: string;
   version: { value: string; reason: string };
   forge: { value: ForgeName; reason: string };
   files: FileChange[];
@@ -81,7 +83,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ? { value: settings.version, reason: "terragucci.yml" }
     : pinned
       ? { value: pinned, reason: "required_version" }
-      : { value: DEFAULT_VERSIONS[binary.value] ?? "", reason: "the default" };
+      : { value: (TOOL_VERSIONS as Record<string, string>)[binary.value] ?? "", reason: "the image" };
 
   const detectedForge = detectForge(repo);
   const forgeChoice = settings.forge
@@ -93,7 +95,18 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError("cannot tell which forge this repo is on; pass --forge github, gitlab or forgejo");
   }
 
-  const pipeline = renderPipeline({ forge: forgeChoice.value, binary: binary.value, version: version.value, layers, env: settings.env });
+  const ref = imageFor(binary.value);
+  if (!ref) throw new RenderError(`terragucci has no CI image for ${binary.value} yet; set binary to tofu or terraform`);
+  const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
+  const pipeline = renderPipeline({
+    forge: forgeChoice.value,
+    binary: binary.value,
+    version: version.value,
+    image: imageReference(ref),
+    install: version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
+    layers,
+    env: settings.env,
+  });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
@@ -130,7 +143,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, layers, binary, version, forge: forgeChoice, files, notes, configNote };
+  return { roots, layers, binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
 }
 
 /** What `init` prints. */

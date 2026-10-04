@@ -8,7 +8,18 @@ just site-dev   # serve the docs locally
 
 ## The package
 
-`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. It ships TypeScript and runs through tsx, like chant. Its tests run with the rest under `just check`. `npm pack` in that directory builds the tarball; publishing to npm waits for an explicit go.
+`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. `just build-cli` bundles it into one file, `dist/terragucci.mjs`, with no runtime dependencies; chant is a build dependency of this repo only. `just bundle-check`, part of `just check`, fails if the package gains a dependency, the bundle passes its size budget, or it imports anything but Node's modules and the optional TypeScript folder that a `terragucci.ts` config needs. `npm pack` in that directory builds the tarball; publishing to npm waits for an explicit go.
+
+## The CI images
+
+`images/images.ts` declares one image per toolchain (tofu, terraform, terragrunt) with chant's docker lexicon; `just ci` renders `images/Dockerfile.*`, and `just ci-check` fails on a hand edit. Tool versions come from `packages/terragucci/src/images.ts`, the table `init` reads too.
+
+```bash
+just images             # build all three for this machine, into the local daemon
+just images-check       # run each image's tools and hold it to images/budget.json
+```
+
+The images workflow builds and checks them on amd64 and arm64 for every change, and pushes them to GHCR only for a `v*` tag, which waits for an explicit go. A release then records each pushed digest in `packages/terragucci/src/image-digests.json` before the npm package is built, so `init` pins the images by digest.
 
 ## Workflows
 
@@ -24,6 +35,8 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `ci/pipeline.ts` | `.github/workflows/ci.yml` |
 | `pages/pipeline.ts` | `.github/workflows/pages.yml` |
 | `capture/pipeline.ts` | `.github/workflows/capture.yml` |
+| `image-ci/pipeline.ts` | `.github/workflows/images.yml` |
+| `images/images.ts` | `images/Dockerfile.*` |
 | `workflows/shared.ts` | the pins they share |
 
 ## The site

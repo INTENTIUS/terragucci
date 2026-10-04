@@ -14,7 +14,7 @@ npm i -D @intentius/terragucci
 npx terragucci init
 ```
 
-`init` writes the pipeline for your forge and prints what it found. With no `terragucci.yml`, it starts from these defaults:
+`init` writes the pipeline for your forge and prints what it found. Every job runs in terragucci's CI image for your binary, pinned by digest, so no job downloads a tool. With no `terragucci.yml`, it starts from these defaults:
 
 | Setting | Default |
 |---|---|

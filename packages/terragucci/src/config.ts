@@ -207,8 +207,17 @@ function projectFiles(root: string): Map<string, string> {
   return files;
 }
 
+/** The TypeScript folder ships separately; only a `.ts` config needs it. */
+export const TSAD_INSTALL = "npm i -D @intentius/tsad-reference";
+
 async function foldConfig(path: string): Promise<unknown> {
-  const { foldProject, EMPTY_HOST } = await import("@intentius/tsad-reference");
+  let tsad: typeof import("@intentius/tsad-reference");
+  try {
+    tsad = await import("@intentius/tsad-reference");
+  } catch {
+    throw new ConfigError(`${path} is TypeScript, which needs the TypeScript folder: ${TSAD_INSTALL}`);
+  }
+  const { foldProject, EMPTY_HOST } = tsad;
   const root = dirname(resolve(path));
   const key = relative(root, resolve(path)).split("\\").join("/");
   const verdict = foldProject(projectFiles(root), { ...EMPTY_HOST, profile: "data-host" }).verdicts.get(key);

@@ -8,8 +8,8 @@
  * committed and never boots the stack.
  */
 
-import { Workflow, Job, Step, Checkout } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, installJust } from "../workflows/shared";
+import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust } from "../workflows/shared";
 
 export const workflow = new Workflow({
   name: "capture",
@@ -28,7 +28,11 @@ export const capture = new Job({
   permissions: { contents: "write", "pull-requests": "write" },
   steps: [
     Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,
+    SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
+    new Step({ name: "Install dependencies", run: "npm ci" }),
     installJust(),
+    // The example's pipeline runs in terragucci's CI image; build it here.
+    new Step({ name: "Build the CI images", run: "just images" }),
     new Step({ name: "Record the smoke claims", run: "just smoke-record" }),
     new Step({ name: "Capture the tutorial", run: "CHROME=google-chrome just tutorial-capture" }),
     new Step({ name: "Stop the stack", if: "always()", run: "just stack-down" }),

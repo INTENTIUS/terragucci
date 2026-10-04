@@ -114,10 +114,16 @@ claim_reconcile() {
   local work repo="$USER/two-roots" mode=apply out pr sha
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
   local name
+  # Forgejo settles a deleted or new repo a moment after answering; wait for it,
+  # or the next call can meet the old repo or a 404.
+  answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
+  settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
   for name in two-roots in-line; do
     api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/$name" 2>/dev/null || true
+    settle "repos/$USER/$name" 404 || return 1
     api -o /dev/null -H 'content-type: application/json' -X POST \
       -d "{\"name\":\"$name\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" "$URL/api/v1/user/repos"
+    settle "repos/$USER/$name" 200 || return 1
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$USER/$name"
   done
   curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
@@ -153,6 +159,9 @@ provider "aws" {
   (cd "$work/in-line" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null && rm -f terragucci.yml)
   push_tree "$work/in-line" "$USER/in-line" main "Two roots, pipeline in line" >/dev/null
   push_tree "$work/two-roots" "$repo" main "Two roots, no pipeline" >/dev/null
+  settle "repos/$USER/in-line/branches/main" 200 || return 1
+  settle "repos/$repo/branches/main" 200 || return 1
+  settle "repos/$repo/pulls?state=open" 200 || return 1
 
   cat > "$work/terragucci.yml" <<YML
 defaults:
