@@ -94,7 +94,7 @@ export async function reconcile(config: TerragucciConfig, options: ReconcileOpti
 
       const dir = join(work, "repo");
       git(work, ["clone", "-q", "--depth", "1", withToken(cloneUrl, token), dir], token);
-      const result = await init(dir, { settings: { ...settings, forge }, dryRun: options.mode === "dry-run" });
+      const result = await init(dir, { settings: { ...settings, forge }, name: pk.name, dryRun: options.mode === "dry-run" });
       const changes = result.files.map((f) => ({ ...f, path: relative(dir, f.path) }));
       const changed = changes.filter((f) => f.status !== "unchanged");
 

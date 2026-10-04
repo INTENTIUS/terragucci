@@ -7,7 +7,7 @@ description: Every terragucci command, its flags and its exit codes.
 
 | Command | What it does |
 |---|---|
-| `init` | finds roots, binary and forge, and writes the pipeline |
+| `init` | finds roots, binary and forge, and writes the pipeline and `chant.workspace.json` |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
@@ -32,6 +32,8 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--for
 | `--force` | overwrite a pipeline file terragucci did not write |
 
 A flag that detection cannot find on its own is recorded in `terragucci.yml`.
+
+`init` also writes `chant.workspace.json` and lists each apply wave's gate (`wave-1`, `wave-2` and so on) under `identity.gates`, so a wave counts only an approval sealed with `chant approve --sign`. When the file already exists, `init` adds the gates it lacks and leaves the rest as it is. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file the seals are checked against.
 
 ## reconcile
 
