@@ -75,11 +75,15 @@ forge_push() { # dir name branch message
 
 forge_branch_sha() { glapi "$URL/api/v4/projects/$(pid "$1")/repository/branches/$(printf %s "$2" | jq -sRr @uri)" | jq -r .commit.id; }
 
-forge_run() { # name branch sha
-  local name="$1" sha="$3" deadline=$(( $(date +%s) + TIMEOUT )) p="" status=""
+# A fourth argument "push" waits for the branch pipeline, which runs the
+# check. A merge request also gets its own pipeline, which plans every root;
+# a root that reads another's state cannot plan until that one is applied, so
+# that pipeline is not what "the request's check" means.
+forge_run() { # name branch sha [job]
+  local name="$1" sha="$3" source="${4:-}" deadline=$(( $(date +%s) + TIMEOUT )) p="" status=""
   RUN_LOG="$WORK/run-$RANDOM.log"
   while :; do
-    p="$(glapi "$URL/api/v4/projects/$(pid "$name")/pipelines?sha=$sha" | jq -c '.[0] // empty')"
+    p="$(glapi "$URL/api/v4/projects/$(pid "$name")/pipelines?sha=$sha${source:+&source=$source}" | jq -c '.[0] // empty')"
     if [ -n "$p" ]; then
       status="$(jq -r .status <<<"$p")"
       case "$status" in success|failed|canceled|skipped) break ;; esac

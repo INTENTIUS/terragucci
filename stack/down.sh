@@ -22,10 +22,11 @@ if docker network inspect terragucci >/dev/null 2>&1; then
 fi
 
 docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
-  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile observability \
+  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile observability \
   down -v --remove-orphans
 
 # Belt and braces for anything created outside compose under our names.
+for c in $(docker ps -aq --filter name=^terragucci-); do docker rm -f "$c" >/dev/null && echo "removed container $c"; done
 for v in $(docker volume ls -q --filter name=terragucci-); do docker volume rm "$v" >/dev/null && echo "removed volume $v"; done
 docker network rm terragucci >/dev/null 2>&1 && echo "removed network terragucci" || true
 

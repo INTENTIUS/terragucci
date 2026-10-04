@@ -159,15 +159,19 @@ provider "aws" {
     }
     mk "$WORK/two-roots" "reconcile-$FORGE" "$p-network"
     mk "$WORK/in-line" "inline-$FORGE" "$p-inline"
-    (cd "$WORK/in-line" && git init -q -b main && "$TERRAGUCCI" init --forge "$FORGE" --binary tofu >/dev/null && rm -f terragucci.yml)
+    # in-line's pipeline is rendered with the same settings the control repo
+    # hands every project (they change the pipeline: token_env adds the plan
+    # job's token), so the claim cannot drift from the renderer.
+    DEFAULTS="forge: $FORGE
+binary: tofu
+token_env: $FORGE_TOKEN_ENV"
+    (cd "$WORK/in-line" && git init -q -b main && echo "$DEFAULTS" > terragucci.yml && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
     forge_push "$WORK/in-line" in-line main "Two roots, pipeline in line" >/dev/null
     forge_push "$WORK/two-roots" two-roots main "Two roots, no pipeline" >/dev/null
 
     cat > "$WORK/terragucci.yml" <<YML
 defaults:
-  forge: $FORGE
-  binary: tofu
-  token_env: $FORGE_TOKEN_ENV
+$(sed 's/^/  /' <<<"$DEFAULTS")
 projects:
   $(forge_project_key in-line):
     url: $(forge_config_url in-line)
@@ -183,7 +187,7 @@ YML
     [ -n "$pr" ] || fail "no request was opened on two-roots"
     [ -z "$(forge_open_pr in-line terragucci/pipeline)" ] || fail "a request was opened on in-line"
     sha="$(forge_branch_sha two-roots terragucci/pipeline)"
-    forge_run two-roots terragucci/pipeline "$sha"
+    forge_run two-roots terragucci/pipeline "$sha" push
     if [ "$RUN_STATUS" != success ]; then forge_logs; fail "the request's check ended $RUN_STATUS"; fi
     forge_merge_pr two-roots "$pr"
     sha="$(forge_branch_sha two-roots main)"

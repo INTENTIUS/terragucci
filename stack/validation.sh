@@ -52,11 +52,13 @@ case "${1:-}" in
     out="${2:?usage: validation.sh record FILE [FORGE...]}"; shift 2
     forges="${*:-$ALL_FORGES}"
     rows=()
+    rc=0
     for forge in $forges; do
       "$HERE/down.sh" >&2
       "$HERE/bootstrap.sh" "$forge" >&2
       for claim in $(claims_of "$forge"); do
         read -r plain broken < <(one "$forge" "$claim")
+        [ "$plain" = pass ] && [ "$broken" = caught ] || rc=1
         says="$(grep "^$forge|$claim|" <<<"$CLAIMS" | cut -d'|' -f3)"
         rows+=("$(jq -n --arg f "$forge" --arg c "$claim" --arg s "$says" --arg v "$plain" --arg b "$broken" \
           '{forge: $f, claim: $c, says: $s, verdict: $v, break: $b}')")
@@ -73,6 +75,7 @@ case "${1:-}" in
       | sort_by(. as $r | ($ord | index($r.forge + " " + $r.claim)) // 99)')"
     jq -n --argjson c "$merged" '{claims: $c}' > "$out"
     echo "wrote $out" >&2
+    exit $rc
     ;;
   *) echo "usage: validation.sh run FORGE | record FILE [FORGE...]" >&2; exit 2 ;;
 esac

@@ -52,7 +52,7 @@ forge_branch_sha() { gh "$URL/api/v3/repos/$USER/$1/branches/$2" | jq -r .commit
 # act on a fresh clone of the commit, the way a runner checks out a push. The
 # payload is a push event: the ref decides whether the apply job's condition
 # (the default branch) holds. Output goes to RUN_LOG.
-forge_run() { # name branch sha
+forge_run() { # name branch sha [source: unused here; act runs a push event]
   local name="$1" branch="$2" sha="$3" dir="$WORK/run-$RANDOM" image
   image="$(ci_image)"
   git clone -q "${URL/#http:\/\//http://oauth2:${TOKEN}@}/$USER/$name.git" "$dir" 2>/dev/null

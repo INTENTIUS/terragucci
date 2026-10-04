@@ -4,8 +4,8 @@
       "forge": "aws",
       "claim": "s3",
       "says": "floci starts and answers S3",
-      "verdict": "pending",
-      "break": null
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "forge": "forgejo",
