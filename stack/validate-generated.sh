@@ -116,8 +116,8 @@ case "$CLAIM" in
     prepare "$WORK/main"
     if [ -n "$BREAK" ]; then
       f="$WORK/main/$PIPELINE_FILE"
-      sed -E '/^ {0,2}apply:$/,$d' "$f" > "$f.new" && mv "$f.new" "$f"
-      ! grep -qE '^ {0,2}apply:$' "$f" || fail "could not drop the apply job from $PIPELINE_FILE"
+      sed -E '/^ {0,2}apply(-wave-[0-9]+)?:$/,$d' "$f" > "$f.new" && mv "$f.new" "$f"
+      ! grep -qE '^ {0,2}apply(-wave-[0-9]+)?:$' "$f" || fail "could not drop the apply jobs from $PIPELINE_FILE"
     fi
     sha="$(forge_push "$WORK/main" validate main "$(msg)")"
     log "pushed to main at ${sha:0:8}"

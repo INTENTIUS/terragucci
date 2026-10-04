@@ -20,14 +20,16 @@ const body = (text: string): Record<string, any> => parseYAML(text.split("\n").f
 
 describe("apply concurrency", () => {
   it.each(["github", "forgejo"] as const)("%s: one apply per project, a waiting push is not cancelled", (forge) => {
-    const apply = body(render(forge)).jobs.apply;
-    expect(apply.concurrency).toEqual({ group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false });
+    for (const job of ["apply-wave-1", "apply-wave-2"]) {
+      expect(body(render(forge)).jobs[job].concurrency).toEqual({ group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false });
+    }
     expect(body(render(forge)).jobs.check.concurrency).toBeUndefined();
   });
 
-  it("gitlab: the apply job is a resource group", () => {
+  it("gitlab: each wave's apply job is in the one resource group", () => {
     const doc = body(render("gitlab"));
-    expect(doc.apply.resource_group).toBe("terragucci-apply");
+    expect(doc["apply-wave-1"].resource_group).toBe("terragucci-apply");
+    expect(doc["apply-wave-2"].resource_group).toBe("terragucci-apply");
     expect(doc.check.resource_group).toBeUndefined();
   });
 
@@ -54,21 +56,21 @@ describe("publish job", () => {
 
   it.each(["github", "forgejo"] as const)("%s: runs after apply on the default branch, with the registry credentials in that job only", (forge) => {
     const jobs = body(withPublish(forge)).jobs;
-    expect(jobs.publish.needs).toBe("apply");
+    expect(jobs.publish.needs).toBe("apply-wave-2");
     expect(jobs.publish.if).toContain("default_branch");
     expect(jobs.publish.env.TERRAGUCCI_REGISTRY_USER).toContain("secrets.TERRAGUCCI_REGISTRY_USER");
     expect(jobs.publish.steps[0].with["fetch-depth"]).toBe(0);
     expect(jobs.publish.steps.at(-1).run).toContain("terragucci publish");
-    for (const name of ["check", "plan", "apply"]) expect(JSON.stringify(jobs[name])).not.toContain("REGISTRY");
+    for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("REGISTRY");
   });
 
   it("gitlab: a publish job after apply, on the default branch, with full history", () => {
     const doc = body(withPublish("gitlab"));
-    expect(doc.publish.needs).toEqual(["apply"]);
+    expect(doc.publish.needs).toEqual(["apply-wave-2"]);
     expect(doc.publish.rules[0].if).toContain("CI_DEFAULT_BRANCH");
     expect(doc.publish.variables.GIT_DEPTH).toBe("0");
     expect(doc.publish.script.join("\n")).toContain("terragucci publish");
-    expect(JSON.stringify(doc.apply)).not.toContain("terragucci publish");
+    expect(JSON.stringify(doc["apply-wave-2"])).not.toContain("terragucci publish");
   });
 });
 
@@ -84,10 +86,10 @@ describe("statuses", () => {
   it("plan runs on pull requests only and apply on the default branch only", () => {
     const gh = body(render("github")).jobs;
     expect(gh.plan.if).toContain("github.event_name == 'pull_request'");
-    expect(gh.apply.if).toContain("default_branch");
+    expect(gh["apply-wave-1"].if).toContain("default_branch");
     const gl = body(render("gitlab"));
     expect(gl.plan.rules[0].if).toContain("merge_request_event");
-    expect(gl.apply.rules[0].if).toContain("CI_DEFAULT_BRANCH");
+    expect(gl["apply-wave-1"].rules[0].if).toContain("CI_DEFAULT_BRANCH");
   });
 });
 
@@ -98,18 +100,19 @@ describe("credentials", () => {
     const flat = (j: unknown): string => JSON.stringify(j);
     expect(flat(jobs.plan)).toContain(OIDC.plan_role);
     expect(flat(jobs.plan)).not.toContain(OIDC.apply_role);
-    expect(flat(jobs.apply)).toContain(OIDC.apply_role);
-    expect(flat(jobs.apply)).not.toContain(OIDC.plan_role);
+    expect(flat(jobs["apply-wave-1"])).toContain(OIDC.apply_role);
+    expect(flat(jobs["apply-wave-1"])).not.toContain(OIDC.plan_role);
     expect(flat(jobs.check)).not.toMatch(/role/);
   });
 
-  it("github: id-token is written for plan and apply, and neither job gets contents: write", () => {
+  it("github: id-token is written for plan and apply; only an apply wave that can wait writes contents, for its gate record", () => {
     const doc = body(render("github", OIDC));
-    for (const j of ["plan", "apply"]) {
-      expect(doc.jobs[j].permissions["id-token"]).toBe("write");
-      expect(doc.jobs[j].permissions.contents).toBe("read");
-    }
+    for (const j of ["plan", "apply-wave-1", "apply-wave-2"]) expect(doc.jobs[j].permissions["id-token"]).toBe("write");
+    expect(doc.jobs.plan.permissions.contents).toBe("read");
+    expect(doc.jobs["apply-wave-1"].permissions.contents).toBe("write");
     expect(doc.permissions).toEqual({ contents: "read" });
+    const never = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
+    expect(never.jobs["apply-wave-1"].permissions.contents).toBe("read");
   });
 
   it("forgejo: the runner ignores permissions, so the dialect drops them and the token comes from the runner's own OIDC endpoint", () => {
@@ -129,7 +132,7 @@ describe("credentials", () => {
   it("gitlab: id_tokens on plan and apply, and plan skips a fork's merge request", () => {
     const doc = body(render("gitlab", OIDC));
     expect(doc.plan.id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" } });
-    expect(doc.apply.id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" } });
+    expect(doc["apply-wave-1"].id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" } });
     expect(doc.check.id_tokens).toBeUndefined();
     expect(doc.plan.rules[0].if).toContain("$CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH");
   });
@@ -148,26 +151,32 @@ describe("credentials", () => {
 
 // ── running the generated scripts ────────────────────────────────────────────
 
-/** A directory with fake binaries first on PATH. */
-function fakeBin(script: string): { dir: string; env: Record<string, string> } {
+/** A directory with fake binaries first on PATH: `tofu` by default, or others by name. */
+function fakeBin(script: string, scripts: Record<string, string> = {}): { dir: string; env: Record<string, string> } {
   const dir = tmp("tg-bin-");
   const bin = join(dir, "bin");
   mkdirSync(bin);
-  writeFileSync(join(bin, "tofu"), script);
-  chmodSync(join(bin, "tofu"), 0o755);
+  for (const [name, text] of Object.entries({ tofu: script, ...scripts })) {
+    writeFileSync(join(bin, name), text);
+    chmodSync(join(bin, name), 0o755);
+  }
   return { dir, env: { PATH: `${bin}:${process.env.PATH}` } };
 }
 
+/** A `terragucci` that stands in for the apply stage and exits 0. */
+const STAGE_OK = { terragucci: "#!/usr/bin/env bash\nexit 0\n" };
+
 describe("the plugin cache", () => {
-  it("roots applied together never share a cache directory, even when the env names one", () => {
+  it("roots applied together never share a cache directory, even when the env names one", async () => {
     const { dir, env } = fakeBin(
-      `#!/usr/bin/env bash\ncase " $* " in *" init "*) echo "$(basename "$2") $TF_PLUGIN_CACHE_DIR" >> "${"$"}{LOG}"; sleep 0.3 ;; esac\nmkdir -p "$TF_PLUGIN_CACHE_DIR"; exit 0\n`,
+      `#!/usr/bin/env bash\ncase "$2" in init) echo "$(basename "\${1#-chdir=}") $TF_PLUGIN_CACHE_DIR" >> "\${LOG}"; sleep 0.3 ;; plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done ;; show) echo '{"resource_changes":[]}' ;; esac\nexit 0\n`,
     );
+    await terragucciBin(join(dir, "bin"));
     const log = join(dir, "cache.log");
     const script = join(dir, "apply.sh");
     writeFileSync(script, applyScript("tofu", [["a", "b", "c"]], "github"));
-    const r = spawnSync("bash", [script], { env: { ...process.env, ...env, LOG: log, TF_PLUGIN_CACHE_DIR: "/shared/cache" }, encoding: "utf-8" });
-    expect(r.status).toBe(0);
+    const r = spawnSync("bash", [script], { cwd: dir, env: { ...process.env, ...env, LOG: log, TF_PLUGIN_CACHE_DIR: "/shared/cache" }, encoding: "utf-8" });
+    expect(r.status, r.stdout + r.stderr).toBe(0);
     const dirs = readFileSync(log, "utf-8").trim().split("\n").map((l) => l.split(" ")[1]);
     expect(dirs).toHaveLength(3);
     expect(new Set(dirs).size).toBe(3);
@@ -337,7 +346,7 @@ describe("stale plan notes", () => {
   const noteFor = (roots: string): { id: number; body: string } => ({ id: 55, body: `<!-- terragucci:plan roots=${roots} -->\n## terragucci plan\n` });
 
   it("marks a note stale when main moved under one of its roots", async () => {
-    const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+    const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
     const api = await stubApi((h) => (h.url.startsWith("/repos/acme/infra/pulls") ? [{ number: 7 }] : h.url.includes("/issues/7/comments") && h.method === "GET" ? [noteFor("network,other")] : {}));
     try {
       const r = await run(applyScript("tofu", [["network"], ["app"]], "github"), applyEnv(api.url, env));
@@ -353,7 +362,7 @@ describe("stale plan notes", () => {
   });
 
   it("leaves a note alone when none of its roots moved, or when it is already stale", async () => {
-    const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+    const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
     const stale = { id: 55, body: "<!-- terragucci:plan roots=app -->\n> stale <!-- terragucci:stale -->\n" };
     for (const note of [noteFor("elsewhere"), stale]) {
       const api = await stubApi((h) => (h.url.startsWith("/repos/acme/infra/pulls") ? [{ number: 7 }] : h.method === "GET" ? [note] : {}));
@@ -366,11 +375,12 @@ describe("stale plan notes", () => {
     }
   });
 
-  it("posts apply as pending, then success, once for the whole stage", async () => {
-    const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+  it("posts apply as pending from the first wave, then success from the last, once for the whole stage", async () => {
+    const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
     const api = await stubApi(() => []);
     try {
-      await run(applyScript("tofu", layers, "github"), applyEnv(api.url, env));
+      await run(applyScript("tofu", layers, "github", undefined, { wave: 1 }), applyEnv(api.url, env));
+      await run(applyScript("tofu", layers, "github", undefined, { wave: 2 }), applyEnv(api.url, env));
       const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.context, h.body.state, h.body.description]);
       expect(s).toEqual([
         ["terragucci/apply", "pending", "applying"],
@@ -392,9 +402,9 @@ describe("two concurrent pushes to main on forgejo", () => {
     git(work, "remote", "add", "origin", origin);
     git(work, "push", "-q", "origin", "main");
     const sha = git(work, "rev-parse", "HEAD").trim();
-    const { dir, env } = fakeBin(
-      `#!/usr/bin/env bash\ncase " $* " in *" apply "*) echo "start $RUN $(date +%s.%N)" >> "$LOG"; sleep 1; echo "end $RUN $(date +%s.%N)" >> "$LOG" ;; esac\nexit 0\n`,
-    );
+    const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+      terragucci: `#!/usr/bin/env bash\necho "start $RUN $(date +%s.%N)" >> "$LOG"; sleep 1; echo "end $RUN $(date +%s.%N)" >> "$LOG"\nexit 0\n`,
+    });
     const log = join(dir, "apply.log");
     const script = applyScript("tofu", [["a"]], "forgejo");
     const base = { ...env, LOG: log, TG_BRANCH: "main", GITHUB_REF_NAME: "main", GITHUB_SHA: sha, TG_SHA: sha, TG_LOCK_POLL: "0.2" };
@@ -422,7 +432,7 @@ describe("two concurrent pushes to main on forgejo", () => {
     git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
     git(work, "remote", "add", "origin", origin);
     git(work, "push", "-q", "origin", "main");
-    const { dir, env } = fakeBin(`#!/usr/bin/env bash\ncase " $* " in *" apply "*) echo applied >> "$LOG" ;; esac\nexit 0\n`);
+    const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", { terragucci: `#!/usr/bin/env bash\necho applied >> "$LOG"\nexit 0\n` });
     const log = join(dir, "apply.log");
     const r = await run(`cd ${work} && ${applyScript("tofu", [["a"]], "forgejo")}`, {
       ...env, LOG: log, TG_BRANCH: "main", GITHUB_REF_NAME: "main", GITHUB_SHA: "0".repeat(40), TG_SHA: "0".repeat(40), GITHUB_RUN_ID: "1",
@@ -453,7 +463,7 @@ describe("two concurrent pushes to main on forgejo", () => {
 
     it("is taken over when its run is no longer running, per the forge API", async () => {
       const { origin, work, sha } = held(`run 99 ${Math.floor(Date.now() / 1000)}`);
-      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
       const api = await stubApi((h) => (h.url === "/repos/acme/infra/actions/runs/99" ? { status: "cancelled" } : {}));
       try {
         const r = await run(`cd ${work} && ${applyScript("tofu", [["a"]], "forgejo")}`, env(sha, { ...bin, TG_TOKEN: "t", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra" }));
@@ -468,7 +478,7 @@ describe("two concurrent pushes to main on forgejo", () => {
 
     it("is taken over when its lease is stale, with no forge API to ask", async () => {
       const { origin, work, sha } = held("run 99 1000");
-      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
       const r = await run(`cd ${work} && ${applyScript("tofu", [["a"]], "forgejo")}`, env(sha, bin));
       expect(r.status).toBe(0);
       expect(r.out).toContain("taking it over");
@@ -477,7 +487,7 @@ describe("two concurrent pushes to main on forgejo", () => {
 
     it("is respected while its run is still running", async () => {
       const { work, sha } = held(`run 99 ${Math.floor(Date.now() / 1000)}`);
-      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n");
+      const { env: bin } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
       const api = await stubApi((h) => (h.url === "/repos/acme/infra/actions/runs/99" ? { status: "running" } : {}));
       try {
         const p = spawn("bash", ["-c", `cd ${work} && ${applyScript("tofu", [["a"]], "forgejo")}`], { env: { ...process.env, ...env(sha, { ...bin, TG_TOKEN: "t", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra" }) } });
@@ -507,7 +517,7 @@ describe("the drift stage", () => {
     expect(doc.on.schedule).toEqual([{ cron: "0 6 * * *" }]);
     expect(doc.on.workflow_dispatch).toBeDefined();
     expect(doc.jobs.drift.if).toBe("github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'");
-    expect(doc.jobs.apply.if).toContain("github.event_name == 'push'");
+    expect(doc.jobs["apply-wave-1"].if).toContain("github.event_name == 'push'");
     expect(doc.jobs.check.if).toContain("github.event_name == 'push'");
     expect(doc.jobs.plan.if).toContain("pull_request");
     const run = doc.jobs.drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
@@ -530,7 +540,7 @@ describe("the drift stage", () => {
     const doc = body(withDrift("gitlab"));
     expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule"' }]);
     expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
-    expect(doc.apply.rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
+    expect(doc["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
     expect(doc.drift.script.join("\n")).toContain("terragucci stage tf-drift");
   });
 });
@@ -545,7 +555,7 @@ describe("telemetry headers secret", () => {
 
   it("gitlab: the CI/CD variable is mapped on every job", () => {
     const doc = body(withHeaders("gitlab"));
-    for (const job of ["check", "plan", "apply"]) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBe("$OTLP_HEADERS");
+    for (const job of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBe("$OTLP_HEADERS");
   });
 
   it.each(FORGES)("%s: no headers setting renders no header variable", (forge) => {

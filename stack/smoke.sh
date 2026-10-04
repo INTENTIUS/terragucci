@@ -26,13 +26,13 @@ affected|only the roots a change touches are planned|
 grouped|one note groups many plans|
 report|the report is JSON and HTML, and links every root to its full plan|
 highlight|destroys and outliers are open, identical groups are folded|
-waves|each wave goes out only once approved|chant#3049
-refuse|a wave whose plans changed after approval applies nothing|chant#3049
+waves|each wave goes out only once approved|
+refuse|a wave whose plans changed after approval applies nothing|
 drift|drift is reported by root|
 rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
 tips|tips are on by default and name their rule|
-zero-config|with no more than a drift schedule in terragucci.yml, init writes the same pipeline|
+zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
 traces|each plan run is one trace, with a span per root and the binary spans inside it|
@@ -107,9 +107,10 @@ claim_zero_config() {
   local work rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
   cp -R "$EXAMPLE/." "$work/"
-  printf 'drift: "0 6 * * *"\n' > "$work/terragucci.yml"
+  # The canary wave stays: it is a choice, like the schedule, and it sets the apply jobs.
+  printf 'drift: "0 6 * * *"\nwaves:\n  canary: ["envs/dev/*"]\n' > "$work/terragucci.yml"
   # BREAK: a config that leaves out prod, so init finds fewer roots.
-  [ -n "${BREAK:-}" ] && printf 'drift: "0 6 * * *"\nroots: ["envs/dev/*", "envs/staging/*"]\n' > "$work/terragucci.yml"
+  [ -n "${BREAK:-}" ] && printf 'drift: "0 6 * * *"\nwaves:\n  canary: ["envs/dev/*"]\nroots: ["envs/dev/*", "envs/staging/*"]\n' > "$work/terragucci.yml"
   (cd "$work" && "$TERRAGUCCI" init) >&2 || rc=1
   if [ $rc = 0 ] && ! diff -u "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$work/.forgejo/workflows/terragucci.yml" >&2; then
     echo "[smoke zero-config] init wrote a different pipeline" >&2
@@ -168,7 +169,10 @@ resource "terraform_data" "slow" {
 }
 TF
   echo 1 > "$work/app/rev.txt"
-  (cd "$work" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null && rm -f terragucci.yml)
+  # The second push replaces the resource, which on-destroy would hold for an
+  # approval; this claim is about the lock, so no wave waits.
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\n' > "$work/terragucci.yml"
+  (cd "$work" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
   # BREAK=1 cuts all three guards; BREAK=lock,group,job names the ones to cut.
   local wf="$work/.forgejo/workflows/terragucci.yml" cut="${BREAK:-}"
   [ "$cut" = 1 ] && cut=lock,group,job
@@ -196,6 +200,128 @@ TF
   statuses="$(api "$URL/api/v1/repos/$repo/commits/$sha2/statuses" | jq -r '[.[] | select(.context == "terragucci/apply")] | sort_by(.id) | last | .status + ":" + .description')"
   log "terragucci/apply on the second commit: $statuses"
   [ "$statuses" = "success:1 roots in 1 groups applied" ] || { log "expected one success status for the stage"; return 1; }
+}
+
+# ── gated waves on plain roots ────────────────────────────────────────────
+# stack/fixtures/gated-waves: five tofu roots, canary/one in the canary wave
+# and fleet/* after it, gate: always. Each claim gets its own Forgejo repo and
+# its own state prefix in floci.
+
+CHANT="$HERE/../node_modules/.bin/chant"
+
+gated_repo() { # name -> a fresh repo $USER/<name>, the fixture in $work/tree with its pipeline, no state under <name>/
+  local name="$1" key
+  answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
+  settle() { local n; for n in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/$name" 2>/dev/null || true
+  settle "repos/$USER/$name" 404 || return 1
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "{\"name\":\"$name\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" "$URL/api/v1/user/repos"
+  settle "repos/$USER/$name" 200 || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$USER/$name"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$name/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  done
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/gated-waves/." "$work/tree/"
+  find "$work/tree" -name main.tf -exec sed -i.bak "s#@PREFIX@#$name#" {} \;
+  find "$work/tree" -name '*.bak' -delete
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+}
+
+gated_applied() { # name -> the roots with state under <name>/, space-separated
+  curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$1/" | grep -o '<Key>[^<]*\.tfstate</Key>' \
+    | sed -E "s#</?Key>##g; s#^$1/##; s#\.tfstate\$##" | sort | tr '\n' ' '
+}
+
+# The smoke stands in for the person who approves: it reads nothing and
+# approves wave 1's standing plan, as `chant approve` would be run by hand.
+gated_approve() { # name, wave
+  local clone="$work/approve-$2"
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$1.git" "$clone" || return 1
+  git -C "$clone" config user.name smoke-approver
+  git -C "$clone" config user.email smoke-approver@terragucci.local
+  (cd "$clone" && "$CHANT" approve tf-apply "wave-$2" --approver smoke-approver) >&2 || { log "chant approve tf-apply wave-$2 failed"; return 1; }
+}
+
+claim_waves() {
+  # Push the fixture. Wave 1 (canary/one) waits for its approval, so the run
+  # stops there and wave 2 (fleet/*) never starts: no root has state. Approve
+  # wave 1 and push again: canary/one applies, and wave 2 waits for its own
+  # approval, so fleet/* still has none.
+  # BREAK: the pushed pipeline runs with --gate never, so no wave waits and
+  # wave 2 applies with nothing approved.
+  log() { echo "[smoke waves] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/waves" sha applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  gated_repo waves || { rm -rf "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
+    rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "waves: first")"
+  wait_run "$repo" "$sha"
+  applied="$(gated_applied waves)"
+  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+  [ -z "$applied" ] || { log "a root applied before any wave was approved"; rc=1; }
+  if [ $rc = 0 ]; then
+    print_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not print its approval command"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    gated_approve waves 1 || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "waves: after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied waves)"
+    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting for its own approval"; rc=1; }
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
+  return $rc
+}
+
+claim_refuse() {
+  # Push the fixture; wave 1 waits. Approve it, then change canary/one and
+  # push again. Wave 1 plans a different set digest from the approved one, so
+  # it applies nothing, names canary/one, and no root anywhere has state.
+  # BREAK: the pushed pipeline runs with --gate never, so the changed wave applies.
+  log() { echo "[smoke refuse] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/refuse" sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  gated_repo refuse || { rm -rf "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
+    rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "refuse: first")"
+  wait_run "$repo" "$sha"
+  if [ -z "${BREAK:-}" ]; then
+    gated_approve refuse 1 || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/canary/one/rev.txt"
+    sha="$(push_tree "$work/tree" "$repo" main "refuse: change canary/one after its wave was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied refuse)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after the change: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a root applied after its wave's plans changed"; rc=1; }
+    [ "$RUN_STATUS" = failure ] || { log "the run ended '$RUN_STATUS', not failure"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "changed after it was approved, so nothing in it was applied" <<<"$logs" || { log "wave 1 did not refuse as changed"; rc=1; }
+    grep -q "planned differently since: canary/one" <<<"$logs" || { log "the refusal does not name canary/one"; rc=1; }
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] && log "wave 1 changed after its approval, applied nothing and named canary/one"
+  return $rc
 }
 
 claim_reconcile() {
