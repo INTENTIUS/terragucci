@@ -5,7 +5,8 @@
 # its state sits under terragrunt/ in the same state bucket.
 #
 #   stack/example-terragrunt.sh up          boot the forgejo profile, push the
-#                                           example to main and apply every unit
+#                                           example to a fresh repo's main and
+#                                           apply every unit
 #   stack/example-terragrunt.sh verify      every resource the units declare is in floci
 #   stack/example-terragrunt.sh change <n>  open a pull request with one scenario
 #   stack/example-terragrunt.sh reset       close every pull request, put main back
@@ -113,6 +114,13 @@ apply_main_tree() { # message
 case "$CMD" in
   up)
     started=$(date +%s)
+    # A fresh repo, so the push always starts a run: the same tree has the same
+    # sha, and an old run on it says nothing about a floci that was wiped since.
+    api -o /dev/null -X DELETE "$URL/api/v1/repos/$REPO" 2>/dev/null || true
+    for _ in $(seq 1 30); do
+      [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/repos/$REPO")" = 404 ] && break
+      sleep 1
+    done
     ensure_repo
     mkdir -p "$WORK/tree"
     cp -R "$EXAMPLE/." "$WORK/tree/"
