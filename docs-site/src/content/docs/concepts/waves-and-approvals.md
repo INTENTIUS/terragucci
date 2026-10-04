@@ -13,7 +13,7 @@ In a Terragrunt repo the dependency graph decides the order. Each wave is one `t
 
 ## What an approval binds
 
-Each wave has its own approval. The approval is bound to the wave's set digest, a hash over the plan digest of every root in that wave. It does not mean that the change is fine. It means that these exact plans are fine.
+Each wave has its own approval. The approval is bound to the wave's set digest, a hash over the plan digest of every root in that wave. It does not mean that the change is fine. It means that these exact plans are fine. The approval is sealed with the approver's ssh key, and the wave counts it only when the seal verifies against the signers file on the default branch. [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/) explains why.
 
 If any root's plan changes after the approval, the digest changes and the wave applies nothing. Another merge or a changed data source can cause that. An approval that still covered a plan nobody read would be worth nothing, so the wave refuses.
 

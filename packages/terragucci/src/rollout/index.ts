@@ -30,11 +30,11 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { terragruntDependencies } from "@intentius/chant-lexicon-terraform/pin";
-import { ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "../config";
+import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, detectForge, findRoots, hostOfRemote, rootDependencies } from "../detect";
 import { DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "../forge";
 import type { Fetch as RegistryFetch } from "../publish/oci";
-import { where, withToken } from "../reconcile";
+import { IDENTITY, where, withToken } from "../reconcile";
 import { newestPublished, ociRepoFor } from "./discover";
 import { appliedState, fetchForge, type RolloutForge } from "./forge";
 import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locker } from "./lock";
@@ -153,8 +153,6 @@ function git(dir: string, args: string[], token?: string): string {
     throw new Error(token ? msg.split(token).join("***") : msg);
   }
 }
-
-const IDENTITY = ["-c", "user.name=terragucci", "-c", "user.email=terragucci@users.noreply.intentius.io", "-c", "commit.gpgsign=false"];
 
 function pusher(dir: string, token?: string): Project["push"] {
   return (branch, files, message) => {
@@ -616,8 +614,7 @@ export function rolloutArgs(args: string[], flags: Record<string, string | true>
     if (v === true) throw new ConfigError(`--${k} needs a value`);
     return v;
   };
-  const mode = value("mode") ?? "dry-run";
-  if (mode !== "dry-run" && mode !== "apply") throw new ConfigError("--mode must be dry-run or apply");
+  const mode = checkMode(value("mode") ?? "dry-run");
   const provider = value("provider");
   const usage = "usage: terragucci rollout <module> [<version>] | terragucci rollout --provider <address> <version>";
   if (provider) {

@@ -12,7 +12,7 @@
 import { groupAnchor, rootAnchor } from "./build";
 import { actionWord, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot } from "./schema";
 
-const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+export const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** The report JSON, safe inside a script element: `</` and `<!--` cannot end or open anything. */
 export function inlineJson(report: Report): string {

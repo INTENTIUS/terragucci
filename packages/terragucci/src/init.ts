@@ -4,9 +4,11 @@
  * terragucci.yml only when a choice it was given on the command line differs
  * from what it would detect. Run twice, the second run changes nothing.
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { emitYAML } from "@intentius/chant/yaml";
+import { applyWaves, waveGate } from "./apply";
 import {
   ConfigError,
   findConfig,
@@ -35,6 +37,8 @@ export interface InitOptions {
   dryRun?: boolean;
   /** The `terragrunt` executable discovery runs. Default: `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
   terragrunt?: string;
+  /** The repo's name, for a new chant.workspace.json. Default: the origin remote's last path segment, then the directory's name. */
+  name?: string;
 }
 
 /** What `init` found in a Terragrunt repo. */
@@ -205,6 +209,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
 
+  // Every tf-apply wave gate needs a sealed approval (chant approve --sign).
+  if (!tgMode) files.push(declaration(repo, applyWaves(layers, settings.waves?.canary).length, options.name));
+
   // A command-line choice is saved when detection would not reach it on its own,
   // so the next run, and the next person, gets the same pipeline.
   let configNote = configPath ? `using ${relative(repo, configPath)}` : "no terragucci.yml needed (defaults fit)";
@@ -239,6 +246,59 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
   return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
+}
+
+/** The chant release that reads `identity`. */
+const IDENTITY_READER = "0.102.0";
+
+/**
+ * chant.workspace.json with each wave gate under `identity.gates`, so chant
+ * and the apply job count only an approval sealed by a key the signers file
+ * at base lists. An existing declaration keeps everything it has; init only
+ * adds the gates it lacks.
+ */
+function declaration(repo: string, waves: number, name?: string): FileChange {
+  const path = join(repo, "chant.workspace.json");
+  let decl: Record<string, unknown>;
+  const before = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+  if (before !== undefined) {
+    try {
+      decl = JSON.parse(before);
+    } catch {
+      throw new ConfigError("chant.workspace.json is not valid JSON, so init cannot add the tf-apply gates to it");
+    }
+  } else {
+    decl = { name: workspaceName(repo, name), schema: 1, minReader: IDENTITY_READER, members: [] };
+  }
+  let changed = before === undefined;
+  const [major = 0, minor = 0] = String(decl.minReader).split(".").map(Number);
+  if (typeof decl.minReader !== "string" || (major === 0 && minor < 102)) {
+    decl.minReader = IDENTITY_READER;
+    changed = true;
+  }
+  const identity = (decl.identity ??= {}) as { gates?: Record<string, unknown> };
+  const gates = (identity.gates ??= {});
+  for (let k = 1; k <= waves; k++) {
+    if (gates[waveGate(k)] !== undefined) continue;
+    gates[waveGate(k)] = {};
+    changed = true;
+  }
+  // A declaration that already lists every gate is left as it is written.
+  return plan(path, changed ? `${JSON.stringify(decl, null, 2)}\n` : before!);
+}
+
+/** A declaration name: lowercase letters, digits and hyphens, at most 40. */
+function workspaceName(repo: string, name?: string): string {
+  let raw = name;
+  if (!raw) {
+    try {
+      raw = execFileSync("git", ["-C", repo, "remote", "get-url", "origin"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim().replace(/\.git$/, "").split(/[/:]/).pop();
+    } catch {
+      /* no git, or no origin */
+    }
+  }
+  const clean = (raw || basename(repo)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, "").slice(0, 40).replace(/-+$/, "");
+  return clean || "infra";
 }
 
 /** What `init` prints. */
