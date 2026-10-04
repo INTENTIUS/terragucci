@@ -25,15 +25,13 @@ await build({
   external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"],
   banner: { js: "#!/usr/bin/env node\nimport { createRequire as __terragucciRequire } from 'node:module';\nconst require = __terragucciRequire(import.meta.url);" },
   legalComments: "none",
-  // Folds constants, drops dead branches and whitespace, and shortens local names.
-  // Function and class names are kept (keepNames), so a stack trace and a log line
-  // still read the real names. The linked source map ships
-  // beside the bundle: run with `node --enable-source-maps` to read a stack
-  // trace against the sources.
+  // Folds constants, drops dead branches and whitespace, and shortens names. The
+  // linked source map ships beside the bundle: run with
+  // `node --enable-source-maps` to read a stack trace against the sources.
   minifySyntax: true,
   minifyWhitespace: true,
   minifyIdentifiers: true,
-  keepNames: true,
+  keepNames: false,
   sourcemap: "linked",
   logLevel: "warning",
 });
