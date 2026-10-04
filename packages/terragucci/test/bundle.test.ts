@@ -21,11 +21,11 @@ function runIn(cwd: string, bin: string, ...args: string[]) {
 }
 
 describe.skipIf(!existsSync(DIST))("the bundle", () => {
-  it("init in the example with only its drift schedule in terragucci.yml writes the example's own pipeline", () => {
+  it("init in the example with only its drift schedule and canary wave in terragucci.yml writes the example's own pipeline", () => {
     const repo = tmp();
     cpSync(EXAMPLE, repo, { recursive: true });
-    // Everything else is found from the repo. A schedule cannot be, so it is the one line kept.
-    writeFileSync(join(repo, "terragucci.yml"), 'drift: "0 6 * * *"\n');
+    // Everything else is found from the repo. A schedule and the canary wave are choices it cannot show, so they are kept.
+    writeFileSync(join(repo, "terragucci.yml"), 'drift: "0 6 * * *"\nwaves:\n  canary: ["envs/dev/*"]\n');
     const r = runIn(repo, isolated(), "init");
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain("unchanged .forgejo/workflows/terragucci.yml");

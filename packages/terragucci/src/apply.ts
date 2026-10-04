@@ -213,7 +213,8 @@ export function appendPending(repo: string, record: PendingRecord, files: Record
     const exists = fetchLifecycle(repo);
     const parent = exists ? git(repo, ["rev-parse", REMOTE_REF]).stdout.trim() : "";
     const old = exists ? git(repo, ["show", `${REMOTE_REF}:${LEDGER_PATH}`]) : undefined;
-    const text = old && old.status === 0 && old.stdout.trim() ? `${old.stdout.replace(/\n$/, "")}\n${line}` : line;
+    // One record per line, each ending in a newline, so a line appended with `>>` stays its own record.
+    const text = `${old && old.status === 0 && old.stdout.trim() ? `${old.stdout.replace(/\n$/, "")}\n` : ""}${line}\n`;
     const blob = git(repo, ["hash-object", "-w", "--stdin"], text).stdout.trim();
     // A scratch index, so the checkout's own index is left alone.
     const scratch = mkdtempSync(join(tmpdir(), "terragucci-ledger-"));

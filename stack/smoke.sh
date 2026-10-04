@@ -275,7 +275,7 @@ claim_waves() {
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a root applied before any wave was approved"; rc=1; }
   if [ $rc = 0 ]; then
-    print_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not print its approval command"; rc=1; }
+    print_logs "$repo" "$RUN_ID" | grep "chant approve tf-apply wave-1" >/dev/null || { log "wave 1 did not print its approval command"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     gated_approve waves 1 || rc=1
@@ -456,7 +456,9 @@ provider "aws" {
   cp -R "$work/two-roots" "$work/in-line"
   sed -i.bak 's#reconcile/#inline/#; s#tg-reconcile-#tg-inline-#' "$work/in-line/network/main.tf" "$work/in-line/app/main.tf"
   rm -f "$work/in-line/network/main.tf.bak" "$work/in-line/app/main.tf.bak"
-  (cd "$work/in-line" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null && rm -f terragucci.yml)
+  # The same settings as the control repo's defaults, so init writes what reconcile would.
+  printf 'forge: forgejo\nbinary: tofu\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' > "$work/in-line/terragucci.yml"
+  (cd "$work/in-line" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
   push_tree "$work/in-line" "$USER/in-line" main "Two roots, pipeline in line" >/dev/null
   push_tree "$work/two-roots" "$repo" main "Two roots, no pipeline" >/dev/null
   settle "repos/$USER/in-line/branches/main" 200 || return 1

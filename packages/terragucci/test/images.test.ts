@@ -46,7 +46,7 @@ describe("images", () => {
     const r = await init(dir, { binary: "tofu" });
     const text = readFileSync(r.files[0].path, "utf-8");
     expect(r.version).toEqual({ value: "1.12.0", reason: "required_version" });
-    expect(text.split('dir="$(terragucci install tofu 1.12.0)"').length - 1).toBe(3);
+    expect(text.split('dir="$(terragucci install tofu 1.12.0)"').length - 1).toBe(text.split(/^\s+(?:after_)?script:/m).length - 1);
     expect(text).toContain('export PATH="$dir:$PATH"');
   });
 });

@@ -11,11 +11,11 @@ A record names the stage, the wave and the wave's set digest, the hash over the 
 
 ## Why a branch
 
-An approval is a commit, so it has an author and a time. You read it with `git log`. It lives with the code and outlasts a change of CI tool. Branch protection on `chant/lifecycle` decides who may write approvals, using permissions you already manage. Every runtime reads the same branch, so an approval recorded from a laptop also counts in forge CI and on a fountain steward.
+Each approval is a commit, and `git log` shows who made it and when. It lives with the code and outlasts a change of CI tool. Branch protection on `chant/lifecycle` decides who may write to it, using permissions you already manage. Every runtime reads that one branch, so an approval recorded from a laptop counts wherever the apply runs.
 
 ## Why it is sealed
 
-Anything that can push to `chant/lifecycle` can write a line that names a person. So an approval is sealed: `chant approve --sign` signs it with the approver's ssh key, over the stage, the wave, the set digest, the approver and the time. `terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`, and for a gate listed there the apply job counts an approval only when its seal verifies against `.chant/allowed_signers` on the default branch. An unsigned line, a line sealed with a key the file does not list for that person, and a line edited after sealing all count for nothing.
+Anything that can push to `chant/lifecycle` can write a line that names a person. So an approval is sealed: `chant approve --sign` signs the whole record with the approver's ssh key. `terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`, and for a gate listed there the apply job counts an approval only when its seal verifies against `.chant/allowed_signers` on the default branch. A line without a valid seal from a listed key counts for nothing, and so does a line edited after it was sealed.
 
 Two rules keep this sound. Agent keys never go in the signers file. And `chant/lifecycle` is a protected branch that only the apply job's identity may push to, with force pushes and deletion blocked.
 

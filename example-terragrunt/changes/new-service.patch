@@ -1,8 +1,8 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 0bcf178..3359c56 100644
+index a3c5ab6..78f71f4 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
-@@ -117,7 +117,7 @@ jobs:
+@@ -124,7 +124,7 @@ jobs:
            }' -- "$@"; }
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
            tg status terragucci/plan pending "planning"
@@ -11,16 +11,7 @@ index 0bcf178..3359c56 100644
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              tg status terragucci/plan failure "the plan report was not written"
-@@ -127,7 +127,7 @@ jobs:
-           if [ -n "${TG_PR:-}" ]; then
-             note="$(mktemp)"
-             # The first line says which roots the note covers, so an apply can mark it stale.
--            { echo "<!-- terragucci:plan roots=live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search,live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search -->"; cat terragucci-report/note.md; } >"$note"
-+            { echo "<!-- terragucci:plan roots=live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search,live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search -->"; cat terragucci-report/note.md; } >"$note"
-             tg note "$note"
-           fi
-           if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi
-@@ -224,7 +224,7 @@ jobs:
+@@ -235,7 +235,7 @@ jobs:
              changed=
            fi
            moved=""
@@ -29,7 +20,7 @@ index 0bcf178..3359c56 100644
              if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -q "^$dir/"; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these units: plan notes that cover them are stale.
-@@ -259,9 +259,9 @@ jobs:
+@@ -270,9 +270,9 @@ jobs:
              terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false
            }
            failed() { tg status terragucci/apply failure "an apply failed"; exit 1; }

@@ -115,9 +115,11 @@ describe("credentials", () => {
     expect(never.jobs["apply-wave-1"].permissions.contents).toBe("read");
   });
 
-  it("forgejo: the runner ignores permissions, so the dialect drops them and the token comes from the runner's own OIDC endpoint", () => {
+  it("forgejo: the jobs that assume a role ask for id-token: write, and the token comes from the runner's OIDC endpoint", () => {
     const text = render("forgejo", OIDC);
-    expect(text).not.toMatch(/permissions:/);
+    const doc = body(text);
+    expect(doc.jobs.plan.permissions["id-token"]).toBe("write");
+    expect(doc.jobs["apply-wave-1"].permissions["id-token"]).toBe("write");
     expect(text).toContain("tg oidc");
   });
 
@@ -523,14 +525,14 @@ describe("the drift stage", () => {
     const run = doc.jobs.drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
     expect(run).toContain("terragucci stage tf-drift");
     expect(run).toContain("--forge " + forge);
-    // It reads; nothing in it applies.
-    expect(run).not.toMatch(/\bapply\b/);
+    // It reads; nothing in it applies. The drift response's apply mode opens a pull request.
+    expect(run.replace("respond drift --mode apply", "respond drift")).not.toMatch(/\bapply\b/);
   });
 
-  it("github: drift can write issues and nothing else, and takes the read-only role", () => {
+  it("github: drift writes its issue and its pull request, and takes the read-only role", () => {
     const text = withDrift("github", OIDC);
     const drift = body(text).jobs.drift;
-    expect(drift.permissions).toEqual({ contents: "read", issues: "write", "id-token": "write" });
+    expect(drift.permissions).toEqual({ contents: "write", issues: "write", "pull-requests": "write", "id-token": "write" });
     const run = drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
     expect(run).toContain(OIDC.plan_role);
     expect(run).not.toContain(OIDC.apply_role);

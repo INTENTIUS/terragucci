@@ -129,6 +129,17 @@ describe("a wave behind its gate", () => {
     expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending).toHaveLength(1);
   });
 
+  it("ends the ledger with a newline, so a line another writer appends stays its own record", async () => {
+    const { work, origin, bin } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "always", env: {}, now: T(1) })).toBe(3);
+    const text = execFileSync("git", ["-C", origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"], { encoding: "utf-8" });
+    expect(text.endsWith("}\n")).toBe(true);
+    const appended = `${text}${JSON.stringify({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "someone", timestamp: T(2) })}\n`;
+    expect(parseLedger(appended).resolutions).toHaveLength(1);
+    expect(parseLedger(appended).pending).toHaveLength(1);
+  });
+
   it("a wave refused for a moved plan writes the approved and current reports, and respond wave-refused names the root and attribute that moved", async () => {
     const { work, origin, bin, log } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});
