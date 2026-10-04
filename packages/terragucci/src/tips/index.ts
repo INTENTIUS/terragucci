@@ -24,12 +24,18 @@ import { tf005 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf005"
 import { tf038 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf038";
 import { tf039 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf039";
 import { tf040 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf040";
+import { tf041 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf041";
+import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
+import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 
 /** Chant's checks that become tips, by rule id. */
 export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
   TF002: tf002, TF003: tf003, TF004: tf004, TF005: tf005, TF038: tf038, TF039: tf039, TF040: tf040,
+  // Terragrunt: mocks that can reach apply, unpinned unit sources, local state. A dependency that
+  // always reads its mocks (TF042) is refused at plan instead.
+  TF041: tf041, TF043: tf043, TF044: tf044,
 };
 
 /** Where chant documents its terraform rules. */
@@ -54,6 +60,8 @@ export interface TipOptions {
   destroying?: readonly string[];
   /** How many roots every change plans. Default: the roots given. */
   planned?: number;
+  /** More directories for the code tips only, such as a Terragrunt repo's top with its root.hcl. */
+  configDirs?: readonly string[];
 }
 
 const codeTip = (rule: string, root: string, message: string): ReportTip => ({ rule, root, message, url: `${CHANT_RULES_URL}#${rule.toLowerCase()}` });
@@ -118,6 +126,11 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
     const checks = (options.rules ?? Object.keys(CODE_RULES)).map((id) => CODE_RULES[id]).filter((c): c is PostSynthCheck => c !== undefined);
     const floating = new Set<string>();
     const users = new Map<string, Set<string>>();
+    for (const dir of options.configDirs ?? []) {
+      const entities = await parseTerraformRootDir(join(repo, dir), dir, parser);
+      const ctx = { outputs: new Map(), entities } as unknown as PostSynthContext;
+      for (const check of checks) for (const d of await check.check(ctx)) tips.push(codeTip(check.id, dir, d.message));
+    }
     for (const root of roots) {
       const entities = await parseTerraformRootDir(join(repo, root), root, parser);
       const ctx = { outputs: new Map(), entities } as unknown as PostSynthContext;

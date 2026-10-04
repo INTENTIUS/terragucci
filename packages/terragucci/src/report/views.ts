@@ -115,6 +115,11 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     }
     blocks.push({ group: false, units: 0, text: "\n" });
   }
+  if (report.deferred?.length) {
+    let t = `**Planned after what they wait for applies (${report.deferred.length}):**\n\n`;
+    for (const d of report.deferred) t += `- ${code(d.unit)} after ${d.after.map(code).join(", ")}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;
+    blocks.push({ group: false, units: 0, text: t + "\n" });
+  }
   if (report.waves.length > 0) {
     let t = "| Wave | Roots | Set digest | Approval |\n|---|---|---|---|\n";
     for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;

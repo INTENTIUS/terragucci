@@ -430,7 +430,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg) : checkScript(binary, roots);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots);
   const applyBody = tg ? terragruntApplyScript(layers, forge, oidc, credentials) : applyScript(binary, layers, forge, oidc);
   const what = tg ? "unit" : "root";
 
@@ -451,7 +451,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const plan = new GitLabJob({
       stage: "plan",
       image: jobImage,
-      variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID" },
+      variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID", ...(tg ? { GIT_DEPTH: "0" } : {}) },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens,
       ...(tg ? forgeCache("gitlab") : {}),
@@ -499,8 +499,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // not cancel makes a later run wait instead.
     ...(forge === "forgejo" ? { concurrency: { group: "terragucci-${{ github.ref }}", "cancel-in-progress": false } } : {}),
   } as never);
-  const steps = (main: InstanceType<typeof Step>, cached = false): InstanceType<typeof Step>[] => [
-    new Step({ uses: "actions/checkout@v4" }),
+  // A Terragrunt plan reads the range from the target branch, so its checkout has the history.
+  const steps = (main: InstanceType<typeof Step>, cached = false, history = false): InstanceType<typeof Step>[] => [
+    new Step({ uses: "actions/checkout@v4", ...(history ? { with: { "fetch-depth": 0 } } : {}) }),
     ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
     ...(cached && tg ? [new Step({ name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
     main,
@@ -525,7 +526,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_PR: "${{ github.event.pull_request.number }}",
     },
     steps: [
-      ...steps(new Step({ name: `Plan every ${what} and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true),
+      ...steps(new Step({ name: `Plan every ${what} and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, Boolean(tg)),
       // The report stays with the run. Forgejo's artifact store speaks the v3 protocol.
       new Step({
         name: "Keep the plan report",

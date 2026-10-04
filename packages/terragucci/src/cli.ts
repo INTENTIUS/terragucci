@@ -5,7 +5,7 @@
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
- *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt]
+ *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>]
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
@@ -44,7 +44,7 @@ const USAGE = `usage:
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
-  terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt]
+  terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci install tofu|terraform|terragrunt <version>
@@ -138,6 +138,7 @@ export async function main(argv: string[]): Promise<number> {
           ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}),
           ...(str(flags, "canary") ? { canary: str(flags, "canary")!.split(",").filter(Boolean) } : {}),
           ...(flags.terragrunt === true ? { terragrunt: true } : {}),
+          ...(str(flags, "base") ? { base: str(flags, "base") } : {}),
           ...(str(flags, "bucket")
             ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } }
             : {}),

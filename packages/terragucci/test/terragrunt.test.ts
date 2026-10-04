@@ -2,7 +2,7 @@
 // pipeline and the tf-plan stage. Terragrunt itself is stubbed; the last block
 // runs the real binary when TERRAGUCCI_TERRAGRUNT names one and tofu is on the path.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
@@ -60,23 +60,47 @@ const argOf = (args: readonly string[], flag: string): string | undefined => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 
-/** A stand-in for terragrunt 1.1.6: version, find, and a plan that writes each unit's plan and report row. */
-function fakeTerragrunt(opts: { fail?: string[]; calls?: string[][] } = {}): TerragruntExec {
-  return async (_file, args) => {
+interface FakeOptions {
+  fail?: string[];
+  calls?: string[][];
+  /** Units whose upstream has no outputs: each maps to the upstream it reads. */
+  noOutputs?: Record<string, string>;
+  /** What Terragrunt's git filter selects, and the files git says changed. */
+  affected?: { selected: string[]; files: string[] };
+}
+
+/** A stand-in for terragrunt 1.1.6 and git: version, find, render, output, a plan that writes each unit's plan and report row, and diff. */
+function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
+  return async (file, args) => {
     opts.calls?.push([...args]);
+    if (file === "git") return { code: 0, stdout: (opts.affected?.files ?? []).join("\n"), stderr: "" };
     if (args[0] === "--version") return { code: 0, stdout: "terragrunt version v1.1.6\n", stderr: "" };
-    if (args[0] === "find") return { code: 0, stdout: FIND, stderr: "" };
+    if (args[0] === "find") {
+      if (args.some((a) => a.startsWith("["))) return { code: 0, stdout: JSON.stringify((opts.affected?.selected ?? []).map((path) => ({ type: "unit", path }))), stderr: "" };
+      return { code: 0, stdout: FIND, stderr: "" };
+    }
+    if (args[0] === "render") {
+      const unit = argOf(args, "--working-dir")!;
+      const up = opts.noOutputs?.[unit];
+      const dependency = up ? { platform: { config_path: `../${up.split("/").pop()}`, mock_outputs: { id: "mock" }, mock_outputs_allowed_terraform_commands: ["validate", "plan"] } } : {};
+      return { code: 0, stdout: JSON.stringify({ dependency }), stderr: "" };
+    }
+    if (args.includes("output")) {
+      const unit = argOf(args, "--working-dir")!;
+      const empty = Object.values(opts.noOutputs ?? {}).includes(unit);
+      return { code: 0, stdout: empty ? "{}" : JSON.stringify({ id: { value: `${unit}-id` } }), stderr: "" };
+    }
     const units = args.flatMap((a, i) => (args[i - 1] === "--filter" && a.startsWith("{./") ? [a.slice(3, -1)] : []));
     const out = argOf(args, "--out-dir")!;
     const json = argOf(args, "--json-out-dir")!;
     const rows = units.map((u) => {
       if (opts.fail?.includes(u)) return { Name: u, Result: "failed", Reason: "run error", Cause: "Error: boom" };
-      for (const [dir, file, body] of [
+      for (const [dir, f, body] of [
         [out, "tfplan.tfplan", "binary"],
         [json, "tfplan.json", JSON.stringify({ format_version: "1.2", resource_changes: [rc("terraform_data.this", ["create"], null, { input: u })] })],
       ] as const) {
         mkdirSync(join(dir, u), { recursive: true });
-        writeFileSync(join(dir, u, file), body);
+        writeFileSync(join(dir, u, f), body);
       }
       return { Name: u, Result: "succeeded" };
     });
@@ -125,7 +149,7 @@ describe("discovery", () => {
     const found = await discoverUnits(liveRepo(), { exec: missing });
     expect(found.source).toBe("terragrunt.hcl files");
     expect(found.units).toEqual(["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"].map((path) => ({ path, dependencies: [] })));
-    expect(found.notes[0]).toMatch(/Terragrunt discovery did not run: .*ENOENT/);
+    expect(found.notes[0]).toMatch(/Terragrunt discovery did not run \(.*ENOENT/);
   });
 
   it("a Terragrunt older than 1.1 falls back too", async () => {
@@ -147,11 +171,11 @@ describe("waves", () => {
   ];
 
   it("one wave without canaries: Terragrunt orders the units inside the run", () => {
-    expect(unitWaves(units)).toEqual([["live/dev/vpc", "live/dev/app", "live/prod/vpc", "live/prod/app"]]);
+    expect(unitWaves(units)).toEqual([["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]]);
   });
 
   it("canaries first, then the rest", () => {
-    expect(unitWaves(units, ["live/dev/**"])).toEqual([["live/dev/vpc", "live/dev/app"], ["live/prod/vpc", "live/prod/app"]]);
+    expect(unitWaves(units, ["live/dev/**"])).toEqual([["live/dev/app", "live/dev/vpc"], ["live/prod/app", "live/prod/vpc"]]);
   });
 
   it("a canary that reads a unit outside the canary wave is refused", () => {
@@ -286,7 +310,7 @@ describe("init in a Terragrunt repo", () => {
   it("explicit stacks and roots are named in the notes", async () => {
     const repo = liveRepo({ "live/st/terragrunt.stack.hcl": "", "terragucci.yml": 'roots: ["live/*"]\n' });
     const notes = (await init(repo, { binary: "tofu", dryRun: true, terragrunt: "/nonexistent/terragrunt" })).notes.join("\n");
-    expect(notes).toMatch(/explicit stacks are not run yet: .*live\/st/);
+    expect(notes).toMatch(/explicit stacks are not run yet, so live\/st is left out/);
     expect(notes).toMatch(/roots is ignored for a Terragrunt repo/);
   });
 
@@ -321,7 +345,7 @@ describe("terragucci stage tf-plan in a Terragrunt repo", () => {
       terragruntExec: fakeTerragrunt({ calls, fail: ["live/prod/app"] }),
       env: {},
     }, () => {});
-    const runs = calls.filter((c) => c[0] === "run");
+    const runs = calls.filter((c) => c[0] === "run" && c[1] === "--all");
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
@@ -340,8 +364,46 @@ describe("terragucci stage tf-plan in a Terragrunt repo", () => {
   it("with no --layers, discovery decides the units and the canary wave", async () => {
     const repo = liveRepo({ "terragucci.yml": 'waves:\n  canary: ["live/dev/**"]\n' });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragruntExec: fakeTerragrunt(), env: {} }, () => {});
-    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc", "live/dev/app"], ["live/prod/vpc", "live/prod/app"]]);
+    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/app", "live/dev/vpc"], ["live/prod/app", "live/prod/vpc"]]);
     expect(r.failed).toBe(false);
+  });
+
+  it("a unit whose upstream has no outputs yet is not planned on its mocks: it waits, and the rest of the wave plans", async () => {
+    const repo = liveRepo();
+    const calls: string[][] = [];
+    const exec = fakeTerragrunt({ calls, noOutputs: { "live/dev/app": "live/dev/vpc" } });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/app", "live/dev/vpc"]], terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.roots.map((u) => u.path)).toEqual(["live/dev/vpc"]);
+    expect(r.report.mock_reads).toEqual([{ unit: "live/dev/app", dependency: "platform", upstream: "live/dev/vpc", reason: "no-outputs" }]);
+    expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "would read mock_outputs", previewed: false }]);
+    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc"]]);
+    expect(r.failed).toBe(false);
+    expect(readFileSync(join(repo, "out/note.md"), "utf-8")).toMatch(/Planned after what they wait for applies \(1\)/);
+    expect(readFileSync(join(repo, "out/report.html"), "utf-8")).toContain('id="deferred"');
+  });
+
+  it("with dependents: plan, a waiting unit is previewed, marked provisional, and kept out of every digest", async () => {
+    const repo = liveRepo({ "terragucci.yml": "terragrunt:\n  dependents: plan\n" });
+    const exec = fakeTerragrunt({ noOutputs: { "live/dev/app": "live/dev/vpc" } });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/app", "live/dev/vpc"]], terragruntExec: exec, env: {} }, () => {});
+    const app = r.report.roots.find((u) => u.path === "live/dev/app")!;
+    expect(app.terragrunt?.provisional).toBe(true);
+    expect(app.status).toBe("planned");
+    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc"]]);
+    expect(r.report.deferred?.[0].previewed).toBe(true);
+    const alone = await runStage("tf-plan", repo, { out: join(repo, "out2"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc"]], terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.change_set).toBe(alone.report.change_set);
+  });
+
+  it("against a base, only the affected units plan, each with its reason, and their dependents wait", async () => {
+    const repo = liveRepo();
+    const calls: string[][] = [];
+    const exec = fakeTerragrunt({ calls, affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", layers: [["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]], terragruntExec: exec, env: {} }, () => {});
+    expect(calls.find((c) => c[0] === "find" && c.includes("[origin/main...HEAD]"))).toBeDefined();
+    expect(r.report.roots.map((u) => u.path)).toEqual(["live/dev/vpc"]);
+    expect(r.report.roots[0].terragrunt?.selection).toMatch(/live\/dev\/vpc\/terragrunt\.hcl/);
+    expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: false }]);
   });
 });
 
@@ -349,13 +411,50 @@ const TG = process.env.TERRAGUCCI_TERRAGRUNT;
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
 
 describe.skipIf(!TG || !TOFU)("with the real terragrunt and tofu", () => {
-  it("init discovers the graph, and the stage plans every unit from it", { timeout: 120_000 }, async () => {
+  it("init discovers the units, and the stage plans the upstreams and holds back their never-applied dependents", { timeout: 120_000 }, async () => {
     const repo = liveRepo({ "root.hcl": 'remote_state {\n  backend = "local"\n  generate = { path = "backend.tf", if_exists = "overwrite" }\n  config = { path = "${get_parent_terragrunt_dir()}/.state/${path_relative_to_include()}/terraform.tfstate" }\n}\n' });
     const r = await init(repo, { binary: "tofu", dryRun: true });
     expect(r.terragrunt?.source).toBe("terragrunt find");
-    const order = r.layers.flat();
-    expect(order.indexOf("live/dev/vpc")).toBeLessThan(order.indexOf("live/dev/app"));
+    expect(r.layers.flat().sort()).toEqual(["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]);
     const stage = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", layers: r.layers }, () => {});
-    expect(stage.report.roots.map((u) => [u.path, u.status])).toEqual(order.map((u) => [u, "planned"]).sort());
+    expect(stage.report.roots.map((u) => [u.path, u.status])).toEqual([["live/dev/vpc", "planned"], ["live/prod/vpc", "planned"]]);
+    expect(stage.report.deferred?.map((d) => [d.unit, d.after])).toEqual([["live/dev/app", ["live/dev/vpc"]], ["live/prod/app", ["live/prod/vpc"]]]);
+  });
+});
+
+describe("tips in a Terragrunt repo", () => {
+  it("TF041 names a unit whose mocks may stand in for apply, and TF044 a root.hcl with local state", async () => {
+    const { repoTips } = await import("../src/tips");
+    const { loadHclParser } = await import("../src/rollout/parser");
+    const repo = liveRepo({
+      "root.hcl": 'remote_state {\n  backend = "local"\n  config = { path = "x.tfstate" }\n}\n',
+      "live/dev/app/terragrunt.hcl": unit(["vpc"]).replace('mock_outputs = { id = "mock" }', 'mock_outputs = { id = "mock" }\n  mock_outputs_allowed_terraform_commands = ["validate", "plan"]'),
+    });
+    const tips = await repoTips(repo, ["live/dev/app", "live/prod/app"], { settings: { gate: "on-destroy", tips: true }, parser: await loadHclParser(), configDirs: ["."] });
+    const tf041 = tips.filter((t) => t.rule === "TF041").map((t) => t.root);
+    expect(tf041).toEqual(["live/prod/app"]);
+    expect(tips.some((t) => t.rule === "TF044" && t.root === ".")).toBe(true);
+  });
+});
+
+describe("the Terragrunt example", () => {
+  const EXAMPLE = join(import.meta.dirname, "../../../example-terragrunt");
+
+  it("init finds its 15 units and writes the pipeline it commits", async () => {
+    const repo = tmp();
+    cpSync(EXAMPLE, repo, { recursive: true });
+    const r = await init(repo, { dryRun: true });
+    expect(r.roots).toHaveLength(15);
+    expect(r.layers.map((w) => w.length)).toEqual([5, 10]);
+    expect(r.files[0].status).toBe("unchanged");
+  });
+
+  it("every scenario applies to the example as committed", () => {
+    const repo = tmp();
+    cpSync(EXAMPLE, repo, { recursive: true });
+    git(repo, "init", "-q");
+    for (const p of readdirSync(join(EXAMPLE, "changes")).filter((n) => n.endsWith(".patch"))) {
+      git(repo, "apply", "--check", join(EXAMPLE, "changes", p));
+    }
   });
 });

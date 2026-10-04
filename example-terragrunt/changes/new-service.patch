@@ -1,0 +1,62 @@
+diff --git a/live/dev/billing/terragrunt.hcl b/live/dev/billing/terragrunt.hcl
+new file mode 100644
+index 0000000..6fb7c2e
+--- /dev/null
++++ b/live/dev/billing/terragrunt.hcl
+@@ -0,0 +1,31 @@
++include "root" {
++  path = find_in_parent_folders("root.hcl")
++}
++
++locals {
++  common = read_terragrunt_config(find_in_parent_folders("common.hcl"))
++  env    = read_terragrunt_config(find_in_parent_folders("env.hcl"))
++}
++
++terraform {
++  source = "../../../modules/service"
++}
++
++# Billing registers itself in the ledger bucket, which this same change adds.
++# Until ledger applies it has no outputs, and Terragrunt would hand billing the
++# mock. With no allow-list, that includes apply.
++dependency "ledger" {
++  config_path = "../ledger"
++
++  mock_outputs = {
++    logs_bucket = "mock-ledger-bucket"
++  }
++}
++
++inputs = {
++  shop                  = local.common.locals.shop
++  env                   = local.env.locals.env
++  name                  = "billing"
++  logs_bucket           = dependency.ledger.outputs.logs_bucket
++  job_retention_seconds = local.common.locals.job_retention_seconds
++}
+diff --git a/live/dev/ledger/terragrunt.hcl b/live/dev/ledger/terragrunt.hcl
+new file mode 100644
+index 0000000..2fcab74
+--- /dev/null
++++ b/live/dev/ledger/terragrunt.hcl
+@@ -0,0 +1,19 @@
++include "root" {
++  path = find_in_parent_folders("root.hcl")
++}
++
++locals {
++  common = read_terragrunt_config(find_in_parent_folders("common.hcl"))
++  env    = read_terragrunt_config(find_in_parent_folders("env.hcl"))
++}
++
++# Where billing keeps its ledgers: a bucket of its own, made by the platform module.
++terraform {
++  source = "../../../modules/platform"
++}
++
++inputs = {
++  shop = local.common.locals.shop
++  env  = local.env.locals.env
++  name = "ledger"
++}

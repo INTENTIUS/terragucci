@@ -193,6 +193,10 @@ export function renderHtml(report: Report): string {
 
   const holes = report.holes.length ? `<h2>Holes (${report.holes.length})</h2><ul>${report.holes.map((h) => `<li><code>${esc(h.root)}: ${esc(h.address)}</code> ${esc(h.reason)}</li>`).join("")}</ul>` : "";
 
+  const li = (s: string): string => `<li>${s}</li>`;
+  const later = report.deferred?.length
+    ? `<section id="deferred"><h2>Planned later (${report.deferred.length})</h2><ul>${report.deferred.map((d) => li(`<code>${esc(d.unit)}</code> after ${esc(d.after.join(", "))}: ${esc(d.why)}${d.previewed ? " (previewed)" : ""}`)).join("")}${(report.mock_reads ?? []).map((r) => li(`<code>${esc(r.unit)}</code> would read mock_outputs of ${esc(r.upstream)} (${esc(r.reason)})`)).join("")}</ul></section>`
+    : "";
   const tips = report.tips
     ? `<section id="tips"><h2>Tips (${report.tips.length})</h2><p class="notice">Advice on how your roots are set up. A tip never fails a run or changes a gate.</p>${report.tips.length ? `<ul>${report.tips.map((t) => `<li><a href="${esc(t.url)}"><code>${esc(t.rule)}</code></a>${t.root ? ` <code>${esc(t.root)}</code>` : ""} ${esc(t.message)}</li>`).join("")}</ul>` : "<p>None.</p>"}</section>`
     : "";
@@ -221,7 +225,7 @@ ${report.groups.map((g) => groupBlock(report, g, roots, waveOf)).join("\n")}
 <h2>Roots (${report.roots.length})</h2>
 ${report.roots.map((r) => rootBlock(r, waveOf.get(r.path))).join("\n")}
 ${holes}
-${tips}
+${later}${tips}
 </main>
 <script type="application/json" id="terragucci-report">
 ${inlineJson(report)}

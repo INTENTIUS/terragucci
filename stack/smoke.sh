@@ -37,6 +37,13 @@ apply-serial|two pushes to main apply one after the other, and the commit carrie
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
 traces|each plan run is one trace, with a span per root and the binary spans inside it|
 metrics|the metrics of a plan run reach Prometheus with the counts in its report|
+tg-zero-config|init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits|
+tg-waves|the Terragrunt example boots, applying the canary wave before the rest with one run --all each|
+tg-check|tf-check fails an unformatted Terragrunt file and names it|
+tg-affected|only the units a change reaches are planned, including a file a module reads that Terragrunt misses|
+tg-mock-lint|a dependency whose mock_outputs can stand in for apply is named by a tip|
+tg-refuse|a unit whose plan would read mock_outputs is not planned; it waits for its upstream to apply|
+tg-mock-trap|a new upstream and its dependent merge together and apply in order, so no mock reaches real state|
 respond-refused|a refused wave names each root whose plan moved and the attributes that moved|
 respond-triage|a failed apply is triaged from the known-error table|
 respond-drift|drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged|
@@ -910,6 +917,230 @@ claim_respond_notes() {
   jq -e '.results.data[0] | .version == "1.0.0" and .previous == "0.1.0" and (.notes | test("### Breaking changes\n\n- net: rename the queue output")) and (.notes | test("### Fixes"))' <<<"$out" >/dev/null \
     || { log "the 1.0.0 notes do not lead with the breaking change and list the fix"; return 1; }
   log "1.0.0's notes name the breaking change and the fix"
+}
+
+# ── the Terragrunt example's claims ──────────────────────────────────────
+
+TG_EXAMPLE="$(cd "$HERE/../example-terragrunt" && pwd)"
+TG_REPO_NAME=example-terragrunt
+
+tg_image() { (cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "terragrunt" { print $2 }'); }
+
+# The plan stage on a copy of the Terragrunt example, run in the CI image the
+# way the plan job runs it: the base is the example as committed, the head is
+# the base plus the named patches. REPORT_CONFIG is appended to terragucci.yml;
+# TG_EDIT is a shell command run in the copy before the head commit.
+tg_report_run() { # work, patches...
+  local work="$1"; shift
+  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p base
+  image="$(tg_image)"
+  docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example-terragrunt up' first" >&2; return 1; }
+  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  cp -R "$TG_EXAMPLE/." "$work/"
+  rm -rf "$work/.git"
+  git -C "$work" init -q -b main
+  git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm base
+  base="$(git -C "$work" rev-parse HEAD)"
+  for p in "$@"; do git -C "$work" apply "$TG_EXAMPLE/changes/$p.patch" || return 1; done
+  [ -n "${REPORT_CONFIG:-}" ] && printf '%s\n' "$REPORT_CONFIG" >> "$work/terragucci.yml"
+  [ -n "${TG_EDIT:-}" ] && (cd "$work" && eval "$TG_EDIT")
+  git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke $(date +%s%N)"
+  docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
+    -e TG_BASE="${TG_BASE_OVERRIDE-$base}" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --terragrunt --binary tofu >&2
+}
+
+# The last run on the Terragrunt example's main, and one of its jobs' whole log.
+tg_main_job_log() { # job name
+  local run job
+  run="$(api "$URL/api/v1/repos/$USER/$TG_REPO_NAME/actions/runs?branch=main" | jq -r '.workflow_runs[0].id')"
+  job="$(api "$URL/api/v1/repos/$USER/$TG_REPO_NAME/actions/runs/$run/jobs" | jq -r --arg n "$1" '.[] | select(.name == $n) | .id' | head -1)"
+  api "$URL/api/v1/repos/$USER/$TG_REPO_NAME/actions/jobs/$job/logs"
+}
+
+claim_tg_zero_config() {
+  # The example with its pipeline removed: init must find Terragrunt from
+  # root.hcl and the 15 units, with no roots setting, and write exactly the
+  # committed pipeline. BREAK: an exclude drops prod, so the units differ.
+  local work rc=0 out
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  cp -R "$TG_EXAMPLE/." "$work/"
+  rm -f "$work/.forgejo/workflows/terragucci.yml"
+  [ -n "${BREAK:-}" ] && printf 'terragrunt:\n  exclude: ["live/prod/**"]\n' >> "$work/terragucci.yml"
+  out="$(cd "$work" && "$TERRAGUCCI" init 2>&1)" || rc=1
+  echo "$out" >&2
+  grep -q "found Terragrunt (root.hcl): 15 units" <<<"$out" || { echo "[smoke tg-zero-config] init did not find 15 Terragrunt units" >&2; rc=1; }
+  if [ $rc = 0 ] && ! diff -u "$TG_EXAMPLE/.forgejo/workflows/terragucci.yml" "$work/.forgejo/workflows/terragucci.yml" >&2; then
+    echo "[smoke tg-zero-config] init wrote a different pipeline" >&2
+    rc=1
+  fi
+  rm -rf "$work"
+  return $rc
+}
+
+claim_tg_waves() {
+  # Boot the example: every resource the units declare reaches floci, and the
+  # apply job runs two waves, every dev unit's apply finishing before the
+  # first staging or prod apply. BREAK: the pipeline is written with no
+  # canary, so everything applies in one wave.
+  log() { echo "[smoke tg-waves] $*" >&2; }
+  local work="" rc=0 logs first_other last_dev
+  if [ -n "${BREAK:-}" ]; then
+    work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+    cp -R "$TG_EXAMPLE/." "$work/"
+    printf 'binary: tofu\n' > "$work/terragucci.yml"
+    (cd "$work" && "$TERRAGUCCI" init >/dev/null) || { rm -rf "$work"; return 1; }
+    TG_PIPELINE="$work/.forgejo/workflows/terragucci.yml" TG_CONFIG="$work/terragucci.yml" "$HERE/example-terragrunt.sh" up >&2 || rc=1
+  else
+    "$HERE/example-terragrunt.sh" up >&2 || rc=1
+  fi
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  if [ $rc = 0 ]; then
+    logs="$(tg_main_job_log apply)"
+    grep -q "wave 1: 5 units" <<<"$logs" && grep -q "wave 2: 10 units" <<<"$logs" || { log "the apply job did not run a 5-unit canary wave and a 10-unit wave"; rc=1; }
+    last_dev="$(grep -n '\[live/dev/[a-z]*\] tofu: Apply complete' <<<"$logs" | tail -1 | cut -d: -f1)"
+    first_other="$(grep -nE '\[live/(staging|prod)/[a-z]*\] tofu: Apply complete' <<<"$logs" | head -1 | cut -d: -f1)"
+    [ -n "$last_dev" ] && [ -n "$first_other" ] && [ "$last_dev" -lt "$first_other" ] \
+      || { log "dev's applies did not all finish before the first staging or prod apply (last dev line ${last_dev:-none}, first other ${first_other:-none})"; rc=1; }
+  fi
+  if [ -n "$work" ]; then rm -rf "$work"; "$HERE/example-terragrunt.sh" reset >&2 || true; fi
+  [ $rc = 0 ] && log "15 units applied to floci, the 5 dev units first, then the other 10"
+  return $rc
+}
+
+claim_tg_check() {
+  # A clean branch goes green; the same branch plus an unformatted .hcl file
+  # goes red with the file named. BREAK: the "clean" branch carries the file.
+  log() { echo "[smoke tg-check] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local repo="$USER/$TG_REPO_NAME" work sha logs bad='locals {
+    team   = "orders"
+  owner = "shop"
+}'
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
+    || { log "no example repo; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && echo "$bad" > "$work/tree/live/dev/orders/owner.hcl"
+  sha="$(push_tree "$work/tree" "$repo" smoke/check "smoke tg-check: clean $(date +%s)")"
+  wait_run "$repo" "$sha"
+  if [ "$RUN_STATUS" != success ]; then log "the clean push ended '$RUN_STATUS'"; rm -rf "$work"; return 1; fi
+  echo "$bad" > "$work/tree/live/dev/orders/owner.hcl"
+  sha="$(push_tree "$work/tree" "$repo" smoke/check "smoke tg-check: unformatted $(date +%s)")"
+  wait_run "$repo" "$sha"
+  logs="$(print_logs "$repo" "$RUN_ID")"
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branches/smoke%2Fcheck" || true
+  rm -rf "$work"
+  [ "$RUN_STATUS" = failure ] || { log "the unformatted push ended '$RUN_STATUS'"; return 1; }
+  grep -q "owner.hcl" <<<"$logs" || { log "the run failed but its log does not name owner.hcl"; return 1; }
+  log "the unformatted push failed at the format check and named live/dev/orders/owner.hcl"
+}
+
+claim_tg_affected() {
+  # module-bump changes only modules/service/policy.json, which the module
+  # reads with file(). Terragrunt's git filter misses it; the plan must cover
+  # the 12 service units, each saying why, and none of the 3 platform units.
+  # BREAK: no base, so every unit is planned.
+  log() { echo "[smoke tg-affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 r n
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  if [ -n "${BREAK:-}" ]; then TG_BASE_OVERRIDE="" tg_report_run "$work" module-bump || true; else tg_report_run "$work" module-bump || true; fi
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
+  n="$(jq '[.roots[] | select(.status == "planned")] | length' "$r")"
+  [ "$n" = 12 ] || { log "$n units planned, not the 12 services"; rc=1; }
+  jq -e '[.roots[] | select(.path | endswith("/platform"))] | length == 0' "$r" >/dev/null || { log "a platform unit was planned"; rc=1; }
+  jq -e '[.roots[] | select(.terragrunt.selection | test("policy.json"))] | length == 12' "$r" >/dev/null || { log "not every service names policy.json as its reason"; rc=1; }
+  rm -rf "$work"
+  [ $rc = 0 ] && log "12 service units planned for policy.json, no platform unit"
+  return $rc
+}
+
+claim_tg_mock_lint() {
+  # prod email's dependency has mocks and no allow-list, so they could stand in
+  # for apply. The report's tips name it as TF041 with the rule's page.
+  # BREAK: prod email gets an allow-list first, so there is nothing to name.
+  log() { echo "[smoke tg-mock-lint] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 edit=""
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  [ -n "${BREAK:-}" ] && edit="sed -i.bak 's|^  mock_outputs = {|  mock_outputs_allowed_terraform_commands = [\"validate\", \"plan\"]\n  mock_outputs = {|' live/prod/email/terragrunt.hcl && rm live/prod/email/terragrunt.hcl.bak"
+  TG_EDIT="$edit" tg_report_run "$work" one-unit || true
+  jq -e '.tips[] | select(.rule == "TF041" and .root == "live/prod/email" and (.url | startswith("https://")))' "$work/terragucci-report/report.json" >/dev/null 2>&1 \
+    || { log "no TF041 tip names live/prod/email"; rc=1; }
+  rm -rf "$work"
+  [ $rc = 0 ] && log "TF041 names live/prod/email, whose mocks have no allow-list"
+  return $rc
+}
+
+claim_tg_refuse() {
+  # new-service adds ledger and billing, which reads ledger's outputs. Ledger
+  # has none yet, so billing's plan would stand on its mocks: billing must not
+  # be planned, and the report must say it waits for ledger. Ledger plans.
+  # BREAK: ledger is applied first, so billing has real outputs and plans; the
+  # claim must notice billing was not held back.
+  log() { echo "[smoke tg-refuse] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 r tree
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  if [ -n "${BREAK:-}" ]; then
+    tree="$work/ledger"; cp -R "$TG_EXAMPLE/." "$tree/"; git -C "$tree" init -q; git -C "$tree" apply "$TG_EXAMPLE/changes/new-service.patch"
+    TG_TREE="$tree" "$HERE/example-terragrunt.sh" tg run --working-dir live/dev/ledger -- apply -auto-approve >&2 || true
+  fi
+  mkdir -p "$work/run"
+  tg_report_run "$work/run" new-service || true
+  r="$work/run/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; rc=1; }
+  if [ $rc = 0 ]; then
+    jq -e '.roots[] | select(.path == "live/dev/ledger" and .status == "planned")' "$r" >/dev/null || { log "ledger was not planned"; rc=1; }
+    jq -e '[.roots[] | select(.path == "live/dev/billing" and (.terragrunt.provisional | not))] | length == 0' "$r" >/dev/null || { log "billing was planned as real, on mock_outputs or ahead of ledger"; rc=1; }
+    jq -e '.deferred[] | select(.unit == "live/dev/billing" and (.after | index("live/dev/ledger")))' "$r" >/dev/null || { log "the report does not say billing waits for ledger"; rc=1; }
+    jq -e '.mock_reads[] | select(.unit == "live/dev/billing" and .upstream == "live/dev/ledger" and .reason == "no-outputs")' "$r" >/dev/null || { log "the report names no mock read for billing"; rc=1; }
+  fi
+  if [ -n "${BREAK:-}" ]; then
+    TG_TREE="$tree" "$HERE/example-terragrunt.sh" tg run --working-dir live/dev/ledger -- destroy -auto-approve >&2 || true
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/terragrunt/live/dev/ledger/terraform.tfstate" || true
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] && log "ledger planned; billing held back until ledger applies, with the mock read named"
+  return $rc
+}
+
+claim_tg_mock_trap() {
+  # Merge new-service to main. The apply job applies ledger before billing in
+  # one run --all, so billing's state holds ledger's real bucket and no mock
+  # value. BREAK: the pushed pipeline ignores Terragrunt's order, so billing
+  # can run before ledger has outputs and take the mock, or fail.
+  log() { echo "[smoke tg-mock-trap] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local repo="$USER/$TG_REPO_NAME" work sha rc=0 state
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
+    || { log "no example repo; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
+  git -C "$work/tree" apply "$TG_EXAMPLE/changes/new-service.patch" || { rm -rf "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && sed -i.bak 's#terragrunt run --all --no-color --no-filters-file#terragrunt run --all --no-color --no-filters-file --queue-ignore-dag-order#' "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+  sha="$(push_tree "$work/tree" "$repo" main "smoke tg-mock-trap: add billing and its ledger $(date +%s)")"
+  wait_run "$repo" "$sha"
+  [ "$RUN_STATUS" = success ] || { log "the apply ended '$RUN_STATUS'"; rc=1; }
+  state="$(curl -fsS "$FLOCI/shop-terraform-state/terragrunt/live/dev/billing/terraform.tfstate" || true)"
+  grep -q '"shop-tg-dev-ledger"' <<<"$state" || { log "billing's state does not name the ledger bucket"; rc=1; }
+  grep -q 'mock-' <<<"$state" && { log "billing's state holds a mock value"; rc=1; }
+  # Put the estate back: billing and ledger destroyed, their state gone, main as committed.
+  TG_TREE="$work/tree" "$HERE/example-terragrunt.sh" tg run --all --no-filters-file --filter '{./live/dev/billing}' --filter '{./live/dev/ledger}' -- destroy -auto-approve >&2 || true
+  for u in billing ledger; do curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/terragrunt/live/dev/$u/terraform.tfstate" || true; done
+  "$HERE/example-terragrunt.sh" reset >&2 || true
+  rm -rf "$work"
+  [ $rc = 0 ] && log "ledger applied before billing; billing's state names shop-tg-dev-ledger and holds no mock"
+  return $rc
 }
 
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
