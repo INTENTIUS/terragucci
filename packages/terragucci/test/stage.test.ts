@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { main } from "../src/cli";
 import { readInlineReport } from "../src/report/html";
-import { affectedRoots, runStage } from "../src/report/stage";
+import { affectedRoots, emptyStateText, runStage } from "../src/report/stage";
 import { tmp, write } from "./helpers";
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
@@ -122,5 +122,32 @@ describe("affected roots", () => {
     execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "docs"], { stdio: "ignore" });
     expect([...affectedRoots(dir, "HEAD~1", roots, roots, () => {})!]).toEqual([]);
     expect(affectedRoots(dir, "origin/nowhere", roots, roots, () => {})).toBeUndefined();
+  });
+});
+
+describe("a fresh estate", () => {
+  it("reads a state with no resources and no outputs as empty", () => {
+    expect(emptyStateText("")).toBe(true);
+    expect(emptyStateText('{"version":4,"resources":[],"outputs":{}}')).toBe(true);
+    expect(emptyStateText('{"version":4,"resources":[{"type":"x"}],"outputs":{}}')).toBe(false);
+    expect(emptyStateText('{"version":4,"resources":[],"outputs":{"a":{"value":1}}}')).toBe(false);
+    expect(emptyStateText("not json")).toBeUndefined();
+  });
+
+  it("holds back a root that reads a root with no state, names it in the report, and does not fail", async () => {
+    const state = (key: string) => `terraform {\n  backend "s3" {\n    bucket = "s"\n    key    = "${key}"\n  }\n}\n`;
+    const reads = `data "terraform_remote_state" "up" {\n  backend = "s3"\n  config = {\n    bucket = "s"\n    key    = "network.tfstate"\n  }\n}\n`;
+    const dir = tmp();
+    // A stand-in binary: init succeeds, state pull prints nothing, plan fails (it must not be reached for app).
+    const fake = write(dir, {
+      "fake-tf": '#!/bin/sh\ncase "$*" in\n  *"state pull"*) exit 0;;\n  *init*) exit 0;;\n  *) echo "plan reached" >&2; exit 1;;\nesac\n',
+      "network/main.tf": state("network.tfstate"),
+      "app/main.tf": state("app.tfstate") + reads,
+    });
+    execFileSync("chmod", ["+x", join(fake, "fake-tf")]);
+    const result = await runStage("tf-plan", fake, { binary: join(fake, "fake-tf"), layers: [["network"], ["app"]], root: "app", out: "r" }, () => {});
+    expect(result.report.deferred).toEqual([expect.objectContaining({ unit: "app", after: ["network"], previewed: false })]);
+    expect(result.report.roots.map((r) => r.path)).not.toContain("app");
+    expect(result.report.waves.flatMap((w) => w.roots)).not.toContain("app");
   });
 });

@@ -161,6 +161,32 @@ export function preventDestroyIn(rootDir: string): Set<string> {
   return out;
 }
 
+/**
+ * Whether a root's state holds nothing: no resources and no outputs. Read
+ * with `init` and `state pull` in the root. Undefined when it cannot be
+ * read (no credentials, no backend), so a root is held back only on a state
+ * that was read and found empty.
+ */
+export function stateIsEmpty(binary: string, dir: string, env: NodeJS.ProcessEnv): boolean | undefined {
+  const opts = { encoding: "utf-8" as const, maxBuffer: 512 * 1024 * 1024, env };
+  const init = spawnSync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], opts);
+  if (init.status !== 0) return undefined;
+  const pull = spawnSync(binary, [`-chdir=${dir}`, "state", "pull"], opts);
+  if (pull.status !== 0) return undefined;
+  return emptyStateText(pull.stdout);
+}
+
+/** `state pull` output with no resources and no outputs, or no output at all. */
+export function emptyStateText(text: string): boolean | undefined {
+  if (text.trim() === "") return true;
+  try {
+    const st = JSON.parse(text) as { resources?: unknown[]; outputs?: Record<string, unknown> };
+    return (st.resources?.length ?? 0) === 0 && Object.keys(st.outputs ?? {}).length === 0;
+  } catch {
+    return undefined;
+  }
+}
+
 const tail = (s: string, n = 40): string => s.trim().split("\n").slice(-n).join("\n");
 
 /** Why a unit is in the plan. Affected selection (Terragrunt's git range and chant's supplements) replaces this. */
@@ -315,10 +341,25 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
   const names = new Map<string, Map<string, string>>();
+  const deferred: ReportDeferred[] = [];
+  const held = new Set<string>();
+  const upstreamState = new Map<string, boolean | undefined>();
+  const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
   let redacted = 0;
   try {
     for (const root of roots) {
       const dir = join(repo, root);
+      // A root that reads the state of a root nothing has applied cannot plan: hold it back.
+      const waitsFor = [...(readsOf.get(root) ?? [])].filter((up) => {
+        if (!upstreamState.has(up)) upstreamState.set(up, stateIsEmpty(binary, join(repo, up), env));
+        return upstreamState.get(up) === true;
+      }).sort();
+      if (waitsFor.length > 0) {
+        deferred.push({ unit: root, after: waitsFor, why: `reads the state of ${waitsFor.join(", ")}, which nothing has applied yet, so it cannot plan until then`, previewed: false });
+        held.add(root);
+        log(`${root}: held back, ${waitsFor.join(", ")} has no state yet`);
+        continue;
+      }
       const planFile = join(work, `${inputs.length}.tfplan`);
       const timing = observer.root(root);
       const run = (...args: string[]) =>
@@ -368,13 +409,13 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const waves: WaveInput[] = [];
   if (drift) {
     // Drift is not applied, so there are no waves to gate.
-  } else if (roots.some(isCanary)) waves.push({ number: 1, roots: roots.filter(isCanary) });
+  } else if (roots.some((r) => isCanary(r) && !held.has(r))) waves.push({ number: 1, roots: roots.filter((r) => isCanary(r) && !held.has(r)) });
   for (const l of drift ? [] : planLayers) {
-    const rest = l.filter((r) => !isCanary(r));
+    const rest = l.filter((r) => !isCanary(r) && !held.has(r));
     if (rest.length) waves.push({ number: waves.length + 1, roots: rest });
   }
 
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names });
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(deferred.length ? { deferred } : {}) });
 }
 
 interface Planned {
