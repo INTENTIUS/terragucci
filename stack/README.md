@@ -47,6 +47,7 @@ Facts measured on floci that the example relies on: SQS `visibility_timeout_seco
 
 | Claim | Holds when | `BREAK=1` does |
 |---|---|---|
+| `aws s3` | a bucket created on floci is found when asked from the host | asks for a bucket that was never created |
 | `forgejo check` | a push of the fixture goes green, and a push of the fixture plus an unformatted file goes red with that file named in the job log | the push that should be clean carries the unformatted file |
 | `forgejo apply` | with the bucket deleted from floci first, a push to `main` goes green and the bucket then exists when asked from the host | removes the `tofu apply` step, so the run is green and only the host check can catch it |
 | `github check`, `gitlab check` | the same, with the pipeline `terragucci init` wrote | the same |
@@ -54,6 +55,10 @@ Facts measured on floci that the example relies on: SQS `visibility_timeout_seco
 | `github reconcile`, `gitlab reconcile` | `terragucci reconcile --mode apply` on a control repo of two projects opens one pull (merge) request on the project with no pipeline and leaves the in-line project alone; the request's check goes green; merged, its pipeline applies both roots, network before app | runs `--mode dry-run`, which opens nothing |
 
 `validate.sh` finds the run by the pushed commit's sha (`GET /repos/{owner}/{repo}/actions/runs?head_sha=`), polls it every 3s up to `TERRAGUCCI_VALIDATE_TIMEOUT` (900s), and prints each job's log through `/actions/jobs/{id}/logs` when a run is not what it expected.
+
+## In CI
+
+Every pull request boots the aws, forgejo and github profiles in separate jobs and runs `just validate-forge <forge>`, which runs each of that forge's claims plain and under `BREAK=1`. The gitlab profile runs nightly on an amd64 runner (`.github/workflows/nightly.yml`). The weekly capture workflow runs `just validation-record`, which boots each forge in turn and rewrites `docs-site/src/data/validation.json`, the table on the validation page. Pass forge names to record only those: `just validation-record gitlab`. The workflows are declared in `ci/`, `nightly/` and `capture/`.
 
 ## Running it
 

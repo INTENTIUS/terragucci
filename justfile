@@ -16,6 +16,7 @@ lint:
     npx chant lint image-ci
     npx chant lint images
     npx chant lint capture
+    npx chant lint nightly
 
 [doc("Run the unit tests.")]
 test:
@@ -44,6 +45,7 @@ ci:
     npx chant build ci -o .github/workflows/ci.yml --format yaml
     npx chant build pages -o .github/workflows/pages.yml --format yaml
     npx chant build capture -o .github/workflows/capture.yml --format yaml
+    npx chant build nightly -o .github/workflows/nightly.yml --format yaml
     npx chant build image-ci -o .github/workflows/images.yml --format yaml
     just render-images
 
@@ -66,7 +68,7 @@ ci-check:
     out="$(mktemp -t terragucci-ci-XXXX.yml)"
     trap 'rm -f "$out"' EXIT
     rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "image-ci:.github/workflows/images.yml"; do
+    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "nightly:.github/workflows/nightly.yml" "image-ci:.github/workflows/images.yml"; do
       src="${pair%%:*}"; committed="${pair#*:}"
       npx chant build "$src" -o "$out" --format yaml >/dev/null
       if diff -u "$committed" "$out"; then
@@ -155,6 +157,14 @@ validate forge="forgejo" claim="apply":
 # ── the example and its smoke claims ───────────────────────────────────────
 # example/ is the shop's 15 roots; stack/example.sh runs them on the forgejo
 # profile against floci. stack/smoke.sh holds one claim per feature.
+
+[doc("Run every claim of one forge plain and under BREAK=1 on a running profile; fails when one is not as expected.")]
+validate-forge forge:
+    stack/validation.sh run {{forge}}
+
+[doc("Boot each forge in turn, run its claims plain and broken, and write the record the validation page shows.")]
+validation-record *forges:
+    stack/validation.sh record docs-site/src/data/validation.json {{forges}}
 
 [doc("The example: up [--fresh], verify, change <scenario>, reset, down.")]
 example *args="up":

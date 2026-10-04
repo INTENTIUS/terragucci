@@ -3,13 +3,13 @@
  *
  * `just ci` renders this into .github/workflows/capture.yml. A GitHub runner
  * has Docker, so it boots the same stack a person does, runs every smoke
- * claim, captures the tutorial's output and screenshots, and opens a pull
+ * claim and every validation claim of every forge, captures the tutorial's output and screenshots, and opens a pull
  * request when any of it changed. The pages build only reads what is
  * committed and never boots the stack.
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust, installAct } from "../workflows/shared";
 
 export const workflow = new Workflow({
   name: "capture",
@@ -23,7 +23,7 @@ export const workflow = new Workflow({
 
 export const capture = new Job({
   "runs-on": "ubuntu-latest",
-  timeoutMinutes: 45,
+  timeoutMinutes: 120,
   // The only job that writes: a branch and a pull request, never main.
   permissions: { contents: "write", "pull-requests": "write" },
   steps: [
@@ -33,7 +33,9 @@ export const capture = new Job({
     installJust(),
     // The example's pipeline runs in terragucci's CI image; build it here.
     new Step({ name: "Build the CI images", run: "just images" }),
+    installAct(),
     new Step({ name: "Record the smoke claims", run: "just smoke-record" }),
+    new Step({ name: "Record the validation claims", run: "just validation-record" }),
     new Step({ name: "Capture the tutorial", run: "CHROME=google-chrome just tutorial-capture" }),
     new Step({ name: "Stop the stack", if: "always()", run: "just stack-down" }),
     new Step({

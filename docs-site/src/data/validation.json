@@ -1,0 +1,67 @@
+{
+  "claims": [
+    {
+      "forge": "aws",
+      "claim": "s3",
+      "says": "floci starts and answers S3",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "forgejo",
+      "claim": "check",
+      "says": "a push that is formatted goes green, and one with an unformatted file goes red naming the file",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "forgejo",
+      "claim": "apply",
+      "says": "a push to main applies the root, and the bucket exists afterwards",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "github",
+      "claim": "check",
+      "says": "the generated workflow fails an unformatted root and names the file",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "github",
+      "claim": "apply",
+      "says": "the generated workflow applies the root on the default branch",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "github",
+      "claim": "reconcile",
+      "says": "a control repo opens one pull request per project that changes, and the merged pipeline applies both roots",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "gitlab",
+      "claim": "check",
+      "says": "the generated pipeline fails an unformatted root and names the file",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "gitlab",
+      "claim": "apply",
+      "says": "the generated pipeline applies the root on the default branch",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "gitlab",
+      "claim": "reconcile",
+      "says": "a control repo opens one merge request per project that changes, and the merged pipeline applies both roots",
+      "verdict": "pass",
+      "break": "caught"
+    }
+  ]
+}

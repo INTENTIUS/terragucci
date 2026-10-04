@@ -40,10 +40,25 @@ BUCKET="terragucci-validate"
 
 log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
-usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: forgejo check|apply, github and gitlab check|apply|reconcile)" >&2; exit 2; }
+usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: aws s3, forgejo check|apply, github and gitlab check|apply|reconcile)" >&2; exit 2; }
 
 command -v docker >/dev/null 2>&1 || { echo "SKIP: docker is not installed"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: the docker daemon is not reachable"; exit 0; }
+
+if [ "$FORGE:$CLAIM" = "aws:s3" ]; then
+  # floci answers S3 on the host's published port: create a bucket, see it,
+  # delete it. BREAK=1 asks for a bucket that was never created, which must fail.
+  FLOCI="${TERRAGUCCI_FLOCI_URL:-http://localhost:${TERRAGUCCI_FLOCI_PORT:-4580}}"
+  b="terragucci-aws-claim"; probe="$b"
+  [ -n "$BREAK" ] && probe="$b-never-created"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$b" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$b" || fail "floci at $FLOCI did not create a bucket; run 'just stack-up aws' first"
+  code="$(curl -s -o /dev/null -m 5 -w '%{http_code}' -I "$FLOCI/$probe" || true)"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$b" || true
+  [ "$code" = 200 ] || fail "HEAD $probe answered $code; expected 200"
+  log "PASS: floci created, listed and answered for a bucket"
+  exit 0
+fi
 
 case "$FORGE:$CLAIM" in
   forgejo:check|forgejo:apply) ;;
