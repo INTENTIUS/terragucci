@@ -6,7 +6,7 @@
 export const SCHEMA_VERSION = 1;
 
 /** The commands that take `--json`. */
-export const ENVELOPE_COMMANDS = ["init", "reconcile", "plan", "config"];
+export const ENVELOPE_COMMANDS = ["init", "reconcile", "plan", "stage", "config"];
 
 export type ExitClass = "ok" | "failed" | "usage" | "waiting";
 

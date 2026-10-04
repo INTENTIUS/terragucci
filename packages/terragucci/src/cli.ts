@@ -5,11 +5,12 @@
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
+ *   terragucci stage tf-plan [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>]
  *   terragucci rollout <module> <version>
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
  *
- * `--json` on init, reconcile, plan and config check prints one envelope
+ * `--json` on init, reconcile, plan, stage and config check prints one envelope
  * (see envelope.ts) instead of text.
  *
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
@@ -27,18 +28,22 @@ import { plan } from "./plan";
 import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { RenderError } from "./render";
+import { renderText } from "./report/views";
+import { runStage } from "./report/stage";
+import { S3Error } from "./report/s3";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
+  terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>]
   terragucci rollout <module> <version>
   terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
 
-init, reconcile, plan and config check take --json: one envelope on stdout.
+init, reconcile, plan, stage and config check take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -116,6 +121,19 @@ export async function main(argv: string[]): Promise<number> {
         const code = results.every((r) => r.ok) ? 0 : 1;
         return json ? emit(envelope("plan", code, { roots: results })) : code;
       }
+      case "stage": {
+        const result = await runStage(args[0] ?? "", cwd, {
+          root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config"),
+          out: str(flags, "out"), reportUrl: str(flags, "report-url"),
+        }, json ? () => {} : console.error);
+        const code = result.failed ? 1 : 0;
+        const files = { html: `${result.dir}/report.html`, json: `${result.dir}/report.json`, note: `${result.dir}/note.md` };
+        if (json) return emit(envelope("stage", code, { stage: args[0], change_set: result.report.change_set, files, uploaded: result.uploaded ?? null }));
+        console.log(renderText(result.report));
+        console.log(`report: ${relative(cwd, files.html) || files.html}`);
+        if (result.uploaded) console.log(`copied to the bucket under ${result.uploaded.prefix}; index rewritten at ${result.uploaded.indexes.join(" and ")}`);
+        return code;
+      }
       case "install": {
         const [tool, version] = args;
         if (!tool || !version || !["tofu", "terraform", "terragrunt"].includes(tool)) {
@@ -166,7 +184,7 @@ export async function main(argv: string[]): Promise<number> {
         return 2;
     }
   } catch (e) {
-    if (e instanceof ConfigError || e instanceof RenderError) {
+    if (e instanceof ConfigError || e instanceof RenderError || e instanceof S3Error) {
       if (json) return emit(envelope(cmd, 2, null, e.message));
       console.error(`terragucci: ${e.message}`);
       return 2;

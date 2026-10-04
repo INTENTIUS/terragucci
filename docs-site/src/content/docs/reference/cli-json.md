@@ -1,9 +1,9 @@
 ---
 title: The CLI's JSON output
-description: The envelope that init, reconcile, plan and config check print with --json, and the exit codes behind it.
+description: The envelope that init, reconcile, plan, stage and config check print with --json, and the exit codes behind it.
 ---
 
-`init`, `reconcile`, `plan` and `config check` take `--json`. With it, the command prints one JSON object on stdout and nothing else, so a script or an agent can parse the whole output. Text, progress and tool output stay off stdout.
+`init`, `reconcile`, `plan`, `stage` and `config check` take `--json`. With it, the command prints one JSON object on stdout and nothing else, so a script or an agent can parse the whole output. Text, progress and tool output stay off stdout.
 
 ## The envelope
 
@@ -20,7 +20,7 @@ description: The envelope that init, reconcile, plan and config check print with
 | Field | Holds |
 |---|---|
 | `schema` | The envelope version. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `command` | `init`, `reconcile`, `plan` or `config check`. |
+| `command` | `init`, `reconcile`, `plan`, `stage` or `config check`. |
 | `exit` | The process exit code. |
 | `status` | `ok` for 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
 | `results` | What the command found or did, as below. `null` when the command could not run. |
@@ -60,6 +60,10 @@ The exit code is 1 when any project failed.
 ## plan
 
 `results.roots` has one entry per root, in apply order: `root`, `ok`, and `summary`, which is the plan's `Plan:` or `No changes.` line, or the failure.
+
+## stage
+
+`results` holds `stage`, `change_set` (the run's set digest), `files` (the paths of `report.html`, `report.json` and `note.md`) and `uploaded`, which is null unless `reports.bucket` is set. Then it holds the run's key prefix in the bucket and the indexes it rewrote. The exit code is 1 when a root refused to plan; the report is written either way.
 
 ## config check
 

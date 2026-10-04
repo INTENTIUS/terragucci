@@ -1,0 +1,295 @@
+{
+  "schema": "terragucci.report/v1",
+  "minor": 0,
+  "run": {
+    "project": "forgejo.example/acme/infra",
+    "commit": "4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d",
+    "base": "main",
+    "stage": "tf-plan",
+    "binary": "tofu",
+    "runtime": "forge",
+    "started": "2026-10-04T10:00:00.000Z",
+    "finished": "2026-10-04T10:03:00.000Z",
+    "job_url": "https://forgejo.example/acme/infra/actions/runs/42",
+    "terragucci": "0.2.0"
+  },
+  "change_set": "jcs1-sha256:77eab549602662c8d0f8021eb0e4e3dfc6b1f3c853a058f45183a26ee7bed8a0",
+  "unit": "member",
+  "units": 4,
+  "totals": {
+    "create": 0,
+    "update": 4,
+    "replace": 0,
+    "delete": 1,
+    "read": 0,
+    "no-op": 0,
+    "forget": 0
+  },
+  "groups": [
+    {
+      "id": "1779ef69aee7",
+      "units": [
+        "envs/dev/orders",
+        "envs/dev/search"
+      ],
+      "outlier": false,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "~ module.service.aws_sqs_queue.jobs: visibility_timeout_seconds",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "destroys": 0,
+      "varies": [],
+      "fold": "folded",
+      "why": []
+    },
+    {
+      "id": "6331d834c574",
+      "units": [
+        "envs/prod/orders"
+      ],
+      "outlier": true,
+      "noChanges": false,
+      "changes": [
+        {
+          "line": "- aws_db_instance.main",
+          "action": "delete",
+          "count": 1
+        },
+        {
+          "line": "~ aws_iam_role_policy.app: policy",
+          "action": "update",
+          "count": 1
+        },
+        {
+          "line": "~ module.service.aws_sqs_queue.jobs: visibility_timeout_seconds",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "extends": "1779ef69aee7",
+      "plus": [
+        {
+          "line": "- aws_db_instance.main",
+          "action": "delete",
+          "count": 1
+        },
+        {
+          "line": "~ aws_iam_role_policy.app: policy",
+          "action": "update",
+          "count": 1
+        }
+      ],
+      "destroys": 1,
+      "varies": [],
+      "fold": "open",
+      "why": [
+        "outlier: read it on its own",
+        "1 destroy or replacement",
+        "IAM: changes who may do what"
+      ]
+    }
+  ],
+  "roots": [
+    {
+      "path": "envs/dev/orders",
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:77dec45ca465401d31c2e83461310a786eda32c9e99b122aabac67ddfaac360a",
+      "counts": {
+        "update": 1
+      },
+      "group": "1779ef69aee7",
+      "plan": {
+        "text": "roots/envs/dev/orders/plan.txt",
+        "json": "roots/envs/dev/orders/plan.json"
+      },
+      "job_url": "https://forgejo.example/acme/infra/actions/runs/42",
+      "changes": [
+        {
+          "address": "module.service.aws_sqs_queue.jobs",
+          "type": "aws_sqs_queue",
+          "action": "update",
+          "disruption": "in-place",
+          "module": "module.service",
+          "attributes": [
+            {
+              "path": "visibility_timeout_seconds",
+              "before": 30,
+              "after": 60
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [],
+      "fold": "folded",
+      "why": []
+    },
+    {
+      "path": "envs/dev/search",
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:6b92a2b438f282c5883718317d2d25c78c6cd38bd8c01ce2b5c794f5711715bd",
+      "counts": {
+        "update": 1
+      },
+      "group": "1779ef69aee7",
+      "plan": {
+        "text": "roots/envs/dev/search/plan.txt",
+        "json": "roots/envs/dev/search/plan.json"
+      },
+      "job_url": "https://forgejo.example/acme/infra/actions/runs/42",
+      "changes": [
+        {
+          "address": "module.service.aws_sqs_queue.jobs",
+          "type": "aws_sqs_queue",
+          "action": "update",
+          "disruption": "in-place",
+          "module": "module.service",
+          "attributes": [
+            {
+              "path": "visibility_timeout_seconds",
+              "before": 30,
+              "after": 60
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [],
+      "fold": "folded",
+      "why": []
+    },
+    {
+      "path": "envs/prod/orders",
+      "status": "planned",
+      "plan_digest": "jcs1-sha256:394feeb34591932faa64756d862df379c5b5a85df5385832a7dfff806ea1160b",
+      "counts": {
+        "delete": 1,
+        "update": 2
+      },
+      "group": "6331d834c574",
+      "plan": {
+        "text": "roots/envs/prod/orders/plan.txt",
+        "json": "roots/envs/prod/orders/plan.json"
+      },
+      "job_url": "https://forgejo.example/acme/infra/actions/runs/42",
+      "changes": [
+        {
+          "address": "aws_db_instance.main",
+          "type": "aws_db_instance",
+          "action": "delete",
+          "disruption": "destroy",
+          "attributes": [],
+          "fold": "open",
+          "why": "destroys"
+        },
+        {
+          "address": "aws_iam_role_policy.app",
+          "type": "aws_iam_role_policy",
+          "action": "update",
+          "disruption": "in-place",
+          "attributes": [
+            {
+              "path": "policy",
+              "before": "{\"Action\":\"s3:GetObject\"}",
+              "after": "{\"Action\":\"s3:*\"}"
+            }
+          ],
+          "fold": "open",
+          "why": "IAM: changes who may do what"
+        },
+        {
+          "address": "module.service.aws_sqs_queue.jobs",
+          "type": "aws_sqs_queue",
+          "action": "update",
+          "disruption": "in-place",
+          "module": "module.service",
+          "attributes": [
+            {
+              "path": "visibility_timeout_seconds",
+              "before": 30,
+              "after": 60
+            }
+          ],
+          "fold": "open"
+        }
+      ],
+      "highlights": [
+        {
+          "address": "aws_db_instance.main",
+          "type": "aws_db_instance",
+          "action": "delete",
+          "why": "destroys"
+        },
+        {
+          "address": "aws_iam_role_policy.app",
+          "type": "aws_iam_role_policy",
+          "action": "update",
+          "why": "IAM: changes who may do what"
+        }
+      ],
+      "fold": "open",
+      "why": [
+        "outlier: its change matches no other root's",
+        "destroys",
+        "IAM: changes who may do what"
+      ]
+    },
+    {
+      "path": "envs/prod/search",
+      "status": "failed",
+      "error": "plan failed:\nError: No valid credential sources found",
+      "plan_digest": null,
+      "counts": {},
+      "plan": {},
+      "job_url": "https://forgejo.example/acme/infra/actions/runs/42",
+      "changes": [],
+      "highlights": [],
+      "fold": "open",
+      "why": [
+        "refused to plan"
+      ]
+    }
+  ],
+  "waves": [
+    {
+      "number": 1,
+      "roots": [
+        "envs/dev/orders",
+        "envs/dev/search"
+      ],
+      "set_digest": "jcs1-sha256:08dfc9edab3d420f18e046482d14deeabae21ef56fe74fb1a7c0dfec0cea5e85",
+      "approval": "not-requested"
+    },
+    {
+      "number": 2,
+      "roots": [
+        "envs/prod/orders",
+        "envs/prod/search"
+      ],
+      "set_digest": null,
+      "approval": "not-requested"
+    }
+  ],
+  "named": [
+    {
+      "root": "envs/prod/search",
+      "action": "refused",
+      "reason": "plan failed:\nError: No valid credential sources found"
+    },
+    {
+      "root": "envs/prod/orders",
+      "address": "aws_db_instance.main",
+      "type": "aws_db_instance",
+      "action": "delete"
+    }
+  ],
+  "holes": [],
+  "redaction": {
+    "marker": "(sensitive, redacted by terragucci)",
+    "values": 0
+  }
+}

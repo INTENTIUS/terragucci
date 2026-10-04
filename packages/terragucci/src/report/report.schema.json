@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/report/v1/report.schema.json",
+  "title": "terragucci.report/v1",
+  "description": "One terragucci run's plan report. A minor version only adds fields.",
+  "type": "object",
+  "required": ["schema", "minor", "run", "change_set", "unit", "units", "totals", "groups", "roots", "waves", "named", "holes", "redaction"],
+  "properties": {
+    "schema": { "const": "terragucci.report/v1" },
+    "minor": { "type": "integer", "minimum": 0 },
+    "run": {
+      "type": "object",
+      "required": ["project", "commit", "stage", "binary", "runtime", "started", "finished"],
+      "properties": {
+        "project": { "type": "string" },
+        "commit": { "type": "string" },
+        "base": { "type": "string" },
+        "stage": { "enum": ["tf-plan", "tf-apply", "tf-drift"] },
+        "wave": { "type": "integer" },
+        "binary": { "type": "string" },
+        "runtime": { "type": "string" },
+        "started": { "type": "string" },
+        "finished": { "type": "string" },
+        "job_url": { "type": "string" },
+        "terragucci": { "type": "string" }
+      }
+    },
+    "change_set": { "type": "string" },
+    "unit": { "enum": ["member", "instance"] },
+    "units": { "type": "integer" },
+    "totals": { "type": "object", "additionalProperties": { "type": "integer" } },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "units", "outlier", "noChanges", "changes", "destroys", "varies", "fold", "why"],
+        "properties": {
+          "id": { "type": "string" },
+          "resource": { "type": "string" },
+          "units": { "type": "array", "items": { "type": "string" } },
+          "outlier": { "type": "boolean" },
+          "noChanges": { "type": "boolean" },
+          "changes": { "type": "array", "items": { "$ref": "#/$defs/summaryChange" } },
+          "extends": { "type": "string" },
+          "plus": { "type": "array", "items": { "$ref": "#/$defs/summaryChange" } },
+          "destroys": { "type": "integer" },
+          "varies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "paths"],
+              "properties": { "address": { "type": "string" }, "paths": { "type": "array", "items": { "type": "string" } } }
+            }
+          },
+          "fold": { "$ref": "#/$defs/fold" },
+          "why": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "status", "plan_digest", "counts", "plan", "changes", "highlights", "fold", "why"],
+        "properties": {
+          "path": { "type": "string" },
+          "status": { "enum": ["planned", "failed"] },
+          "error": { "type": "string" },
+          "plan_digest": { "type": ["string", "null"] },
+          "counts": { "type": "object", "additionalProperties": { "type": "integer" } },
+          "group": { "type": "string" },
+          "plan": {
+            "type": "object",
+            "properties": { "text": { "type": "string" }, "json": { "type": "string" } }
+          },
+          "job_url": { "type": "string" },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "type", "action", "attributes", "fold"],
+              "properties": {
+                "address": { "type": "string" },
+                "type": { "type": "string" },
+                "action": { "$ref": "#/$defs/action" },
+                "disruption": { "type": "string" },
+                "deposed": { "type": "string" },
+                "module": { "type": "string" },
+                "index": { "type": ["string", "integer"] },
+                "attributes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {
+                      "path": { "type": "string" },
+                      "before": {},
+                      "after": {},
+                      "unknown": { "const": true },
+                      "sensitive": { "const": true },
+                      "forcesReplacement": { "const": true }
+                    }
+                  }
+                },
+                "replace_paths": { "type": "array", "items": { "type": "array", "items": { "type": ["string", "integer"] } } },
+                "importing": { "type": "string" },
+                "write_only": { "type": "array", "items": { "type": "string" } },
+                "kind": { "enum": ["tags", "description", "unknown"] },
+                "fold": { "$ref": "#/$defs/fold" },
+                "why": { "type": "string" }
+              }
+            }
+          },
+          "highlights": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "type", "action", "why"],
+              "properties": {
+                "address": { "type": "string" },
+                "type": { "type": "string" },
+                "action": { "$ref": "#/$defs/action" },
+                "why": { "type": "string" }
+              }
+            }
+          },
+          "fold": { "$ref": "#/$defs/fold" },
+          "why": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "waves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "roots", "set_digest", "approval"],
+        "properties": {
+          "number": { "type": "integer" },
+          "roots": { "type": "array", "items": { "type": "string" } },
+          "set_digest": { "type": ["string", "null"] },
+          "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
+          "gate": {
+            "type": "object",
+            "required": ["branch", "path"],
+            "properties": { "branch": { "type": "string" }, "path": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "named": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["root", "action"],
+        "properties": {
+          "root": { "type": "string" },
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "action": { "enum": ["delete", "replace", "refused", "forget", "import"] },
+          "deposed": { "type": "string" },
+          "replace_paths": { "type": "array", "items": { "type": "array", "items": { "type": ["string", "integer"] } } },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "holes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["root", "address", "reason"],
+        "properties": {
+          "root": { "type": "string" },
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "required": ["marker", "values"],
+      "properties": {
+        "marker": { "const": "(sensitive, redacted by terragucci)" },
+        "values": { "type": "integer" }
+      }
+    }
+  },
+  "$defs": {
+    "action": { "enum": ["create", "update", "replace", "delete", "read", "no-op", "forget"] },
+    "fold": { "enum": ["open", "folded"] },
+    "summaryChange": {
+      "type": "object",
+      "required": ["line", "action", "count"],
+      "properties": {
+        "line": { "type": "string" },
+        "action": { "$ref": "#/$defs/action" },
+        "count": { "type": "integer" },
+        "differsFrom": { "type": "string" },
+        "differsIn": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
