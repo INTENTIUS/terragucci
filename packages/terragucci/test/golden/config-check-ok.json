@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "command": "config check",
+  "exit": 0,
+  "status": "ok",
+  "results": {
+    "file": "terragucci.yml",
+    "ok": true,
+    "problems": []
+  }
+}

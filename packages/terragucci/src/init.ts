@@ -17,7 +17,7 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { applyLayers, detectBinary, detectForge, detectVersion, findRoots } from "./detect";
+import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
 import { imageFor, imageReference, TOOL_VERSIONS } from "./images";
 import { MARKER, RenderError, renderPipeline } from "./render";
 
@@ -41,6 +41,8 @@ export interface FileChange {
 
 export interface InitResult {
   roots: string[];
+  /** Why each root was found. */
+  rootReasons: RootReason[];
   layers: string[][];
   binary: { value: Binary; reason: string };
   image?: string;
@@ -61,7 +63,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const configPath = options.settings ? undefined : findConfig(repo);
   const settings: ResolvedSettings = options.settings ?? resolveRepo(configPath ? await loadConfig(configPath) : {});
 
-  const roots = findRoots(repo, settings.roots);
+  const rootReasons = findRootsWithReasons(repo, settings.roots);
+  const roots = rootReasons.map((r) => r.root);
   if (roots.length === 0) {
     throw new ConfigError(
       settings.roots
@@ -143,7 +146,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, layers, binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
 }
 
 /** What `init` prints. */
@@ -158,4 +161,20 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
     ...r.notes.map((n) => `note: ${n}`),
   ];
   return lines.join("\n");
+}
+
+/** The `--json` form of an init result: paths relative to the repo, file content in full. */
+export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<string, unknown> {
+  return {
+    dryRun,
+    roots: r.rootReasons.map(({ root, reason }) => ({ path: root, reason })),
+    layers: r.layers,
+    binary: r.binary,
+    version: r.version,
+    forge: r.forge,
+    image: r.image,
+    files: r.files.map((f) => ({ path: relative(repo, f.path), status: f.status, content: f.content })),
+    notes: r.notes,
+    configNote: r.configNote,
+  };
 }

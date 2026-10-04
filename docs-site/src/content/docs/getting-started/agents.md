@@ -29,7 +29,7 @@ The site describes the finished product, and the status page is the only record 
 
 ## Steps for the agent
 
-1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run`. It lists the roots, the binary and the forge it found. Show the user.
+1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run --json`. It lists what it found, with a reason for each. Show the user.
 2. Check what it found. When the binary or the forge is wrong, pass `--binary` or `--forge`, or ask the user.
 3. Decide whether the repo needs a config file. With one binary and no canary preference, it needs none. Otherwise write the smallest `terragucci.yml` that corrects the defaults; [Your config file](/terragucci/getting-started/config/) lists every key and its default.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
@@ -38,6 +38,8 @@ The site describes the finished product, and the status page is the only record 
 
 ## Rules for the agent
 
+- Run terragucci from the shell with `--json` and parse the envelope ([JSON output](/terragucci/reference/cli-json/)). Each root carries the reason it was found, and the binary, version and forge carry theirs. Do not add an MCP server for it.
+- Run `npx terragucci config check --json` after writing a config; it lists every problem at once.
 - Approvals belong to people. An agent may print the `chant approve` command for a waiting wave but never runs it.
 - Credentials stay in the forge's secrets. The config names environment variables (`token_env`) and never holds a value.
 - Ask before choosing a runtime other than the forge. A fountain steward is opt-in.

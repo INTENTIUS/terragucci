@@ -42,10 +42,22 @@ const posix = (p: string): string => p.split("\\").join("/");
  * with its own `terraform { required_providers }` block is not a root.
  */
 export function isRoot(dir: string): boolean {
-  return tfFiles(dir).some((f) => {
-    const text = stripComments(readFileSync(f, "utf-8"));
-    return /\bbackend\s+"[^"]+"\s*\{/.test(text) || /^\s*cloud\s*\{/m.test(text) || /^\s*provider\s+"[^"]+"\s*\{/m.test(text);
-  });
+  return rootReason(dir) !== undefined;
+}
+
+/** Why a directory is a root: the first thing in its Terraform files that makes it one. */
+export function rootReason(dir: string): string | undefined {
+  const texts = tfFiles(dir).map((f) => stripComments(readFileSync(f, "utf-8")));
+  for (const text of texts) {
+    const m = text.match(/\bbackend\s+"([^"]+)"\s*\{/);
+    if (m) return `backend ${m[1]}`;
+  }
+  if (texts.some((t) => /^\s*cloud\s*\{/m.test(t))) return "cloud block";
+  for (const text of texts) {
+    const m = text.match(/^\s*provider\s+"([^"]+)"\s*\{/m);
+    if (m) return `provider ${m[1]}`;
+  }
+  return undefined;
 }
 
 function stripComments(text: string): string {
@@ -75,11 +87,28 @@ export function globMatch(glob: string, path: string): boolean {
  * them, every directory that is a root by `isRoot`.
  */
 export function findRoots(repo: string, globs?: string[]): string[] {
-  const found = dirs(repo)
-    .map((d) => ({ abs: d, rel: posix(relative(repo, d)) || "." }))
-    .filter(({ abs, rel }) => (globs ? globs.some((g) => globMatch(g, rel)) && tfFiles(abs).length > 0 : isRoot(abs)))
-    .map(({ rel }) => rel);
-  return found.sort();
+  return findRootsWithReasons(repo, globs).map((r) => r.root);
+}
+
+export interface RootReason {
+  root: string;
+  reason: string;
+}
+
+/** `findRoots`, with why each directory counts: the backend, cloud block or provider found, or the glob matched. */
+export function findRootsWithReasons(repo: string, globs?: string[]): RootReason[] {
+  const out: RootReason[] = [];
+  for (const d of dirs(repo)) {
+    const rel = posix(relative(repo, d)) || ".";
+    if (globs) {
+      const g = globs.find((x) => globMatch(x, rel));
+      if (g !== undefined && tfFiles(d).length > 0) out.push({ root: rel, reason: `matches roots glob ${g}` });
+    } else {
+      const reason = rootReason(d);
+      if (reason) out.push({ root: rel, reason });
+    }
+  }
+  return out.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
 }
 
 export interface Detected<T> {
