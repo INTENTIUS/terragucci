@@ -14,7 +14,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
-import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { defaultTerragruntExec, planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
 import pkg from "../../package.json" with { type: "json" };
@@ -180,16 +180,19 @@ async function planUnits(
   waves: string[][],
   binary: string,
   work: string,
-  options: StageOptions & { dependents?: "follow" | "plan"; selection: (unit: string) => string; preview: string[] },
+  options: StageOptions & { dependents?: "follow" | "plan"; selection: (unit: string) => string; preview: string[]; drift?: boolean },
   log: (line: string) => void,
-): Promise<{ inputs: RootInput[]; plans: Map<string, { text?: string; json?: string }>; redacted: number; mockReads: ReportMockRead[]; waiting: string[] }> {
+): Promise<{ inputs: RootInput[]; plans: Map<string, { text?: string; json?: string }>; redacted: number; mockReads: ReportMockRead[]; waiting: string[]; names: Map<string, Map<string, string>> }> {
+  const drift = options.drift === true;
+  const names = new Map<string, Map<string, string>>();
   const planner = plannerForBinary(binary);
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
   const mockReads: ReportMockRead[] = [];
   let redacted = 0;
   const terragrunt = options.terragruntPath ?? (options.env ?? process.env).TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-  const run = { dir: repo, binary, terragrunt, ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) };
+  const exec = drift ? refreshOnlyExec(options.terragruntExec) : options.terragruntExec;
+  const run = { dir: repo, binary, terragrunt, ...(exec ? { exec } : {}) };
 
   const read = (workDir: string, wave: TerragruntWavePlan, provisional: boolean): void => {
     if (wave.code !== 0 && wave.code !== 2) log(tail(wave.log));
@@ -216,8 +219,9 @@ async function planUnits(
       const safe = redactPlan(plan);
       redacted += safe.values;
       plans.set(path, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
-      inputs.push({ path, plan, planner, files: { json: planFiles(path).json }, preventDestroy: new Set(), terragrunt: unit });
-      log(`${path}: ${provisional ? "previewed (provisional)" : "planned"}`);
+      if (drift) names.set(path, driftNames(plan));
+      inputs.push({ path, plan: drift ? driftPlan(plan) : plan, planner, files: { json: planFiles(path).json }, preventDestroy: new Set(), terragrunt: unit });
+      log(drift ? `${path}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${path}: ${provisional ? "previewed (provisional)" : "planned"}`);
     }
   };
 
@@ -261,7 +265,21 @@ async function planUnits(
       log(`no provisional preview: ${(e as Error).message}`);
     }
   }
-  return { inputs, plans, redacted, mockReads, waiting: allWaiting };
+  return { inputs, plans, redacted, mockReads, waiting: allWaiting, names };
+}
+
+/**
+ * The runner with `-refresh-only` added to the engine's plan command, so a
+ * wave's `run --all` plans what the real world changed and not what the code
+ * would change. Terragrunt's other calls (render, output) pass through.
+ */
+function refreshOnlyExec(inner: TerragruntExec = defaultTerragruntExec): TerragruntExec {
+  return (file, args, opts) => {
+    const at = args.indexOf("--");
+    if (at < 0 || args[at + 1] !== "plan") return inner(file, args, opts);
+    const next = [...args.slice(0, at + 2), "-refresh-only", "-lock=false", ...args.slice(at + 2)];
+    return inner(file, next, opts);
+  };
 }
 
 export async function runStage(stage: string, repo: string, options: StageOptions = {}, log: (line: string) => void = console.error): Promise<StageResult> {
@@ -272,8 +290,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
   if (options.terragrunt ?? detectTerragrunt(repo) !== undefined) {
-    if (drift) throw new ConfigError("tf-drift does not plan Terragrunt units yet; it plans Terraform and OpenTofu roots");
-    return runTerragruntStage(repo, settings, options, env, log);
+    return runTerragruntStage(repo, settings, options, env, log, drift);
   }
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
   const layers = (options.layers ?? applyLayers(repo, all))
@@ -373,21 +390,26 @@ interface Planned {
   names?: Map<string, Map<string, string>>;
 }
 
-/** A Terragrunt repo's tf-plan: its units by wave, as the pipeline names them or as discovery finds them. */
+/**
+ * A Terragrunt repo's tf-plan or tf-drift: its units by wave, as the pipeline
+ * names them or as discovery finds them. tf-drift refresh-plans every unit,
+ * with no affected selection, and keeps the drift issue.
+ */
 async function runTerragruntStage(
   repo: string,
   settings: ReturnType<typeof resolveRepo>,
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
+  drift = false,
 ): Promise<StageResult> {
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, []).value;
-  const canary = options.canary ?? settings.waves?.canary ?? [];
+  const canary = drift ? [] : (options.canary ?? settings.waves?.canary ?? []);
   const tool = {
     ...(options.terragruntPath ? { terragrunt: options.terragruntPath } : env.TERRAGUCCI_TERRAGRUNT ? { terragrunt: env.TERRAGUCCI_TERRAGRUNT } : {}),
     ...(options.terragruntExec ? { exec: options.terragruntExec } : {}),
   };
-  const base = options.base ?? baseRef(env);
+  const base = drift ? undefined : (options.base ?? baseRef(env));
   // Discovery gives the edges that dependents and the canary wave need.
   let units: TerragruntUnit[] | undefined;
   if (!options.layers || base) {
@@ -401,7 +423,7 @@ async function runTerragruntStage(
 
   // Affected selection: Terragrunt's git range plus what it misses. Without a base, every unit.
   const reasons = new Map<string, string>();
-  let everyUnit = SELECTED_ALL;
+  let everyUnit = drift ? "every unit: drift checks the whole repo" : SELECTED_ALL;
   const deferred: ReportDeferred[] = [];
   let preview: string[] = [];
   if (base && units) {
@@ -426,15 +448,21 @@ async function runTerragruntStage(
     }
   }
   const started = new Date().toISOString();
-  const observer = new StageObserver(telemetryFromEnv(env), "tf-plan", env);
+  const observer = new StageObserver(telemetryFromEnv(env), drift ? "tf-drift" : "tf-plan", env);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
   try {
     const planned = await planUnits(repo, waves, binary, work, {
-      ...options, env, dependents: settings.terragrunt?.dependents, preview,
+      ...options, env, drift, dependents: drift ? "follow" : settings.terragrunt?.dependents, preview,
       selection: (u) => reasons.get(u) ?? everyUnit,
     }, log);
     const { inputs, plans, redacted, mockReads } = planned;
     for (const u of planned.waiting) {
+      if (drift) {
+        // A refresh needs the upstream's real outputs; with none, the unit cannot be checked.
+        const error = "its upstream has no outputs yet, so Terragrunt would plan it on mock_outputs";
+        inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+        continue;
+      }
       const after = [...new Set(mockReads.filter((r) => r.unit === u).map((r) => r.upstream))].sort();
       deferred.push({ unit: u, after, why: "would read mock_outputs", previewed: settings.terragrunt?.dependents === "plan" });
     }
@@ -444,9 +472,11 @@ async function runTerragruntStage(
     const real = new Set(inputs.filter((r) => !r.terragrunt?.provisional).map((r) => r.path));
     return await finish(repo, settings, options, env, log, {
       binary, started, inputs, plans, redacted, all: all.length ? all : plannedPaths, roots: plannedPaths, observer, mockReads,
+      ...(drift ? { stage: "tf-drift" as const, names: planned.names } : {}),
       deferred: deferred.sort((a, b) => (a.unit < b.unit ? -1 : 1)),
       ...(existsSync(join(repo, "root.hcl")) ? { configDirs: ["."] } : {}),
-      waves: waves.map((w) => w.filter((u) => real.has(u))).filter((w) => w.length > 0).map((roots, i) => ({ number: i + 1, roots })),
+      // Drift is not applied, so there are no waves to gate.
+      waves: drift ? [] : waves.map((w) => w.filter((u) => real.has(u))).filter((w) => w.length > 0).map((roots, i) => ({ number: i + 1, roots })),
     });
   } finally {
     rmSync(work, { recursive: true, force: true });

@@ -416,6 +416,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     "--forge", forge,
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
     "--report-url", reportUrl(forge),
+    ...(report.terragrunt ? ["--terragrunt"] : []),
     ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
     ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
@@ -424,6 +425,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     "set -uo pipefail",
     // The stage keeps the issue itself; the forge calls here are only for the OIDC token.
     ...(oidc ? [forgeApi(forge), oidcScript(forge, oidc.plan_role, "terragucci-drift", oidc.audience)] : []),
+    ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
   ].join("\n");
 }
@@ -457,8 +459,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(input.reports ? { reports: input.reports } : {}),
     ...(tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n") } } : {}),
   };
-  // Drift plans Terraform and OpenTofu roots; a Terragrunt repo gets no drift job yet.
-  const drift = tg ? undefined : input.drift;
+  const drift = input.drift;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError(tg ? "there are no Terragrunt units to run" : "there are no roots to run");
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env, ...(headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {}) };
@@ -527,6 +528,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         variables: gitlabEnv,
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "schedule"' })],
         ...idTokens,
+        ...(tg ? forgeCache("gitlab") : {}),
         script: script(bash("DRIFT", driftScript(binary, layers, forge, oidc, report))),
         artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`] },
       } as never) as never);
@@ -643,7 +645,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_SHA: "${{ github.sha }}",
       },
       steps: [
-        ...steps(new Step({ name: "Plan every root against what exists, and keep the drift issue", shell: "bash", run: driftScript(binary, layers, forge, oidc, report) })),
+        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report) }), true),
         new Step({
           name: "Keep the drift report",
           if: "always()",

@@ -35,7 +35,7 @@ Each project has at most one open drift issue, titled `terragucci: drift found`:
 | no drift in any root | closes, with a comment naming the commit |
 | no drift, but a root could not be planned | stays as it is, since that root is unknown |
 
-`tf-drift` plans Terraform and OpenTofu roots, and refuses a Terragrunt repo. A root that cannot be refreshed fails the job. Drift alone does not. The job never applies; correct drift with a pull request, or by applying the code as it is.
+`tf-drift` plans Terraform and OpenTofu roots. In a Terragrunt repo it runs one refresh-only `terragrunt run --all` per wave over every unit, and reports drift by unit. A root that cannot be refreshed fails the job. Drift alone does not. The job never applies; correct drift with a pull request, or by applying the code as it is.
 
 The job needs a token that can write issues. On GitHub and Forgejo the job's own token does, with `issues: write` in the generated workflow. On GitLab, `token_env` names a variable holding a token with the `api` scope, and the schedule itself is set under CI/CD > Schedules with the cron from `terragucci.yml`, since GitLab keeps schedules outside the pipeline file. The job takes the plan job's read-only role when `oidc` is set. `workflow_dispatch` also runs it on GitHub and Forgejo, for a drift check on demand.
 
