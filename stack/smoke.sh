@@ -36,7 +36,13 @@ zero-config|with no terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
 traces|each plan run is one trace, with a span per root and the binary spans inside it|
-metrics|the metrics of a plan run reach Prometheus with the counts in its report|'
+metrics|the metrics of a plan run reach Prometheus with the counts in its report|
+respond-refused|a refused wave names each root whose plan moved and the attributes that moved|
+respond-triage|a failed apply is triaged from the known-error table|
+respond-drift|drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged|
+respond-tips|each tip becomes its own small pull request|
+respond-fmt|fmt on request commits to the pull request branch and nowhere else|
+respond-notes|release notes come from the conventional commits that touched the module|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -679,6 +685,231 @@ claim_rollout() {
   rm -rf "$work"
   [ $rc = 0 ] && grep -q ": complete" <<<"$out" || { log "after three waves the rollout is not complete (exit $rc)"; return 1; }
   log "0.2.0 found from its tag; three waves, one pull request each moving only its root, each opened only after the last applied"
+}
+
+# ── responses to pipeline events ──────────────────────────────────────────
+# `terragucci respond <event>` runs in the tofu CI image on the stack's
+# network, with the bundle built from this tree, against floci and a scratch
+# Forgejo repo per claim. Nothing here needs the example booted.
+
+STAMP="$(date +%s)"
+
+# A new, empty Forgejo repo under the admin user; returns 1 if it never settles.
+fresh_repo() { # name
+  local repo="$USER/$1" i
+  answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
+  settle() { for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; echo "$1 never answered $2" >&2; return 1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
+  settle "repos/$repo" 404 || return 1
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "{\"name\":\"$1\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" "$URL/api/v1/user/repos"
+  settle "repos/$repo" 200
+}
+
+# Run a command in the tofu CI image, in DIR, with terragucci built from this tree.
+in_image() { # dir, command...
+  local dir="$1" image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
+  image="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
+  [ -f "$bundle" ] || (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  docker run --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" "$@"
+}
+
+# A tree with one root and a terragucci.yml that names the scratch repo, its
+# origin the repo as the stack's network reaches it. Leaves it in $1/tree.
+respond_tree() { # work, repo, main.tf
+  local tree="$1/tree"
+  mkdir -p "$tree/app"
+  printf '%s\n' "$3" > "$tree/app/main.tf"
+  cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$tree/app/"
+  printf 'binary: tofu\nforge: forgejo\nurl: http://forgejo:3000/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' "$2" > "$tree/terragucci.yml"
+  git -C "$tree" init -q -b main
+  git -C "$tree" remote add origin "http://$USER:$TOKEN@forgejo:3000/$2.git"
+}
+
+respond_root() { # state key, body
+  printf 'terraform {\n  required_providers {\n    aws = {\n      source  = "hashicorp/aws"\n      version = "6.67.0"\n    }\n  }\n\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "%s"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nprovider "aws" {\n  region            = "us-east-1"\n  s3_use_path_style = true\n}\n\n%s' "$1" "$2"
+}
+
+sqs() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: AmazonSQS.$1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
+
+open_pr() { # repo, branch -> the open pull request's number, or nothing
+  api "$URL/api/v1/repos/$1/pulls?state=open&limit=50" | jq -r --arg b "$2" '.[] | select(.head.ref == $b) | .number' | head -1
+}
+
+pr_files() { # repo, number
+  api "$URL/api/v1/repos/$1/pulls/$2/files" | jq -r '[.[].filename] | sort | join(",")'
+}
+
+claim_respond_refused() {
+  # Plan the example, then plan it again with the replace scenario. The
+  # wave-refused response must name envs/prod/search alone, and hash_key as
+  # what moved in it. BREAK: the second plan has no change, so nothing moved.
+  log() { echo "[smoke respond-refused] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work out patches=(replace)
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  [ -n "${BREAK:-}" ] && patches=()
+  mkdir -p "$work/approved" "$work/current"
+  report_run "$work/approved" || true
+  report_run "$work/current" "${patches[@]}" || true
+  out="$(cd "$work/current" && "$TERRAGUCCI" respond wave-refused --approved "$work/approved/terragucci-report" --current terragucci-report --json)" || { rm -rf "$work"; return 1; }
+  rm -rf "$work" 2>/dev/null || true
+  jq -r .results.text <<<"$out" >&2
+  [ "$(jq -c '[.results.data.roots[].root]' <<<"$out")" = '["envs/prod/search"]' ] || { log "expected envs/prod/search alone to have moved"; return 1; }
+  jq -e '[.results.data.roots[0].changes[].attributes[]] | index("hash_key")' <<<"$out" >/dev/null || { log "hash_key is not named"; return 1; }
+  log "envs/prod/search moved, and hash_key with it"
+}
+
+claim_respond_triage() {
+  # An apply that meets a state lock someone else holds fails, and the triage
+  # names it as a state lock with its fix. BREAK: no lock, so the apply passes
+  # and there is nothing to triage.
+  log() { echo "[smoke respond-triage] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work key="respond/triage-$STAMP.tfstate" out
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  mkdir -p "$work/app"
+  respond_root "$key" 'resource "terraform_data" "mark" {}' > "$work/app/main.tf"
+  cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$work/app/"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
+  [ -z "${BREAK:-}" ] && curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' \
+    -d "{\"ID\":\"smoke-$STAMP\",\"Operation\":\"OperationTypeApply\",\"Info\":\"\",\"Who\":\"smoke@stack\",\"Version\":\"1.12.0\",\"Created\":\"2026-01-01T00:00:00Z\",\"Path\":\"shop-terraform-state/$key\"}" \
+    "$FLOCI/shop-terraform-state/$key.tflock"
+  in_image "$work" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color -lock-timeout=0s' > "$work/apply.log" 2>&1 || true
+  tail -20 "$work/apply.log" >&2
+  out="$(in_image "$work" terragucci respond apply-failed --log apply.log --json)" || { rm -rf "$work" 2>/dev/null; return 1; }
+  rm -rf "$work" 2>/dev/null || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key.tflock" || true
+  jq -r .results.text <<<"$out" >&2
+  [ "$(jq -r '.results.data.known[0].class // empty' <<<"$out")" = state-lock ] || { log "the failure was not triaged as a state lock"; return 1; }
+  log "the failed apply was triaged as a state lock, with its fix"
+}
+
+claim_respond_drift() {
+  # A root with a literal visibility timeout is applied; then the queue's
+  # timeout is changed in floci, and another queue is made there by hand. The
+  # drift response must open one pull request that writes the live timeout
+  # into main.tf and adds an import block and generated config for the other
+  # queue. BREAK: no drift and no import, so no pull request opens.
+  log() { echo "[smoke respond-drift] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/respond-drift" queue="tg-drift-$STAMP" extra="tg-drift-$STAMP-extra" url xurl out pr files args=()
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  fresh_repo respond-drift || return 1
+  respond_tree "$work" "$repo" "$(respond_root "respond/drift-$STAMP.tfstate" "resource \"aws_sqs_queue\" \"jobs\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+}")"
+  push_tree "$work/tree" "$repo" main "a queue with a literal timeout" >/dev/null || return 1
+  in_image "$work/tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r .QueueUrl)"
+    sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null
+    xurl="$(sqs CreateQueue "{\"QueueName\":\"$extra\"}" | jq -r .QueueUrl)"
+    args=(--import "aws_sqs_queue.extra=$xurl")
+  fi
+  out="$(in_image "$work/tree" terragucci respond drift --root app --mode apply "${args[@]}" 2>&1)" || { echo "$out" >&2; rm -rf "$work" 2>/dev/null; return 1; }
+  echo "$out" >&2
+  rm -rf "$work" 2>/dev/null || true
+  pr="$(open_pr "$repo" terragucci/drift)"
+  [ -n "$pr" ] || { log "no drift pull request"; return 1; }
+  files="$(pr_files "$repo" "$pr")"
+  [ "$files" = "app/main.tf,app/terragucci_generated.tf,app/terragucci_imports.tf" ] || { log "the pull request changes $files"; return 1; }
+  api "$URL/api/v1/repos/$repo/raw/app/main.tf?ref=terragucci%2Fdrift" | grep -q 'visibility_timeout_seconds = 45' || { log "main.tf on the branch does not hold the live timeout"; return 1; }
+  api "$URL/api/v1/repos/$repo/raw/app/terragucci_generated.tf?ref=terragucci%2Fdrift" | grep -q "$extra" || { log "the generated config does not name $extra"; return 1; }
+  log "pull request $pr writes the live timeout and imports $extra"
+}
+
+claim_respond_tips() {
+  # Two roots: dev takes the AWS provider by a range, prod has no lock file,
+  # and the config names no canary. The tips response must open three pull
+  # requests, one per tip, each changing only its own files. BREAK: the repo
+  # follows every tip already, so nothing opens.
+  log() { echo "[smoke respond-tips] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/respond-tips" tree out pr branch want rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  fresh_repo respond-tips || return 1
+  respond_tree "$work" "$repo" ""
+  tree="$work/tree"
+  rm -rf "$tree/app"
+  mkdir -p "$tree/envs/dev/app" "$tree/envs/prod/app"
+  respond_root "respond/tips-dev.tfstate" "" | sed 's/version = "6.67.0"/version = "~> 6.0"/' > "$tree/envs/dev/app/main.tf"
+  cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$tree/envs/dev/app/"
+  respond_root "respond/tips-prod.tfstate" "" > "$tree/envs/prod/app/main.tf"
+  if [ -n "${BREAK:-}" ]; then
+    respond_root "respond/tips-dev.tfstate" "" > "$tree/envs/dev/app/main.tf"
+    cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$tree/envs/prod/app/"
+    printf 'waves:\n  canary: ["envs/dev/*"]\n' >> "$tree/terragucci.yml"
+  fi
+  push_tree "$tree" "$repo" main "two roots" >/dev/null || return 1
+  out="$(in_image "$tree" terragucci respond tips --mode apply --platform linux_amd64,linux_arm64 2>&1)" || { echo "$out" >&2; rm -rf "$work" 2>/dev/null; return 1; }
+  echo "$out" >&2
+  rm -rf "$work" 2>/dev/null || true
+  for want in "terragucci/tip/pin-hashicorp-aws|envs/dev/app/main.tf" "terragucci/tip/lock-files|envs/prod/app/.terraform.lock.hcl" "terragucci/tip/canary|terragucci.yml"; do
+    branch="${want%%|*}"
+    pr="$(open_pr "$repo" "$branch")"
+    [ -n "$pr" ] || { log "no pull request from $branch"; rc=1; continue; }
+    [ "$(pr_files "$repo" "$pr")" = "${want#*|}" ] || { log "$branch changes $(pr_files "$repo" "$pr"), not ${want#*|}"; rc=1; }
+  done
+  [ $rc = 0 ] && log "three tips, three pull requests, each changing only its own file"
+  return $rc
+}
+
+claim_respond_fmt() {
+  # A pull request's branch carries an unformatted file. fmt on request must
+  # push one commit to that branch, formatting it, and leave main alone.
+  # BREAK: a dry run, which commits nothing.
+  log() { echo "[smoke respond-fmt] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/respond-fmt" main_sha head subject mode=apply out
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  fresh_repo respond-fmt || return 1
+  respond_tree "$work" "$repo" "$(respond_root "respond/fmt.tfstate" "")"
+  main_sha="$(push_tree "$work/tree" "$repo" main "formatted")" || return 1
+  printf 'locals {\n    team   = "orders"\n  owner = "shop"\n}\n' > "$work/tree/app/locals.tf"
+  push_tree "$work/tree" "$repo" smoke-fmt "unformatted" >/dev/null || return 1
+  [ -n "${BREAK:-}" ] && mode=dry-run
+  out="$(in_image "$work/tree" terragucci respond fmt --branch smoke-fmt --mode "$mode" 2>&1)" || { echo "$out" >&2; rm -rf "$work" 2>/dev/null; return 1; }
+  echo "$out" >&2
+  rm -rf "$work" 2>/dev/null || true
+  subject="$(api "$URL/api/v1/repos/$repo/branches/smoke-fmt" | jq -r '.commit.message' | head -1)"
+  [ "$subject" = "style: tofu fmt" ] || { log "the branch's last commit is '$subject'"; return 1; }
+  api "$URL/api/v1/repos/$repo/raw/app/locals.tf?ref=smoke-fmt" | grep -q '^  team  = "orders"$' || { log "locals.tf is not formatted on the branch"; return 1; }
+  head="$(api "$URL/api/v1/repos/$repo/branches/main" | jq -r .commit.id)"
+  [ "$head" = "$main_sha" ] || { log "main moved"; return 1; }
+  log "one fmt commit on smoke-fmt; main untouched"
+}
+
+claim_respond_notes() {
+  # A module released twice; the notes for the second release come from its
+  # conventional commits, breaking change first. BREAK: the commits do not
+  # follow the convention, so nothing is marked breaking.
+  log() { echo "[smoke respond-notes] $*" >&2; }
+  local work out c=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false) feat="feat(net)!: rename the queue output" fix="fix(net): tag the queue"
+  [ -n "${BREAK:-}" ] && { feat="rename the queue output"; fix="tag the queue"; }
+  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  mkdir -p "$work/modules/net"
+  ( cd "$work" && git init -q -b main && echo '# net' > modules/net/main.tf && git add -A && "${c[@]}" commit -qm "feat: the net module" \
+    && git tag modules/net/v0.1.0 && echo '# tags' >> modules/net/main.tf && "${c[@]}" commit -qam "$fix" \
+    && echo '# output' >> modules/net/main.tf && "${c[@]}" commit -qam "$feat" && git tag modules/net/v1.0.0 ) || { rm -rf "$work"; return 1; }
+  out="$(cd "$work" && "$TERRAGUCCI" respond publish --json)" || { rm -rf "$work"; return 1; }
+  rm -rf "$work"
+  jq -r .results.text <<<"$out" >&2
+  jq -e '.results.data[0] | .version == "1.0.0" and .previous == "0.1.0" and (.notes | test("### Breaking changes\n\n- net: rename the queue output")) and (.notes | test("### Fixes"))' <<<"$out" >/dev/null \
+    || { log "the 1.0.0 notes do not lead with the breaking change and list the fix"; return 1; }
+  log "1.0.0's notes name the breaking change and the fix"
 }
 
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail

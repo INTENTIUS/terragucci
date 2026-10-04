@@ -18,6 +18,7 @@ terragucci is being built. The rest of this site describes it finished, so this 
 | CI images | one per toolchain (OpenTofu, Terraform, Terragrunt), built and checked on amd64 and arm64; not yet published, so `init` pins them by tag until they are |
 | `terragucci stage tf-plan` | plans every root and writes the plan report: JSON, HTML, the pull-request note and GitLab's counts, with each root's full plan beside it, sensitive values redacted; with `reports.bucket`, copies it to the bucket and updates the index. The generated pipeline's plan job runs it on every pull request, posts its note and keeps it as the job's artifact |
 | Traces and metrics | with an OTLP endpoint set, `tf-plan` sends one trace per run, with a span per wave, root and binary run, and OpenTofu's own spans inside it; and its metrics, read from the report |
+| `terragucci respond` | the default response to each pipeline event: the refused-wave diff, apply-failure triage, drift codified as a pull request with import blocks, one pull request per tip, `fmt` on a pull request's branch, and module release notes; `respond` in the config picks each one, and `agent` is checked but no generated job runs an agent yet |
 | `terragucci.yml` and `terragucci reconcile` | one config for one repo or many; from a control repo, a pull request in each project that changes |
 | The local validation stack | floci with Forgejo, GitHub (`act` and a mock API) or GitLab, each with its claims on the [validation page](/terragucci/reference/validation/); a fountain setup is declared but not yet checked |
 

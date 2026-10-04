@@ -54,6 +54,25 @@ export interface TerragruntSettings {
   credentials?: Record<string, RolePair>;
 }
 
+/**
+ * Pipeline events and the responses each takes. The first mode is the
+ * default and needs no model; `agent` adds an agent's comment or proposal on
+ * top of the deterministic response, and is never the default.
+ */
+export const RESPONSES = {
+  plan: ["summary", "agent"],
+  "wave-refused": ["diff", "off"],
+  "apply-failed": ["triage", "agent", "off"],
+  drift: ["pull-request", "agent", "off"],
+  tips: ["pull-request", "off"],
+  fmt: ["commit", "off"],
+  publish: ["notes", "agent", "off"],
+  rollout: ["next-wave", "off"],
+  question: ["off", "agent"],
+} as const;
+export type RespondEvent = keyof typeof RESPONSES;
+export const AGENT_VIA = ["forge", "fountain"] as const;
+
 /** The settings one project (or one repo) can carry. Every key is optional. */
 export interface ProjectSettings {
   /** Globs of root directories. Detected when absent. */
@@ -89,12 +108,24 @@ export interface ProjectSettings {
   owned?: boolean;
   /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
   terragrunt?: TerragruntSettings;
+  /** The response to each pipeline event; see RESPONSES. */
+  respond?: Partial<Record<RespondEvent, string>>;
+  /**
+   * Where an agent response runs, for any event set to `agent`. Its token can
+   * comment and open pull requests; its role, when named, is read-only.
+   */
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string };
 }
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
 export interface TerragucciConfig extends ProjectSettings {
   defaults?: ProjectSettings;
   projects?: Record<string, ProjectSettings>;
+}
+
+/** The response a project takes to an event: its setting, or the event's default. */
+export function responseTo(settings: ProjectSettings, event: RespondEvent): string {
+  return settings.respond?.[event] ?? RESPONSES[event][0];
 }
 
 /** Settings with terragucci's defaults filled in. Detection fills `roots`, `binary` and `forge` later. */
@@ -139,7 +170,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "tips", "modules", "owned", "oidc", "terragrunt",
+  "reports", "token_env", "env", "tips", "modules", "owned", "oidc", "terragrunt", "respond", "agent",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -211,6 +242,27 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
+  if (s.respond !== undefined) {
+    if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
+    else {
+      for (const [event, mode] of Object.entries(s.respond)) {
+        const modes = (RESPONSES as Record<string, readonly string[]>)[event];
+        if (!modes) problems.push(`${where}.respond.${event} is not an event (events: ${Object.keys(RESPONSES).join(", ")})`);
+        else oneOf(mode, modes, `${where}.respond.${event}`, problems);
+      }
+    }
+  }
+  if (s.agent !== undefined) {
+    const a = s.agent;
+    if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
+    else {
+      for (const k of Object.keys(a)) if (!["via", "token_env", "role"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, role)`);
+      if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge or fountain`);
+      else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
+      if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
+      if (a.role !== undefined && typeof a.role !== "string") problems.push(`${where}.agent.role must name a read-only role`);
+    }
+  }
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
     else {
@@ -266,6 +318,21 @@ function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
         problems.push(`${at} uses one role for plan and apply; plan runs pull-request code, so give it a read-only role of its own`);
       }
     }
+/**
+ * An `agent` response needs somewhere to run, and the agent never holds the
+ * apply role: at most a forge token and read-only cloud credentials.
+ */
+function checkAgent(s: Record<string, unknown>, where: string, problems: string[]): void {
+  const respond = isObject(s.respond) ? s.respond : {};
+  const agent = isObject(s.agent) ? s.agent : undefined;
+  for (const [event, mode] of Object.entries(respond)) {
+    if (mode === "agent" && !agent) {
+      problems.push(`${where}.respond.${event} is agent, but no agent integration is configured; add agent with via (forge or fountain) and token_env (the variable holding the agent's forge token)`);
+    }
+  }
+  const oidc = isObject(s.oidc) ? s.oidc : {};
+  if (agent?.role !== undefined && agent.role === oidc.apply_role) {
+    problems.push(`${where}.agent.role is the apply role; an agent gets read-only credentials at most, so name the plan role or a read-only role of its own`);
   }
 }
 
@@ -295,6 +362,10 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   }
   if (defaults !== undefined) checkSettings(defaults, "defaults", problems);
   if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
+  const d = isObject(defaults) ? defaults : {};
+  if (isObject(projects)) {
+    for (const [key, s] of Object.entries(projects)) checkAgent({ ...d, ...(isObject(s) ? s : {}) }, `projects["${key}"]`, problems);
+  } else checkAgent(rest, "config", problems);
   if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
   // JSON's view: an undefined property is the same as an absent one.
   return JSON.parse(JSON.stringify(raw)) as TerragucciConfig;
@@ -432,6 +503,7 @@ function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings 
   const out: ResolvedSettings = { ...base, ...settings, env: { ...base.env, ...(settings.env ?? {}) } };
   if (settings.oidc) out.oidc = { ...base.oidc, ...settings.oidc };
   if (base.terragrunt || settings.terragrunt) out.terragrunt = { ...base.terragrunt, ...settings.terragrunt };
+  if (base.respond || settings.respond) out.respond = { ...base.respond, ...settings.respond };
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
   return out;
 }

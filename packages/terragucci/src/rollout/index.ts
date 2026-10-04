@@ -165,7 +165,7 @@ function pusher(dir: string, token?: string): Project["push"] {
 }
 
 /** The forge API target for a remote URL: its host's origin and its path. */
-function targetOfRemote(remote: string): { origin: string; path: string; host: string } | undefined {
+export function targetOfRemote(remote: string): { origin: string; path: string; host: string } | undefined {
   const host = hostOfRemote(remote);
   if (!host) return undefined;
   const http = /^(https?):\/\/(?:[^@/]+@)?[^/]+\/(.+?)(?:\.git)?\/?$/.exec(remote);
