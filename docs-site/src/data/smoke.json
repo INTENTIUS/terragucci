@@ -100,6 +100,55 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught"
+    },
+    {
+      "claim": "tg-zero-config",
+      "says": "init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-waves",
+      "says": "the Terragrunt example boots, applying the canary wave before the rest with one run --all each",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-check",
+      "says": "tf-check fails an unformatted Terragrunt file and names it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-affected",
+      "says": "only the units a change reaches are planned, including a file a module reads that Terragrunt misses",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-mock-lint",
+      "says": "a dependency whose mock_outputs can stand in for apply is named by a tip",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-refuse",
+      "says": "a unit whose plan would read mock_outputs is not planned; it waits for its upstream to apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-mock-trap",
+      "says": "a new upstream and its dependent merge together and apply in order, so no mock reaches real state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     }
   ]
 }
