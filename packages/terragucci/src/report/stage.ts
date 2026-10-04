@@ -15,6 +15,8 @@ import { applyLayers, detectBinary, findRoots, globMatch } from "../detect";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { redactPlan } from "./redact";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
+import { StageObserver } from "./observe";
+import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportRun } from "./schema";
 import { uploadReport, writeReportDir, type Uploaded } from "./store";
 
@@ -42,6 +44,8 @@ export interface StageOptions {
   canary?: string[];
   env?: NodeJS.ProcessEnv;
   fetch?: S3Fetch;
+  /** Where traces and metrics go. Default: Node's fetch. */
+  otlpFetch?: OtlpFetch;
 }
 
 /** `a,b;c` as layers: commas inside a layer, semicolons between. */
@@ -143,6 +147,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, all).value;
   const planner = plannerForBinary(binary);
   const started = new Date().toISOString();
+  const observer = new StageObserver(telemetryFromEnv(env), stage, env);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
 
   const inputs: RootInput[] = [];
@@ -152,35 +157,41 @@ export async function runStage(stage: string, repo: string, options: StageOption
     for (const root of roots) {
       const dir = join(repo, root);
       const planFile = join(work, `${inputs.length}.tfplan`);
-      const run = (...args: string[]) => spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", maxBuffer: 512 * 1024 * 1024, env });
-      const init = run("init", "-input=false", "-no-color");
-      if (init.status !== 0) {
-        inputs.push({ path: root, planner, error: `init failed:\n${tail(init.stderr || init.stdout)}`, preventDestroy: new Set() });
-        log(`${root}: init failed`);
-        continue;
-      }
-      // A plan never writes state, so it takes no lock and never blocks an apply.
-      const p = run("plan", "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
-      if (p.status !== 0 || !existsSync(planFile)) {
-        inputs.push({ path: root, planner, error: `plan failed:\n${tail(p.stderr || p.stdout)}`, preventDestroy: new Set() });
-        log(`${root}: plan failed`);
-        continue;
-      }
-      const json = run("show", "-json", planFile);
-      const text = run("show", "-no-color", planFile);
-      let plan: unknown;
+      const timing = observer.root(root);
+      const run = (...args: string[]) =>
+        observer.command(timing, binary, args, env, (e) => spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", maxBuffer: 512 * 1024 * 1024, env: e }));
       try {
-        plan = JSON.parse(json.stdout);
-      } catch {
-        inputs.push({ path: root, planner, error: `show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, preventDestroy: new Set() });
-        log(`${root}: show -json failed`);
-        continue;
+        const init = run("init", "-input=false", "-no-color");
+        if (init.status !== 0) {
+          inputs.push({ path: root, planner, error: `init failed:\n${tail(init.stderr || init.stdout)}`, preventDestroy: new Set() });
+          log(`${root}: init failed`);
+          continue;
+        }
+        // A plan never writes state, so it takes no lock and never blocks an apply.
+        const p = run("plan", "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
+        if (p.status !== 0 || !existsSync(planFile)) {
+          inputs.push({ path: root, planner, error: `plan failed:\n${tail(p.stderr || p.stdout)}`, preventDestroy: new Set() });
+          log(`${root}: plan failed`);
+          continue;
+        }
+        const json = run("show", "-json", planFile);
+        const text = run("show", "-no-color", planFile);
+        let plan: unknown;
+        try {
+          plan = JSON.parse(json.stdout);
+        } catch {
+          inputs.push({ path: root, planner, error: `show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, preventDestroy: new Set() });
+          log(`${root}: show -json failed`);
+          continue;
+        }
+        const safe = redactPlan(plan);
+        redacted += safe.values;
+        plans.set(root, { text: text.stdout, json: JSON.stringify(safe.plan, null, 2) + "\n" });
+        inputs.push({ path: root, plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) });
+        log(`${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
+      } finally {
+        observer.endRoot(timing);
       }
-      const safe = redactPlan(plan);
-      redacted += safe.values;
-      plans.set(root, { text: text.stdout, json: JSON.stringify(safe.plan, null, 2) + "\n" });
-      inputs.push({ path: root, plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) });
-      log(`${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
     }
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -210,6 +221,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const s3 = new S3Client(s3FromEnv(reports, env), options.fetch);
     uploaded = await uploadReport(s3, dir, report, reports.prefix);
   }
+  await observer.finish(report, env, log, options.otlpFetch);
   return { report, dir, ...(uploaded ? { uploaded } : {}), failed: report.roots.some((r) => r.status === "failed") };
 }
 

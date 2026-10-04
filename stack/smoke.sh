@@ -34,7 +34,9 @@ publish|changed modules are published at a new version|
 tips|tips are on by default and name their rule|terragucci#10
 zero-config|with no terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
-reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|'
+reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|
+traces|each plan run is one trace, with a span per root and the binary spans inside it|
+metrics|the metrics of a plan run reach Prometheus with the counts in its report|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -297,7 +299,11 @@ report_run() {
   git -C "$work" remote add origin "http://forgejo:3000/$USER/example.git"
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost commit -qm "smoke report $(date +%s%N)"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  # REPORT_ENV: extra KEY=VALUE pairs for the stage, space-separated.
+  local extra=() kv
+  for kv in ${REPORT_ENV:-}; do extra+=(-e "$kv"); done
   docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    ${extra[@]+"${extra[@]}"} \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -353,6 +359,90 @@ claim_report() {
   rm -rf "$work"
   [ $rc = 0 ] || return 1
   log "two runs, each root linked to its plan, both in $REPORT_BUCKET/$prefix/index.json"
+}
+
+# ── traces and metrics ────────────────────────────────────────────────────
+# A plan run sends OTLP to the observability profile's collector on the
+# stack's network. Needs the example booted and `just stack-up observability`.
+
+OTLP_ENDPOINT=http://otel-collector:4318
+PROMETHEUS="http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}"
+
+collector_up() {
+  curl -fsS -o /dev/null "http://localhost:${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}/" \
+    || { echo "no collector; run 'just stack-up observability' first" >&2; return 1; }
+}
+
+claim_traces() {
+  # One plan run. Its trace is found by the commit on the stage span; it must
+  # hold one root span per root in the report, and OpenTofu's own spans (sent
+  # under its own service name) must carry the same trace id, which they do
+  # only when TRACEPARENT reached the binary.
+  log() { echo "[smoke traces] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  collector_up || return 1
+  local work rc=0 commit trace roots spans binary env="OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  # BREAK: traces off, for terragucci and the binary alike.
+  [ -n "${BREAK:-}" ] && env="$env OTEL_TRACES_EXPORTER=none"
+  mkdir -p "$work/run"
+  REPORT_ENV="$env" report_run "$work/run" module-bump || true
+  commit="$(git -C "$work/run" rev-parse HEAD)"
+  roots="$(jq '.roots | length' "$work/run/terragucci-report/report.json" 2>/dev/null || echo 0)"
+  sleep 3   # the file exporter writes on its own schedule
+  docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$work/traces.jsonl" || true
+  trace="$(jq -rs --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
+    | select(.name == "terragucci tf-plan" and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$work/traces.jsonl" 2>/dev/null)"
+  if [ -z "$trace" ]; then
+    log "no trace for commit $commit"; rc=1
+  else
+    spans="$(jq -s --arg t "$trace" '[.[].resourceSpans[].scopeSpans[].spans[] | select(.traceId == $t and (.name | startswith("root ")))] | length' "$work/traces.jsonl")"
+    binary="$(jq -s --arg t "$trace" '[.[].resourceSpans[]
+      | select(any(.resource.attributes[]?; .key == "service.name" and .value.stringValue == "terragucci") | not)
+      | .scopeSpans[].spans[] | select(.traceId == $t)] | length' "$work/traces.jsonl")"
+    [ "$spans" = "$roots" ] && [ "$roots" -ge 15 ] || { log "trace $trace has $spans root spans for $roots roots"; rc=1; }
+    [ "$binary" -gt 0 ] || { log "no span from the binary carries trace $trace"; rc=1; }
+  fi
+  rm -rf "$work"
+  [ $rc = 0 ] || return 1
+  log "trace $trace: $spans root spans for $roots roots, and $binary spans from the binary inside it"
+}
+
+claim_metrics() {
+  # One plan run. Prometheus, scraping the collector, must hold the run's
+  # metrics (found by the commit, a resource attribute the collector copies
+  # onto each series) with the report's root count and change totals.
+  log() { echo "[smoke metrics] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  collector_up || return 1
+  local work rc=1 commit report i q want got action env="OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  # BREAK: metrics off, so nothing reaches Prometheus.
+  [ -n "${BREAK:-}" ] && env="$env OTEL_METRICS_EXPORTER=none"
+  mkdir -p "$work/run"
+  REPORT_ENV="$env" report_run "$work/run" module-bump destroy || true
+  commit="$(git -C "$work/run" rev-parse HEAD)"
+  report="$work/run/terragucci-report/report.json"
+  [ -f "$report" ] || { log "the run wrote no report"; rm -rf "$work"; return 1; }
+  value() { curl -fsS -G "$PROMETHEUS/api/v1/query" --data-urlencode "query=$1" | jq -r '.data.result[0].value[1] // empty'; }
+  for i in $(seq 1 12); do   # Prometheus scrapes every 5s
+    rc=0
+    want="$(jq '.roots | length' "$report")"
+    got="$(value "terragucci_roots_planned{vcs_ref_head_revision=\"$commit\"}")"
+    [ "$got" = "$want" ] || { rc=1; q="roots_planned: $got, want $want"; }
+    for action in create update replace delete; do
+      want="$(jq --arg a "$action" '.totals[$a] // 0' "$report")"
+      got="$(value "terragucci_plan_changes{vcs_ref_head_revision=\"$commit\",action=\"$action\"}")"
+      [ "$got" = "$want" ] || { rc=1; q="plan_changes $action: $got, want $want"; }
+    done
+    [ $rc = 0 ] && break
+    sleep 5
+  done
+  rm -rf "$work"
+  [ $rc = 0 ] || { log "Prometheus does not hold the run's metrics ($q)"; return 1; }
+  log "Prometheus holds commit $commit's roots planned and changes by action, equal to the report"
 }
 
 claim_highlight() {

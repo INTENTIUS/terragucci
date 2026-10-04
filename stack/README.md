@@ -13,6 +13,7 @@ terragucci's stages are not built yet, so the one workflow run here is hand-writ
 | `github` | floci, github-warden's mock GitHub API | declared, not yet validated |
 | `gitlab` | floci, GitLab CE, gitlab-runner | declared, not yet validated |
 | `fountain` | floci, fountain, Postgres, waterpark's sandbox runner | declared, not yet validated |
+| `observability` | an OpenTelemetry collector and Prometheus (`stack/observability/`) | used by the `traces` and `metrics` claims; run it beside `forgejo` |
 
 Declared means the services are in `docker-compose.yml`, readable, with comments on what they still need. `bootstrap.sh` refuses those profiles unless `TERRAGUCCI_UNVALIDATED=1`, and then only starts their containers. No claim runs on them.
 

@@ -28,6 +28,7 @@
 #   gitlab    floci + GitLab CE + gitlab-runner        declared, not yet validated
 #   fountain  floci + fountain + Postgres + runner     declared, not yet validated
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
+#   observability  an OpenTelemetry collector and Prometheus   used by the traces and metrics smoke claims
 name: terragucci
 
 networks:
@@ -51,6 +52,8 @@ volumes:
     name: terragucci-fountain-pgdata
   fountain-sandboxes:
     name: terragucci-fountain-sandboxes
+  otel-out:
+    name: terragucci-otel-out
 
 services:
   # ── aws ──────────────────────────────────────────────────────────────────
@@ -155,6 +158,39 @@ services:
     networks:
       default:
         aliases: [registry]
+
+  # ── observability ────────────────────────────────────────────────────────
+  # Where a stage's traces and metrics go: jobs on this network send OTLP over
+  # HTTP to http://otel-collector:4318. The collector writes traces to a file
+  # in the otel-out volume and serves metrics to Prometheus. Root, so it can
+  # write to the volume, which Docker creates owned by root.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+    container_name: terragucci-otel-collector
+    profiles: [observability]
+    user: "0:0"
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    volumes:
+      - ./observability/collector.yaml:/etc/otelcol/collector.yaml:ro
+      - otel-out:/out
+    ports:
+      - "${TERRAGUCCI_OTLP_PORT:-4328}:4318"
+      - "${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}:13133"
+    networks:
+      default:
+        aliases: [otel-collector]
+
+  prometheus:
+    image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+    container_name: terragucci-prometheus
+    profiles: [observability]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${TERRAGUCCI_PROMETHEUS_PORT:-9190}:9090"
+    networks:
+      default:
+        aliases: [prometheus]
 
   # ── github: declared, not yet validated ──────────────────────────────────
   # GitHub has no self-hostable edition. The plan (terragucci#4) is `act` on the

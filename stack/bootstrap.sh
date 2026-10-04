@@ -5,6 +5,7 @@
 #
 #   stack/bootstrap.sh forgejo        floci + Forgejo + forgejo-runner
 #   stack/bootstrap.sh aws            floci alone
+#   stack/bootstrap.sh observability  an OpenTelemetry collector and Prometheus
 #
 # For forgejo it also mints an admin and an API token, registers the runner
 # and creates the repo the claims push to. Re-running it is safe: the admin is
@@ -81,7 +82,15 @@ case "$PROFILE" in
     "${COMPOSE[@]}" --profile "$PROFILE" up -d >&2
     exit 0
     ;;
-  *) die "unknown profile '$PROFILE' (aws, forgejo, github, gitlab, fountain)" ;;
+  observability)
+    log "starting the observability profile…"
+    "${COMPOSE[@]}" --profile observability up -d >&2
+    wait_http "http://localhost:${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}/" "the collector" 30
+    wait_http "http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}/-/ready" "Prometheus" 30
+    write_env observability "TERRAGUCCI_OTLP_URL=http://localhost:${TERRAGUCCI_OTLP_PORT:-4328}" "TERRAGUCCI_PROMETHEUS_URL=http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}"
+    exit 0
+    ;;
+  *) die "unknown profile '$PROFILE' (aws, forgejo, observability, github, gitlab, fountain)" ;;
 esac
 
 started=$(date +%s)
