@@ -24,14 +24,14 @@ CLAIMS='boot|the example boots and deploys locally|
 check|tf-check fails an unformatted root and names the file|
 affected|only the roots a change touches are planned|chant#3183
 grouped|one note groups many plans|chant#3188
-report|the report is JSON and HTML, and links every root to its full plan|chant#3349
-highlight|destroys and outliers are open, identical groups are folded|chant#3349
+report|the report is JSON and HTML, and links every root to its full plan|terragucci#7
+highlight|destroys and outliers are open, identical groups are folded|terragucci#7
 waves|each wave goes out only once approved|chant#3049
 refuse|a wave whose plans changed after approval applies nothing|chant#3049
-drift|drift is reported by root|chant#3388
-rollout|a module version rolls out one pull request per wave|chant#3352
-publish|changed modules are published at a new version|chant#3353
-tips|tips are on by default and name their rule|chant#3354
+drift|drift is reported by root|terragucci#13
+rollout|a module version rolls out one pull request per wave|terragucci#8
+publish|changed modules are published at a new version|terragucci#9
+tips|tips are on by default and name their rule|terragucci#10
 zero-config|with no terragucci.yml, init writes the same pipeline|
 reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies|'
 

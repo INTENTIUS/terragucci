@@ -1,4 +1,4 @@
-// The released shape (chant#3421): dist/terragucci.mjs alone, copied where no
+// The released shape (terragucci#18): dist/terragucci.mjs alone, copied where no
 // node_modules can be found, does everything the source does.
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, readFileSync, rmSync } from "node:fs";

@@ -34,14 +34,14 @@
     {
       "claim": "report",
       "says": "the report is JSON and HTML, and links every root to its full plan",
-      "needs": "chant#3349",
+      "needs": "terragucci#7",
       "verdict": "pending",
       "break": null
     },
     {
       "claim": "highlight",
       "says": "destroys and outliers are open, identical groups are folded",
-      "needs": "chant#3349",
+      "needs": "terragucci#7",
       "verdict": "pending",
       "break": null
     },
@@ -62,28 +62,28 @@
     {
       "claim": "drift",
       "says": "drift is reported by root",
-      "needs": "chant#3388",
+      "needs": "terragucci#13",
       "verdict": "pending",
       "break": null
     },
     {
       "claim": "rollout",
       "says": "a module version rolls out one pull request per wave",
-      "needs": "chant#3352",
+      "needs": "terragucci#8",
       "verdict": "pending",
       "break": null
     },
     {
       "claim": "publish",
       "says": "changed modules are published at a new version",
-      "needs": "chant#3353",
+      "needs": "terragucci#9",
       "verdict": "pending",
       "break": null
     },
     {
       "claim": "tips",
       "says": "tips are on by default and name their rule",
-      "needs": "chant#3354",
+      "needs": "terragucci#10",
       "verdict": "pending",
       "break": null
     },

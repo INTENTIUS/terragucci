@@ -1,5 +1,5 @@
 /**
- * terragucci's CI images (chant#3422), built and checked on every change and
+ * terragucci's CI images (terragucci#19), built and checked on every change and
  * published on a release tag.
  *
  * `just ci` renders this into .github/workflows/images.yml. The check job

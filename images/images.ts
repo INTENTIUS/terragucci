@@ -1,5 +1,5 @@
 /**
- * terragucci's CI images, one per toolchain (chant#3422), declared rather than
+ * terragucci's CI images, one per toolchain (terragucci#19), declared rather than
  * hand-written. `just ci` renders each into images/Dockerfile.<name>, and
  * `just ci-check` fails when a rendered file differs from this declaration.
  *

@@ -1,4 +1,4 @@
-// The CI images (chant#3422): build them, prove each one works, and hold
+// The CI images (terragucci#19): build them, prove each one works, and hold
 // each to its size budget.
 //   npx tsx scripts/images.ts tags                 print each image's name and reference
 //   npx tsx scripts/images.ts build [--platform p]  build all three for one platform, into the local daemon

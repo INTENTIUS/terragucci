@@ -2,7 +2,7 @@
 // no runtime dependencies, and the config types for a terragucci.ts.
 //   node scripts/build-cli.mjs
 // chant is a build dependency only. The TypeScript folder that a .ts config
-// needs stays external and optional (chant#3421).
+// needs stays external and optional (terragucci#18).
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
