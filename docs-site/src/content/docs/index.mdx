@@ -17,7 +17,7 @@ import Validated from '../../components/Validated.astro';
 
 ## The lifecycle around your roots
 
-Welcome, Terraform and Terragrunt users. terragucci carries a root through review, rollout and the watch that follows, and you write none of the pipeline.
+terragucci carries a root through review, rollout and the watch that follows, and you write none of the pipeline. The stages are built on [chant](https://intentius.io/chant/), which renders each one into a workflow for your forge. Your Terraform code and its state stay yours.
 
 <Lifecycle />
 
@@ -49,19 +49,12 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 
 <Validated />
 
-## Or let your agent do it
+## Three ways in
 
-Paste one prompt into Claude Code, Codex or Cursor, and your agent reads the docs from [`llms.txt`](https://intentius.io/terragucci/llms.txt), writes the config and opens a pull request. It never applies and never approves. [The prompt](/terragucci/getting-started/agents/) is on the agents page.
+| You want to | Start here |
+|---|---|
+| see it work first | [The tutorial](/terragucci/tutorial/) runs a 15-root example on your laptop, with a local forge and an AWS stand-in |
+| use it on your own repo | [Get your first plan note](/terragucci/getting-started/) takes `npm i -D @intentius/terragucci` and `npx terragucci init` to a plan note on a pull request |
+| hand the setup to your agent | paste the prompt at the top of this page into Claude Code, Codex or Cursor; [the agent page](/terragucci/getting-started/agents/) says what it does. It never applies and never approves |
 
-## Start with one file
-
-Most repos need no config at all. Install terragucci and let it read the repo:
-
-```bash
-npm i -D @intentius/terragucci
-npx terragucci init
-```
-
-It writes the pipeline for your forge. For many repos at once, one `terragucci.yml` in a control repo opens a pull request in each.
-
-[Write your config file](/terragucci/getting-started/config/)
+Once it runs, the [how-to guides](/terragucci/guides/add-to-github/) cover the tasks, the [reference](/terragucci/reference/config/) the details, and the [concepts](/terragucci/concepts/waves-and-approvals/) the reasons behind them.

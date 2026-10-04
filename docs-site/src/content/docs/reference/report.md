@@ -15,7 +15,7 @@ To run the stage yourself, from the repo:
 npx terragucci stage tf-plan
 ```
 
-It plans every root, prints the grouped summary, and writes the run's report to `terragucci-report/`:
+It plans every root and prints the grouped summary. It also writes the run's report to `terragucci-report/`:
 
 | File | What it is |
 |---|---|
@@ -27,7 +27,7 @@ It plans every root, prints the grouped summary, and writes the run's report to 
 | `roots/<root>/plan.txt` | the root's full plan, as the binary printed it |
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 
-`--out <dir>` writes it somewhere else. `--report-url <url>` is where the note links the HTML report, when it is not beside the note. `--root <glob>` plans only matching roots. `--layers`, `--binary`, `--canary` and `--bucket` (with `--bucket-endpoint` and `--bucket-prefix`) are how the pipeline passes the roots, binary, canary wave and bucket it was written with; each overrides `terragucci.yml`. A Terragrunt repo's units are planned with one `terragrunt run --all` per wave. `--json` prints one result object instead of the summary. The stage exits 1 when a root refuses to plan, and still writes the report.
+`--out <dir>` writes it somewhere else, and `--root <glob>` plans only matching roots. [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the rest of the flags. A Terragrunt repo's units are planned with one `terragrunt run --all` per wave. The stage exits 1 when a root refuses to plan, and still writes the report.
 
 ## What a reviewer sees
 
@@ -50,7 +50,7 @@ Open and highlighted:
 - the roots whose change differs from every group;
 - changes to types where one wrong value reaches far, each marked with why;
 - anything declared with `prevent_destroy`;
-- inside a group, the attributes that differ from root to root.
+- inside a group, the attributes that differ between roots.
 
 The types that are highlighted, and the reason the report gives:
 
@@ -73,7 +73,7 @@ Folded, one click away:
 
 ## Back to the full plan
 
-Nothing is summarized away. Every root's full plan is kept beside the report, as the binary printed it and as JSON. Every group, root and named change in the HTML links to that plan and to the CI job that produced it. In the plan note, each group links to its place in the report and each destroy to its root, so one click from the pull request lands on the line you were reading about.
+Nothing is summarized away. Every root's full plan is kept beside the report, as the binary printed it and as JSON. Every group, root and named change in the HTML links to that plan and to the CI job that produced it. In the plan note, each group links to its place in the report and each destroy to its root. One click from the pull request lands on the line you were reading about.
 
 The page opens on two lists: every destroy, replacement and refusal, and the outlier roots and highlighted changes to read first. Both fit on the first screen and neither is ever folded.
 
@@ -87,22 +87,7 @@ The HTML report is one file that makes no network calls, so it opens the same wh
 sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '.named[] | select(.action == "delete") | .address'
 ```
 
-| Field | Holds |
-|---|---|
-| `schema` | `terragucci.report/v1`; a minor version only adds fields |
-| `run` | project, commit, base, stage, binary, runtime, start and finish times |
-| `groups[]` | a stable id per normalized change, its roots and the change |
-| `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
-| `waves[]` | number, roots, set digest, approval state and a link to the approval record |
-| `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
-| `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
-| `deferred[]` | Terragrunt units planned after the units they wait for apply, and what each waits for |
-| `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
-| `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
-| `redaction` | the marker that replaced sensitive values, and how many it replaced |
-| `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
-
-The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`.
+[Report JSON schema](/terragucci/reference/report-schema/) lists every field.
 
 Approvals stay on your repo's `chant/lifecycle` branch. The report links to each record and never copies it, so the branch is the one record of who approved what.
 

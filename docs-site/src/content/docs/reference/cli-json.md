@@ -1,9 +1,9 @@
 ---
 title: The CLI's JSON output
-description: The envelope that init, reconcile, plan, stage, rollout and config check print with --json, and the exit codes behind it.
+description: The envelope that init, reconcile, plan, stage, rollout, respond and config check print with --json, and the exit codes behind it.
 ---
 
-`init`, `reconcile`, `plan`, `stage`, `rollout` and `config check` take `--json`. With it, the command prints one JSON object on stdout and nothing else, so a script or an agent can parse the whole output. Text, progress and tool output stay off stdout.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` and `config check` take `--json`. With it, the command prints one JSON object on stdout and nothing else, so a script or an agent can parse the whole output. Text, progress and tool output stay off stdout.
 
 ## The envelope
 
@@ -20,7 +20,7 @@ description: The envelope that init, reconcile, plan, stage, rollout and config 
 | Field | Holds |
 |---|---|
 | `schema` | The envelope version. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout` or `config check`. |
+| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` or `config check`. |
 | `exit` | The process exit code. |
 | `status` | `ok` for 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
 | `results` | What the command found or did, as below. `null` when the command could not run. |
