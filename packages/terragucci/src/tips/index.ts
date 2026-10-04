@@ -25,6 +25,7 @@ import { tf038 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf038"
 import { tf039 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf039";
 import { tf040 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf040";
 import { tf041 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf041";
+import { tf042 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf042";
 import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
 import type { ResolvedSettings } from "../config";
@@ -33,9 +34,9 @@ import type { ReportTip } from "../report/schema";
 /** Chant's checks that become tips, by rule id. */
 export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
   TF002: tf002, TF003: tf003, TF004: tf004, TF005: tf005, TF038: tf038, TF039: tf039, TF040: tf040,
-  // Terragrunt: mocks that can reach apply, unpinned unit sources, local state. A dependency that
-  // always reads its mocks (TF042) is refused at plan instead.
-  TF041: tf041, TF043: tf043, TF044: tf044,
+  // Terragrunt: mocks that can reach apply, a dependency that always reads its mocks, unpinned
+  // unit sources, local state.
+  TF041: tf041, TF042: tf042, TF043: tf043, TF044: tf044,
 };
 
 /** Where chant documents its terraform rules. */

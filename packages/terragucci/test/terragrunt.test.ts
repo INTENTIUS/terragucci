@@ -458,3 +458,20 @@ describe("the Terragrunt example", () => {
     }
   });
 });
+
+describe("TF042 as a tip", () => {
+  const skipUnit = (extra: string): string =>
+    unit().replace(/$/, `dependency "vpc" {\n  config_path  = "../vpc"\n  mock_outputs = { id = "mock" }\n${extra}}\n`);
+
+  it("names a unit whose dependency sets skip_outputs with mock_outputs, and leaves the others", async () => {
+    const { repoTips } = await import("../src/tips");
+    const { loadHclParser } = await import("../src/rollout/parser");
+    const repo = liveRepo({
+      "root.hcl": ROOT_HCL,
+      "live/dev/app/terragrunt.hcl": skipUnit("  skip_outputs = true\n"),
+      "live/prod/app/terragrunt.hcl": skipUnit(""),
+    });
+    const tips = await repoTips(repo, ["live/dev/app", "live/prod/app"], { settings: { gate: "on-destroy", tips: true }, parser: await loadHclParser() });
+    expect(tips.filter((t) => t.rule === "TF042").map((t) => t.root)).toEqual(["live/dev/app"]);
+  });
+});
