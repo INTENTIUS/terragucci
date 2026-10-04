@@ -22,8 +22,8 @@ EXAMPLE="$(cd "$HERE/../example" && pwd)"
 # name|what the site says|issue that builds it (empty: implemented here)
 CLAIMS='boot|the example boots and deploys locally|
 check|tf-check fails an unformatted root and names the file|
-affected|only the roots a change touches are planned|chant#3183
-grouped|one note groups many plans|chant#3188
+affected|only the roots a change touches are planned|
+grouped|one note groups many plans|
 report|the report is JSON and HTML, and links every root to its full plan|
 highlight|destroys and outliers are open, identical groups are folded|
 waves|each wave goes out only once approved|chant#3049
@@ -300,6 +300,7 @@ REPORT_BUCKET=terragucci-reports
 
 # work dir, then the patches to apply; leaves the run's report in $1/terragucci-report.
 # REPORT_STAGE names another stage (tf-drift); REPORT_EXTRA holds more `docker run` arguments and REPORT_ARGS more stage arguments.
+# REPORT_BASE=1 commits the tree before the patches and REPORT_EDIT (shell, run in the tree), and names that commit TG_BASE.
 REPORT_EXTRA=()
 REPORT_ARGS=()
 report_run() {
@@ -311,7 +312,13 @@ report_run() {
   cp -R "${REPORT_TREE:-$EXAMPLE}/." "$work/"
   rm -rf "$work/.git"
   git -C "$work" init -q -b main
+  local base=""
+  if [ -n "${REPORT_BASE:-}" ]; then
+    git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm base
+    base="$(git -C "$work" rev-parse HEAD)"
+  fi
   for p in "$@"; do git -C "$work" apply "$EXAMPLE/changes/$p.patch" || return 1; done
+  [ -n "${REPORT_EDIT:-}" ] && { (cd "$work" && eval "$REPORT_EDIT") || return 1; }
   [ -n "${REPORT_CONFIG:-}" ] && printf '%s\n' "$REPORT_CONFIG" >> "$work/terragucci.yml"
   git -C "$work" remote add origin "http://forgejo:3000/$USER/example.git"
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost commit -qm "smoke report $(date +%s%N)"
@@ -319,6 +326,7 @@ report_run() {
   # REPORT_ENV: extra KEY=VALUE pairs for the stage, space-separated.
   local extra=() kv
   for kv in ${REPORT_ENV:-}; do extra+=(-e "$kv"); done
+  [ -n "$base" ] && extra+=(-e "TG_BASE=$base")
   docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     ${extra[@]+"${extra[@]}"} \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
@@ -377,6 +385,78 @@ claim_report() {
   rm -rf "$work"
   [ $rc = 0 ] || return 1
   log "two runs, each root linked to its plan, both in $REPORT_BUCKET/$prefix/index.json"
+}
+
+claim_affected() {
+  # A change to envs/dev/platform, against the commit before it. The plan must
+  # cover dev's platform and the four dev services that read its state, and
+  # no other root. BREAK: no base, so every root is planned.
+  log() { echo "[smoke affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 r got want base=1
+  want="envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/platform,envs/dev/search"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  [ -n "${BREAK:-}" ] && base=""
+  REPORT_BASE="$base" REPORT_EDIT='printf "\n# smoke affected: a change to this root alone\n" >> envs/dev/platform/main.tf' report_run "$work" || true
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
+  got="$(jq -r '[.roots[] | select(.status == "planned") | .path] | sort | join(",")' "$r")"
+  [ "$got" = "$want" ] || { log "planned $got, not $want"; rc=1; }
+  rm -rf "$work"
+  [ $rc = 0 ] && log "envs/dev/platform changed: it and the four dev services that read its state planned, nothing else"
+  return $rc
+}
+
+claim_grouped() {
+  # A pull request on the example with module-bump, which reaches the twelve
+  # service roots. Its plan job must post one plan note whose first line names
+  # those twelve roots, and whose groups name every one of them, in fewer
+  # groups than roots. BREAK: the pushed pipeline plans dev's roots alone, so
+  # the note leaves out the staging and prod services.
+  log() { echo "[smoke grouped] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local repo="$USER/example" branch=smoke/grouped work sha pr rc=0 deadline state notes body roots want root groups
+  want="$(for e in dev prod staging; do for s in email orders payments search; do echo "envs/$e/$s"; done; done | sort | paste -sd, -)"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
+    || { log "no example repo; run 'just example up' first"; rm -rf "$work"; return 1; }
+  # The pipeline this tree renders, so the pull request runs it whatever main carries.
+  cp "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$work/tree/.forgejo/workflows/terragucci.yml"
+  git -C "$work/tree" apply "$EXAMPLE/changes/module-bump.patch" || { rm -rf "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && sed -i.bak "s#terragucci stage tf-plan --out#terragucci stage tf-plan --root 'envs/dev/*' --out#" "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+  sha="$(push_tree "$work/tree" "$repo" "$branch" "smoke grouped: module-bump $(date +%s)")"
+  pr="$(open_pr "$repo" "$branch")"
+  [ -n "$pr" ] || pr="$(api -H 'content-type: application/json' -X POST \
+    -d "$(jq -n --arg h "$branch" '{head: $h, base: "main", title: "smoke grouped: module-bump"}')" "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  [ -n "$pr" ] && [ "$pr" != null ] || { log "no pull request"; rm -rf "$work"; return 1; }
+  # The plan job's status on the head commit says when its note is up.
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  state=pending
+  while [ "$state" = pending ] && [ "$(date +%s)" -lt "$deadline" ]; do
+    sleep 5
+    state="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // "pending"')"
+  done
+  log "terragucci/plan on ${sha:0:8}: $state"
+  notes="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq '[.[] | select(.body | startswith("<!-- terragucci:plan"))]')"
+  if [ "$(jq length <<<"$notes")" != 1 ]; then
+    log "pull request $pr has $(jq length <<<"$notes") plan notes, not one"; rc=1
+  else
+    body="$(jq -r '.[0].body' <<<"$notes")"
+    roots="$(head -1 <<<"$body" | sed -E 's/.*roots=([^ ]*) -->.*/\1/' | tr , '\n' | sort | paste -sd, -)"
+    [ "$roots" = "$want" ] || { log "the note covers $roots, not $want"; rc=1; }
+    for root in ${want//,/ }; do
+      grep '^Roots: ' <<<"$body" | grep -q "\`$root\`" || { log "no group in the note names $root"; rc=1; }
+    done
+    groups="$(grep -c '^#### \[Group ' <<<"$body" || true)"
+    [ "$groups" -ge 1 ] && [ "$groups" -lt 12 ] || { log "the note has $groups groups for 12 roots"; rc=1; }
+  fi
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/pulls/$pr" || true
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branches/smoke%2Fgrouped" || true
+  rm -rf "$work"
+  [ $rc = 0 ] && log "one note on pull request $pr groups the 12 service roots in $groups groups"
+  return $rc
 }
 
 # ── traces and metrics ────────────────────────────────────────────────────

@@ -279,7 +279,7 @@ describe("the plan stage", () => {
       expect(statuses[1].body.description).toBe("3 roots, 2 groups, 2 destroys");
       const note = api.hits.find((h) => h.method === "POST" && h.url === "/repos/acme/infra/issues/7/comments")!;
       const lines = note.body.body.split("\n");
-      expect(lines[0]).toBe("<!-- terragucci:plan roots=network,app,cache -->");
+      expect(lines[0]).toBe("<!-- terragucci:plan roots=app,cache,network -->");
       expect(note.body.body).toBe(`${lines[0]}\n${readFileSync(join(repo, "terragucci-report/note.md"), "utf-8")}`);
       expect(note.body.body).toContain("(http://forge/acme/infra/actions/runs/9#root-cache) (destroy)");
       const report = JSON.parse(readFileSync(join(repo, "terragucci-report/report.json"), "utf-8"));

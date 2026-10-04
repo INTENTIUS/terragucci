@@ -1,6 +1,7 @@
 /**
- * `terragucci stage tf-plan`: plan every root, keep each root's full plan,
- * and write the run's report. Each root is planned to a plan file, shown as
+ * `terragucci stage tf-plan`: plan the roots a change reaches (every root
+ * when there is no base to diff against), keep each root's full plan, and
+ * write the run's report. Each root is planned to a plan file, shown as
  * JSON and as text; the JSON is redacted before it is stored, after its
  * plan digest is taken.
  *
@@ -17,9 +18,11 @@ import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set"
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
+// Path rules only: no HCL parser, no compiler.
+import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import pkg from "../../package.json" with { type: "json" };
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type ForgeName } from "../config";
-import { applyLayers, detectBinary, findRoots, globMatch } from "../detect";
+import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
 import { ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
@@ -279,8 +282,13 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const layers = (options.layers ?? applyLayers(repo, all))
     .map((l) => (options.root ? l.filter((r) => globMatch(options.root!, r)) : l))
     .filter((l) => l.length > 0);
-  const roots = layers.flat();
-  if (roots.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
+  if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
+  // A pull request plans only the roots its change reaches, and their dependents. Drift reads every root.
+  const base = drift ? undefined : (options.base ?? baseRef(env));
+  const selected = base ? affectedRoots(repo, base, all, layers.flat(), log) : undefined;
+  const planLayers = selected ? layers.map((l) => l.filter((r) => selected.has(r))).filter((l) => l.length > 0) : layers;
+  const roots = planLayers.flat();
+  if (roots.length === 0) log("this change reaches no root, so nothing is planned");
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, all).value;
   const planner = plannerForBinary(binary);
   const started = new Date().toISOString();
@@ -344,7 +352,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   if (drift) {
     // Drift is not applied, so there are no waves to gate.
   } else if (roots.some(isCanary)) waves.push({ number: 1, roots: roots.filter(isCanary) });
-  for (const l of drift ? [] : layers) {
+  for (const l of drift ? [] : planLayers) {
     const rest = l.filter((r) => !isCanary(r));
     if (rest.length) waves.push({ number: waves.length + 1, roots: rest });
   }
@@ -451,6 +459,39 @@ async function runTerragruntStage(
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+/**
+ * The roots a change from `base` to HEAD reaches: chant's path rules (a file
+ * in the root, in a local module it calls, or one of its var files), plus
+ * every root that reads a reached root's state, followed through. Undefined,
+ * so every root plans, when git cannot diff the range.
+ */
+export function affectedRoots(repo: string, base: string, all: string[], roots: string[], log: (line: string) => void): Set<string> | undefined {
+  const diff = spawnSync("git", ["-C", repo, "diff", "--name-only", "--no-renames", "--relative", `${base}...HEAD`], { encoding: "utf-8" });
+  if (diff.status !== 0) {
+    log(`every root: affected selection failed (git diff ${base}...HEAD: ${(diff.stderr || "").trim().split("\n")[0]})`);
+    return undefined;
+  }
+  const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+  const changed = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
+  const deps = rootDependencies(repo, all);
+  const selected = new Set(changed);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [root, reads] of deps) {
+      if (!selected.has(root) && [...reads].some((d) => selected.has(d))) {
+        selected.add(root);
+        grew = true;
+      }
+    }
+  }
+  for (const r of changed) log(`affected: ${r} changed`);
+  for (const r of [...selected].filter((r) => !changed.includes(r)).sort()) {
+    log(`affected: ${r} reads the state of ${[...deps.get(r)!].filter((d) => selected.has(d)).sort().join(", ")}`);
+  }
+  log(`affected: ${changed.length} of ${roots.length} roots against ${base}, ${selected.size - changed.length} dependents after them`);
+  return new Set([...selected].filter((r) => roots.includes(r)));
 }
 
 /** The base of a pull request's range, from the forge's environment: `origin/<target branch>`. */

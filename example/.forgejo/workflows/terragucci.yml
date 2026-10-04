@@ -50,7 +50,9 @@ jobs:
       TG_PR: '${{ github.event.pull_request.number }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Plan every root and write the plan report
+        with:
+          fetch-depth: 0
+      - name: Plan the roots the change reaches and write the plan report
         shell: bash
         run: |
           set -uo pipefail
@@ -118,7 +120,7 @@ jobs:
           if [ -n "${TG_PR:-}" ]; then
             note="$(mktemp)"
             # The first line says which roots the note covers, so an apply can mark it stale.
-            { echo "<!-- terragucci:plan roots=envs/dev/platform,envs/prod/platform,envs/staging/platform,envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search -->"; cat terragucci-report/note.md; } >"$note"
+            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >"$note"
             tg note "$note"
           fi
           if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi

@@ -15,7 +15,7 @@ To run the stage yourself, from the repo:
 npx terragucci stage tf-plan
 ```
 
-It plans every root and prints the grouped summary. It also writes the run's report to `terragucci-report/`:
+With no base to compare against it plans every root. On a pull request, or with `--base <ref>` (or `TG_BASE`), it plans only the roots the change reaches: a root whose directory, local modules or var files changed, and every root that reads such a root's state. A change that reaches no root plans nothing, and the note says so. It prints the grouped summary. It also writes the run's report to `terragucci-report/`:
 
 | File | What it is |
 |---|---|
