@@ -50,7 +50,7 @@ export interface ProjectSettings {
   /** Environment variables every job gets. Values only, never secrets. */
   env?: Record<string, string>;
   tips?: boolean;
-  modules?: { path?: string; publish?: string };
+  modules?: { path?: string; publish?: string | string[] };
   /** Whether removing the project from a control repo removes its generated files. */
   owned?: boolean;
 }
@@ -156,7 +156,18 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.reports !== undefined && !(isObject(s.reports) && typeof s.reports.bucket === "string")) {
     problems.push(`${where}.reports must name a bucket`);
   }
-  if (s.modules !== undefined && !isObject(s.modules)) problems.push(`${where}.modules must be a map`);
+  if (s.modules !== undefined) {
+    if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
+    else {
+      if (s.modules.path !== undefined && typeof s.modules.path !== "string") problems.push(`${where}.modules.path must be a glob`);
+      const targets = Array.isArray(s.modules.publish) ? s.modules.publish : s.modules.publish === undefined ? [] : [s.modules.publish];
+      for (const t of targets) {
+        if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t))) {
+          problems.push(`${where}.modules.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
+        }
+      }
+    }
+  }
 }
 
 /** Check a parsed config and return it typed, or throw with every problem listed. */

@@ -43,7 +43,26 @@ Each wave is a small pull request that the usual stages plan and apply. The next
 
 ## Publishing modules
 
-Keep your modules beside your roots and let `tf-publish` version them. A module that changes on the main branch is published at its next version. Conventional commits decide the bump unless a `version` file beside the module says otherwise. OpenTofu roots pin it as an `oci://` source; Terraform roots pin a git tag such as `modules/network/v1.4.0`. A published version never changes, and its digest is recorded so a root can pin the digest itself.
+Keep your modules beside your roots and let `tf-publish` version them.
+
+```yaml
+modules:
+  path: modules/*
+  publish: oci://registry.example.com/acme/modules
+```
+
+`publish` takes an `oci://` registry address, `git-tags`, or a list of both. OpenTofu roots pin the OCI artifact as an `oci://` source. Terraform has no OCI sources, so its roots pin a git tag per module, such as `modules/network/v1.4.0`.
+
+```bash
+terragucci publish --dry-run
+terragucci publish
+```
+
+A module is published when its content differs from its last release. The next version follows the commits since that release that touched the module: `feat` is a minor bump, `fix` and any other type a patch, and a breaking marker (`feat!:` or a `BREAKING CHANGE:` footer) a major. A module with no release yet starts at `0.1.0`. A `version` file in the module directory overrides the bump; once that version is published, change the file to publish the next content.
+
+A published version never changes. Each release records the commit it was cut from and a digest of the module's content, so a second run on the same commit publishes nothing, and so does a change that was reverted. The OCI manifest digest is printed with each published version, and a root can pin it: `oci://registry.example.com/acme/modules/network@sha256:...`.
+
+Registry credentials come from `TERRAGUCCI_REGISTRY_USER` and `TERRAGUCCI_REGISTRY_PASSWORD`. A registry without TLS needs `TERRAGUCCI_REGISTRY_INSECURE=1`. Git tags are pushed to `origin`, so check out the full history and the tags.
 
 ## The grouped summary
 
