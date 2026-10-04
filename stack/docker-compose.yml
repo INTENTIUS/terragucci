@@ -1,5 +1,5 @@
 # The local validation stack: a real forge, a real runner and an AWS emulator
-# on one Docker network. chant#3344 is the design; stack/README.md says what is
+# on one Docker network. terragucci#4 is the design; stack/README.md says what is
 # validated today and what is only declared.
 #
 #   stack/bootstrap.sh forgejo     bring a profile up and print its env vars
@@ -135,7 +135,7 @@ services:
         aliases: [forgejo-runner]
 
   # ── github: declared, not yet validated ──────────────────────────────────
-  # GitHub has no self-hostable edition. The plan (chant#3344) is `act` on the
+  # GitHub has no self-hostable edition. The plan (terragucci#4) is `act` on the
   # host with event payloads and the job containers on this network, plus
   # github-warden's stateful mock API for the PR-comment calls. The mock is
   # dependency-free node, mounted from a github-warden checkout next to this

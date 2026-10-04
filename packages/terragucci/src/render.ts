@@ -12,7 +12,7 @@
  */
 // Each lexicon's serializer and generated entities, never its entry point: the
 // entry points carry lint rules, codegen and the TypeScript compiler, which the
-// bundle must not (chant#3421).
+// bundle must not (terragucci#18).
 import { Job, Step, Workflow } from "@intentius/chant-lexicon-github/generated/index";
 import { githubSerializer } from "@intentius/chant-lexicon-github/serializer";
 import { applyForgejoDialect } from "@intentius/chant-lexicon-forgejo/dialect";

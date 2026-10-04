@@ -1,5 +1,5 @@
 /**
- * The CI images terragucci publishes (chant#3422), one per toolchain. Each
+ * The CI images terragucci publishes (terragucci#19), one per toolchain. Each
  * carries one tool at a fixed version plus the terragucci bundle. A pipeline
  * runs in the image for its binary, pinned by digest once the image is
  * published; a repo that pins another version installs it in the job with

@@ -1,4 +1,4 @@
-// Holds @intentius/terragucci to its shape (chant#3421): no runtime
+// Holds @intentius/terragucci to its shape (terragucci#18): no runtime
 // dependencies, one bundled file under its size budget, and no imports but
 // Node's own modules and the optional TypeScript folder.
 //   node scripts/bundle-check.mjs     (after `just build-cli`)

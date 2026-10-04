@@ -1,6 +1,6 @@
 # The local validation stack
 
-terragucci's pipelines are meant to be run before they ship, on a real forge with a real runner, against an AWS emulator, all on one Docker network. This directory is that stack. [chant#3344](https://github.com/INTENTIUS/chant/issues/3344) is the design and lists every claim it should eventually check.
+terragucci's pipelines are meant to be run before they ship, on a real forge with a real runner, against an AWS emulator, all on one Docker network. This directory is that stack. [terragucci#4](https://github.com/INTENTIUS/terragucci/issues/4) is the design and lists every claim it should eventually check.
 
 terragucci's stages are not built yet, so the one workflow run here is hand-written (`fixtures/s3-bucket/.forgejo/workflows/tofu.yml`). When the stages exist, the generated workflow replaces it and the claims stay the same.
 
@@ -22,7 +22,7 @@ Declared means the services are in `docker-compose.yml`, readable, with comments
 
 ## The example and the smoke claims
 
-`example/` is the shop's estate: 15 roots (dev, staging and prod, each a platform root and four services calling `modules/service`), applied to floci by the forgejo profile. It is the tutorial's example and the subject of every smoke claim ([chant#3355](https://github.com/INTENTIUS/chant/issues/3355)).
+`example/` is the shop's estate: 15 roots (dev, staging and prod, each a platform root and four services calling `modules/service`), applied to floci by the forgejo profile. It is the tutorial's example and the subject of every smoke claim ([terragucci#11](https://github.com/INTENTIUS/terragucci/issues/11)).
 
 | Command | Does |
 |---|---|
