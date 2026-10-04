@@ -132,7 +132,7 @@ jobs:
           name: terragucci-report
           path: terragucci-report/
           if-no-files-found: ignore
-  apply:
+  apply-wave-1:
     runs-on: docker
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
@@ -148,7 +148,7 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Apply every root
+      - name: Apply wave 1 of 4
         shell: bash
         run: |
           set -uo pipefail
@@ -241,33 +241,336 @@ jobs:
             exit 0
           fi
           tg status terragucci/apply pending "applying"
-          # Each root gets its own provider cache. A cache directory shared by roots
-          # that init together is not safe, so the one the job's env may name is set aside.
-          apply_root() {
-            local dir="$1" log
-            log="$(mktemp)"
-            export TF_PLUGIN_CACHE_DIR="$(mktemp -d)"
-            # Each root's output goes to its own log, printed when the root is done.
-            if tofu -chdir="$dir" init -input=false -no-color >"$log" 2>&1 &&
-              tofu -chdir="$dir" apply -auto-approve -input=false -no-color >>"$log" 2>&1; then
-              echo "applied $dir: $(grep -o 'Resources: .*destroyed' "$log" | tail -1)"
-            else
-              echo "FAILED $dir"
-              sed 's/^/    /' "$log"
-              rm -rf "$log" "$TF_PLUGIN_CACHE_DIR"
-              return 1
+          outcome="$(mktemp)"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy
+          rc=$?
+          case "$rc" in
+            0) ;;
+            3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
+            4) tg status terragucci/apply failure "$(cat "$outcome")"; exit 4 ;;
+            *) tg status terragucci/apply failure "an apply failed"; exit 1 ;;
+          esac
+          echo "wave 1 of 4 applied"
+  apply-wave-2:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
+    needs: apply-wave-1
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    concurrency:
+      group: terragucci-apply-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      TG_TOKEN: '${{ github.token }}'
+      TG_SHA: '${{ github.sha }}'
+      TG_BEFORE: '${{ github.event.before }}'
+      TG_BRANCH: '${{ github.event.repository.default_branch }}'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Apply wave 2 of 4
+        shell: bash
+        run: |
+          set -uo pipefail
+          export TG_FORGE=forgejo
+          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          const MARK = "<!-- terragucci:plan";
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const call = async (m, p, b) => {
+                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
+                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
+                return r.status === 204 ? null : r.json();
+              };
+              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
+              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
+              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
+              if (cmd === "status") {
+                const [context, state, description] = a;
+                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
+                const sha = e.TG_SHA;
+                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
+                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
+              } else if (cmd === "note") {
+                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
+                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "alive") {
+                const run = await call("GET", repo + "/actions/runs/" + a[0]);
+                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+              } else if (cmd === "stale") {
+                const moved = a[0].split(",");
+                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
+                for (const pr of open) {
+                  const n = gl ? pr.iid : pr.number, note = await find(n);
+                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
+                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
+                  if (!hit.length) continue;
+                  const lines = note.body.split("\n");
+                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
+                  await edit(n, note.id, lines.join("\n"));
+                }
+              }
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@"; }
+          lock_ref="refs/tags/terragucci-apply-lock"
+          empty="$(git mktree </dev/null)"
+          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
+          tries=0
+          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
+            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
+            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
+              lease="$(git log -1 --format=%s "$lock_ref")"
+              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
+              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
+                echo "the apply lock was held by run $holder, which is gone; taking it over"
+                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
+              fi
             fi
-            rm -rf "$log" "$TF_PLUGIN_CACHE_DIR"
-          }
-          apply_together() {
-            local pids=() rc=0
-            for dir in "$@"; do apply_root "$dir" & pids+=("$!"); done
-            for pid in "${pids[@]}"; do wait "$pid" || rc=1; done
-            return $rc
-          }
-          failed() { tg status terragucci/apply failure "an apply failed"; exit 1; }
-          apply_together 'envs/dev/platform' 'envs/prod/platform' 'envs/staging/platform' || failed
-          apply_together 'envs/dev/email' 'envs/dev/orders' 'envs/dev/payments' 'envs/dev/search' 'envs/prod/email' 'envs/prod/orders' 'envs/prod/payments' 'envs/prod/search' 'envs/staging/email' 'envs/staging/orders' 'envs/staging/payments' 'envs/staging/search' || failed
+            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
+            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
+          done
+          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
+          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
+            tg status terragucci/apply success "superseded by a newer push"
+            exit 0
+          fi
+          outcome="$(mktemp)"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy
+          rc=$?
+          case "$rc" in
+            0) ;;
+            3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
+            4) tg status terragucci/apply failure "$(cat "$outcome")"; exit 4 ;;
+            *) tg status terragucci/apply failure "an apply failed"; exit 1 ;;
+          esac
+          echo "wave 2 of 4 applied"
+  apply-wave-3:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
+    needs: apply-wave-2
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    concurrency:
+      group: terragucci-apply-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      TG_TOKEN: '${{ github.token }}'
+      TG_SHA: '${{ github.sha }}'
+      TG_BEFORE: '${{ github.event.before }}'
+      TG_BRANCH: '${{ github.event.repository.default_branch }}'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Apply wave 3 of 4
+        shell: bash
+        run: |
+          set -uo pipefail
+          export TG_FORGE=forgejo
+          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          const MARK = "<!-- terragucci:plan";
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const call = async (m, p, b) => {
+                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
+                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
+                return r.status === 204 ? null : r.json();
+              };
+              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
+              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
+              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
+              if (cmd === "status") {
+                const [context, state, description] = a;
+                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
+                const sha = e.TG_SHA;
+                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
+                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
+              } else if (cmd === "note") {
+                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
+                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "alive") {
+                const run = await call("GET", repo + "/actions/runs/" + a[0]);
+                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+              } else if (cmd === "stale") {
+                const moved = a[0].split(",");
+                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
+                for (const pr of open) {
+                  const n = gl ? pr.iid : pr.number, note = await find(n);
+                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
+                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
+                  if (!hit.length) continue;
+                  const lines = note.body.split("\n");
+                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
+                  await edit(n, note.id, lines.join("\n"));
+                }
+              }
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@"; }
+          lock_ref="refs/tags/terragucci-apply-lock"
+          empty="$(git mktree </dev/null)"
+          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
+          tries=0
+          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
+            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
+            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
+              lease="$(git log -1 --format=%s "$lock_ref")"
+              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
+              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
+                echo "the apply lock was held by run $holder, which is gone; taking it over"
+                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
+              fi
+            fi
+            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
+            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
+          done
+          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
+          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
+            tg status terragucci/apply success "superseded by a newer push"
+            exit 0
+          fi
+          outcome="$(mktemp)"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy
+          rc=$?
+          case "$rc" in
+            0) ;;
+            3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
+            4) tg status terragucci/apply failure "$(cat "$outcome")"; exit 4 ;;
+            *) tg status terragucci/apply failure "an apply failed"; exit 1 ;;
+          esac
+          echo "wave 3 of 4 applied"
+  apply-wave-4:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
+    needs: apply-wave-3
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    concurrency:
+      group: terragucci-apply-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      TG_TOKEN: '${{ github.token }}'
+      TG_SHA: '${{ github.sha }}'
+      TG_BEFORE: '${{ github.event.before }}'
+      TG_BRANCH: '${{ github.event.repository.default_branch }}'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Apply wave 4 of 4
+        shell: bash
+        run: |
+          set -uo pipefail
+          export TG_FORGE=forgejo
+          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          const MARK = "<!-- terragucci:plan";
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const call = async (m, p, b) => {
+                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
+                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
+                return r.status === 204 ? null : r.json();
+              };
+              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
+              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
+              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
+              if (cmd === "status") {
+                const [context, state, description] = a;
+                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
+                const sha = e.TG_SHA;
+                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
+                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
+              } else if (cmd === "note") {
+                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
+                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "alive") {
+                const run = await call("GET", repo + "/actions/runs/" + a[0]);
+                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+              } else if (cmd === "stale") {
+                const moved = a[0].split(",");
+                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
+                for (const pr of open) {
+                  const n = gl ? pr.iid : pr.number, note = await find(n);
+                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
+                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
+                  if (!hit.length) continue;
+                  const lines = note.body.split("\n");
+                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
+                  await edit(n, note.id, lines.join("\n"));
+                }
+              }
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@"; }
+          lock_ref="refs/tags/terragucci-apply-lock"
+          empty="$(git mktree </dev/null)"
+          mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${GITHUB_RUN_ID:-$$} $(date +%s)")"
+          tries=0
+          until git push -q origin "$mine:$lock_ref" 2>/dev/null; do
+            held="$(git ls-remote origin "$lock_ref" | cut -f1)"
+            if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then
+              lease="$(git log -1 --format=%s "$lock_ref")"
+              holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"
+              if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then
+                echo "the apply lock was held by run $holder, which is gone; taking it over"
+                git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break
+              fi
+            fi
+            if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi
+            sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
+          done
+          trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
+          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
+            tg status terragucci/apply success "superseded by a newer push"
+            exit 0
+          fi
+          outcome="$(mktemp)"
+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy
+          rc=$?
+          case "$rc" in
+            0) ;;
+            3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;
+            4) tg status terragucci/apply failure "$(cat "$outcome")"; exit 4 ;;
+            *) tg status terragucci/apply failure "an apply failed"; exit 1 ;;
+          esac
           tg status terragucci/apply success "15 roots in 2 groups applied"
           echo "all roots applied"
   drift:

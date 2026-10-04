@@ -25,7 +25,7 @@ describe("init", () => {
     const text = readFileSync(join(dir, path), "utf-8");
     expect(text.startsWith(MARKER)).toBe(true);
     const parsed = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, unknown>;
-    expect(Object.keys(parsed)).toEqual(expect.arrayContaining(path === ".gitlab-ci.yml" ? ["stages", "check", "apply"] : ["name", "on", "jobs"]));
+    expect(Object.keys(parsed)).toEqual(expect.arrayContaining(path === ".gitlab-ci.yml" ? ["stages", "check", "apply-wave-1"] : ["name", "on", "jobs"]));
   });
 
   it("the pipeline applies the network before the app, and validates both", async () => {
@@ -34,7 +34,10 @@ describe("init", () => {
     expect(r.layers).toEqual([["network"], ["app"]]);
     const text = readFileSync(r.files[0].path, "utf-8");
     expect(text).toContain("for dir in 'app' 'network'; do");
-    expect(text.indexOf("apply_together 'network'")).toBeLessThan(text.indexOf("apply_together 'app'"));
+    // One job per wave: the network's wave first, and the app's needs it.
+    expect(text).toContain("terragucci stage tf-apply --wave 1 --layers 'network;app'");
+    expect(text).toContain("terragucci stage tf-apply --wave 2 --layers 'network;app'");
+    expect(text).toMatch(/apply-wave-2:\n(?:.*\n)*? {4}needs: apply-wave-1\n/);
   });
 
   it("a second run changes nothing", async () => {
@@ -80,10 +83,14 @@ describe("init", () => {
     expect(text).not.toContain("'app'");
   });
 
-  it("settings the pipeline cannot act on yet are named", async () => {
-    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'drift: "0 6 * * *"\nwaves:\n  canary: ["network"]\n' });
+  it("the canary wave and the gate policy reach the apply jobs", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'gate: always\nwaves:\n  canary: ["app"]\n' });
     const r = await init(dir, { binary: "tofu" });
-    expect(r.notes.join("\n")).toMatch(/gated waves are not built yet/);
+    expect(r.notes.join("\n")).not.toMatch(/gated waves/);
+    const text = readFileSync(r.files[0].path, "utf-8");
+    expect(text).toContain("terragucci stage tf-apply --wave 1 --layers 'network;app' --canary 'app' --binary tofu --gate always");
+    expect(text).toContain("apply-wave-2:");
+    expect(text).not.toContain("apply-wave-3:");
   });
 
   it("a repo with no roots is an error that says what a root is", async () => {

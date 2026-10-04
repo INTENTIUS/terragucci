@@ -10,10 +10,14 @@
  *        named). Its note, chant's grouped summary across those roots, is the
  *        one plan note and its counts the one terragucci/plan status.
  *        Read-only role.
- * apply  pushes to the default branch: apply every root, a layer at a time,
- *        roots in one layer together. A root that reads another's state
- *        applies after it. One apply per project at a time; posts one
+ * apply  pushes to the default branch: one job per wave, canary first, each
+ *        needing the one before. `terragucci stage tf-apply` plans the wave,
+ *        and a wave the gate policy holds waits for a person's approval of
+ *        its set digest (`chant approve`); one whose plans changed after the
+ *        approval applies nothing. A root that reads another's state applies
+ *        after it. One apply per project at a time; posts one
  *        terragucci/apply status and marks plan notes the push made stale.
+ *        A Terragrunt repo applies every wave in one job.
  *
  * drift  only when `drift:` names a schedule: `terragucci stage tf-drift` plans
  *        every root with -refresh-only, keeps the same report, and opens,
@@ -21,8 +25,8 @@
  *        Read-only role. On GitLab the schedule itself is set in the
  *        project's CI/CD schedules; the job runs for scheduled pipelines.
  *
- * The stages terragucci is building (gated waves) take these jobs' place as
- * they ship; the file stays where it is.
+ * The stages terragucci is building take these jobs' place as they ship;
+ * the file stays where it is.
  */
 // Each lexicon's serializer and generated entities, never its entry point: the
 // entry points carry lint rules, codegen and the TypeScript compiler, which the
@@ -39,7 +43,8 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import type { Binary, ForgeName, RolePair } from "./config";
+import type { Binary, ForgeName, Gate, RolePair } from "./config";
+import { applyWaves } from "./apply";
 import type { Tool } from "./install";
 import {
   cacheExports,
@@ -84,6 +89,10 @@ export interface PipelineInput {
   publish?: boolean;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
+  /** Globs for the canary wave, which applies first. Plain roots only. */
+  canary?: string[];
+  /** When a wave waits for an approval. Default on-destroy. Plain roots only. */
+  gate?: Gate;
 }
 
 export interface RenderedPipeline {
@@ -249,46 +258,66 @@ export function forgejoLock(): string {
   ].join("\n");
 }
 
-export function applyScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"]): string {
+/** Which wave an apply job runs, and how the waves are cut and gated. */
+export interface ApplyWaveInput {
+  /** 1-based. */
+  wave: number;
+  /** Globs for wave 1, from `waves.canary`. */
+  canary?: string[];
+  gate?: Gate;
+}
+
+/**
+ * One wave's apply job: `terragucci stage tf-apply` plans the wave's roots,
+ * decides the wave's gate against its set digest, and applies the plans it
+ * made. The first wave marks stale plan notes and posts the pending status;
+ * the last posts the one success. A wave that waits for an approval, or whose
+ * plans changed after one, says so in the status and fails the job, so the
+ * waves after it do not start.
+ */
+export function applyScript(
+  binary: Binary,
+  layers: string[][],
+  forge: ForgeName = "github",
+  oidc?: PipelineInput["oidc"],
+  input: ApplyWaveInput = { wave: 1 },
+): string {
   const roots = layers.flat().sort();
   const total = layers.flat().length;
+  const gate = input.gate ?? "on-destroy";
+  const count = applyWaves(layers, input.canary).length;
+  const first = input.wave === 1;
+  const last = input.wave === count;
+  const args = [
+    "--wave", String(input.wave),
+    "--layers", sh(layers.map((l) => l.join(",")).join(";")),
+    ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []),
+    "--binary", binary,
+    "--gate", gate,
+  ];
   return [
     "set -uo pipefail",
     forgeApi(forge),
     ...(oidc ? [oidcScript(forge, oidc.apply_role, "terragucci-apply", oidc.audience)] : []),
-    movedRoots(roots),
-    '# The base branch moved under these roots: plan notes that cover them are stale.',
-    'tg stale "$moved" "${TG_BRANCH:-}"',
+    ...(first
+      ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
+      : []),
     ...(forge === "forgejo" ? [forgejoLock()] : []),
-    'tg status terragucci/apply pending "applying"',
-    "# Each root gets its own provider cache. A cache directory shared by roots",
-    "# that init together is not safe, so the one the job's env may name is set aside.",
-    "apply_root() {",
-    '  local dir="$1" log',
-    '  log="$(mktemp)"',
-    '  export TF_PLUGIN_CACHE_DIR="$(mktemp -d)"',
-    "  # Each root's output goes to its own log, printed when the root is done.",
-    `  if ${binary} -chdir="$dir" init -input=false -no-color >"$log" 2>&1 &&`,
-    `    ${binary} -chdir="$dir" apply -auto-approve -input=false -no-color >>"$log" 2>&1; then`,
-    `    echo "applied $dir: $(grep -o 'Resources: .*destroyed' "$log" | tail -1)"`,
-    "  else",
-    '    echo "FAILED $dir"',
-    "    sed 's/^/    /' \"$log\"",
-    '    rm -rf "$log" "$TF_PLUGIN_CACHE_DIR"',
-    "    return 1",
-    "  fi",
-    '  rm -rf "$log" "$TF_PLUGIN_CACHE_DIR"',
-    "}",
-    "apply_together() {",
-    "  local pids=() rc=0",
-    '  for dir in "$@"; do apply_root "$dir" & pids+=("$!"); done',
-    '  for pid in "${pids[@]}"; do wait "$pid" || rc=1; done',
-    "  return $rc",
-    "}",
-    'failed() { tg status terragucci/apply failure "an apply failed"; exit 1; }',
-    ...layers.map((layer) => `apply_together ${layer.map(sh).join(" ")} || failed`),
-    `tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
-    'echo "all roots applied"',
+    ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
+    // A waiting wave records what it planned on the chant/lifecycle branch, so the job's checkout must be able to push.
+    ...(forge === "gitlab" && gate !== "never" ? ['git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"'] : []),
+    'outcome="$(mktemp)"',
+    `TG_OUTCOME="$outcome" terragucci stage tf-apply ${args.join(" ")}`,
+    "rc=$?",
+    'case "$rc" in',
+    "  0) ;;",
+    '  3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;',
+    '  4) tg status terragucci/apply failure "$(cat "$outcome")"; exit 4 ;;',
+    '  *) tg status terragucci/apply failure "an apply failed"; exit 1 ;;',
+    "esac",
+    ...(last
+      ? [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
+      : [`echo "wave ${input.wave} of ${count} applied"`]),
   ].join("\n");
 }
 
@@ -473,7 +502,16 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots);
-  const applyBody = tg ? terragruntApplyScript(layers, forge, oidc, credentials) : applyScript(binary, layers, forge, oidc);
+  // Plain roots apply a wave per job, each behind its gate; a Terragrunt repo applies in one job.
+  const gate = input.gate ?? "on-destroy";
+  const waveCount = tg ? 1 : applyWaves(layers, input.canary).length;
+  const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
+    name: tg ? "apply" : `apply-wave-${i + 1}`,
+    body: tg ? terragruntApplyScript(layers, forge, oidc, credentials) : applyScript(binary, layers, forge, oidc, { wave: i + 1, canary: input.canary, gate }),
+  }));
+  const lastApply = applyJobs[applyJobs.length - 1].name;
+  // A wave that waits records its plan on the chant/lifecycle branch.
+  const writesLedger = !tg && gate !== "never";
   const what = tg ? "unit" : "root";
 
   if (forge === "gitlab") {
@@ -502,24 +540,27 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // The report stays with the job; its counts feed the merge request's widget.
       artifacts: { name: REPORT_DIR, when: "always", paths: [`${REPORT_DIR}/`], reports: { terraform: `${REPORT_DIR}/gitlab-terraform.json` } },
     } as never);
-    const apply = new GitLabJob({
-      stage: "apply",
-      image: jobImage,
-      variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA" },
-      rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
-      resource_group: "terragucci-apply",
-      ...idTokens,
-      ...(tg ? forgeCache("gitlab") : {}),
-      script: script(bash("APPLY", applyBody)),
-    } as never);
-    const jobs = new Map<string, never>([["check", check as never], ["plan", plan as never], ["apply", apply as never]]);
+    const jobs = new Map<string, never>([["check", check as never], ["plan", plan as never]]);
+    for (const [i, job] of applyJobs.entries()) {
+      jobs.set(job.name, new GitLabJob({
+        stage: "apply",
+        image: jobImage,
+        ...(i > 0 ? { needs: [applyJobs[i - 1].name] } : {}),
+        variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA" },
+        rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        resource_group: "terragucci-apply",
+        ...idTokens,
+        ...(tg ? forgeCache("gitlab") : {}),
+        script: script(bash("APPLY", job.body)),
+      } as never) as never);
+    }
     if (input.publish) {
       // GitLab hands project variables (TERRAGUCCI_REGISTRY_USER and _PASSWORD)
       // to every job, so mark them protected and masked to keep them off merge requests.
       jobs.set("publish", new GitLabJob({
         stage: "publish",
         image: jobImage,
-        needs: ["apply"],
+        needs: [lastApply],
         variables: { ...gitlabEnv, GIT_DEPTH: "0" },
         rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
         resource_group: "terragucci-publish",
@@ -595,35 +636,38 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       }),
     ],
   } as never);
-  const apply = new Job({
-    "runs-on": "ubuntu-latest",
-    container: { image },
-    needs: "check",
-    if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
-    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
-    // One apply per project at a time; a push that waits is not cancelled.
-    concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
-    env: {
-      TG_TOKEN: "${{ github.token }}",
-      TG_SHA: "${{ github.sha }}",
-      TG_BEFORE: "${{ github.event.before }}",
-      TG_BRANCH: "${{ github.event.repository.default_branch }}",
-    },
-    steps: steps(new Step({ name: `Apply every ${what}`, shell: "bash", run: applyBody }), true),
-  } as never);
   const entities = new Map<string, never>([
     ["workflow", workflow as never],
     ["check", check as never],
     ["plan", plan as never],
-    ["apply", apply as never],
   ]);
+  for (const [i, job] of applyJobs.entries()) {
+    entities.set(job.name, new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      // Each wave needs the one before, so a wave that waits holds back every later one.
+      needs: i === 0 ? "check" : applyJobs[i - 1].name,
+      if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
+      // contents: write only to record a waiting wave's plan on the chant/lifecycle branch.
+      permissions: { contents: writesLedger ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+      // One apply per project at a time; a push that waits is not cancelled.
+      concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
+      env: {
+        TG_TOKEN: "${{ github.token }}",
+        TG_SHA: "${{ github.sha }}",
+        TG_BEFORE: "${{ github.event.before }}",
+        TG_BRANCH: "${{ github.event.repository.default_branch }}",
+      },
+      steps: steps(new Step({ name: tg ? `Apply every ${what}` : `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
+    } as never) as never);
+  }
   if (input.publish) {
     // The only job that sees the registry credentials. It pushes tags, so it is
     // the only one with write access to contents, and it runs after apply.
     entities.set("publish", new Job({
       "runs-on": "ubuntu-latest",
       container: { image },
-      needs: "apply",
+      needs: lastApply,
       if: "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
       permissions: { contents: "write" },
       concurrency: { group: "terragucci-publish-${{ github.repository }}", "cancel-in-progress": false },

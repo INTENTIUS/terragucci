@@ -6,6 +6,7 @@
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never]
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
@@ -17,12 +18,13 @@
  * (see envelope.ts) instead of text.
  *
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
- * config error; 3 waiting on an approval.
+ * config error; 3 waiting on an approval; 4 a wave's plans changed after
+ * its approval, so it applied nothing.
  */
 import { readFileSync, realpathSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { BINARIES, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -31,6 +33,7 @@ import { plan } from "./plan";
 import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { RenderError } from "./render";
+import { applyWave } from "./apply";
 import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
@@ -45,6 +48,7 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci install tofu|terraform|terragrunt <version>
@@ -131,6 +135,18 @@ export async function main(argv: string[]): Promise<number> {
         return json ? emit(envelope("plan", code, { roots: results })) : code;
       }
       case "stage": {
+        if (args[0] === "tf-apply") {
+          if (json) throw new ConfigError("--json is not available on stage tf-apply");
+          const layers = str(flags, "layers");
+          if (!layers || !str(flags, "wave")) throw new ConfigError("stage tf-apply needs --wave <n> and --layers <a,b;c>");
+          return await applyWave(cwd, {
+            wave: Number(str(flags, "wave")),
+            layers: parseLayers(layers),
+            canary: (str(flags, "canary") ?? "").split(",").filter(Boolean),
+            binary: str(flags, "binary") ?? "tofu",
+            gate: (str(flags, "gate") ?? "on-destroy") as Gate,
+          });
+        }
         const result = await runStage(args[0] ?? "", cwd, {
           root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config"),
           out: str(flags, "out"), reportUrl: str(flags, "report-url"),
