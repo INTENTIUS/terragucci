@@ -349,7 +349,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     if (rest.length) waves.push({ number: waves.length + 1, roots: rest });
   }
 
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer });
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names });
 }
 
 interface Planned {
@@ -367,6 +367,10 @@ interface Planned {
   all: string[];
   roots: string[];
   observer: StageObserver;
+  /** Default tf-plan. */
+  stage?: "tf-plan" | "tf-drift";
+  /** tf-drift: the real names of drifted objects, per root. */
+  names?: Map<string, Map<string, string>>;
 }
 
 /** A Terragrunt repo's tf-plan: its units by wave, as the pipeline names them or as discovery finds them. */
@@ -462,8 +466,9 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs }: Planned,
+  { binary, started, inputs, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names }: Planned,
 ): Promise<StageResult> {
+  const drift = stage === "tf-drift";
   const report = buildReport({
     run: { ...runFacts(repo, env), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: pkg.version },
     roots: inputs,
@@ -496,7 +501,7 @@ async function finish(
   let issue: StageResult["issue"];
   if (drift) {
     const url = options.reportUrl;
-    const issueOptions = { names, ...(url ? { reportUrl: url } : {}) };
+    const issueOptions = { ...(names ? { names } : {}), ...(url ? { reportUrl: url } : {}) };
     writeFileSync(join(dir, "issue.md"), renderDriftIssue(report, issueOptions));
     const token = options.token ?? env.TG_TOKEN;
     const target = targetFromEnv(options.forge, env, token);
