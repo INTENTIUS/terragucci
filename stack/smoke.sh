@@ -304,7 +304,6 @@ report_run() {
   for kv in ${REPORT_ENV:-}; do extra+=(-e "$kv"); done
   docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     ${extra[@]+"${extra[@]}"} \
-    -v "$HERE/../node_modules:/usr/local/bin/node_modules:ro" \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \

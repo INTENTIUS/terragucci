@@ -29,15 +29,21 @@ const minifiedYaml = {
 };
 
 // The lint tips parse HCL through the terraform lexicon, whose parser module
-// reaches chant's carve registry and with it the AWS, GCP and Kubernetes
-// provider tables (50 KB). terragucci never carves, so the registry starts
-// empty here. Remove this once chant loads the tables only when carving.
-const noCarveProviders = {
-  name: "no-carve-providers",
+// imports chant's terraform/parse for its HCL loader. That module also imports
+// the dependency graph and the state reader, and through them the carve registry
+// with the AWS, GCP and Kubernetes provider tables (80 KB). terragucci only
+// loads the HCL parser, so those two imports are stubbed out. Remove this once
+// chant keeps the loader apart from the graph.
+const noGraph = {
+  name: "no-terraform-graph",
   setup(b) {
-    b.onResolve({ filter: /^\.\/providers$/ }, (args) =>
-      /chant\/src\/terraform\/carve-provider\.ts$/.test(args.importer) ? { path: "carve-providers", namespace: "empty" } : undefined);
-    b.onLoad({ filter: /.*/, namespace: "empty" }, () => ({ contents: "export const BUILTIN_CARVE_PROVIDERS = [];", loader: "js" }));
+    const stubs = {
+      "./graph": "export const buildGraph = () => { throw new Error('not in the bundle'); }; export const collectExpressions = buildGraph;",
+      "./state": "export const readStateInstanceCounts = () => { throw new Error('not in the bundle'); }; export const applyStateCounts = readStateInstanceCounts;",
+    };
+    b.onResolve({ filter: /^\.\/(graph|state)$/ }, (args) =>
+      /chant\/src\/terraform\/parse\.ts$/.test(args.importer) ? { path: args.path, namespace: "stub" } : undefined);
+    b.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({ contents: stubs[args.path], loader: "js" }));
   },
 };
 
@@ -51,14 +57,15 @@ await build({
   external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"],
   banner: { js: "#!/usr/bin/env node\nimport { createRequire as __terragucciRequire } from 'node:module';\nconst require = __terragucciRequire(import.meta.url);" },
   legalComments: "none",
-  // Folds constants, drops dead branches and whitespace. Names are kept, and the
-  // linked source map ships beside the bundle: run with `node --enable-source-maps`
-  // to read a stack trace against the sources.
+  // Folds constants, drops dead branches and whitespace. Function and class names are
+  // not kept (that was 17 KB of the budget); the linked source map ships beside
+  // the bundle: run with `node --enable-source-maps` to read a stack trace
+  // against the sources.
   minifySyntax: true,
   minifyWhitespace: true,
-  keepNames: true,
+  keepNames: false,
   sourcemap: "linked",
-  plugins: [minifiedYaml, noCarveProviders],
+  plugins: [minifiedYaml, noGraph],
   logLevel: "warning",
 });
 chmodSync(join(dist, "terragucci.mjs"), 0o755);
