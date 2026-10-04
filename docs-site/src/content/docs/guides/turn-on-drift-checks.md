@@ -11,6 +11,7 @@ A scheduled `tf-drift` run that plans every root against what exists, and one is
 
 - A repo with the pipeline from [Get your first plan note](/terragucci/getting-started/).
 - A plan role that can read your cloud. Drift plans run with the same read-only role as pull requests.
+- Terraform or OpenTofu roots. Drift does not plan Terragrunt units yet, so `init` adds no drift job to a Terragrunt repo and says so.
 - A time that suits you. The schedule is a cron expression in UTC.
 
 ## Steps
