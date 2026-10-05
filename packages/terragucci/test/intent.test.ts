@@ -75,7 +75,7 @@ describe("description check: the three cases of #30", () => {
     expect(read(dir, "report.html")).toContain('id="description-flag"');
     expect(JSON.parse(read(dir, "intent.json"))).toMatchObject({ flagged: true });
     // The report itself is untouched, so its digests and groups are.
-    expect(JSON.parse(read(dir, "report.json")).change_set).toMatch(/^sha256:/);
+    expect(JSON.parse(read(dir, "report.json")).change_set).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
   });
 
   it("an unreachable decision service leaves the note as it was", async () => {
