@@ -4,7 +4,6 @@ description: Let a provider version float and read the tip terragucci gives.
 sidebar:
   order: 8
 claims: [tips]
-draft: true
 ---
 
 :::note[Where the example stands]
@@ -15,4 +14,4 @@ Booted with `just example up`. `just example reset` gets you back to that from a
 just example change float
 ```
 
-Dev search now lets the AWS provider float to any 6.x release. The report adds a tip naming the rule and how to pin it again. Tips are advice. They never fail a run.
+Dev search now lets the AWS provider float to any 6.x release (`~> 6.0`). The report adds a tip, `terragucci-floating-range`. It names the root and the rule and says how to pin the version again. The note counts it. Tips are advice. They never fail a run and they never change a plan: with `tips: false` in `terragucci.yml` the report has none, and every plan digest stays the same. [Tips](/terragucci/reference/tips/) lists the rules.
