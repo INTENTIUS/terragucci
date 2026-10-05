@@ -1,0 +1,15 @@
+{
+  "use": "#30 a pull request whose description does not match its plan",
+  "question": "prIntent",
+  "expect": "true",
+  "state": {
+    "title": "retag email",
+    "description": "Retag the staging email service. Tags only.",
+    "plan": {
+      "counts": { "add": 0, "change": 0, "destroy": 1, "replace": 0 },
+      "destroys": ["envs/staging/email: module.service.aws_dynamodb_table.records[0]"],
+      "replacements": [],
+      "groups": ["1 root destroys a DynamoDB table"]
+    }
+  }
+}

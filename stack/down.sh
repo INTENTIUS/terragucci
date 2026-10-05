@@ -22,7 +22,7 @@ if docker network inspect terragucci >/dev/null 2>&1; then
 fi
 
 docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
-  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile observability \
+  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile observability --profile decide \
   down -v --remove-orphans
 
 # Belt and braces for anything created outside compose under our names.

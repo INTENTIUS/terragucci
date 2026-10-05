@@ -227,6 +227,14 @@ images-check platform="":
 chant-local *args:
     scripts/chant-local.sh {{args}}
 
+[doc("Build the opt-in decision service image, terragucci-decide (Laya on CPU), into the local Docker daemon. Not one of the CI images.")]
+decide-image platform="":
+    npx tsx scripts/images.ts build-decide {{ if platform == "" { "" } else { "--platform " + platform } }}
+
+[doc("The decision service in the stack: up (builds the image if missing), ask (the three uses' questions, on CPU), down.")]
+decide *args="up":
+    stack/decide.sh {{args}}
+
 [doc("Rebuild both examples' changes/*.patch from the examples as committed.")]
 example-patches: build-cli
     python3 stack/example-patches.py

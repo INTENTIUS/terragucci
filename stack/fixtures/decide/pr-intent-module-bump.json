@@ -1,0 +1,15 @@
+{
+  "use": "#30 a pull request whose description matches its plan",
+  "question": "prIntent",
+  "expect": "false",
+  "state": {
+    "title": "service module: raise the SQS visibility timeout to 60 seconds",
+    "description": "Raises visibility_timeout_seconds from 30 to 60 on the jobs and dead-letter queues of every service. Updates in place; nothing is destroyed or replaced.",
+    "plan": {
+      "counts": { "add": 0, "change": 12, "destroy": 0, "replace": 0 },
+      "destroys": [],
+      "replacements": [],
+      "groups": ["12 roots update aws_sqs_queue.visibility_timeout_seconds from 30 to 60"]
+    }
+  }
+}

@@ -89,6 +89,29 @@ export const RESPONSES = {
 export type RespondEvent = keyof typeof RESPONSES;
 export const AGENT_VIA = ["forge", "fountain"] as const;
 
+/** The services `decide:` can name; each speaks the Jev request and response shape. */
+export const DECIDE_BACKENDS = ["laya", "von", "decider", "jev"] as const;
+export type DecideBackend = (typeof DECIDE_BACKENDS)[number];
+export const QUESTION_TYPES = ["noul", "choice", "score"] as const;
+export type QuestionType = (typeof QUESTION_TYPES)[number];
+
+/**
+ * `decide:`: the typed-decision service the opt-in uses ask (terragucci#28).
+ * With no `decide:`, every use runs its deterministic response.
+ */
+export interface DecideSettings {
+  /** Which service answers: laya (the terragucci-decide image), von, decider or jev. */
+  backend: DecideBackend;
+  /** The service's base URL; `/v1/systemone` is appended. Required except for jev, which defaults to TypeSafe's. */
+  url?: string;
+  /** The pinned model version. Required except for laya, which defaults to the version terragucci-decide serves. */
+  model?: string;
+  /** The environment variable holding the service's bearer token. Required for jev. */
+  token_env?: string;
+  /** The probability an answer needs before a use acts on it, per question type, between 0 and 1. */
+  thresholds?: Partial<Record<QuestionType, number>>;
+}
+
 /** The settings one project (or one repo) can carry. Every key is optional. */
 export interface ProjectSettings {
   /** Globs of root directories. Detected when absent. */
@@ -137,6 +160,8 @@ export interface ProjectSettings {
    * comment and open pull requests; its role, when named, is read-only.
    */
   agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string };
+  /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
+  decide?: DecideSettings;
 }
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
@@ -198,7 +223,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -305,6 +330,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       if (a.role !== undefined && typeof a.role !== "string") problems.push(`${where}.agent.role must name a read-only role`);
     }
   }
+  if (s.decide !== undefined) checkDecide(s.decide, `${where}.decide`, problems);
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
     else {
@@ -331,6 +357,42 @@ function checkPolicy(p: unknown, where: string, problems: string[]): void {
   }
   if (p.namespace !== undefined && !(typeof p.namespace === "string" && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(p.namespace))) {
     problems.push(`${where}.namespace must be a Rego package name, such as terraform.plan`);
+  }
+}
+
+const DECIDE_KEYS = ["backend", "url", "model", "token_env", "thresholds"];
+
+function checkDecide(d: unknown, where: string, problems: string[]): void {
+  if (!isObject(d)) {
+    problems.push(`${where} must be a map (settings: ${DECIDE_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(d)) {
+    if (!DECIDE_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${DECIDE_KEYS.join(", ")})`);
+  }
+  if (d.backend === undefined) problems.push(`${where}.backend is missing; use one of ${DECIDE_BACKENDS.join(", ")}`);
+  else oneOf(d.backend, DECIDE_BACKENDS, `${where}.backend`, problems);
+  for (const k of ["url", "model", "token_env"] as const) {
+    if (d[k] !== undefined && (typeof d[k] !== "string" || d[k] === "")) problems.push(`${where}.${k} must be a string`);
+  }
+  if (typeof d.url === "string" && !/^https?:\/\/[^/\s]+/.test(d.url)) problems.push(`${where}.url must be an http or https URL, such as http://localhost:8790`);
+  if (d.url === undefined && d.backend !== "jev" && d.backend !== undefined) problems.push(`${where}.url is missing; name the service's base URL`);
+  if (d.model === undefined && d.backend !== "laya" && d.backend !== undefined) {
+    problems.push(`${where}.model is missing; pin the model version the ${String(d.backend)} service answers as`);
+  }
+  if (typeof d.model === "string" && /(^|[-_.])(latest|preview)$/.test(d.model)) {
+    problems.push(`${where}.model is ${d.model}, an alias that moves when a new version ships; pin a versioned id, such as jev-1.13.0`);
+  }
+  if (d.backend === "jev" && d.token_env === undefined) problems.push(`${where}.token_env is missing; name the variable holding the Jev API key`);
+  if (typeof d.token_env === "string" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(d.token_env)) problems.push(`${where}.token_env must name an environment variable`);
+  if (d.thresholds !== undefined) {
+    if (!isObject(d.thresholds)) problems.push(`${where}.thresholds must map question types (${QUESTION_TYPES.join(", ")}) to a probability`);
+    else {
+      for (const [k, v] of Object.entries(d.thresholds)) {
+        if (!(QUESTION_TYPES as readonly string[]).includes(k)) problems.push(`${where}.thresholds.${k} is not a question type (types: ${QUESTION_TYPES.join(", ")})`);
+        else if (typeof v !== "number" || !(v > 0 && v <= 1)) problems.push(`${where}.thresholds.${k} must be a probability above 0 and at most 1`);
+      }
+    }
   }
 }
 
