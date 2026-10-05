@@ -33,7 +33,7 @@ import { loadHclParser } from "../rollout/parser";
 import { describeTips, repoTips } from "../tips";
 import { driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
-import { checkPlan, describeVerdict, engineBinary, policyPathExists, type PolicyOptions } from "./policy";
+import { checkPlan, describeVerdict, engineBinary, policyPathExists, trustedPolicy, type PolicyOptions, type TrustedOptions } from "./policy";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
@@ -738,40 +738,53 @@ export function baseRef(env: NodeJS.ProcessEnv): string | undefined {
 }
 
 /**
- * Run the project's policy over each planned root. A root the policy denies
- * becomes a failed root whose error lists the denials; so does one the engine
- * could not check. Nothing reads a response or agent setting, so no path waives it.
+ * Check each plan against the project's policy and return the error of every
+ * path that fails: a denial lists the messages, and a policy that cannot be
+ * read or run fails the path too. For a pull request (`base` set) the policy
+ * comes from the base branch, so the change under review cannot edit it away.
+ * Nothing reads a response or agent setting, so no path waives it.
  */
-async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], options: PolicyOptions = {}, log: (line: string) => void): Promise<RootInput[]> {
-  const engine = policy.engine ?? "conftest";
-  const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional);
-  if (checked.length === 0) return inputs;
-  let binary: string | undefined;
-  let setup: string | undefined;
-  if (!policyPathExists(policy, repo)) setup = `the policy directory ${policy.path ?? "policy"} does not exist`;
-  else {
-    try {
-      binary = await engineBinary(policy, repo, options);
-    } catch (e) {
-      setup = (e as Error).message;
-    }
-  }
+export async function checkPolicy(repo: string, policy: PolicySettings, items: { path: string; plan: unknown }[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions, log: (line: string) => void): Promise<Map<string, string>> {
   const failed = new Map<string, string>();
-  let denied = 0;
-  for (const input of checked) {
-    const verdict = setup !== undefined || binary === undefined
-      ? { violations: [], error: setup ?? "no engine" }
-      : await checkPlan(binary, policy, repo, JSON.stringify(input.plan), options);
-    if (verdict.error === undefined && verdict.violations.length === 0) {
-      log(`${input.path}: policy passed`);
-      continue;
+  if (items.length === 0) return failed;
+  const engine = policy.engine ?? "conftest";
+  const trusted = await trustedPolicy(repo, policy, base, trust);
+  try {
+    if (trusted.from === "base") log(`policy: read from ${base}, not from this checkout`);
+    let binary: string | undefined;
+    let setup: string | undefined = trusted.error;
+    if (setup === undefined && !policyPathExists(trusted.policy, repo)) setup = `the policy directory ${policy.path ?? "policy"} does not exist`;
+    if (setup === undefined) {
+      try {
+        binary = await engineBinary(trusted.policy, repo, options);
+      } catch (e) {
+        setup = (e as Error).message;
+      }
     }
-    denied += verdict.violations.length;
-    failed.set(input.path, describeVerdict(engine, verdict));
-    log(`${input.path}: ${verdict.error ? "policy could not be checked" : `policy denied ${verdict.violations.length}`}`);
-    for (const m of verdict.violations) log(`  ${m}`);
+    let denied = 0;
+    for (const item of items) {
+      const verdict = setup !== undefined || binary === undefined
+        ? { violations: [], error: setup ?? "no engine" }
+        : await checkPlan(binary, trusted.policy, repo, JSON.stringify(item.plan), options);
+      if (verdict.error === undefined && verdict.violations.length === 0) {
+        log(`${item.path}: policy passed`);
+        continue;
+      }
+      denied += verdict.violations.length;
+      failed.set(item.path, describeVerdict(engine, verdict));
+      log(`${item.path}: ${verdict.error ? "policy could not be checked" : `policy denied ${verdict.violations.length}`}`);
+      for (const m of verdict.violations) log(`  ${m}`);
+    }
+    if (failed.size > 0) log(`policy: ${failed.size} root${failed.size === 1 ? "" : "s"} failed${denied ? `, ${denied} violation${denied === 1 ? "" : "s"}` : ""}`);
+  } finally {
+    trusted.cleanup();
   }
-  if (failed.size > 0) log(`policy: ${failed.size} root${failed.size === 1 ? "" : "s"} failed${denied ? `, ${denied} violation${denied === 1 ? "" : "s"}` : ""}`);
+  return failed;
+}
+
+async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void): Promise<RootInput[]> {
+  const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional);
+  const failed = await checkPolicy(repo, policy, checked.map((i) => ({ path: i.path, plan: i.plan })), base, trust, options, log);
   return inputs.map((i) => {
     const error = failed.get(i.path);
     if (error === undefined) return i;
@@ -790,7 +803,10 @@ async function finish(
 ): Promise<StageResult> {
   let inputs = planned;
   const drift = stage === "tf-drift";
-  if (!drift && settings.policy) inputs = await applyPolicy(repo, settings.policy, inputs, options.policy, log);
+  if (!drift && settings.policy) {
+    const configPath = options.config ?? findConfig(repo);
+    inputs = await applyPolicy(repo, settings.policy, inputs, options.base ?? baseRef(env), { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) }, options.policy, log);
+  }
   const report = buildReport({
     run: { ...runFacts(repo, env), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: inputs,

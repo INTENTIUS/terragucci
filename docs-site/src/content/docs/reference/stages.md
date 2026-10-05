@@ -9,7 +9,7 @@ Every stage takes the root directories and the binary.
 |---|---|---|---|
 | `tf-check` | format and validate | read the repository | pass or fail |
 | `tf-plan` | plans only the roots a change affects, in one run, and posts the grouped summary on the pull request; with [`policy`](/terragucci/reference/policy/) set, fails a root the policy denies | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
-| `tf-apply` | applies wave by wave, one job per wave, each wave behind its own approval | read the repository, write the `chant/lifecycle` branch | per wave, whether it waited and the command that approves it |
+| `tf-apply` | applies wave by wave, one job per wave, each wave behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a wave whose plans the policy denies | read the repository, write the `chant/lifecycle` branch | per wave, whether it waited and the command that approves it |
 | `tf-drift` | plans every root on a schedule with `-refresh-only` and reports what changed outside Terraform, grouped | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |

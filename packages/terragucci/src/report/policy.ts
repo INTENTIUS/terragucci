@@ -6,15 +6,17 @@
  * temporary file, and runs the engine on that file. Nothing here reads a
  * respond mode or an agent setting, and a policy that cannot run (no engine,
  * a policy that does not compile) fails the root too, so no path waives it.
- * Pull-request code can edit the policy directory like any file in the
- * checkout; protect it with CODEOWNERS or a branch rule.
+ * A pull request's plan reads the policy, and the `policy:` key, from the
+ * base branch (`trustedPolicy`), so a change that edits the policy cannot
+ * waive its own violation. `tf-apply` applies the same check to a wave's
+ * plans, with the policy of the checkout it runs from (main) or of TG_BASE.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import type { PolicySettings } from "../config";
+import { dirname, join, relative, resolve } from "node:path";
+import { loadConfig, resolveProject, resolveRepo, type PolicySettings } from "../config";
 
 /** What one run of an engine printed and how it exited. */
 export interface PolicyRun {
@@ -161,4 +163,96 @@ export function describeVerdict(engine: string, v: PolicyVerdict): string {
 /** Whether the policy path exists in the repo, so a typo fails loudly and not as a pass. */
 export function policyPathExists(policy: PolicySettings, repo: string): boolean {
   return existsSync(resolve(repo, policy.path ?? "policy"));
+}
+
+/** What `trustedPolicy` hands the check: the settings to run, and a cleanup for the base copy it made. */
+export interface TrustedPolicy {
+  policy: PolicySettings;
+  /** Set when the policy could not be read from the base; every root fails with it. */
+  error?: string;
+  /** Where the policy came from, for the log. */
+  from: "checkout" | "base";
+  cleanup: () => void;
+}
+
+function gitOut(repo: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
+  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+/** Copy the tree under `path` at `ref` into `dest`. Returns the file count, or the reason it failed. */
+function exportTree(repo: string, ref: string, path: string, dest: string): number | string {
+  const rel = `./${path.replace(/^\.\//, "").replace(/\/+$/, "")}`;
+  const ls = gitOut(repo, ["ls-tree", "-r", "-z", ref, "--", rel]);
+  if (ls.status !== 0) return `git ls-tree ${ref} ${path}: ${ls.stderr.trim().split("\n")[0]}`;
+  let count = 0;
+  for (const entry of ls.stdout.split("\0").filter(Boolean)) {
+    const tab = entry.indexOf("\t");
+    const [mode] = entry.slice(0, tab).split(" ");
+    if (mode === "120000" || mode === "160000") continue;
+    const file = entry.slice(tab + 1);
+    const shown = gitOut(repo, ["show", `${ref}:./${file}`]);
+    if (shown.status !== 0) return `git show ${ref}:./${file}: ${shown.stderr.trim().split("\n")[0]}`;
+    const out = join(dest, file);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, shown.stdout);
+    count++;
+  }
+  return count;
+}
+
+export interface TrustedOptions {
+  /** The config file the run reads; its base copy supplies the `policy:` key. */
+  config?: string;
+  /** The control repo project the run reads, if any. */
+  project?: string;
+}
+
+/**
+ * The policy a plan is checked against. Without a base (a push to main, a
+ * schedule) that is the checkout's. With one (a pull request's target branch)
+ * the `policy:` key is read from the config at the base, and its directory is
+ * exported from the base into a temporary directory, so the pull request's own
+ * edits to either change nothing. A base that has no `policy:` key leaves the
+ * checkout's in force: there is nothing there to waive. A base that cannot be
+ * read fails closed.
+ */
+export async function trustedPolicy(repo: string, checkout: PolicySettings, base: string | undefined, options: TrustedOptions = {}): Promise<TrustedPolicy> {
+  const own: TrustedPolicy = { policy: checkout, from: "checkout", cleanup: () => {} };
+  if (!base) return own;
+  let atBase: PolicySettings | undefined = checkout;
+  if (options.config) {
+    const rel = relative(repo, options.config);
+    const shown = gitOut(repo, ["show", `${base}:./${rel}`]);
+    if (shown.status !== 0) {
+      // No config file at the base: nothing was in force there.
+      if (/exists on disk, but not in|does not exist in|path .* does not exist/.test(shown.stderr)) return own;
+      return { ...own, error: `could not read ${rel} at ${base}: ${shown.stderr.trim().split("\n")[0]}` };
+    }
+    if (/\.ts$/.test(rel)) {
+      // A TypeScript config cannot be evaluated from a string; its policy settings stay the checkout's, and the directory still comes from the base.
+    } else {
+      const dir = mkdtempSync(join(tmpdir(), "terragucci-baseconfig-"));
+      try {
+        const file = join(dir, rel.split("/").pop()!);
+        writeFileSync(file, shown.stdout);
+        const config = await loadConfig(file);
+        atBase = (options.project ? resolveProject(config, options.project) : resolveRepo(config)).policy;
+      } catch (e) {
+        return { ...own, error: `could not read the config at ${base}: ${(e as Error).message}` };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  if (!atBase) return own;
+  const path = atBase.path ?? "policy";
+  const dest = mkdtempSync(join(tmpdir(), "terragucci-basepolicy-"));
+  const cleanup = () => rmSync(dest, { recursive: true, force: true });
+  const n = exportTree(repo, base, path, dest);
+  if (typeof n === "string" || n === 0) {
+    cleanup();
+    return { ...own, error: typeof n === "string" ? `could not read the policy at ${base}: ${n}` : `the policy directory ${path} does not exist at ${base}` };
+  }
+  return { policy: { ...atBase, path: join(dest, path.replace(/^\.\//, "")) }, from: "base", cleanup };
 }

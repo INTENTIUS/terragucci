@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave, applyWaves, approvedPath, decideGate, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
+import type { PolicyExec } from "../src/report/policy";
 import { refusedDiff } from "../src/respond/refused";
 import { gateSealPayload } from "../src/seal";
 import { git, tmp, write } from "./helpers";
@@ -112,6 +113,19 @@ describe("a wave behind its gate", () => {
     vi.stubEnv("LOG", join(dir, "apply.log"));
     return { work, origin, bin, log: join(dir, "apply.log") };
   }
+
+  it("refuses a wave the policy denies, before any gate fact or apply, and leaves the wave alone when policy is not set", async () => {
+    const { work, origin, bin, log } = setup({ "terragucci.yml": "policy:\n  path: policy\n", "policy/p.rego": "package main\n" });
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
+    const deny: PolicyExec = async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status: 1, stdout: JSON.stringify([{ failures: [{ msg: "terraform_data.x is not allowed" }] }]), stderr: "" });
+    expect(await applyWave(work, { ...opts, now: T(1), policy: { exec: deny } })).toBe(1);
+    expect(existsSync(log)).toBe(false);
+    expect(out.mock.calls.flat().join("\n")).toContain("terraform_data.x is not allowed");
+    expect(() => git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).toThrow();
+    const allow: PolicyExec = async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status: 0, stdout: JSON.stringify([{ failures: [] }]), stderr: "" });
+    expect(await applyWave(work, { ...opts, now: T(1), policy: { exec: allow } })).toBe(3);
+  });
 
   it("records one pending fact with each root's digest, applies nothing, and records no second fact on a re-run", async () => {
     const { work, origin, bin, log } = setup();

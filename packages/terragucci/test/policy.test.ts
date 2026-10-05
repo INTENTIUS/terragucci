@@ -3,9 +3,11 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
-import { checkPlan, conftestViolations, describeVerdict, engineBinary, opaViolations, CONFTEST_SHA256, type PolicyExec } from "../src/report/policy";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { checkPlan, trustedPolicy, conftestViolations, describeVerdict, engineBinary, opaViolations, CONFTEST_SHA256, type PolicyExec } from "../src/report/policy";
 import { runStage } from "../src/report/stage";
-import { tmp, write } from "./helpers";
+import { git, tmp, write } from "./helpers";
 
 const deny = (...msgs: string[]) => JSON.stringify([{ filename: "plan.json", namespace: "main", successes: 1, failures: msgs.map((msg) => ({ msg })), warnings: [{ msg: "advice only" }] }]);
 
@@ -75,6 +77,68 @@ describe("config", () => {
   });
 });
 
+/** A repo whose main commits `files`, then a branch `pr` that overwrites `edits` and commits them. */
+function prRepo(files: Record<string, string>, edits: Record<string, string>): string {
+  const repo = tmp();
+  git(repo, "init", "-q", "-b", "main");
+  write(repo, files);
+  const commit = (m: string) => {
+    git(repo, "add", "-A");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", m);
+  };
+  commit("main");
+  git(repo, "checkout", "-q", "-b", "pr");
+  write(repo, edits);
+  commit("pr");
+  return repo;
+}
+
+const readTree = (dir: string): Record<string, string> => Object.fromEntries(readdirSync(dir).map((f) => [f, readFileSync(join(dir, f), "utf-8")]));
+
+describe("trustedPolicy", () => {
+  const yml = "policy:\n  path: policy\n";
+  const checkout = { path: "policy" };
+
+  it("reads the policy directory from the base, not from the pull request's edit", async () => {
+    const repo = prRepo({ "terragucci.yml": yml, "policy/p.rego": "package main\ndeny contains 1\n" }, { "policy/p.rego": "package main\n" });
+    const t = await trustedPolicy(repo, checkout, "main", { config: join(repo, "terragucci.yml") });
+    try {
+      expect(t.error).toBeUndefined();
+      expect(t.from).toBe("base");
+      expect(readTree(t.policy.path!)["p.rego"]).toContain("deny contains 1");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  it("reads the policy key from the base, so deleting it in the pull request waives nothing", async () => {
+    const repo = prRepo({ "terragucci.yml": "policy:\n  engine: opa\n  path: rego\n", "rego/p.rego": "package main\n" }, { "terragucci.yml": "roots: []\n" });
+    const t = await trustedPolicy(repo, {}, "main", { config: join(repo, "terragucci.yml") });
+    try {
+      expect(t.policy.engine).toBe("opa");
+      expect(readTree(t.policy.path!)["p.rego"]).toBe("package main\n");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  it("uses the checkout without a base, and when the base has no policy key", async () => {
+    const repo = prRepo({ "terragucci.yml": "roots: []\n" }, { "terragucci.yml": yml, "policy/p.rego": "package main\n" });
+    expect((await trustedPolicy(repo, checkout, undefined, {})).from).toBe("checkout");
+    const t = await trustedPolicy(repo, checkout, "main", { config: join(repo, "terragucci.yml") });
+    expect(t.from).toBe("checkout");
+    expect(t.error).toBeUndefined();
+  });
+
+  it("fails closed when the base has the key but not the directory, or is not a ref", async () => {
+    const repo = prRepo({ "terragucci.yml": yml }, { "policy/p.rego": "package main\n" });
+    const t = await trustedPolicy(repo, checkout, "main", { config: join(repo, "terragucci.yml") });
+    expect(t.error).toMatch(/does not exist at main/);
+    const bad = await trustedPolicy(repo, checkout, "origin/nothing", { config: join(repo, "terragucci.yml") });
+    expect(bad.error).toMatch(/could not read/);
+  });
+});
+
 const TOFU = (await import("node:child_process")).spawnSync("tofu", ["version"]).status === 0;
 
 describe.skipIf(!TOFU)("terragucci stage tf-plan with policy", () => {
@@ -91,6 +155,19 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan with policy", () => {
     expect(result.failed).toBe(true);
     expect(result.report.roots[0].status).toBe("failed");
     expect(JSON.stringify(result.report)).toContain("terraform_data.x is not allowed");
+  });
+
+  it("checks a pull request against the base's policy, so editing the policy to allow itself does not pass", { timeout: 120_000 }, async () => {
+    const repo = prRepo(files({ "policy/p.rego": "package main\n# base\n" }), { "policy/p.rego": "package main\n# allow everything\n" });
+    const seen: string[] = [];
+    const exec: PolicyExec = async (_f, args) => {
+      if (args[0] === "--version") return { status: 0, stdout: "", stderr: "" };
+      seen.push(readFileSync(join(args[args.indexOf("--policy") + 1], "p.rego"), "utf-8"));
+      return { status: 1, stdout: deny("terraform_data.x is not allowed"), stderr: "" };
+    };
+    const result = await runStage("tf-plan", repo, { base: "main", policy: { exec } }, () => {});
+    expect(seen).toEqual(["package main\n# base\n"]);
+    expect(result.failed).toBe(true);
   });
 
   it("changes nothing when the policy key is absent", { timeout: 120_000 }, async () => {

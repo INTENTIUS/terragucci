@@ -758,7 +758,7 @@ claim_affected() {
   [ -n "${BREAK:-}" ] && base=""
   REPORT_BASE="$base" REPORT_EDIT='printf "\n# smoke affected: a change to this root alone\n" >> envs/dev/platform/main.tf' report_run "$work" || true
   r="$work/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; drop_work "$tree"; return 1; }
   got="$(jq -r '[.roots[] | select(.status == "planned") | .path] | sort | join(",")' "$r")"
   [ "$got" = "$want" ] || { log "planned $got, not $want"; rc=1; }
   drop_work "$work"
@@ -1651,7 +1651,7 @@ claim_tg_affected() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then TG_BASE_OVERRIDE="" tg_report_run "$work" module-bump || true; else tg_report_run "$work" module-bump || true; fi
   r="$work/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; drop_work "$tree"; return 1; }
   n="$(jq '[.roots[] | select(.status == "planned")] | length' "$r")"
   [ "$n" = 12 ] || { log "$n units planned, not the 12 services"; rc=1; }
   jq -e '[.roots[] | select(.path | endswith("/platform"))] | length == 0' "$r" >/dev/null || { log "a platform unit was planned"; rc=1; }
@@ -1864,7 +1864,7 @@ TF"
   curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/envs/dev/fresh-app.tfstate" || true
   REPORT_BASE=1 REPORT_EDIT="$edit" report_run "$work" || run=$?
   r="$work/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; drop_work "$tree"; return 1; }
   [ "$run" = 0 ] || { log "the plan job exited $run, so it is not green"; rc=1; }
   jq -e --arg n "$net" '.roots[] | select(.path == $n and .status == "planned")' "$r" >/dev/null || { log "$net was not planned"; rc=1; }
   jq -e --arg a "$app" '[.roots[] | select(.path == $a)] | length == 0' "$r" >/dev/null || { log "$app was planned though its upstream is unapplied"; rc=1; }
@@ -1879,12 +1879,15 @@ claim_policy() {
   # A new root plans a terraform_data resource, and the repo's terragucci.yml
   # turns on policy: a Rego rule denying terraform_data. tf-plan must exit 1,
   # fail that root, and name the denial in the report and the note; conftest is
-  # fetched on demand, since the CI image does not carry it. BREAK: the rule
-  # denies nothing, so the violation does not fail the plan.
+  # fetched on demand, since the CI image does not carry it. The policy and the
+  # key that turns it on are committed at the base, and the change under test
+  # also rewrites that policy to deny nothing: the plan reads the base's copy,
+  # so the pull request cannot allow itself. BREAK: the base's rule denies
+  # nothing, so the violation does not fail the plan.
   log() { echo "[smoke policy] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work rc=0 run=0 r root=envs/dev/policy-probe edit rule='deny contains msg if {
+  local work tree rc=0 run=0 r root=envs/dev/policy-probe edit rule='deny contains msg if {
   some rc in input.resource_changes
   rc.type == "terraform_data"
   msg := sprintf("%s: terraform_data is not allowed here", [rc.address])
@@ -1893,7 +1896,12 @@ claim_policy() {
   input.nothing_ever_matches
   msg := "unreachable"
 }'
-  edit="mkdir -p $root policy
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$EXAMPLE/." "$tree/"
+  mkdir -p "$tree/policy"
+  printf 'package main\n\nimport rego.v1\n\n%s\n' "$rule" > "$tree/policy/plan.rego"
+  printf 'policy:\n  engine: conftest\n  path: policy\n' >> "$tree/terragucci.yml"
+  edit="mkdir -p $root
 cat > $root/main.tf <<'TF'
 terraform {
   required_version = \"~> 1.13.0\"
@@ -1911,23 +1919,17 @@ resource \"terraform_data\" \"probe\" {
   input = 1
 }
 TF
-cat > policy/plan.rego <<'REGO'
-package main
-
-import rego.v1
-
-$rule
-REGO"
+printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  input.the_pull_request_allows_itself\n  msg := \"unreachable\"\n}\n' > policy/plan.rego"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  REPORT_BASE=1 REPORT_EDIT="$edit" REPORT_CONFIG=$'policy:\n  engine: conftest\n  path: policy' report_run "$work" || run=$?
+  REPORT_TREE="$tree" REPORT_BASE=1 REPORT_EDIT="$edit" report_run "$work" || run=$?
   r="$work/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; drop_work "$tree"; return 1; }
   [ "$run" = 1 ] || { log "the plan job exited $run, not 1: the violation did not fail it"; rc=1; }
   jq -e --arg n "$root" '.roots[] | select(.path == $n and .status == "failed")' "$r" >/dev/null || { log "$root is not failed in the report"; rc=1; }
   grep -q "terraform_data.probe: terraform_data is not allowed here" "$r" || { log "the report does not name the violation"; rc=1; }
   grep -q "terraform_data.probe: terraform_data is not allowed here" "$work/terragucci-report/note.md" || { log "the note does not name the violation"; rc=1; }
-  drop_work "$work"
-  [ $rc = 0 ] && log "conftest denied terraform_data, $root failed the plan job, and the report and the note name the violation"
+  drop_work "$work"; drop_work "$tree"
+  [ $rc = 0 ] && log "conftest denied terraform_data under the base's policy although the change rewrote it, $root failed the plan job, and the report and the note name the violation"
   return $rc
 }
 
