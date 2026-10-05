@@ -1,6 +1,6 @@
 {
   "recorded": "2026-10-05",
-  "commit": "4faf4fb",
+  "commit": "4638c80",
   "forge": "forgejo",
   "claims": [
     {
@@ -237,6 +237,13 @@
     {
       "claim": "forgejo-oidc",
       "says": "a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "steward",
+      "says": "tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
