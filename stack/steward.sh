@@ -13,8 +13,11 @@
 #                                           and the pipeline's wave jobs replaced
 #                                           by one job that runs
 #                                           `chant run tf-apply --on fountain`
-#   stack/steward.sh turns                  the steward's turns, one per line:
-#                                           number, status, prompt
+#                                           on a fresh conversation, and fails
+#                                           unless a new turn completed
+#   stack/steward.sh turns                  the steward's turns on its current
+#                                           conversation, one per line: number,
+#                                           status, prompt, turn id
 #
 # The steward is one fountain Agent on the acp runtime, whose command is
 # `chant acp`, seated as a Teammate so its turns land on one thread. Its
@@ -176,9 +179,9 @@ export default {
   },
 };
 TS
-    python3 - "$wf" "$dir/tf-apply.op.ts" "$STEWARD_IMAGE" "${TG_STEWARD_HANDOVER:-1}" "$MODULES" <<'PY'
+    python3 - "$wf" "$dir/tf-apply.op.ts" "$STEWARD_IMAGE" "${TG_STEWARD_HANDOVER:-1}" "$MODULES" "$NAME" <<'PY'
 import json, re, sys
-wf, op, image, handover, modules = sys.argv[1:]
+wf, op, image, handover, modules, name = sys.argv[1:]
 s = open(wf).read()
 head, jobs = s.split("\njobs:\n", 1)
 # One block per job: "  name:\n" and the indented lines under it.
@@ -249,8 +252,86 @@ job = f"""  apply:
           set -euo pipefail
           # The Op file imports chant, which the image installs globally.
           ln -sfn {modules} node_modules
-          chant run tf-apply --on fountain
+          node --input-type=module <<'JS'
 """
+# The step around `chant run tf-apply --on fountain`. chant 0.104 tails the
+# teammate's whole thread from its first event, so on a thread that already
+# has a finished turn it reports that turn as this run and returns before the
+# new turn has started (INTENTIUS/chant#3524). So the job moves the teammate
+# to a fresh conversation first (same computer, same sandbox), and trusts a 0
+# from chant only once a new tf-apply turn on the thread has completed.
+STEP = r"""
+import { spawnSync } from "node:child_process";
+const api = "http://fountain:4000/api";
+const name = "@@NAME@@";
+const headers = { authorization: `Bearer ${process.env.FOUNTAIN_TOKEN}`, "content-type": "application/json" };
+const say = (m) => console.error(`[steward] ${m}`);
+const fail = (m) => { say(`FAIL: ${m}`); process.exit(1); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const call = async (method, path) => {
+  const res = await fetch(api + path, { method, headers });
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+};
+const teammate = async () => {
+  const { status, body } = await call("GET", "/team");
+  if (status !== 200) fail(`GET /api/team answered ${status}`);
+  const t = (body.data ?? []).find((t) => t.name === name || t.agent?.name === name);
+  if (!t) fail(`no teammate ${name} on fountain`);
+  return t;
+};
+const applyTurns = async () => {
+  const conv = (await teammate()).conversation?.id;
+  if (!conv) return [];
+  const { status, body } = await call("GET", `/conversations/${conv}/turns?limit=500`);
+  if (status !== 200) fail(`GET the turns of conversation ${conv} answered ${status}`);
+  return (body.data ?? []).filter((t) => (t.prompt ?? "").startsWith("chant run tf-apply"));
+};
+const until = async (what, secs, fn) => {
+  for (let i = 0; i < secs / 3; i++) {
+    const v = await fn();
+    if (v) return v;
+    await sleep(3000);
+  }
+  fail(`${what} after ${secs}s`);
+};
+
+let t = await teammate();
+if ((t.conversation?.turn_count ?? 0) > 0) {
+  const last = await until("the steward's conversation could not be rotated", 300, async () => {
+    const { status, body } = await call("POST", `/team/${t.agent_id}/conversations`);
+    if (status === 200 || status === 201) return { ok: true };
+    // 400 a turn still running, 409 a reset, 503 the computer starting: wait.
+    if ([400, 409, 503].includes(status)) return undefined;
+    return { ok: false, why: `${status} ${JSON.stringify(body)}` };
+  });
+  if (!last.ok) fail(`rotating the steward's conversation answered ${last.why}`);
+  t = await teammate();
+  say(`a fresh conversation for this run: ${t.conversation?.id}`);
+}
+await until("the steward's computer is not up", 300, async () =>
+  ["online", "asleep", "working"].includes((await teammate()).presence?.state));
+
+const before = new Set((await applyTurns()).map((t) => t.id));
+const run = spawnSync("chant", ["run", "tf-apply", "--on", "fountain"], { stdio: "inherit" });
+if (run.error) fail(`could not start chant: ${run.error.message}`);
+if (run.status !== 0) process.exit(run.status ?? 1);
+
+const turn = await until("chant reported the run finished, but the steward has no new tf-apply turn", 120, async () =>
+  (await applyTurns()).filter((t) => !before.has(t.id)).sort((a, b) => b.turn_number - a.turn_number)[0]);
+let now = turn;
+if (!["completed", "failed", "interrupted"].includes(now.status)) {
+  say(`chant returned before the steward's turn ${now.turn_number} finished (${now.status}); waiting for it (INTENTIUS/chant#3524)`);
+  now = await until(`turn ${turn.turn_number} has not finished`, 3600, async () => {
+    const t = (await applyTurns()).find((t) => t.id === turn.id);
+    return t && ["completed", "failed", "interrupted"].includes(t.status) ? t : undefined;
+  });
+}
+if (now.status !== "completed" || now.limit_reason || now.waiting) {
+  fail(`the steward's turn ${now.turn_number} ended ${now.status}${now.limit_reason ? ` (${now.limit_reason})` : ""}${now.waiting ? ", waiting on a request" : ""}`);
+}
+say(`the steward's turn ${now.turn_number} completed`);
+""".replace("@@NAME@@", name)
+job += "".join(("          " + l if l else "") + "\n" for l in STEP.strip("\n").split("\n")) + "          JS\n"
 out = "".join(job if b == "@@APPLY@@" else b for b in kept)
 out = re.sub(rf"(?m)^    needs: {last}$", "    needs: apply", out)
 open(wf, "w").write(head + "\njobs:\n" + out)
@@ -267,11 +348,11 @@ PY
     conv="$(teammate | jq -r '.conversation.id // empty')"
     [ -n "$conv" ] || fail "no teammate $NAME on fountain; run 'stack/steward.sh declare <owner/repo>' first"
     fapi "$FOUNTAIN/api/conversations/$conv/turns" \
-      | jq -r '.data | sort_by(.turn_number)[] | "\(.turn_number)\t\(.status)\t\(.prompt | split("\n")[0])"'
+      | jq -r '.data | sort_by(.turn_number)[] | "\(.turn_number)\t\(.status)\t\(.prompt | split("\n")[0])\t\(.id)"'
     ;;
 
   *)
-    sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

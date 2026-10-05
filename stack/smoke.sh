@@ -1986,21 +1986,35 @@ JS
 claim_steward() {
   # Changes the example: it boots it fresh with tf-apply handed to the fountain
   # steward (stack/steward.sh). The push to main goes green, every resource is
-  # in floci, and the steward's thread has one more `chant run tf-apply` turn,
-  # which completed. BREAK: the pipeline keeps its own wave jobs, so the forge
-  # applies and every resource still appears; only the steward's thread can
-  # tell that the steward ran nothing.
+  # in floci, and the steward has a `chant run tf-apply` turn it did not have
+  # before the push, which completed. The steward may already exist from an
+  # earlier boot: the apply job moves it to a fresh conversation, so the new
+  # turn is told apart by its id, not by a count. BREAK: the pipeline keeps its
+  # own wave jobs, so the forge applies and every resource still appears; only
+  # the steward's turns can tell that the steward ran nothing.
   log() { echo "[smoke steward] $*" >&2; }
-  local handover=1 before after last
+  local handover=1 before new rc=0
   [ -n "${BREAK:-}" ] && handover=0
   tf_apply_turns() { "$HERE/steward.sh" turns 2>/dev/null | grep $'\tchant run tf-apply' || true; }
-  before="$(tf_apply_turns | grep -c . || true)"
-  TG_STEWARD_HANDOVER=$handover "$HERE/example.sh" up --fresh --fountain >&2 || return 1
-  "$HERE/example.sh" verify >&2 || return 1
-  after="$(tf_apply_turns | grep -c . || true)"
-  last="$(tf_apply_turns | tail -1 | cut -f2)"
-  [ "$after" -gt "$before" ] || { log "the steward ran no tf-apply turn ($before before the push, $after after)"; return 1; }
-  [ "$last" = completed ] || { log "the steward's tf-apply turn ended '$last'"; return 1; }
+  # The tf-apply turns whose id was not there before the push, oldest first.
+  new_turns() { tf_apply_turns | awk -F'\t' 'NR == FNR { seen[$1]; next } !($4 in seen)' <(printf '%s\n' "$before") -; }
+  before="$(tf_apply_turns | cut -f4)"
+  TG_STEWARD_HANDOVER=$handover "$HERE/example.sh" up --fresh --fountain >&2 || rc=1
+  [ "$rc" = 0 ] && { "$HERE/example.sh" verify >&2 || rc=1; }
+  new="$(new_turns)"
+  if [ -z "$new" ]; then
+    log "the steward ran no new tf-apply turn for this push"
+    return 1
+  fi
+  # The pipeline is finished by now, so a turn still pending or running is a
+  # job that ended before the steward's turn did.
+  log "the steward's new turn: $(tail -1 <<<"$new" | cut -f1-3 | tr '\t' ' ')"
+  case "$(tail -1 <<<"$new" | cut -f2)" in
+    completed) ;;
+    pending|running) log "the apply job ended before the steward's turn did"; return 1 ;;
+    *) log "the steward's tf-apply turn did not complete"; return 1 ;;
+  esac
+  [ "$rc" = 0 ] || { log "the steward's turn completed, but the boot or the resource check failed"; return 1; }
   log "the steward's tf-apply turn completed, and every root's resources are in floci"
 }
 
