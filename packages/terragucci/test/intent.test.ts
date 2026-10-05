@@ -12,7 +12,8 @@ import { validateConfig } from "../src/config";
 import type { DecideFetch, DecideSettings } from "../src/decide";
 import { LAYA_MODEL } from "../src/images";
 import { buildReport, planFiles } from "../src/report/build";
-import { writeReportDir } from "../src/report/store";
+import type { S3Fetch } from "../src/report/s3";
+import { runKey, writeReportDir } from "../src/report/store";
 import { respond } from "../src/respond";
 import { checkDescription, intentState } from "../src/respond/intent";
 import { tmp } from "./helpers";
@@ -192,6 +193,37 @@ describe("respond description", () => {
     expect(none.skipped).toMatch(/no pull request title/);
     const r = await respond("description", repo, { config: cfg, mode: "apply", env: { CI_MERGE_REQUEST_TITLE: "retag email", CI_MERGE_REQUEST_DESCRIPTION: "Tags only." }, decideFetch: answers(0.93) });
     expect((r.data as { flagged: boolean }).flagged).toBe(true);
+  });
+
+  it("copies what it changed over the bucket's copy the stage uploaded, so the bucket holds the flag too (#131)", async () => {
+    const dir = reportDir("destroy");
+    const repo = join(dir, "..");
+    const cfg = config(repo, "respond:\n  description: check\ndecide:\n  backend: laya\n  url: http://decide.local:8790\nreports:\n  bucket: s3://acme-reports\n  endpoint: http://minio:9000\n  prefix: reports\n");
+    const objects = new Map<string, string>();
+    const s3Fetch: S3Fetch = async (url, init) => {
+      if (init.method === "PUT") objects.set(decodeURIComponent(new URL(url).pathname.replace(/^\/acme-reports\//, "")), Buffer.from(init.body as Uint8Array).toString("utf-8"));
+      return { ok: true, status: 200, text: async () => "" };
+    };
+    const env = { CI_MERGE_REQUEST_TITLE: RETAG.title, CI_MERGE_REQUEST_DESCRIPTION: RETAG.description, AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" };
+    const r = await respond("description", repo, { config: cfg, mode: "apply", env, decideFetch: answers(0.93), s3Fetch });
+    const key = runKey(JSON.parse(read(dir, "report.json")), "reports");
+    expect(r.text).toContain(`copied intent.json, note.md, report.html to the bucket under ${key}`);
+    for (const f of ["note.md", "report.html", "intent.json"]) expect(objects.get(`${key}/${f}`), f).toBe(read(dir, f));
+    expect(objects.get(`${key}/note.md`)!.startsWith("> Check the description")).toBe(true);
+  });
+
+  it("with no flag to write, copies nothing but the decision record", async () => {
+    const dir = reportDir("module-bump");
+    const repo = join(dir, "..");
+    const cfg = config(repo, "respond:\n  description: check\ndecide:\n  backend: laya\n  url: http://decide.local:8790\nreports:\n  bucket: s3://acme-reports\n  endpoint: http://minio:9000\n");
+    const puts: string[] = [];
+    const s3Fetch: S3Fetch = async (url, init) => {
+      if (init.method === "PUT") puts.push(new URL(url).pathname);
+      return { ok: true, status: 200, text: async () => "" };
+    };
+    const env = { CI_MERGE_REQUEST_TITLE: MODULE_BUMP.title, CI_MERGE_REQUEST_DESCRIPTION: MODULE_BUMP.description, AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" };
+    await respond("description", repo, { config: cfg, mode: "apply", env, decideFetch: answers(0.05), s3Fetch });
+    expect(puts.map((p) => p.split("/").pop())).toEqual(["intent.json"]);
   });
 });
 

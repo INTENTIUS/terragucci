@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 3;
+export const REPORT_MINOR = 4;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -37,6 +37,18 @@ export interface ReportRun {
   job_url?: string;
   /** The `terragucci` version that wrote it. */
   terragucci?: string;
+  /** The commit's page on the forge (minor 4). */
+  commit_url?: string;
+  /** The pull or merge request the run planned, by number (minor 4). */
+  pull_request?: string;
+  /** Its page on the forge (minor 4). */
+  pull_request_url?: string;
+  /** Where this report.html is served, when `reports.url` names the bucket's address (minor 4). */
+  report_url?: string;
+  /** The run's trace id, when the stage sent a trace (minor 4). */
+  trace_id?: string;
+  /** The trace in Grafana, Tempo or another viewer, from `telemetry.trace_url` (minor 4). */
+  trace_url?: string;
 }
 
 /** Why something is open: one short reason a reader sees beside it. */

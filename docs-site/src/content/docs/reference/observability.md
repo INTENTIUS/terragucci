@@ -87,6 +87,17 @@ A plan run for a pull request labels its metrics with `pull_request`. The stage 
 
 The resource carries `terragucci.project`, `vcs.ref.head.revision` (the commit) and `cicd.pipeline.run.url.full` (the CI job). A collector set to copy resource attributes onto series can then find one run's numbers by its commit.
 
+## From a trace to its report
+
+`report.json` records the run's trace id as `run.trace_id`, and the HTML report shows it. Set `telemetry.trace_url` to a link with `{trace_id}` in it and the report links the trace instead:
+
+```yaml
+telemetry:
+  trace_url: "https://grafana.example.com/explore?left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22{trace_id}%22%7D%5D%7D"
+```
+
+Any viewer that takes a trace id in its URL works: Grafana's Explore, Tempo's API, Jaeger. The other way, with [`reports.url`](/terragucci/reference/report/#where-reports-are-kept) set, the stage span carries the address of the run's `report.html` in the bucket as `terragucci.report.url`, and the job's page as `cicd.pipeline.run.url.full`.
+
 ## Dashboards and alerts
 
 Set `dashboards: true` in `terragucci.yml` and `init` writes Grafana dashboards and alert rules into the repo, next to the pipeline. `reconcile` writes them into each project the same way. They change only when the config does, and `init` leaves a file there that it did not write alone.
@@ -148,3 +159,5 @@ connectors:
 ```
 
 The Runs dashboard lists traces from Tempo. A collector that exports traces elsewhere still fills every other panel.
+
+With `reports.url` set, the dashboards link down to the reports. In the Runs dashboard's trace table, each run's name links its report, through the page the upload writes at `traces/<trace id>.html`; the trace id keeps Grafana's own link to the trace. The Estate dashboard links each project in "Roots per project" to its report index, and both dashboards carry a link to the index of every project.

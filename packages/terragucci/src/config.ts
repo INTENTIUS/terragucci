@@ -158,13 +158,22 @@ export interface ProjectSettings {
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
   runtime?: Runtime;
-  reports?: { bucket: string; endpoint?: string; prefix?: string };
+  /**
+   * A bucket for plan reports. `url` is the address that serves the bucket's
+   * objects to a browser (a static site, a CDN, the store's public endpoint);
+   * with it, the note, the index and the dashboards link the bucket's copy.
+   */
+  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string };
   /** The environment variable holding the forge token. */
   token_env?: string;
   /** Environment variables every job gets. Values only, never secrets. */
   env?: Record<string, string>;
-  /** The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, such as a collector's API key. */
-  telemetry?: { headers_secret: string };
+  /**
+   * The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, such as a collector's API
+   * key, and `trace_url`: a link to a run's trace with `{trace_id}` in it
+   * (Grafana's Explore, Tempo, Jaeger), which the report links.
+   */
+  telemetry?: { headers_secret?: string; trace_url?: string };
   tips?: boolean;
   modules?: { path?: string; publish?: string | string[] };
   /**
@@ -312,16 +321,23 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.telemetry !== undefined) {
     const t = s.telemetry;
-    if (!isObject(t)) problems.push(`${where}.telemetry must be a map with headers_secret`);
+    if (!isObject(t)) problems.push(`${where}.telemetry must be a map (settings: headers_secret, trace_url)`);
     else {
-      for (const k of Object.keys(t)) if (k !== "headers_secret") problems.push(`${where}.telemetry.${k} is not a setting (settings: headers_secret)`);
-      if (typeof t.headers_secret !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t.headers_secret)) {
+      for (const k of Object.keys(t)) if (k !== "headers_secret" && k !== "trace_url") problems.push(`${where}.telemetry.${k} is not a setting (settings: headers_secret, trace_url)`);
+      if (t.headers_secret === undefined && t.trace_url === undefined) problems.push(`${where}.telemetry must set headers_secret, trace_url or both`);
+      if (t.headers_secret !== undefined && (typeof t.headers_secret !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t.headers_secret))) {
         problems.push(`${where}.telemetry.headers_secret must name the secret holding the OTLP headers, such as OTLP_HEADERS`);
+      }
+      if (t.trace_url !== undefined && !(typeof t.trace_url === "string" && /^https?:\/\/[^\s]+$/.test(t.trace_url) && t.trace_url.includes("{trace_id}"))) {
+        problems.push(`${where}.telemetry.trace_url must be an http(s) URL with {trace_id} in it, such as https://grafana.example/explore?left=...{trace_id}...`);
       }
     }
   }
-  if (s.reports !== undefined && !(isObject(s.reports) && typeof s.reports.bucket === "string")) {
-    problems.push(`${where}.reports must name a bucket`);
+  if (s.reports !== undefined) {
+    if (!(isObject(s.reports) && typeof s.reports.bucket === "string")) problems.push(`${where}.reports must name a bucket`);
+    else if (s.reports.url !== undefined && !(typeof s.reports.url === "string" && /^https?:\/\/[^\s?#]+$/.test(s.reports.url))) {
+      problems.push(`${where}.reports.url must be the http(s) address that serves the bucket, such as https://reports.example.com`);
+    }
   }
   if (s.oidc !== undefined) {
     const o = s.oidc;

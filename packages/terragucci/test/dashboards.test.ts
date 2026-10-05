@@ -229,3 +229,50 @@ describe("dashboards: what a stage sends", () => {
     ]);
   });
 });
+
+describe("dashboards: links down to the reports (#131)", () => {
+  type Link = { title: string; url: string };
+  type Override = { matcher: { id: string; options: string }; properties: { id: string; value: Link[] }[] };
+  type LinkedPanel = Panel & { links?: Link[]; fieldConfig?: { overrides?: Override[] } };
+  const BASE = "https://reports.acme.example/reports";
+  const dash = (files: { path: string; content: string }[], uid: string) =>
+    JSON.parse(files.find((f) => f.path.endsWith(`/${uid}.json`))!.content) as { links: Link[]; panels: LinkedPanel[] };
+  const panel = (d: { panels: LinkedPanel[] }, title: string) => panelsOf(d).find((p) => p.title === title) as LinkedPanel;
+  const linkOn = (p: LinkedPanel, field: string): string | undefined =>
+    p.fieldConfig?.overrides?.find((o) => o.matcher.id === "byName" && o.matcher.options === field)?.properties.find((x) => x.id === "links")?.value[0]?.url;
+
+  it("with no reports address, links nothing outside Grafana", () => {
+    const files = renderDashboards(dashboardSettings(true)!);
+    for (const uid of [DASHBOARD_UIDS.runs, DASHBOARD_UIDS.estate]) {
+      const d = dash(files, uid);
+      expect(d.links).toEqual([]);
+      expect(JSON.stringify(d)).not.toContain("index.html");
+    }
+  });
+
+  it("the Runs dashboard's trace rows link each run's report through its trace page, and the index", () => {
+    const d = dash(renderDashboards(dashboardSettings(true)!, { reports: BASE }), DASHBOARD_UIDS.runs);
+    const runs = panel(d, "Runs");
+    expect(linkOn(runs, "traceName")).toBe(`${BASE}/traces/\${__data.fields.traceID}.html`);
+    // Grafana's own link from the trace id to the trace stays.
+    expect(linkOn(runs, "traceID")).toBeUndefined();
+    expect(runs.links?.[0].url).toBe(`${BASE}/index.html`);
+    expect(d.links.map((l) => l.url)).toEqual([`${BASE}/index.html`]);
+  });
+
+  it("the Estate dashboard links each project to its index, and the index of every project", () => {
+    const d = dash(renderDashboards(dashboardSettings(true)!, { reports: BASE }), DASHBOARD_UIDS.estate);
+    expect(linkOn(panel(d, "Roots per project"), "project")).toBe(`${BASE}/\${__value.raw}/index.html`);
+    expect(d.links.map((l) => l.url)).toEqual([`${BASE}/index.html`]);
+  });
+
+  it("init takes the address from reports.url and reports.prefix, and never from the bucket's name", async () => {
+    const served = await init(repo("binary: tofu\ndashboards: true\nreports:\n  bucket: s3://acme-reports\n  prefix: reports\n  url: https://reports.acme.example/\n"), { dryRun: true });
+    const runs = served.files.find((f) => f.path.endsWith(`/${DASHBOARD_UIDS.runs}.json`))!;
+    expect(runs.content).toContain(`${BASE}/traces/`);
+    const unserved = await init(repo("binary: tofu\ndashboards: true\nreports:\n  bucket: s3://acme-reports\n"), { dryRun: true });
+    const plain = unserved.files.find((f) => f.path.endsWith(`/${DASHBOARD_UIDS.runs}.json`))!;
+    expect(plain.content).not.toContain("acme-reports");
+    expect(plain.content).not.toContain("/traces/");
+  });
+});

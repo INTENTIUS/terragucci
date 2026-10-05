@@ -71,6 +71,12 @@ const codePoints = (s: string): number => [...s].length;
 export interface NoteOptions {
   /** Where report.html is, as the note links it. Default `report.html`. */
   reportUrl?: string;
+  /**
+   * `reportUrl` is the CI run's page, where the report is a download in the
+   * run's artifacts (GitHub and Forgejo with no `reports.url`): the note says
+   * so, and links no anchor, since the run's page has none.
+   */
+  artifacts?: boolean;
   /** The most characters the note may hold. Default GitHub's 65,536. */
   limit?: number;
 }
@@ -81,6 +87,11 @@ function changeText(l: PlanSummaryChange): string {
   return t;
 }
 
+/** Whether a report URL is a page that holds the report as a download rather than report.html itself: anything that is not an .html file. */
+export function isArtifactPage(url: string): boolean {
+  return !/\.html?$/i.test(url.split("#")[0].split("?")[0]);
+}
+
 /**
  * The pull-request note. Each group links to `report.html#group-<id>` and
  * each named change to `report.html#root-<path>`. Destroys, replacements and
@@ -89,6 +100,10 @@ function changeText(l: PlanSummaryChange): string {
  */
 export function renderNote(report: Report, options: NoteOptions = {}): string {
   const url = options.reportUrl ?? "report.html";
+  const artifacts = options.artifacts === true;
+  // A link into the report; to the run's page, with no anchor, when the report is a download there.
+  const to = (text: string, anchor?: string): string => `[${text}](${url}${anchor && !artifacts ? `#${anchor}` : ""})`;
+  const full = artifacts ? `The full report is \`report.html\` in the \`terragucci-report\` artifact of [this run](${url}).` : `[Full report](${url})`;
   const limit = options.limit ?? GITHUB_COMMENT_LIMIT;
   const { run } = report;
   const unitWord = report.unit === "instance" ? "instance" : "root";
@@ -98,14 +113,14 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   head.push(`### terragucci ${run.stage}${run.wave !== undefined ? `, wave ${run.wave}` : ""}: ${code(run.commit.slice(0, 12))}`, "");
   const parts = [plural(report.groups.length, "group"), plural(destroys, "destroy or replacement", "destroys or replacements")];
   if (refused > 0) parts.push(`${refused} refused`);
-  head.push(`${plural(report.units, unitWord)}: ${parts.join(", ")}. [Full report](${url})`, "");
+  head.push(`${plural(report.units, unitWord)}: ${parts.join(", ")}. ${full}`, "");
   if (report.roots.length === 0 && run.stage === "tf-plan") head.push("This change reaches no root, so nothing was planned.", "");
-  if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the [full report](${url}#tips).`, "");
+  if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts ? "full report" : to("full report", "tips")}.`, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
   // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
   const slow = report.timings?.resources.slice(0, 3) ?? [];
   if (slow.length > 0) {
-    head.push(`Slowest: ${slow.map((r) => `${code(`${r.root}: ${r.address}`)} ${duration(r.ms)}`).join(", ")}. [Where the time went](${url}#timings)`, "");
+    head.push(`Slowest: ${slow.map((r) => `${code(`${r.root}: ${r.address}`)} ${duration(r.ms)}`).join(", ")}. ${artifacts ? "Where the time went is in the full report." : to("Where the time went", "timings")}`, "");
   }
 
   const blocks: { text: string; group: boolean; units: number }[] = [];
@@ -116,7 +131,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const what = n.address ? `${n.root}: ${n.address}${n.deposed !== undefined ? ` (deposed ${n.deposed})` : ""}` : n.root;
       const forced = n.replace_paths?.length ? `, forced by ${n.replace_paths.map((p) => code(p.join("."))).join(", ")}` : "";
       const reason = n.reason ? `: ${n.reason.split(/\s+/).join(" ")}` : "";
-      blocks.push({ group: false, units: 0, text: `- [${code(what)}](${url}#${rootAnchor(n.root)}) (${actionWord(run.stage, n.action)}${forced})${reason}\n` });
+      blocks.push({ group: false, units: 0, text: `- ${to(code(what), rootAnchor(n.root))} (${actionWord(run.stage, n.action)}${forced})${reason}\n` });
     }
     blocks.push({ group: false, units: 0, text: "\n" });
   }
@@ -131,7 +146,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     blocks.push({ group: false, units: 0, text: t + "\n" });
   }
   for (const g of report.groups) {
-    let title = `[Group ${g.id}](${url}#${groupAnchor(g.id)}): ${plural(g.units.length, unitWord)}`;
+    let title = `${to(`Group ${g.id}`, groupAnchor(g.id))}: ${plural(g.units.length, unitWord)}`;
     if (g.resource) title += ` of ${code(g.resource)}`;
     if (g.outlier) title += " (outlier)";
     title += g.noChanges ? ", no changes" : g.extends ? `, group ${g.extends}'s change plus` : g.units.length > 1 ? ", identical change" : ", change";
@@ -151,7 +166,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     const groups = cut.filter((b) => b.group);
     const lines = cut.length - groups.length;
     const what = [groups.length > 0 ? `${plural(groups.length, "group")} (${plural(groups.reduce((n, b) => n + b.units, 0), unitWord)})` : "", lines > 0 ? plural(lines, "line") : ""].filter(Boolean).join(" and ");
-    return `**Cut:** this note leaves out ${what} to stay within ${limit} characters. [The full report](${url}) has all of it.\n`;
+    return `**Cut:** this note leaves out ${what} to stay within ${limit} characters. ${artifacts ? `The full report, in the artifacts of [this run](${url}),` : `[The full report](${url})`} has all of it.\n`;
   };
   let kept = blocks.length;
   let used = codePoints(all);

@@ -89,6 +89,8 @@ export class StageObserver {
   pins: ModulePin[] = [];
   /** Set by a drift stage before `finish`. */
   drift?: DriftFacts;
+  /** Set by the stage before `finish` when the report has an address (reports.url): the stage span carries it, so a trace links its report. */
+  reportUrl?: string;
   /** Set by a tf-apply wave: its number, what it found out, and its exit code once it has one. */
   wave?: { number: number; facts: WaveFacts; code?: number };
 
@@ -298,6 +300,8 @@ export class StageObserver {
         // How the stage or the wave ended, a dimension of the span metrics the dashboards read.
         "terragucci.result": result,
         ...(this.wave ? { "terragucci.wave": this.wave.number } : {}),
+        ...(this.reportUrl ? { "terragucci.report.url": this.reportUrl } : {}),
+        ...(run.job_url ? { "cicd.pipeline.run.url.full": run.job_url } : {}),
         ...Object.fromEntries(Object.entries(report.totals).map(([a, n]) => [`terragucci.plan.${a}`, n])),
       }, failed ? `${failed} root(s) failed` : result === "failed" ? `wave ${this.wave?.number} failed` : undefined);
       // Waves are known once every root has planned, so their spans are set

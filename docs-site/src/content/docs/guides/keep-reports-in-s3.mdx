@@ -25,9 +25,12 @@ Put it in `terragucci.yml`.
 reports:
   bucket: s3://acme-terragucci
   prefix: reports
+  url: https://reports.acme.example
 ```
 
 For a store that is not AWS, add `endpoint`. When it is absent, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
+
+`url` is the address a browser reads the reports at, such as a static website. Set it once you serve them (step 5). The plan note then links the copy of `report.html` there instead of the CI run. Its links to a group or root land on that place in the report. On GitHub and Forgejo a run's artifacts are a download, so this is how the note's links open the report.
 
 ### 2. Write the pipeline again
 
@@ -48,6 +51,7 @@ When the plan job finishes, its log says where the report went:
 ```text
 report: terragucci-report/report.html
 copied to the bucket under reports/github.com/acme/infra/2026/10/4f1a9c0/tf-plan; index rewritten at reports/github.com/acme/infra/index.html and reports/index.html
+served at https://reports.acme.example/reports/github.com/acme/infra/2026/10/4f1a9c0/tf-plan/report.html
 ```
 
 Reports land under one path per run, the plans beside them. Links inside a report are relative, so they work in the bucket as they do in the CI artifact:
@@ -59,7 +63,9 @@ reports/github.com/acme/infra/2026/10/4f1a9c0/tf-apply-wave-2/report.json
 
 ### 5. Serve the index
 
-Every upload rewrites `index.html` and `index.json` twice. One pair sits at the project's path and covers that project. The other sits at the top of the prefix and covers every project. Each run gets a row with its counts and destroys, linked to its report. Serve the bucket as a static site and the index is the home page for every plan you have run.
+Every upload rewrites `index.html` and `index.json` twice. One pair sits at the project's path and covers that project. The other sits at the top of the prefix and covers every project. Each run gets a row with its counts and destroys, linked to its report. The row also links the commit and the job, and the pull request when there is one. Serve the bucket as a static site and the index is the home page for every plan you have run.
+
+A run that sent a trace also gets `traces/<trace id>.html` under the prefix, which forwards to its report. With `dashboards: true`, the Runs dashboard links each trace there. The Estate dashboard links the index.
 
 <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
 

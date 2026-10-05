@@ -22,7 +22,13 @@
         "started": { "type": "string" },
         "finished": { "type": "string" },
         "job_url": { "type": "string" },
-        "terragucci": { "type": "string" }
+        "terragucci": { "type": "string" },
+        "commit_url": { "type": "string", "description": "The commit's page on the forge (minor 4)." },
+        "pull_request": { "type": "string", "description": "The pull or merge request the run planned, by number (minor 4)." },
+        "pull_request_url": { "type": "string", "description": "The pull or merge request's page (minor 4)." },
+        "report_url": { "type": "string", "description": "Where this report.html is served, when reports.url names the bucket's address (minor 4)." },
+        "trace_id": { "type": "string", "description": "The run's trace id, when the stage sent a trace (minor 4)." },
+        "trace_url": { "type": "string", "description": "The trace in a viewer, from telemetry.trace_url (minor 4)." }
       }
     },
     "change_set": { "type": "string" },

@@ -9,7 +9,7 @@ Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one report. The report
 
 ## Running it
 
-The pipeline's plan job runs the stage for every pull request and merge request. The report's note becomes the one plan note, and the `terragucci/plan` status takes its counts from the report. GitHub and Forgejo keep the report as the run's `terragucci-report` artifact, and the note links to the run. GitLab keeps it with the job's artifacts, where the note links to the HTML report. Its merge-request widget reads `gitlab-terraform.json`.
+The pipeline's plan job runs the stage for every pull request and merge request. The report's note becomes the one plan note, and the `terragucci/plan` status takes its counts from the report. GitHub and Forgejo keep the report as the run's `terragucci-report` artifact. An artifact there is a download. The note links to the run and says the report is in its artifacts. GitLab keeps it with the job's artifacts, where the note links to the HTML report. Its merge-request widget reads `gitlab-terraform.json`. When [the bucket is served](#where-reports-are-kept), the note links the copy there instead, and each link to a group or root opens at its place in the report.
 
 To run the stage yourself, from the repo:
 
@@ -87,6 +87,8 @@ The plan link opens the root's plan as the binary printed it:
 
 <Shot step="report" view="plan" alt="The full plan text of envs/prod/payments, opened from the report" optional />
 
+The report's header links the commit and the job. A plan for a pull request links the pull request too. A run that sent a trace shows its trace id. With `telemetry.trace_url` set, the id is a link to the trace. See [Traces and metrics](/terragucci/reference/observability/#from-a-trace-to-its-report).
+
 The page opens on two lists: every destroy, replacement and refusal, and the outlier roots and highlighted changes to read first. Both fit on the first screen and neither is ever folded.
 
 The HTML report is one file that makes no network calls, so it opens the same wherever you copy it. Its filters narrow the page to what one reviewer owns, and destroys stay pinned above every filter. It follows the reader's light or dark setting.
@@ -119,7 +121,10 @@ To keep them longer, name a bucket in `terragucci.yml` and run `npx terragucci i
 reports:
   bucket: s3://acme-terragucci
   prefix: reports
+  url: https://reports.acme.example
 ```
+
+`url` is the address that serves the bucket to a browser, such as its static website. terragucci never works it out from the bucket's name. With it, a note links the copy of `report.html` there. `report.json` records that address as `run.report_url`. Without it, the note links the CI run.
 
 Reports land under one path per run, the plans beside them. Links in a report are relative, so they work in the bucket as they do in the CI artifact:
 
@@ -134,6 +139,6 @@ With `tips` on, which is the default, the report ends with advice on how your ro
 
 ## The report index
 
-Every upload rewrites `index.html` and `index.json` for the project, at the project's path, and for every project, at the top of the prefix. Each run gets a row in the index with its counts and destroys, and the row links to that run's report. Serve the bucket as a static site and the index is the home page for every plan you have run. Retention is your bucket's lifecycle rule.
+Every upload rewrites `index.html` and `index.json` for the project, at the project's path, and for every project, at the top of the prefix. Each run gets a row in the index with its counts and destroys. The row links that run's report and the forge's page for its commit. It links the job and the pull request when the run had them, and the trace when `telemetry.trace_url` is set. Serve the bucket as a static site and the index is the home page for every plan you have run. Retention is your bucket's lifecycle rule.
 
 <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />

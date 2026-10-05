@@ -6,7 +6,20 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "links": [],
+  "links": [
+    {
+      "title": "Report index",
+      "type": "link",
+      "url": "http://localhost:4580/terragucci-reports/reports/index.html",
+      "icon": "doc",
+      "tooltip": "",
+      "tags": [],
+      "asDropdown": false,
+      "targetBlank": true,
+      "includeVars": false,
+      "keepTime": false
+    }
+  ],
   "panels": [
     {
       "type": "row",
@@ -25,7 +38,7 @@
       "type": "table",
       "id": 2,
       "title": "Roots per project",
-      "description": "Roots in each project's latest plan or drift run.",
+      "description": "Roots in each project's latest plan or drift run. Each project links to its report index.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -52,7 +65,26 @@
       "options": {},
       "fieldConfig": {
         "defaults": {},
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "project"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Report index",
+                    "url": "http://localhost:4580/terragucci-reports/reports/${__value.raw}/index.html",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     },
     {

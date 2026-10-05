@@ -62,11 +62,11 @@ projects:
 | `waves.canary` | none | roots that go out first, as wave 1 |
 | `drift` | off | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `runtime` | `forge` | `fountain` runs apply and drift on a steward; see [Where it runs](/terragucci/reference/runtimes/) |
-| `reports` | CI artifact | a bucket to copy reports to; see [The plan report](/terragucci/reference/report/) |
+| `reports` | CI artifact | a bucket to copy reports to (`bucket`, `endpoint`, `prefix`), and `url`, the address that serves the bucket to a browser, so the note, the index and the dashboards link the bucket's copy; see [The plan report](/terragucci/reference/report/) |
 | `version` | detected | the binary's version |
 | `env` | none | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
-| `telemetry` | none | `headers_secret`: the name of the CI secret or variable holding `OTEL_EXPORTER_OTLP_HEADERS`; the generated plan, apply and drift jobs map it into the environment |
+| `telemetry` | none | `headers_secret`: the name of the CI secret or variable holding `OTEL_EXPORTER_OTLP_HEADERS`; the generated plan, apply and drift jobs map it into the environment. `trace_url`: a link to a trace with `{trace_id}` in it, which the report links |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN` | the environment variable holding the forge token |
 | `oidc` | none | `plan_role`, `apply_role` and an optional `audience`: the cloud roles the jobs assume over OIDC; see [Credentials](/terragucci/reference/pipeline/#credentials) |
 | `parallelism` | 3 for GitLab-managed state, else 16 | how many roots of one dependency layer `tf-plan` and `tf-drift` plan at once, and of one wave `tf-apply` plans at once; a Terragrunt repo uses `terragrunt.parallelism` |

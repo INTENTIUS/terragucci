@@ -411,7 +411,7 @@ export function terragruntApplyScript(
 /** Where a plan job's report is kept, and what the stage needs beyond the roots. */
 export interface PlanReportInput {
   /** Copy the report to this bucket as well as keeping it with the job. */
-  reports?: { bucket: string; endpoint?: string; prefix?: string };
+  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string };
   /** Globs for the canary wave the report shows. */
   canary?: string[];
   /** A Terragrunt repo: the stage runs Terragrunt, after this shell (credentials, caches). */
@@ -423,7 +423,12 @@ export interface PlanReportInput {
 /** The plan report's directory in the job's workspace. */
 export const REPORT_DIR = "terragucci-report";
 
-/** Where the note links the HTML report: the job's artifact on GitLab, the run (and its artifact) elsewhere. */
+/**
+ * Where the note links the HTML report when the bucket's address is not
+ * configured: the job's artifact on GitLab, the run elsewhere, where the
+ * report is a download in the run's artifacts and the note says so. With
+ * `reports.url` the stage links the bucket's copy instead.
+ */
 function reportUrl(forge: ForgeName): string {
   return forge === "gitlab"
     ? `"$CI_JOB_URL/artifacts/file/${REPORT_DIR}/report.html"`
@@ -459,6 +464,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
     ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
+    ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
   return [
     "set -uo pipefail",
@@ -548,6 +554,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
     ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
+    ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
   return [
     "set -uo pipefail",

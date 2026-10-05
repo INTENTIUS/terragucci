@@ -14,7 +14,10 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | Field | Holds |
 |---|---|
 | `schema` | `terragucci.report/v1`; a minor version only adds fields |
-| `run` | project, commit, base, stage, binary, runtime, start and finish times |
+| `run` | project, commit, base, stage, binary, runtime, start and finish times, and the job |
+| `run.commit_url`, `run.pull_request`, `run.pull_request_url` | the commit's page, and the pull or merge request the run planned with its page |
+| `run.report_url` | where this `report.html` is served from the bucket, when `reports.url` is set |
+| `run.trace_id`, `run.trace_url` | the run's trace, when the stage sent one, and its link when `telemetry.trace_url` is set |
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
 | `waves[]` | number, roots, set digest, approval state and a link to the approval record |
@@ -41,5 +44,6 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | the full plan of a root | `roots[].plan` |
 | the slowest resources of a run | `timings.resources`, then `roots[].timings.resources` |
 | how long a root waited for its state lock | `roots[].timings.lock_waits`, with the attempts it took |
+| the trace of the run, to search your tracing backend | `run.trace_id` |
 
 Approvals stay on your repo's `chant/lifecycle` branch. The report links to each record and never copies it, so the branch is the one record of who approved what.

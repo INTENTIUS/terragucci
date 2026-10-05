@@ -6,7 +6,20 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "links": [],
+  "links": [
+    {
+      "title": "Report index",
+      "type": "link",
+      "url": "http://localhost:4580/terragucci-reports/reports/index.html",
+      "icon": "doc",
+      "tooltip": "",
+      "tags": [],
+      "asDropdown": false,
+      "targetBlank": true,
+      "includeVars": false,
+      "keepTime": false
+    }
+  ],
   "panels": [
     {
       "type": "row",
@@ -255,7 +268,7 @@
       "type": "table",
       "id": 10,
       "title": "Runs",
-      "description": "The trace of each stage run. Open one to see its waves, roots and the binary's own spans.",
+      "description": "The trace of each stage run. Open one to see its waves, roots and the binary's own spans; a run's name links to its report.",
       "gridPos": {
         "h": 10,
         "w": 24,
@@ -283,8 +296,41 @@
       "options": {},
       "fieldConfig": {
         "defaults": {},
-        "overrides": []
-      }
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "traceName"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Report",
+                    "url": "http://localhost:4580/terragucci-reports/reports/traces/${__data.fields.traceID}.html",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "links": [
+        {
+          "title": "Report index",
+          "type": "link",
+          "url": "http://localhost:4580/terragucci-reports/reports/index.html",
+          "icon": "external link",
+          "tooltip": "",
+          "tags": [],
+          "asDropdown": false,
+          "targetBlank": true,
+          "includeVars": false,
+          "keepTime": false
+        }
+      ]
     }
   ],
   "refresh": "1m",
