@@ -443,6 +443,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const planner = plannerForBinary(binary);
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), stage, env);
+  if (roots.length > 0) await observer.collectSpans(log);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
@@ -735,6 +736,7 @@ async function finish(
     }
     for (const line of describeTips(report.tips)) log(line);
   }
+  observer.addTimings(report);
   const dir = resolve(repo, options.out ?? "terragucci-report");
   writeReportDir(dir, report, plans, { ...(options.reportUrl ? { reportUrl: options.reportUrl } : {}) });
   let uploaded: Uploaded | undefined;

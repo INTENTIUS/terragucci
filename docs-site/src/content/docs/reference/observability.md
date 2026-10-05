@@ -39,7 +39,22 @@ terragucci tf-plan          project, commit, binary, change set, totals
 
 Every run of the binary is a span, and the binary gets that span as `TRACEPARENT`. OpenTofu and choudoufu read it, so their own spans land inside the trace. Terraform ignores it and starts a trace of its own. Its spans carry the resource attributes `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`, so a query on them finds the span that ran it.
 
-With an endpoint set, terragucci turns the binary's OTLP exporter on (`OTEL_TRACES_EXPORTER=otlp`). Set `OTEL_TRACES_EXPORTER` yourself to choose otherwise.
+terragucci also turns the binary's OTLP trace exporter on and points it at a receiver of its own, on a loopback port, for as long as the run lasts. With an endpoint set, each batch the binary sends is passed on to your collector unchanged. The receiver takes OTLP over HTTP only. A collector reached only over gRPC gets nothing from terragucci or the binary.
+
+## Where the time went
+
+Every `tf-plan` and `tf-drift` report names where the run spent its time, endpoint or not. It reads what each root's plan sent to the receiver:
+
+- the slowest roots, with each root's wall time and its plan's;
+- in each root, the slowest resource instances and their refresh time;
+- the slowest provider calls, and the resource each was for;
+- provider start-up and state lock waits.
+
+choudoufu times each resource instance and each provider call. On a large estate it sums them by resource type or provider method instead, once a graph walk passes its budget (`CHOUDOUFU_TRACE_DETAIL` and `CHOUDOUFU_TRACE_SPAN_BUDGET`). The report then lists those sums with a count and the slowest member per type. It also says how many instances it summed.
+
+A root whose binary reports nothing per resource says so where the lists would be. Terraform exports no traces, and OpenTofu's stop above the resource. In a Terragrunt run, Terragrunt runs the binary, so the report has no per-unit timings.
+
+The HTML report shows the run's timings under "Where the time went", and folds each root's own under its changes. When a binary did time its resources, the plan note gets one line naming the three slowest. `report.json` carries them as `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 
 ## The metrics
 

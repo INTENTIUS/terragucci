@@ -10,7 +10,8 @@
  * links to its root's full plan and to the CI job that produced it.
  */
 import { groupAnchor, rootAnchor } from "./build";
-import { actionWord, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot } from "./schema";
+import { actionWord, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRootTimings } from "./schema";
+import { duration } from "./spans";
 
 export const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -63,6 +64,63 @@ function changeRow(c: ReportChange): string {
 
 const KIND_WORD: Record<string, string> = { tags: "tags only", description: "description only", unknown: "known after apply only" };
 
+const secs = (s: number): string => duration(s * 1000);
+const table = (head: string[], rows: string[][]): string =>
+  `<table><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</table>`;
+const codeOr = (s: string | undefined): string => (s ? `<code>${esc(s)}</code>` : "");
+
+/** A root's timings, folded under its changes. */
+function timingsBlock(t: ReportRootTimings): string {
+  const head = `Time: ${secs(t.seconds)}${t.plan_seconds !== undefined ? `, plan ${secs(t.plan_seconds)}` : ""}${t.detail === "none" ? ", no per-resource timings" : ""}`;
+  let body = t.note ? `<p class="notice">${esc(t.note)}.</p>` : "";
+  if (t.resources.length) {
+    body += `<h3>Slowest resources</h3>${table(["Resource", "Action", "Time", "Refresh"], t.resources.map((r) => [codeOr(r.address), esc(r.action ?? ""), duration(r.ms), r.refresh_ms !== undefined ? duration(r.refresh_ms) : ""]))}`;
+  }
+  if (t.aggregates.length) {
+    body += `<h3>Summed by type</h3>${table(["Spans", "Type or provider", "Count", "Total", "Slowest"], t.aggregates.map((a) => [
+      esc(a.of),
+      `${codeOr(a.type ?? a.provider)}${a.method ? ` ${esc(a.method)}` : ""}${a.groups !== undefined ? ` (${a.groups} groups)` : ""}`,
+      String(a.count),
+      duration(a.ms),
+      `${duration(a.max_ms)}${a.slowest ? ` ${codeOr(a.slowest)}` : ""}`,
+    ]))}`;
+  }
+  if (t.provider_calls.length) {
+    body += `<h3>Slowest provider calls</h3>${table(["Call", "Provider", "For", "Time"], t.provider_calls.map((c) => [esc(c.method), codeOr(c.provider), codeOr(c.address ?? c.type), duration(c.ms)]))}`;
+  }
+  if (t.provider_init.length) {
+    body += `<h3>Provider start-up</h3>${table(["Provider", "Starts", "Total", "Longest"], t.provider_init.map((p) => [codeOr(p.provider), String(p.count), duration(p.ms), duration(p.max_ms)]))}`;
+  }
+  if (t.lock_waits.length) {
+    body += `<h3>State lock waits</h3>${table(["Backend", "Operation", "Attempts", "Time"], t.lock_waits.map((w) => [esc(w.backend ?? ""), esc(w.operation ?? ""), w.attempts !== undefined ? String(w.attempts) : "", duration(w.ms)]))}`;
+  }
+  return `<details class="minor timings"><summary>${esc(head)}</summary>${body}</details>`;
+}
+
+const DETAIL_WORD: Record<ReportRootTimings["detail"], string> = { resources: "per resource", aggregate: "summed by type", none: "none" };
+
+/** The run's slowest roots and resources. */
+function timingsSection(report: Report): string {
+  const t = report.timings;
+  if (!t) return "";
+  let body = t.note ? `<p class="notice">${esc(t.note)}.</p>` : "";
+  if (t.resources.length) {
+    body += `<h3>Slowest resources</h3>${table(["Root", "Resource", "Time"], t.resources.map((r) => [`<a href="#${esc(rootAnchor(r.root))}"><code>${esc(r.root)}</code></a>`, codeOr(r.address), duration(r.ms)]))}`;
+  }
+  const without = report.roots.filter((r) => r.timings && r.timings.detail === "none");
+  if (without.length && without.length === t.roots.length) {
+    const notes = [...new Set(without.map((r) => r.timings!.note).filter((n): n is string => n !== undefined))];
+    body += `<p class="notice">No root has per-resource timings. ${notes.map((n) => esc(n) + ".").join(" ")}</p>`;
+  } else if (without.length) {
+    body += `<p class="notice">${without.length} of ${t.roots.length} roots have no per-resource timings; each says why.</p>`;
+  }
+  if (t.roots.length) {
+    const shown = t.roots.slice(0, 20);
+    body += `<h3>Slowest roots</h3>${table(["Root", "Time", "Plan", "Per-resource timings"], shown.map((r) => [`<a href="#${esc(rootAnchor(r.root))}"><code>${esc(r.root)}</code></a>`, secs(r.seconds), r.plan_seconds !== undefined ? secs(r.plan_seconds) : "", esc(DETAIL_WORD[r.detail])]))}${t.roots.length > shown.length ? `<p class="notice">and ${t.roots.length - shown.length} faster roots.</p>` : ""}`;
+  }
+  return `<section id="timings"><h2>Where the time went</h2>${body}</section>`;
+}
+
 function rootBlock(r: ReportRoot, wave: number | undefined): string {
   const shown = r.changes.filter((c) => !c.kind);
   const folded = r.changes.filter((c) => c.kind);
@@ -77,6 +135,7 @@ function rootBlock(r: ReportRoot, wave: number | undefined): string {
     const kinds = [...new Set(folded.map((c) => KIND_WORD[c.kind!]))].join(", ");
     body += `<details class="minor"><summary>${folded.length} folded: ${esc(kinds)}</summary><ul class="changes">${folded.map(changeRow).join("")}</ul></details>`;
   }
+  if (r.timings) body += timingsBlock(r.timings);
   return `<details class="root" id="${esc(rootAnchor(r.path))}" data-root="${esc(r.path)}" data-group="${esc(r.group ?? "")}" data-actions="${esc(actions.join(" "))}" data-wave="${wave ?? ""}"${r.fold === "open" ? " open" : ""}><summary><code>${esc(r.path)}</code> <span class="counts">${esc(counts)}</span> ${why}</summary>${body}</details>`;
 }
 
@@ -124,7 +183,7 @@ const CSS = `
 :root{--bg:#fbfbfa;--fg:#1d1d1b;--muted:#6b6b66;--line:#deded8;--card:#fff;--bad:#b42318;--badbg:#fdecea;--hl:#8a5a00;--hlbg:#fff5e0;--link:#1f5fbf;--code:#f1f1ee}
 @media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--muted:#a0a09a;--line:#34342f;--card:#1c1c1a;--bad:#ff8a80;--badbg:#3a1714;--hl:#ffc766;--hlbg:#33270f;--link:#8ab4ff;--code:#262623}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
-main{max-width:1100px;margin:0 auto;padding:16px}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:20px 0 8px}
+main{max-width:1100px;margin:0 auto;padding:16px}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:20px 0 8px}h3{font-size:14px;margin:12px 0 4px}
 a{color:var(--link)}code,pre{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}pre{background:var(--code);padding:8px;overflow-x:auto;margin:6px 0}
 .run{color:var(--muted);margin:0 0 8px}.run code{color:var(--fg)}.notice{color:var(--muted);font-size:13px}
 details{background:var(--card);border:1px solid var(--line);border-radius:6px;margin:6px 0;padding:6px 10px}details details{margin:6px 0}
@@ -136,6 +195,7 @@ summary{cursor:pointer}ul{margin:4px 0;padding-left:20px}.attrs{list-style:none;
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px;position:sticky;top:0;background:var(--bg);padding:6px 0;z-index:1}
 .filters label{display:flex;gap:4px;align-items:center}select,input{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit}
 .counts,.meta{color:var(--muted)}.links a{margin-right:6px}.digest{color:var(--muted);font-size:11px}.sym{display:inline-block;min-width:3ch}
+#timings table,.timings table{display:block;overflow-x:auto}
 .a-delete .sym,.a-replace .sym{color:var(--bad)}.hidden{display:none}table{border-collapse:collapse}td,th{border-bottom:1px solid var(--line);padding:3px 10px 3px 0;text-align:left}
 `;
 
@@ -224,6 +284,7 @@ ${report.groups.map((g) => groupBlock(report, g, roots, waveOf)).join("\n")}
 <h2>Roots (${report.roots.length})</h2>
 ${report.roots.map((r) => rootBlock(r, waveOf.get(r.path))).join("\n")}
 ${holes}
+${timingsSection(report)}
 ${later}${tips}
 </main>
 <script type="application/json" id="terragucci-report">

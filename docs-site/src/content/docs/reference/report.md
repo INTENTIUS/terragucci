@@ -36,7 +36,7 @@ A `tf-drift` run writes the same files, and `issue.md` besides: the body of the 
 | View | Where | What it shows |
 |---|---|---|
 | Plan note | the pull request or merge request | groups, every destroy by name, the wave plan, the approval command, and a link to the full report |
-| HTML report | wherever the report is kept | every group, root and wave, with filters |
+| HTML report | wherever the report is kept | every group, root and wave, with filters, and where the run spent its time |
 | Merge-request widget | GitLab | create, update and delete counts, from a `reports:terraform` artifact |
 | Text summary | the job log | the grouped summary |
 

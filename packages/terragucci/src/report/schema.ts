@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 1;
+export const REPORT_MINOR = 2;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -126,6 +126,85 @@ export interface ReportMockRead {
   keys?: string[];
 }
 
+/** One resource instance's time in a root's plan, from the binary's spans (minor 2). */
+export interface ReportResourceTiming {
+  address: string;
+  type?: string;
+  action?: string;
+  /** The provider instance it is planned with. */
+  provider?: string;
+  ms: number;
+  /** The part of it spent refreshing the resource. */
+  refresh_ms?: number;
+}
+
+/** One call from the binary to a provider (minor 2). */
+export interface ReportProviderCall {
+  /** The RPC method: `PlanResourceChange`, `ReadResource`, `GetProviderSchema`... */
+  method: string;
+  provider?: string;
+  type?: string;
+  /** The resource instance it was made for, when it was made for one. */
+  address?: string;
+  ms: number;
+}
+
+/**
+ * A summary span: the binary counted a set of resource instances or provider
+ * calls instead of giving each a span of its own (minor 2).
+ */
+export interface ReportAggregate {
+  /** The name of the spans it stands for, such as `Plan resource instance changes`, or `other`. */
+  of: string;
+  /** `resource_instance` or `provider_call`. */
+  kind?: string;
+  type?: string;
+  provider?: string;
+  method?: string;
+  count: number;
+  /** How many of them also have a span of their own. */
+  detailed: number;
+  /** Their total time. */
+  ms: number;
+  max_ms: number;
+  /** The slowest member: an address, or a resource type. */
+  slowest?: string;
+  /** For `other`: how many groups it folds. */
+  groups?: number;
+}
+
+/** Where a root's plan spent its time (minor 2). */
+export interface ReportRootTimings {
+  /** The root's wall time: init, plan and show. */
+  seconds: number;
+  /** The binary's plan run alone. Absent when the root never reached it. */
+  plan_seconds?: number;
+  /** How many spans the binary sent for the plan. */
+  spans: number;
+  /** `resources`: a span per resource instance; `aggregate`: summed by type only; `none`: nothing per resource. */
+  detail: "resources" | "aggregate" | "none";
+  /** Why the lists are empty or partial. */
+  note?: string;
+  /** The slowest resource instances, slowest first. */
+  resources: ReportResourceTiming[];
+  provider_calls: ReportProviderCall[];
+  /** Provider start-up, by provider. */
+  provider_init: { provider: string; count: number; ms: number; max_ms: number }[];
+  /** Waits for a state lock. */
+  lock_waits: { backend?: string; operation?: string; attempts?: number; ms: number }[];
+  aggregates: ReportAggregate[];
+}
+
+/** The run's slowest roots and resources (minor 2). */
+export interface ReportTimings {
+  /** Every timed root, slowest first. */
+  roots: { root: string; seconds: number; plan_seconds?: number; detail: ReportRootTimings["detail"] }[];
+  /** The slowest resource instances across the run. */
+  resources: { root: string; address: string; type?: string; ms: number }[];
+  /** Why the run has no per-root timings, when it has none. */
+  note?: string;
+}
+
 export interface ReportRoot {
   path: string;
   /** Set when the root is a Terragrunt unit. */
@@ -145,6 +224,8 @@ export interface ReportRoot {
   highlights: Highlight[];
   fold: Fold;
   why: string[];
+  /** Where its plan spent its time, from the binary's spans (minor 2). */
+  timings?: ReportRootTimings;
 }
 
 export interface ReportWave {
@@ -218,6 +299,8 @@ export interface Report {
   deferred?: ReportDeferred[];
   /** Present when tips are on, even when there are none. Absent with `tips: false`. */
   tips?: ReportTip[];
+  /** Where the run spent its time (minor 2). Absent from a report built without running the binary. */
+  timings?: ReportTimings;
 }
 
 /**

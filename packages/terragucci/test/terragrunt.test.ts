@@ -352,7 +352,9 @@ describe("terragucci stage tf-plan in a Terragrunt repo", () => {
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(1);
+    expect(r.report.minor).toBe(2);
+    // Terragrunt runs the binary for each unit, so the report times none of them, and says so.
+    expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
     expect(units["live/dev/app"].terragrunt).toEqual({ stack: "live/dev", selection: expect.stringMatching(/^every unit/), provisional: false, run_result: "succeeded" });
     expect(units["live/dev/app"].status).toBe("planned");

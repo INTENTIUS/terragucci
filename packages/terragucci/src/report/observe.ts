@@ -3,16 +3,23 @@
  * its waves and roots are spans, and each run of the binary is a span the
  * binary's own spans hang under. The metrics are read from the finished
  * report, so they match what reviewers saw.
+ *
+ * Whether or not telemetry is on, the binary's own spans are collected for
+ * the run (`spans.ts`), and the report names the slowest roots and, in each
+ * root, the slowest resources and provider calls.
  */
 import { spawnSync } from "node:child_process";
 import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
 import type { Report } from "./schema";
+import { rootTimings, runTimings, SpanReceiver } from "./spans";
 
 interface RootTiming {
   path: string;
   start: bigint;
   end?: bigint;
   span?: Span;
+  /** Each run of the binary in the root, in seconds. */
+  commands: { command: string; seconds: number }[];
 }
 
 const seconds = (from: bigint, to: bigint): number => Number(to - from) / 1e9;
@@ -33,6 +40,7 @@ export class StageObserver {
   private readonly stageSpan?: Span;
   private readonly start = nowNanos();
   private readonly roots: RootTiming[] = [];
+  private receiver?: SpanReceiver;
 
   constructor(readonly telemetry: Telemetry | undefined, readonly stage: string, env: NodeJS.ProcessEnv) {
     if (telemetry?.traces) {
@@ -41,9 +49,20 @@ export class StageObserver {
     }
   }
 
+  /**
+   * Start collecting the binary's spans for the report. Without it the
+   * report still times each root, with no per-resource timings.
+   */
+  async collectSpans(log: (line: string) => void): Promise<void> {
+    const receiver = new SpanReceiver(this.trace ? this.telemetry?.traces : undefined);
+    const problem = await receiver.listen();
+    if (problem) log(`timings: the binary's spans are not collected (${problem})`);
+    else this.receiver = receiver;
+  }
+
   /** Start timing a root; end it with `endRoot`. */
   root(path: string): RootTiming {
-    const t: RootTiming = { path, start: nowNanos() };
+    const t: RootTiming = { path, start: nowNanos(), commands: [] };
     if (this.trace) t.span = this.trace.start(`root ${path}`, this.stageSpan, { "terragucci.root": path });
     this.roots.push(t);
     return t;
@@ -63,13 +82,41 @@ export class StageObserver {
     return r;
   }
 
-  /** `command` for a run that does not block, so roots can plan at once. */
+  /**
+   * `command` for a run that does not block, so roots can plan at once. The
+   * binary's spans also go to the stage's span receiver, which a blocking
+   * run would starve.
+   */
   async commandAsync<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => Promise<R>): Promise<R> {
-    if (!this.trace || !t.span) return spawn(env);
-    const span = this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, 3);
-    const r = await spawn(binaryEnv(env, this.trace, span, t.path));
-    this.trace.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
+    const start = nowNanos();
+    const span = this.trace && t.span ? this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, 3) : undefined;
+    let runEnv = span ? binaryEnv(env, this.trace!, span, t.path) : env;
+    if (this.receiver) runEnv = this.receiver.env(runEnv, t.path, args[0]);
+    const r = await spawn(runEnv);
+    t.commands.push({ command: args[0], seconds: seconds(start, nowNanos()) });
+    if (span) this.trace!.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
     return r;
+  }
+
+  /**
+   * Put each root's timings, and the run's slowest roots and resources, on
+   * the report. A root this observer did not time (a Terragrunt unit, which
+   * Terragrunt runs the binary for) gets none, and the run says why.
+   */
+  addTimings(report: Report): void {
+    const binary = report.run.binary.split("/").pop() || report.run.binary;
+    for (const r of report.roots) {
+      const t = this.roots.find((x) => x.path === r.path);
+      if (!t || t.end === undefined) continue;
+      const plan = t.commands.find((c) => c.command === "plan");
+      r.timings = rootTimings(this.receiver?.spansOf(t.path, "plan") ?? [], {
+        binary,
+        seconds: seconds(t.start, t.end),
+        ...(plan ? { planSeconds: plan.seconds } : {}),
+      });
+    }
+    const untimed = report.roots.length > 0 && report.roots.every((r) => r.timings === undefined);
+    report.timings = runTimings(report.roots, untimed ? "Terragrunt ran the binary for these units, so the report has no per-unit timings" : undefined);
   }
 
   /** The metrics a finished report gives. */
@@ -95,6 +142,11 @@ export class StageObserver {
 
   /** Close the trace from the report, then send the trace and the metrics. Never throws. */
   async finish(report: Report, env: NodeJS.ProcessEnv, log: (line: string) => void, fetchFn?: OtlpFetch): Promise<void> {
+    if (this.receiver) {
+      for (const u of this.receiver.unreadable) log(`timings: a batch of spans could not be read: ${u}`);
+      const failed = await this.receiver.close();
+      if (failed.length) log(`telemetry: ${failed.length} of the binary's span batches were not forwarded: ${failed[0]}`);
+    }
     const tel = this.telemetry;
     if (!tel) return;
     for (const s of tel.skipped) log(`telemetry: ${s}`);
