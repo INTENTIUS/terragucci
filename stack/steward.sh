@@ -13,8 +13,8 @@
 #                                           and the pipeline's wave jobs replaced
 #                                           by one job that runs
 #                                           `chant run tf-apply --on fountain`
-#                                           on a fresh conversation, and fails
-#                                           unless a new turn completed
+#                                           and fails unless a new turn
+#                                           completed
 #   stack/steward.sh turns                  the steward's turns on its current
 #                                           conversation, one per line: number,
 #                                           status, prompt, turn id
@@ -254,12 +254,8 @@ job = f"""  apply:
           ln -sfn {modules} node_modules
           node --input-type=module <<'JS'
 """
-# The step around `chant run tf-apply --on fountain`. chant 0.104 tails the
-# teammate's whole thread from its first event, so on a thread that already
-# has a finished turn it reports that turn as this run and returns before the
-# new turn has started (INTENTIUS/chant#3524). So the job moves the teammate
-# to a fresh conversation first (same computer, same sandbox), and trusts a 0
-# from chant only once a new tf-apply turn on the thread has completed.
+# The step around `chant run tf-apply --on fountain`. The job trusts a 0 from
+# chant only once a new tf-apply turn on the teammate's thread has completed.
 STEP = r"""
 import { spawnSync } from "node:child_process";
 const api = "http://fountain:4000/api";
@@ -305,19 +301,6 @@ const until = async (what, secs, fn) => {
   fail(`${what} after ${secs}s`);
 };
 
-let t = await teammate();
-if ((t.conversation?.turn_count ?? 0) > 0) {
-  const last = await until("the steward's conversation could not be rotated", 300, async () => {
-    const { status, body } = await call("POST", `/team/${t.agent_id}/conversations`);
-    if (status === 200 || status === 201) return { ok: true };
-    // 400 a turn still running, 409 a reset, 503 the computer starting: wait.
-    if ([400, 409, 503].includes(status)) return undefined;
-    return { ok: false, why: `${status} ${JSON.stringify(body)}` };
-  });
-  if (!last.ok) fail(`rotating the steward's conversation answered ${last.why}`);
-  t = await teammate();
-  say(`a fresh conversation for this run: ${t.conversation?.id}`);
-}
 await until("the steward's computer is not up", 300, async () =>
   ["online", "asleep", "working"].includes((await teammate()).presence?.state));
 
@@ -328,14 +311,7 @@ if (run.status !== 0) process.exit(run.status ?? 1);
 
 const turn = await until("chant reported the run finished, but the steward has no new tf-apply turn", 120, async () =>
   (await applyTurns()).filter((t) => !before.has(t.id)).sort((a, b) => b.turn_number - a.turn_number)[0]);
-let now = turn;
-if (!["completed", "failed", "interrupted"].includes(now.status)) {
-  say(`chant returned before the steward's turn ${now.turn_number} finished (${now.status}); waiting for it (INTENTIUS/chant#3524)`);
-  now = await until(`turn ${turn.turn_number} has not finished`, 3600, async () => {
-    const t = (await applyTurns()).find((t) => t.id === turn.id);
-    return t && ["completed", "failed", "interrupted"].includes(t.status) ? t : undefined;
-  });
-}
+const now = turn;
 if (now.status !== "completed" || now.limit_reason || now.waiting) {
   fail(`the steward's turn ${now.turn_number} ended ${now.status}${now.limit_reason ? ` (${now.limit_reason})` : ""}${now.waiting ? ", waiting on a request" : ""}`);
 }

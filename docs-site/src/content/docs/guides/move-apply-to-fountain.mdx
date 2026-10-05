@@ -59,7 +59,7 @@ chant run tf-apply --on fountain
 
 On the steward, `tf-apply` runs the same waves the forge jobs ran, one step per wave, in order. A wave that has to wait for an approval ends the steward's turn there, and the forge job reports it the same way.
 
-Up to chant 0.104, `chant run --on fountain` can report an earlier turn as the new run and return before the new turn has started ([chant#3524](https://github.com/INTENTIUS/chant/issues/3524)). The example's apply job works around it: it gives each run a fresh conversation with `POST /api/team/<agent id>/conversations` and checks that a new turn completed.
+The example's apply job trusts a zero exit from `chant run` only after it has seen a new `tf-apply` turn on the steward complete.
 
 The plan and check jobs stay as they were, since the pull request lives on the forge.
 
