@@ -52,11 +52,25 @@ forge_branch_sha() { gh "$URL/api/v3/repos/$USER/$1/branches/$2" | jq -r .commit
 # act on a fresh clone of the commit, the way a runner checks out a push. The
 # payload is a push event: the ref decides whether the apply job's condition
 # (the default branch) holds. Output goes to RUN_LOG.
+#
+# The clone's origin is the mock's in-network URL: act reads the repository
+# (github.repository) from it, and the job's git fetches reach it from the
+# terragucci network. github.token is the mock's token, so act does not hand
+# the job a token of its own (it falls back to the gh CLI's).
+#
+# act checks out with the local tree. --github-instance makes act fetch every
+# other action from the mock, which serves none and has no name on the host,
+# so the actions the workflow uses (actions/upload-artifact; add any new one)
+# come from github.com, as on GitHub. GITHUB_SERVER_URL is
+# github.com's, which the workflow is written for: upload-artifact@v4
+# refuses to run against a server it takes for GitHub Enterprise Server. Its
+# uploads go to act's artifact server under WORK.
 forge_run() { # name branch sha [source: unused here; act runs a push event]
   local name="$1" branch="$2" sha="$3" dir="$WORK/run-$RANDOM" image
   image="$(ci_image)"
   git clone -q "${URL/#http:\/\//http://oauth2:${TOKEN}@}/$USER/$name.git" "$dir" 2>/dev/null
   git -C "$dir" checkout -q "$sha"
+  git -C "$dir" remote set-url origin "http://mock-github:8188/$USER/$name.git"
   jq -n --arg ref "refs/heads/$branch" --arg sha "$sha" --arg repo "$USER/$name" \
     '{ref: $ref, after: $sha, repository: {full_name: $repo, default_branch: "main"}}' > "$dir.event.json"
   RUN_LOG="$dir.log"
@@ -66,7 +80,11 @@ forge_run() { # name branch sha [source: unused here; act runs a push event]
         --env AWS_ENDPOINT_URL=http://floci:4566 --env AWS_ACCESS_KEY_ID=test \
         --env AWS_SECRET_ACCESS_KEY=test --env AWS_REGION=us-east-1 \
         --env GITHUB_API_URL=http://mock-github:8188/api/v3 \
-        --github-instance mock-github:8188) >"$RUN_LOG" 2>&1; then
+        --env GITHUB_SERVER_URL=https://github.com \
+        --secret GITHUB_TOKEN="$TOKEN" \
+        --github-instance mock-github:8188 \
+        --replace-ghe-action-with-github-com actions/upload-artifact \
+        --artifact-server-path "$WORK/artifacts") >"$RUN_LOG" 2>&1; then
     RUN_STATUS=success
   else
     RUN_STATUS=failure
