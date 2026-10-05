@@ -1232,15 +1232,17 @@ claim_respond_drift() {
 
 claim_respond_tips() {
   # Two roots: dev takes the AWS provider by a range, prod has no lock file,
-  # and the config names no canary. The tips response must open three pull
+  # and the config names no canary. The repo commits the pipeline init writes
+  # and pushes to main: after the applies, its tips job must open three pull
   # requests, one per tip, each changing only its own files. BREAK: the repo
-  # follows every tip already, so nothing opens.
+  # follows every tip already, so the tips job opens nothing.
   log() { echo "[smoke respond-tips] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/respond-tips" tree out pr branch want rc=0
+  local work repo="$USER/respond-tips" tree sha pr branch want i rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-tips || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   respond_tree "$work" "$repo" ""
   tree="$work/tree"
   rm -rf "$tree/app"
@@ -1248,22 +1250,27 @@ claim_respond_tips() {
   respond_root "respond/tips-dev.tfstate" "" | sed 's/version = "6.67.0"/version = "~> 6.0"/' > "$tree/envs/dev/app/main.tf"
   cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$tree/envs/dev/app/"
   respond_root "respond/tips-prod.tfstate" "" > "$tree/envs/prod/app/main.tf"
+  # The tips job opens its pull requests with the job's own token.
+  printf 'binary: tofu\nforge: forgejo\n' > "$tree/terragucci.yml"
   if [ -n "${BREAK:-}" ]; then
     respond_root "respond/tips-dev.tfstate" "" > "$tree/envs/dev/app/main.tf"
     cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$tree/envs/prod/app/"
     printf 'waves:\n  canary: ["envs/dev/*"]\n' >> "$tree/terragucci.yml"
   fi
-  push_tree "$tree" "$repo" main "two roots" >/dev/null || return 1
-  out="$(in_image "$tree" terragucci respond tips --mode apply --platform linux_amd64,linux_arm64 2>&1)" || { echo "$out" >&2; rm -rf "$work" 2>/dev/null; return 1; }
-  echo "$out" >&2
-  rm -rf "$work" 2>/dev/null || true
+  for key in respond/tips-dev.tfstate respond/tips-prod.tfstate; do curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true; done
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  grep -q 'terragucci respond tips' "$tree/.forgejo/workflows/terragucci.yml" || { log "the pipeline has no tips job"; return 1; }
+  sha="$(push_tree "$tree" "$repo" main "two roots")"
+  wait_run "$repo" "$sha"
+  [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS'"; print_logs "$repo" "$RUN_ID" | tail -40 >&2; return 1; }
+  print_logs "$repo" "$RUN_ID" | grep -A12 'terragucci respond tips' >&2 || true
   for want in "terragucci/tip/pin-hashicorp-aws|envs/dev/app/main.tf" "terragucci/tip/lock-files|envs/prod/app/.terraform.lock.hcl" "terragucci/tip/canary|terragucci.yml"; do
     branch="${want%%|*}"
     pr="$(open_pr "$repo" "$branch")"
     [ -n "$pr" ] || { log "no pull request from $branch"; rc=1; continue; }
     [ "$(pr_files "$repo" "$pr")" = "${want#*|}" ] || { log "$branch changes $(pr_files "$repo" "$pr"), not ${want#*|}"; rc=1; }
   done
-  [ $rc = 0 ] && log "three tips, three pull requests, each changing only its own file"
+  [ $rc = 0 ] && log "the pipeline's tips job opened three pull requests, each changing only its own file"
   return $rc
 }
 
@@ -1665,8 +1672,9 @@ TF"
   jq -e --arg n "$net" '.roots[] | select(.path == $n and .status == "planned")' "$r" >/dev/null || { log "$net was not planned"; rc=1; }
   jq -e --arg a "$app" '[.roots[] | select(.path == $a)] | length == 0' "$r" >/dev/null || { log "$app was planned though its upstream is unapplied"; rc=1; }
   jq -e --arg a "$app" --arg n "$net" '.deferred[] | select(.unit == $a and (.after | index($n)))' "$r" >/dev/null || { log "the report does not say $app waits for $net"; rc=1; }
+  grep -qF "\`$app\` after \`$net\`" "$work/terragucci-report/note.md" || { log "the note does not name $app as waiting for $net"; rc=1; }
   rm -rf "$work"
-  [ $rc = 0 ] && log "$net planned; $app held back until $net applies, and the job stayed green"
+  [ $rc = 0 ] && log "$net planned; $app held back until $net applies, named in the report and the note, and the job stayed green"
   return $rc
 }
 
@@ -1683,7 +1691,7 @@ claim_forgejo_oidc() {
   log() { echo "[smoke forgejo-oidc] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/oidc" sha pr i mark plan_mark apply_mark rc=0 role trust
+  local work repo="$USER/oidc" sha pr i mark plan_mark apply_mark rc=0 role trust subrepo
   local plan_role=terragucci-oidc-plan apply_role=terragucci-oidc-apply marks=shop-terraform-state/oidc-marks
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo oidc || return 1
@@ -1711,6 +1719,9 @@ terraform {
     }
   }
 }
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
 
 data "external" "oidc" {
   program = ["node", "${path.module}/probe.mjs"]
@@ -1775,7 +1786,9 @@ JS
     log "the apply job did not take the apply role over OIDC"
     return 1
   fi
-  checked terragucci-apply "repo:$repo:ref:refs/heads/main" "$apply_role" <<<"$apply_mark" || { log "the apply mark is not a verified token for main traded for $apply_role"; rc=1; }
+  # Forgejo 16 names a repo in the subject as owner-<id>/repo-<id>.
+  subrepo="$(api "$URL/api/v1/repos/$repo" | jq -r '"\(.owner.login)-\(.owner.id)/\(.name)-\(.id)"')"
+  checked terragucci-apply "repo:$subrepo:ref:refs/heads/main" "$apply_role" <<<"$apply_mark" || { log "the apply mark is not a verified token for main traded for $apply_role"; rc=1; }
   echo 2 > "$work/tree/app/rev.txt"
   sha="$(push_tree "$work/tree" "$repo" oidc-change "oidc: change")"
   pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"oidc-change","base":"main","title":"oidc: plan"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
@@ -1787,7 +1800,7 @@ JS
   done
   log "plan job: mark ${plan_mark:-none}"
   [ -n "$plan_mark" ] || { log "the plan job wrote no mark"; return 1; }
-  checked terragucci-plan "repo:$repo:pull_request" "$plan_role" <<<"$plan_mark" || { log "the plan mark is not a verified pull_request token traded for $plan_role"; rc=1; }
+  checked terragucci-plan "repo:$subrepo:pull_request" "$plan_role" <<<"$plan_mark" || { log "the plan mark is not a verified pull_request token traded for $plan_role"; rc=1; }
   [ $rc = 0 ] && log "plan and apply jobs each got a token Forgejo signed and took their own role"
   return $rc
 }

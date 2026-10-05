@@ -1,6 +1,6 @@
 {
-  "recorded": "2026-10-04",
-  "commit": "ed782ac",
+  "recorded": "2026-10-05",
+  "commit": "4faf4fb",
   "forge": "forgejo",
   "claims": [
     {
@@ -207,8 +207,36 @@
       "break": "caught"
     },
     {
+      "claim": "respond-tips",
+      "says": "each tip becomes its own small pull request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
       "claim": "respond-fmt",
       "says": "fmt on request commits to the pull request branch and nowhere else",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "respond-notes",
+      "says": "release notes come from the conventional commits that touched the module",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "fresh-plan",
+      "says": "on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "forgejo-oidc",
+      "says": "a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role",
       "needs": null,
       "verdict": "pass",
       "break": "caught"

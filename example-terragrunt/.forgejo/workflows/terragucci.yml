@@ -266,13 +266,38 @@ jobs:
           fi
           tg status terragucci/apply pending "applying"
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
+          log="$(mktemp)"
           apply_wave() {
-            terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false
+            terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false 2>&1 | tee -a "$log"
           }
-          failed() { tg status terragucci/apply failure "an apply failed"; exit 1; }
+          failed() { tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1; }
           echo "wave 1: 5 units"
           apply_wave --filter '{./live/dev/email}' --filter '{./live/dev/orders}' --filter '{./live/dev/payments}' --filter '{./live/dev/platform}' --filter '{./live/dev/search}' || failed
           echo "wave 2: 10 units"
           apply_wave --filter '{./live/prod/email}' --filter '{./live/prod/orders}' --filter '{./live/prod/payments}' --filter '{./live/prod/platform}' --filter '{./live/prod/search}' --filter '{./live/staging/email}' --filter '{./live/staging/orders}' --filter '{./live/staging/payments}' --filter '{./live/staging/platform}' --filter '{./live/staging/search}' || failed
           tg status terragucci/apply success "15 units in 2 waves applied"
           echo "all units applied"
+  tips:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1
+    needs: apply
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: terragucci-tips-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      TG_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Open a pull request for each tip
+        shell: bash
+        run: |
+          set -u
+          export FORGEJO_TOKEN="$TG_TOKEN"
+          terragucci respond tips --mode apply --binary tofu || true

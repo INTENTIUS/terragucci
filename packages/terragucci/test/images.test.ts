@@ -33,7 +33,7 @@ describe("images", () => {
   ] as const)("a %s pipeline runs every job in the pinned image", (forge, shape) => {
     const image = `ghcr.io/intentius/terragucci-tofu:${imageTag("tofu")}@${DIGEST}`;
     const out = renderPipeline({ forge, binary: "tofu", version: TOOL_VERSIONS.tofu, image, layers: [["a"]], env: {} }).content;
-    expect(out.split(shape + image).length - 1).toBe(3);
+    expect(out.split(shape + image).length - 1).toBe(4); // check, plan, one apply wave, tips
     expect(out).toContain("pinned by digest");
     expect(out).not.toContain("terragucci install");
     expect(out).not.toMatch(/curl|unzip/);

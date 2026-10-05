@@ -1,0 +1,21 @@
+{
+  "step": "wave-refused",
+  "source_hash": "c0204984f98eaa7d",
+  "commands": [
+    {
+      "cmd": "just example approve",
+      "output": "\n  Approved  wave-4, signed as terragucci-admin",
+      "exit": 0
+    },
+    {
+      "cmd": "just example change module-bump",
+      "output": "[example] pushed change/module-bump at a3d784fe\n[example] run 11 for a3d784fe: success (http://localhost:3300/terragucci-admin/example/actions/runs/11)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/11 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example merge module-bump",
+      "output": "[example] merged change/module-bump into main\n\n  Merged    pull request 4 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/12 (failure)\n  wave 4 changed after it was approved, so nothing in it was applied. approved: jcs1-sha256:2e7a63f3f8af41bdf101ad8f6758bab88a6307d9b0bbce452a455ec024c37996; planned now: jcs1-sha256:707339809ec53a67c42f4f1668a345e618adf3c87d3e3f73f8409ba2ddae52d5. Read the new plan, then approve it: chant approve tf-apply wave-4 --plan jcs1-sha256:707339809ec53a67c42f4f1668a345e618adf3c87d3e3f73f8409ba2ddae52d5\n  wave 4 of 4: approved by terragucci-admin, but these roots planned differently since: envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search",
+      "exit": 0
+    }
+  ]
+}

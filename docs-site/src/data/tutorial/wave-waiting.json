@@ -1,0 +1,16 @@
+{
+  "step": "wave-waiting",
+  "source_hash": "c0204984f98eaa7d",
+  "commands": [
+    {
+      "cmd": "just example change destroy",
+      "output": "[example] pushed change/destroy at e079d669\n[example] run 7 for e079d669: success (http://localhost:3300/terragucci-admin/example/actions/runs/7)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/3\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/7 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example merge destroy",
+      "output": "[example] listed the reader's key in .chant/allowed_signers\n[example] merged change/destroy into main\n\n  Merged    pull request 3 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/9 (failure)\n    chant approve tf-apply wave-4 --plan jcs1-sha256:2e7a63f3f8af41bdf101ad8f6758bab88a6307d9b0bbce452a455ec024c37996 --sign",
+      "exit": 0
+    }
+  ]
+}
