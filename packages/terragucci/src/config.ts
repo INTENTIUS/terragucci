@@ -117,6 +117,29 @@ export interface DecideSettings {
   thresholds?: Partial<Record<QuestionType, number>>;
 }
 
+/** `dashboards:` in terragucci.yml, as a map. `true` takes every default. */
+export interface DashboardSettings {
+  /** Where the files go, relative to the repo. Default `observability/terragucci`. */
+  dir?: string;
+  /** The uid of the Grafana datasource that reads the Prometheus holding the metrics. Default `prometheus`. */
+  prometheus?: string;
+  /** The uid of the Grafana datasource that reads Tempo. Default `tempo`. */
+  tempo?: string;
+  /** The Grafana folder the dashboards and Grafana-managed rules go in. Default `terragucci`. */
+  folder?: string;
+  /** Where Grafana's container finds the dashboard files. Default `/var/lib/grafana/dashboards/terragucci`. */
+  path?: string;
+  /** Alert when a project's drift is older than this. Default `1d`. */
+  drift_age?: string;
+  /** Alert when a wave has waited for its approval longer than this. Default `4h`. */
+  wave_wait?: string;
+  /** Alert when a project's drift run has not run for this long. Default `2d`. */
+  schedule?: string;
+}
+
+export const DASHBOARD_KEYS = ["dir", "prometheus", "tempo", "folder", "path", "drift_age", "wave_wait", "schedule"] as const;
+export const DASHBOARD_DURATION_KEYS = ["drift_age", "wave_wait", "schedule"] as const;
+
 /** The settings one project (or one repo) can carry. Every key is optional. */
 export interface ProjectSettings {
   /** Globs of root directories. Detected when absent. */
@@ -167,6 +190,8 @@ export interface ProjectSettings {
   agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string };
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
   decide?: DecideSettings;
+  /** Dashboards and alert rules written next to the pipeline. Off unless set. */
+  dashboards?: boolean | DashboardSettings;
 }
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
@@ -228,7 +253,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "dashboards",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -336,6 +361,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.decide !== undefined) checkDecide(s.decide, `${where}.decide`, problems);
+  if (s.dashboards !== undefined) checkDashboards(s.dashboards, `${where}.dashboards`, problems);
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
     else {
@@ -399,6 +425,26 @@ function checkDecide(d: unknown, where: string, problems: string[]): void {
       }
     }
   }
+}
+
+const DURATION = /^(\d+(ms|s|m|h|d|w|y))+$/;
+
+function checkDashboards(d: unknown, where: string, problems: string[]): void {
+  if (typeof d === "boolean") return;
+  if (!isObject(d)) {
+    problems.push(`${where} must be true, false or a map (settings: ${DASHBOARD_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(d)) {
+    if (!(DASHBOARD_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${DASHBOARD_KEYS.join(", ")})`);
+  }
+  for (const k of DASHBOARD_KEYS) {
+    const v = d[k];
+    if (v === undefined) continue;
+    if (typeof v !== "string" || v === "") problems.push(`${where}.${k} must be a string`);
+    else if ((DASHBOARD_DURATION_KEYS as readonly string[]).includes(k) && !DURATION.test(v)) problems.push(`${where}.${k} is ${JSON.stringify(v)}; use a duration such as 4h or 1d`);
+  }
+  if (typeof d.dir === "string" && (d.dir.startsWith("/") || d.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a path inside the repo`);
 }
 
 function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
