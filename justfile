@@ -213,6 +213,19 @@ smoke claim="":
 smoke-record:
     stack/smoke.sh --record docs-site/src/data/smoke.json
 
+[doc("Remove the stack's job cache volume (terragucci-job-cache: the OpenTofu binary and every provider version it fetched). The next stack-up makes it again. Stop the stack first: Docker refuses while a container mounts it.")]
+job-cache-prune:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      echo "SKIP: Docker is not available."; exit 0
+    fi
+    if ! docker volume inspect terragucci-job-cache >/dev/null 2>&1; then
+      echo "terragucci-job-cache does not exist"; exit 0
+    fi
+    docker volume rm terragucci-job-cache
+    echo "  ✓ terragucci-job-cache removed"
+
 [doc("Run the tutorial's steps against the example and record their output and screenshots.")]
 tutorial-capture:
     stack/tutorial-capture.sh

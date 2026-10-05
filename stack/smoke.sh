@@ -637,6 +637,14 @@ image_tag() { # name
 # claim starts (SMOKE_CLI_BUILT=1), so no run rewrites it under another.
 build_cli() {
   [ -n "${SMOKE_CLI_BUILT:-}" ] && return 0
+  # A hand run (smoke.sh <claim>) skips the build when the bundle is newer than
+  # everything it is built from, so several hand runs started at once do not
+  # each rebuild it. build-cli.mjs renames the finished files into place, so a
+  # build that does run never leaves another run a half-written bundle.
+  local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  if [ -f "$bundle" ] && [ -z "$(find "$HERE/../packages/terragucci/src" "$HERE/../packages/terragucci/package.json" "$HERE/../scripts/build-cli.mjs" -type f -newer "$bundle" -print -quit 2>/dev/null)" ]; then
+    return 0
+  fi
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null)
 }
 
@@ -2931,6 +2939,13 @@ free_gb() {
   [ -d "$vol" ] || vol="${TMPDIR:-/tmp}"
   df -Pk "$vol" 2>/dev/null | awk 'NR == 2 { printf "%d", $4 / 1048576 }'
 }
+# The job cache volume gains a provider per version and nothing prunes it.
+# `just job-cache-prune` empties it.
+job_cache_size() {
+  local size
+  size="$(docker system df -v --format '{{range .Volumes}}{{.Name}} {{.Size}}{{"\n"}}{{end}}' 2>/dev/null | awk -v v="$JOB_CACHE_VOLUME" '$1 == v { print $2 }')" || size=""
+  echo "smoke: the ${JOB_CACHE_VOLUME} volume holds ${size:-an unknown size}; 'just job-cache-prune' removes it" >&2
+}
 SMOKE_DISK_WARN_GB="${SMOKE_DISK_WARN_GB:-50}"
 # disk_check START_GB: say how much free space the record cost, and warn past the threshold.
 disk_check() {
@@ -2939,6 +2954,7 @@ disk_check() {
   [ -n "$start" ] && [ -n "$end" ] || return 0
   lost=$((start - end))
   echo "smoke: free space ${start} GB at the start of the record, ${end} GB now" >&2
+  job_cache_size
   if [ "$lost" -gt "$SMOKE_DISK_WARN_GB" ]; then
     echo "smoke: WARNING the record used ${lost} GB of disk, more than SMOKE_DISK_WARN_GB=${SMOKE_DISK_WARN_GB}. Docker Desktop may be holding deleted bind-mounted files; 'lsof +L1 -a -p <pid of the VM process>' lists them, and restarting Docker Desktop frees them." >&2
   fi
