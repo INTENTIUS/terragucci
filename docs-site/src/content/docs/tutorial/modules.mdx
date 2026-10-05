@@ -4,15 +4,20 @@ description: Publish the module at a version, pin the roots to it, and roll a ne
 sidebar:
   order: 7
 claims: [publish, rollout]
-draft: true
 ---
 
-:::note[Where the example stands]
-Booted with `just example up`. `just example reset` gets you back to that from any step.
-:::
+When roots call a module from the repo, a change reaches every root that calls it, as `just example change module-bump` showed with twelve plans. When roots pin a published version, a change to the module reaches no root until a pin moves. `tf-publish` publishes a module at a new version, and `tf-rollout` moves the pins for one wave at a time, each wave its own small pull request.
 
-When roots pin a module version, a change to the module reaches no root until a pin moves. `tf-publish` publishes `modules/service` at a new version, and `tf-rollout` moves the pins for one wave at a time, each wave its own small pull request.
+The example's roots call `modules/service` by path, so this page works in your own repository rather than in the example. Publish first.
 
 ```bash
-just example change pin
+npx terragucci publish --dry-run
 ```
+
+It lists each module whose content changed since its last release, with the version it would publish. [Publish your modules](/terragucci/guides/publish-modules/) adds the job that does it on every merge. Then preview the rollout.
+
+```bash
+npx terragucci rollout modules/service
+```
+
+A dry run lists the pull requests it would open and their files. `--mode apply` opens the pull request for the first wave. Merge it and run the rollout again. The next wave follows once the last one has applied. [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) has every step.

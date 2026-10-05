@@ -17,7 +17,14 @@ terragucci is being built. The rest of this site describes it finished, so this 
 | Terragrunt repos | `init` notices Terragrunt, takes the units from `terragrunt find`, and writes a pipeline that checks with `hcl fmt` and `hcl validate`, plans the units a pull request reaches and applies a wave at a time with one `run --all`. A unit whose plan would read `mock_outputs` waits for its upstream instead of planning, and tips name mocks that can reach apply. Roles can follow unit paths. `just example-terragrunt up` boots the Terragrunt example: 15 units on the local Forgejo, applied to floci |
 | CI images | one per toolchain (OpenTofu, Terraform, Terragrunt), built and checked on amd64 and arm64; not yet published, so `init` pins them by tag until they are |
 | `terragucci stage tf-plan` | plans the roots a pull request reaches, and the roots that read their state, and writes the plan report: JSON, HTML, the pull-request note and GitLab's counts, with each root's full plan beside it, sensitive values redacted; with `reports.bucket`, copies it to the bucket and updates the index. The generated pipeline's plan job runs it on every pull request, posts its note and keeps it as the job's artifact |
-| Traces and metrics | with an OTLP endpoint set, `tf-plan` sends one trace per run, with a span per wave, root and binary run, and OpenTofu's own spans inside it; and its metrics, read from the report |
+| Traces and metrics | with an OTLP endpoint set, `tf-plan` sends one trace per run, with a span per wave, root and binary run, and OpenTofu's own spans inside it; and its metrics, read from the report. Terraform's own spans land in a separate trace, tagged with the run's trace and span ids so a query finds them |
+| Affected-only plans | a pull request plans only the roots its change reaches, and the roots that read their state; the rest are left alone |
+| One grouped plan note | one note on the pull request or merge request for every plan across the roots: identical changes folded into a group, destroys, replacements and outliers named on their own and open, each root linked to its full plan |
+| Gated waves | `tf-apply` runs one job per wave, canary first, each wave planned after the one before it applied and behind a gate bound to its set digest. Under the default `on-destroy` policy a wave waits when its plans destroy or replace something, and `always` and `never` are the other two. A wave whose plans changed after approval applies nothing and names the roots that moved |
+| Sealed approvals | on by default: a wave counts an approval only when it is sealed by a key in `.chant/allowed_signers` on the default branch. You approve with `chant approve tf-apply wave-N --sign`; the waiting job prints the command, and an MCP session cannot approve a wave |
+| The fresh-estate plan | on an estate with no state yet, the plan holds back a root whose upstream is unapplied, and says so, instead of planning against placeholder values |
+| `tf-drift` | one plan sweep across every root on a schedule, reported as one grouped issue; Terragrunt units are swept too |
+| Module publishing and rollouts | `tf-publish` releases changed modules as OCI artifacts or git tags, and `tf-rollout` moves the pins one wave at a time, one pull request per wave, across roots and repos |
 | `terragucci respond` | the default response to each pipeline event: the refused-wave diff, apply-failure triage, drift codified as a pull request with import blocks, one pull request per tip, `fmt` on a pull request's branch, and module release notes; `respond` in the config picks each one, and `agent` is checked but no generated job runs an agent yet |
 | `terragucci.yml` and `terragucci reconcile` | one config for one repo or many; from a control repo, a pull request in each project that changes |
 | The local validation stack | floci with Forgejo, GitHub (`act` and a mock API) or GitLab, each with its claims on the [validation page](/terragucci/reference/validation/); a fountain setup is declared but not yet checked |
@@ -32,12 +39,11 @@ Each feature on this site has one check, run against the [tutorial's example](/t
 
 | Feature | Status |
 |---|---|
-| Plans for only the roots a change reaches | in development |
-| One grouped note for many plans | in development |
-| Applies in gated waves | in development |
-| Module publishing and pin-bump rollouts | in development |
+| The npm package, `@intentius/terragucci` | not yet published; run it from a checkout until it is |
+| The CI images | built and checked, not yet pushed to a registry |
 | Terragrunt explicit stacks (`terragrunt.stack.hcl`) | in development |
 | Dashboards and alert rules, declared with chant's grafana and prometheus lexicons | in development |
 | A fountain steward started by a pull request | planned after launch |
+| A re-plan comment command and opt-in policy checks | planned after launch |
 
 The tutorial grows a page each time one of these passes its check.

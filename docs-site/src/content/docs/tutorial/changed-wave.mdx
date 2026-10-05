@@ -4,11 +4,14 @@ description: Approve a wave, change one of its roots, and see the wave refuse to
 sidebar:
   order: 5
 claims: [refuse]
-draft: true
 ---
 
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-Approve staging, then change one staging root before the stage runs again. The plans no longer match the digest you approved, so the wave applies nothing. It prints the digest you approved beside the one it found. Read the new plan, then approve again.
+An approval covers the plans you read and no others. To see that, start from a waiting wave. Merge `just example change destroy` so that wave 4 waits for staging email's destroy, then approve it as on the previous page with `chant approve tf-apply wave-4 --sign`. Before you run the wave's job again, merge `just example change replace`, which changes prod search, another root in wave 4.
+
+Now the wave makes plans that differ from the ones you approved, so its set digest differs. The wave applies nothing, and its job fails with exit code 4. The log names each root whose plan moved, and it prints the digest you approved beside the one it found. The plan that moved is yours to read: `npx terragucci respond wave-refused` prints what changed in it. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) walks through the diff.
+
+Read the new plan. If it is what you meant to apply, approve again with the digest the wave now prints and run the job. Otherwise revert the change that moved it.
