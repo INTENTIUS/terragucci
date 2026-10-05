@@ -2,8 +2,12 @@
 //   - every smoke claim it names in `claims:` passes in smoke.json;
 //   - every <Captured step="…"> has a capture, made from the example as it is
 //     now (its source_hash matches example/);
-//   - every <Shot step="…" view="…"> has both its light and dark screenshot.
-// Draft pages are skipped; they leave draft when their claims pass.
+//   - every <Shot step="…" view="…"> has its light and dark screenshot, each
+//     the one its step's capture recorded (the hash in <step>.json), from a
+//     capture of the example as it is now.
+// Draft pages are skipped; they leave draft when their claims pass. Every
+// other page of the site that embeds a capture or a screenshot is held to the
+// same capture rules.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -33,6 +37,34 @@ for (const f of files(join(root, "example")).map((p) => relative(root, p)).sort(
 const exampleHash = hash.digest("hex").slice(0, 16);
 
 const problems = [];
+const shaOf = (file) => createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);
+const capture = (step) => {
+  const file = join(data, `${step}.json`);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
+};
+const fix = (step) => `run just capture ${step}`;
+
+// The <Captured> and <Shot> on one page.
+function checkCaptures(label, text) {
+  for (const [, step] of text.matchAll(/<Captured\s+step="([^"]+)"/g)) {
+    const c = capture(step);
+    if (!c) { problems.push(`${label}: no capture for step ${step}; ${fix(step)}`); continue; }
+    if (c.source_hash !== exampleHash) problems.push(`${label}: capture ${step} was made from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`);
+  }
+  for (const [, step, view] of text.matchAll(/<Shot\s+step="([^"]+)"\s+view="([^"]+)"/g)) {
+    const c = capture(step);
+    if (!c) { problems.push(`${label}: no capture for step ${step}, so no screenshot ${step}-${view}; ${fix(step)}`); continue; }
+    if (c.source_hash !== exampleHash) problems.push(`${label}: screenshot ${step}-${view} was taken from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`);
+    for (const theme of ["light", "dark"]) {
+      const png = join(shots, `${step}-${view}-${theme}.png`);
+      const want = c.shots?.[`${view}-${theme}`];
+      if (!existsSync(png)) problems.push(`${label}: no screenshot ${step}-${view}-${theme}.png; ${fix(step)}`);
+      else if (!want) problems.push(`${label}: capture ${step} records no screenshot ${view}-${theme}; ${fix(step)}`);
+      else if (shaOf(png) !== want) problems.push(`${label}: ${step}-${view}-${theme}.png is not the screenshot capture ${step} took; ${fix(step)}`);
+    }
+  }
+}
+
 let checked = 0;
 for (const name of existsSync(pages) ? readdirSync(pages).sort() : []) {
   if (!/\.mdx?$/.test(name)) continue;
@@ -48,34 +80,16 @@ for (const name of existsSync(pages) ? readdirSync(pages).sort() : []) {
   for (const c of claims) {
     if (verdict[c] !== "pass") problems.push(`${name}: claim ${c} is ${verdict[c] ?? "unknown"}, so the page must stay a draft`);
   }
-  for (const [, step] of text.matchAll(/<Captured\s+step="([^"]+)"/g)) {
-    const file = join(data, `${step}.json`);
-    if (!existsSync(file)) { problems.push(`${name}: no capture for step ${step}`); continue; }
-    const got = JSON.parse(readFileSync(file, "utf8")).source_hash;
-    if (got !== exampleHash) problems.push(`${name}: capture ${step} was made from example ${got}, but example/ is now ${exampleHash}; run just tutorial-capture`);
-  }
-  for (const [, step, view] of text.matchAll(/<Shot\s+step="([^"]+)"\s+view="([^"]+)"/g)) {
-    for (const theme of ["light", "dark"]) {
-      if (!existsSync(join(shots, `${step}-${view}-${theme}.png`))) problems.push(`${name}: no screenshot ${step}-${view}-${theme}.png`);
-    }
-  }
+  checkCaptures(name, text);
   console.log(`ok    ${name}`);
 }
-// Guides that embed a capture are held to the same rule: the capture exists
-// and was made from the example as it is now.
-const guides = join(root, "docs-site/src/content/docs/guides");
-for (const name of existsSync(guides) ? readdirSync(guides).sort() : []) {
-  if (!name.endsWith(".mdx")) continue;
-  const text = readFileSync(join(guides, name), "utf8");
-  for (const [, step] of text.matchAll(/<Captured\s+step="([^"]+)"/g)) {
-    const file = join(data, `${step}.json`);
-    if (!existsSync(file)) { problems.push(`guides/${name}: no capture for step ${step}; run just tutorial-capture`); continue; }
-    const got = JSON.parse(readFileSync(file, "utf8")).source_hash;
-    if (got !== exampleHash) problems.push(`guides/${name}: capture ${step} was made from example ${got}, but example/ is now ${exampleHash}; run just tutorial-capture`);
-  }
+// Every other page that embeds a capture or a screenshot.
+const docs = join(root, "docs-site/src/content/docs");
+for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/")).sort()) {
+  checkCaptures(relative(docs, file), readFileSync(file, "utf8"));
 }
 if (problems.length) {
-  for (const p of problems) console.log(`FAIL  ${p}`);
+  for (const p of new Set(problems)) console.log(`FAIL  ${p}`);
   process.exit(1);
 }
 console.log(`tutorial: ${checked} published page(s) checked against example ${exampleHash}`);

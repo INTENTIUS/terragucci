@@ -14,7 +14,7 @@ interface Props {
 }
 const { step, cmd, optional } = Astro.props;
 const capture = captures[`../data/tutorial/${step}.json`];
-if (!capture && !optional) throw new Error(`no capture for tutorial step "${step}"; run just tutorial-capture`);
+if (!capture && !optional) throw new Error(`no capture for tutorial step "${step}"; run just capture ${step}`);
 const commands = !capture ? [] : cmd ? capture.commands.filter((c) => c.cmd.startsWith(cmd)) : capture.commands;
 if (capture && commands.length === 0) throw new Error(`tutorial step "${step}" has no command starting "${cmd}"`);
 ---

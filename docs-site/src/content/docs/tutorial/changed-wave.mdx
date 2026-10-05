@@ -6,12 +6,19 @@ sidebar:
 claims: [refuse]
 ---
 
+import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
+
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-An approval covers the plans you read and no others. To see that, start from a waiting wave. Merge `just example change destroy` so that wave 4 waits for staging email's destroy, then approve it as on the previous page with `chant approve tf-apply wave-4 --sign`. Before you run the wave's job again, merge `just example change replace`, which changes prod search, another root in wave 4.
+An approval covers the plans you read and no others. To see that, start from a waiting wave. Merge `just example change destroy` so that wave 4 waits for staging email's destroy, then approve it as on the previous page with `chant approve tf-apply wave-4 --sign`. Before you run the wave's job again, merge `just example change module-bump`. It changes the shared module, so every root in wave 4 plans again.
 
-Now the wave makes plans that differ from the ones you approved, so its set digest differs. The wave applies nothing, and its job fails with exit code 4. The log names each root whose plan moved, and it prints the digest you approved beside the one it found. The plan that moved is yours to read: `npx terragucci respond wave-refused` prints what changed in it. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) walks through the diff.
+<Captured step="wave-refused" optional />
+
+Now the wave makes plans that differ from the ones you approved, so its set digest differs. The wave applies nothing, and its job fails with exit code 4. The log names each root whose plan moved, and it prints the digest you approved beside the one it found.
+
+<Shot step="wave-refused" view="log" alt="Wave 4's apply job in Forgejo, refusing: the approved digest beside the planned one, and the eight roots that planned differently" optional /> The plan that moved is yours to read: `npx terragucci respond wave-refused` prints what changed in it. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) walks through the diff.
 
 Read the new plan. If it is what you meant to apply, approve again with the digest the wave now prints and run the job. Otherwise revert the change that moved it.

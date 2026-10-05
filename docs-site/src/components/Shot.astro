@@ -9,20 +9,24 @@ interface Props {
 	step: string;
 	view: string;
 	alt: string;
+	/** Render nothing until the step has been captured. `just tutorial-check` still fails on the page until it is. */
+	optional?: boolean;
 }
-const { step, view, alt } = Astro.props;
+const { step, view, alt, optional } = Astro.props;
 const pick = (theme: string) => {
 	const s = shots[`../assets/tutorial/${step}-${view}-${theme}.png`];
-	if (!s) throw new Error(`no screenshot ${step}-${view}-${theme}.png; run just tutorial-capture`);
-	return s.default;
+	if (!s && !optional) throw new Error(`no screenshot ${step}-${view}-${theme}.png; run just capture ${step}`);
+	return s?.default;
 };
 const light = pick('light');
 const dark = pick('dark');
 ---
-<figure class="tg-shot not-content">
-	<Image src={light} alt={alt} class="light" widths={[640, 1280]} sizes="(min-width: 50rem) 46rem, 100vw" />
-	<Image src={dark} alt={alt} class="dark" widths={[640, 1280]} sizes="(min-width: 50rem) 46rem, 100vw" />
-</figure>
+{light && dark && (
+	<figure class="tg-shot not-content">
+		<Image src={light} alt={alt} class="light" widths={[640, 1280]} sizes="(min-width: 50rem) 46rem, 100vw" />
+		<Image src={dark} alt={alt} class="dark" widths={[640, 1280]} sizes="(min-width: 50rem) 46rem, 100vw" />
+	</figure>
+)}
 
 <style>
 	figure {
