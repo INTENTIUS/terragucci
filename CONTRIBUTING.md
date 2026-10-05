@@ -37,6 +37,19 @@ just images-check       # run each image's tools and hold it to images/budget.js
 
 The images workflow builds and checks them on amd64 and arm64 for every change, and pushes them to GHCR only for a `v*` tag, which waits for an explicit go. A release then records each pushed digest in `packages/terragucci/src/image-digests.json` before the npm package is built, so `init` pins the images by digest.
 
+### The decision service image
+
+`images/images.ts` also declares `terragucci-decide` (`images/Dockerfile.decide`): Laya on CPU behind the Jev `/v1/systemone` shape, for the typed-decision uses (terragucci#28). It is opt-in and is not one of the CI images. `just images`, `just images-check` and the images workflow leave it out, and `images/budget.json` has no entry for it. Its pins (the `laya` release, the CPU torch build, the checkpoint's Hub commit and its weights' SHA-256) live in `DECIDE_IMAGE` in `packages/terragucci/src/images.ts`, and `images/decide/server.py` is the wrapper that makes it answer as one pinned model id.
+
+```bash
+just decide-image        # build it into the local daemon as terragucci-decide:local
+just decide up           # start it in the stack (builds it first if missing); http://decide:8790 on the network
+just decide ask          # ask the three uses' questions through the client, and check it runs on CPU
+just decide down
+```
+
+The client is `packages/terragucci/src/decide/` (`decide`, `isConfident`, `summarize`), and the uses' questions are in `decide/questions.ts`. `test/decide.test.ts` holds it to a recorded Jev response.
+
 ## Workflows
 
 Every workflow in this repo is a chant declaration. The YAML is rendered from it and committed, because GitHub reads YAML from the default branch.
