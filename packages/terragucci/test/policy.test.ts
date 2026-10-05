@@ -158,7 +158,7 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan with policy", () => {
   });
 
   it("checks a pull request against the base's policy, so editing the policy to allow itself does not pass", { timeout: 120_000 }, async () => {
-    const repo = prRepo(files({ "policy/p.rego": "package main\n# base\n" }), { "policy/p.rego": "package main\n# allow everything\n" });
+    const repo = prRepo(files({ "policy/p.rego": "package main\n# base\n" }), { "policy/p.rego": "package main\n# allow everything\n", "a/main.tf": 'resource "terraform_data" "x" {\n  input = 2\n}\n' });
     const seen: string[] = [];
     const exec: PolicyExec = async (_f, args) => {
       if (args[0] === "--version") return { status: 0, stdout: "", stderr: "" };
