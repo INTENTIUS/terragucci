@@ -2,7 +2,7 @@
 #
 # One smoke claim per feature the site claims, run against the example.
 #
-#   stack/smoke.sh               every claim
+#   stack/smoke.sh               every claim, several at a time
 #   stack/smoke.sh <claim>       one claim
 #   BREAK=1 stack/smoke.sh boot  break the property; the claim must print "caught"
 #   stack/smoke.sh --record FILE every claim, plain and under BREAK=1, as JSON
@@ -14,6 +14,19 @@
 # pending means the stage the claim needs is not built yet; the line names the
 # issue that builds it. Exit codes: 0 when every claim passed, was caught or is
 # pending; 1 when any claim failed; 2 for an unknown claim.
+#
+# Every claim and --record run claims in parallel (see "the runner" at the end):
+# each run holds the stack's shared resources its line in CLAIM_GROUPS names,
+# so runs that share nothing overlap and runs that would disturb each other
+# wait. SMOKE_JOBS=<n> runs at most n at a time (default 6); SMOKE_SERIAL=1 runs
+# one at a time in the same order, for comparing verdicts. Each run's output
+# goes to its own log, <claim>.<plain|break>.log, under SMOKE_LOG_DIR (default
+# stack/.state/smoke-logs/<time>); the SMOKE lines print as runs finish, and
+# the record lists claims in CLAIMS order whatever order they finished in.
+#
+# A new claim: add its line to CLAIMS and its function claim_<name>, and give
+# it a line in CLAIM_GROUPS naming what it shares. A claim with no line there
+# runs alone, after boot and tg-waves: safe, and slow.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,6 +34,8 @@ EXAMPLE="$(cd "$HERE/../example" && pwd)"
 
 # Every claim's temp work dir is recorded here and removed on every exit path:
 # when the claim returns (run_claim), and on exit, interrupt or termination.
+# On exit the runner also stops the runs it started and lets go of every lock
+# this process holds.
 SMOKE_WORKS=()
 track_work() { SMOKE_WORKS+=("$1"); }
 cleanup_works() {
@@ -28,7 +43,17 @@ cleanup_works() {
   for d in ${SMOKE_WORKS[@]+"${SMOKE_WORKS[@]}"}; do [ -n "$d" ] && rm -rf "$d"; done
   SMOKE_WORKS=()
 }
-trap cleanup_works EXIT
+SMOKE_RUNNING=""
+on_exit() {
+  cleanup_works
+  local pid run
+  while read -r pid run; do
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null
+  done <<<"$SMOKE_RUNNING"
+  if declare -F release_mine >/dev/null; then release_mine; fi
+  return 0
+}
+trap on_exit EXIT
 trap 'cleanup_works; exit 130' INT
 trap 'cleanup_works; exit 143' TERM
 
@@ -84,10 +109,61 @@ command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
 # evidence on stderr.
 
 claim_boot() {
+  # The example from nothing: its repo, its resources and its state are wiped,
+  # then `example.sh up` pushes it and the pipeline applies every root. Only
+  # the example is wiped (not all of floci, as `up --fresh` does), so claims on
+  # other repos and the Terragrunt example keep running meanwhile.
+  # BREAK: one root's apply is skipped, so only the resource check notices.
+  log() { echo "[smoke boot] $*" >&2; }
   local skip=""
   [ -n "${BREAK:-}" ] && skip="envs/prod/email"
-  TG_SKIP_ROOT="$skip" "$HERE/example.sh" up --fresh >&2 || return 1
+  if (. "$HERE/lib.sh") >/dev/null 2>&1; then
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    wipe_example || return 1
+  else
+    log "no stack yet, so nothing to wipe; example.sh up starts it"
+  fi
+  TG_SKIP_ROOT="$skip" "$HERE/example.sh" up >&2 || return 1
   "$HERE/example.sh" verify >&2
+}
+
+# The plain example's repo, its buckets (and their objects), queues and
+# tables, and its state under envs/ in the state bucket. Nothing else on floci
+# is touched: the Terragrunt example's names start with shop-tg-.
+wipe_example() {
+  local mine='^shop-(dev|staging|prod)-' b k u t n left i
+  sqs_json() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: $1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/example" 2>/dev/null || true
+  for i in $(seq 1 30); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/repos/$USER/example")" = 404 ] && break
+    sleep 1
+  done
+  for b in $(curl -fsS "$FLOCI/" | grep -o '<Name>[^<]*</Name>' | sed -E 's#</?Name>##g' | grep -E "$mine" || true); do
+    for k in $(curl -fsS "$FLOCI/$b?list-type=2" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' || true); do
+      curl -s -o /dev/null -X DELETE "$FLOCI/$b/$k" || true
+    done
+    curl -s -o /dev/null -X DELETE "$FLOCI/$b" || true
+  done
+  for u in $(sqs_json AmazonSQS.ListQueues '{}' | jq -r '.QueueUrls[]?' || true); do
+    grep -qE "$mine" <<<"${u##*/}" || continue
+    sqs_json AmazonSQS.DeleteQueue "$(jq -cn --arg u "$u" '{QueueUrl: $u}')" >/dev/null || true
+  done
+  for t in $(sqs_json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?' | grep -E "$mine" || true); do
+    sqs_json DynamoDB_20120810.DeleteTable "$(jq -cn --arg t "$t" '{TableName: $t}')" >/dev/null || true
+  done
+  for k in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=envs/" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' || true); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$k" || true
+  done
+  # Anything left would make the apply meet a resource it did not create.
+  left="$( { curl -fsS "$FLOCI/" | grep -o '<Name>[^<]*</Name>' | sed -E 's#</?Name>##g' | grep -E "$mine"
+    sqs_json AmazonSQS.ListQueues '{}' | jq -r '.QueueUrls[]? | split("/") | last' | grep -E "$mine"
+    sqs_json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?' | grep -E "$mine"
+    curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=envs/" 2>/dev/null | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'
+  } 2>/dev/null || true)"
+  n="$(grep -c . <<<"$left" || true)"
+  [ "$n" = 0 ] || { log "the wipe left $n of the example's objects in floci: $(tr '\n' ' ' <<<"$left")"; return 1; }
+  log "wiped the example's repo, resources and state"
 }
 
 claim_check() {
@@ -148,8 +224,9 @@ claim_apply_serial() {
   # let run until its apply has started, then a second push lands. The marks
   # must read start end start end: the second apply waited for the first.
   # BREAK: the lock is cut out of the committed pipeline, so the applies overlap.
-  # The runner has capacity 4, so a free slot never forces the order: only the
-  # concurrency group and the state lock do.
+  # The runner has capacity 8, and under BREAK the smoke runner gives this claim
+  # the runner to itself (runner! in CLAIM_GROUPS), so a free slot never forces
+  # the order: only the concurrency group and the state lock do.
   log() { echo "[smoke apply-serial] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -532,12 +609,29 @@ REPORT_BUCKET=terragucci-reports
 # REPORT_BASE=1 commits the tree before the patches and REPORT_EDIT (shell, run in the tree), and names that commit TG_BASE.
 REPORT_EXTRA=()
 REPORT_ARGS=()
+
+# A CI image's tag (tofu, terragrunt), as scripts/images.ts names it. The
+# runner works both out once and passes them down in SMOKE_<NAME>_IMAGE.
+image_tag() { # name
+  local cached
+  case "$1" in tofu) cached="${SMOKE_TOFU_IMAGE:-}" ;; terragrunt) cached="${SMOKE_TG_IMAGE:-}" ;; *) cached="" ;; esac
+  if [ -n "$cached" ]; then echo "$cached"; return 0; fi
+  (cd "$HERE/.." && npx tsx scripts/images.ts tags | awk -v n="$1" '$1 == n { print $2 }')
+}
+
+# Build the bundle the CI image runs. The runner builds it once before any
+# claim starts (SMOKE_CLI_BUILT=1), so no run rewrites it under another.
+build_cli() {
+  [ -n "${SMOKE_CLI_BUILT:-}" ] && return 0
+  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null)
+}
+
 report_run() {
   local work="$1"; shift
   local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p
-  image="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
-  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  build_cli || return 1
   cp -R "${REPORT_TREE:-$EXAMPLE}/." "$work/"
   rm -rf "$work/.git"
   git -C "$work" init -q -b main
@@ -564,6 +658,24 @@ report_run() {
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     ${REPORT_EXTRA[@]+"${REPORT_EXTRA[@]}"} \
     "$image" terragucci stage "${REPORT_STAGE:-tf-plan}" ${REPORT_ARGS[@]+"${REPORT_ARGS[@]}"} >&2
+}
+
+# Apply some of the example's roots as committed, each in the tofu CI image as
+# the pipeline's apply job runs it. The reset a claim needs when it changed one
+# root's resources, instead of re-applying all 15 through the pipeline.
+apply_roots() { # root...
+  local work image root
+  image="$(image_tag tofu)"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$EXAMPLE/." "$work/"
+  for root in "$@"; do
+    docker run --rm --network terragucci -v "$work:/repo" -w "/repo/$root" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { rm -rf "$work"; return 1; }
+  done
+  rm -rf "$work"
 }
 
 claim_report() {
@@ -703,7 +815,8 @@ collector_up() {
   answers 2>/dev/null && return 0
   echo "starting the observability profile" >&2
   # up -d leaves running containers alone, so this is safe when half of it is up.
-  docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile observability up -d >&2 || return 1
+  # The compose lock keeps it from racing another run's compose call.
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile observability up -d >&2 || return 1
   for i in $(seq 1 30); do
     answers 2>/dev/null && return 0
     sleep 2
@@ -846,41 +959,53 @@ claim_drift() {
   for n in $(open_issues | jq -r '.[].number'); do
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$USER/example/issues/$n"
   done
-  [ -n "${BREAK:-}" ] || TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { rm -rf "$work"; return 1; }
+  local deleted=""
+  if [ -z "${BREAK:-}" ]; then
+    TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { rm -rf "$work"; return 1; }
+    deleted=1
+  fi
+  drift_checks() {
+    drift_run "$work/run1" || { log "the drift run failed"; return 1; }
+    dir="$work/run1/terragucci-report"
+    [ -f "$dir/report.json" ] || { log "no report"; return 1; }
+    jq -e '.run.stage == "tf-drift"' "$dir/report.json" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
+    # Exactly one object is gone, and it is this queue in this root.
+    [ "$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")" = "$root module.service.aws_sqs_queue.jobs" ] \
+      || { log "the deletes are not exactly $root's queue: $(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")"; rc=1; }
+    # Everything else that drifted is a tag or object metadata. Anything more would be a real
+    # difference, such as dev orders' retention change that is only on main.
+    [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")" = "" ] \
+      || { log "attributes other than tags and metadata drifted: $(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")"; rc=1; }
+    issues="$(open_issues)"
+    [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
+    body="$(jq -r '.[0].body // ""' <<<"$issues")"
+    grep -q "$root" <<<"$body" && grep -q "$queue" <<<"$body" || { log "the issue does not name $root and $queue"; rc=1; }
+    [ $rc = 0 ] || return 1
 
-  drift_run "$work/run1" || { log "the drift run failed"; rm -rf "$work"; return 1; }
-  dir="$work/run1/terragucci-report"
-  [ -f "$dir/report.json" ] || { log "no report"; rm -rf "$work"; return 1; }
-  jq -e '.run.stage == "tf-drift"' "$dir/report.json" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
-  # Exactly one object is gone, and it is this queue in this root.
-  [ "$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")" = "$root module.service.aws_sqs_queue.jobs" ] \
-    || { log "the deletes are not exactly $root's queue: $(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$dir/report.json")"; rc=1; }
-  # Everything else that drifted is a tag or object metadata. Anything more would be a real
-  # difference, such as dev orders' retention change that is only on main.
-  [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")" = "" ] \
-    || { log "attributes other than tags and metadata drifted: $(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$dir/report.json")"; rc=1; }
-  issues="$(open_issues)"
-  [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
-  body="$(jq -r '.[0].body // ""' <<<"$issues")"
-  grep -q "$root" <<<"$body" && grep -q "$queue" <<<"$body" || { log "the issue does not name $root and $queue"; rc=1; }
-  [ $rc = 0 ] || { rm -rf "$work"; return 1; }
+    # A second run on the same drift updates the one issue.
+    drift_run "$work/run2" || { log "the second drift run failed"; return 1; }
+    [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; return 1; }
 
-  # A second run on the same drift updates the one issue.
-  drift_run "$work/run2" || { log "the second drift run failed"; rm -rf "$work"; return 1; }
-  [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rm -rf "$work"; return 1; }
-
-  # The example applied again recreates the queue, so no delete is left.
-  "$HERE/example.sh" reset >&2 || { log "could not apply the example again"; rm -rf "$work"; return 1; }
-  drift_run "$work/run3" || { log "the third drift run failed"; rm -rf "$work"; return 1; }
-  [ "$(jq '[.roots[].changes[] | select(.action == "delete")] | length' "$work/run3/terragucci-report/report.json")" = 0 ] \
-    || { log "a deleted object remains after the example was applied again"; rm -rf "$work"; return 1; }
-  # A run that finds no drift closes the issue. The scratch root has no resources, so none can drift.
-  mkdir -p "$work/clean/envs/empty"
-  printf 'terraform {\n  backend "local" {}\n}\n' > "$work/clean/envs/empty/main.tf"
-  REPORT_TREE="$work/clean" drift_run "$work/run4" || { log "the clean drift run failed"; rm -rf "$work"; return 1; }
-  [ "$(jq '[.roots[].changes[]] | length' "$work/run4/terragucci-report/report.json")" = 0 ] || { log "the clean run reports drift"; rm -rf "$work"; return 1; }
-  [ "$(open_issues | jq length)" = 0 ] || { log "the drift issue is still open with no drift"; rm -rf "$work"; return 1; }
+    # The example applied again recreates the queue, so no delete is left. Only
+    # staging orders changed, so only that root is applied, not all 15.
+    apply_roots "$root" || { log "could not apply $root again"; return 1; }
+    deleted=""
+    drift_run "$work/run3" || { log "the third drift run failed"; return 1; }
+    [ "$(jq '[.roots[].changes[] | select(.action == "delete")] | length' "$work/run3/terragucci-report/report.json")" = 0 ] \
+      || { log "a deleted object remains after the example was applied again"; return 1; }
+    # A run that finds no drift closes the issue. The scratch root has no resources, so none can drift.
+    mkdir -p "$work/clean/envs/empty"
+    printf 'terraform {\n  backend "local" {}\n}\n' > "$work/clean/envs/empty/main.tf"
+    REPORT_TREE="$work/clean" drift_run "$work/run4" || { log "the clean drift run failed"; return 1; }
+    [ "$(jq '[.roots[].changes[]] | length' "$work/run4/terragucci-report/report.json")" = 0 ] || { log "the clean run reports drift"; return 1; }
+    [ "$(open_issues | jq length)" = 0 ] || { log "the drift issue is still open with no drift"; return 1; }
+  }
+  drift_checks || rc=1
   rm -rf "$work"
+  # A run that stopped before the example was applied again leaves the queue
+  # deleted; put it back, so the next claim meets the example as committed.
+  if [ -n "$deleted" ]; then apply_roots "$root" || log "could not apply $root again"; fi
+  [ $rc = 0 ] || return 1
   log "$root and $queue named in the report and one issue; a pending change on main was not drift; a run with none closed the issue"
 }
 
@@ -941,7 +1066,7 @@ claim_publish() {
     -keyout "$work/certs/registry.key" -out "$work/certs/registry.crt" >/dev/null 2>&1 \
     || { log "openssl could not make a certificate"; rm -rf "$work"; return 1; }
   chmod 644 "$work/certs/registry.key"
-  TERRAGUCCI_REGISTRY_CERTS="$work/certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+  with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$work/certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
     --profile registry up -d --force-recreate registry >&2 || { rm -rf "$work"; return 1; }
   local i
   for i in $(seq 1 30); do
@@ -1095,7 +1220,8 @@ claim_rollout() {
 # network, with the bundle built from this tree, against floci and a scratch
 # Forgejo repo per claim. Nothing here needs the example booted.
 
-STAMP="$(date +%s)"
+# Unique to this process too: the runner may start two claims in one second.
+STAMP="$(date +%s)$$"
 
 # A new, empty Forgejo repo under the admin user; returns 1 if it never settles.
 fresh_repo() { # name
@@ -1112,9 +1238,9 @@ fresh_repo() { # name
 # Run a command in the tofu CI image, in DIR, with terragucci built from this tree.
 in_image() { # dir, command...
   local dir="$1" image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
-  image="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
-  [ -f "$bundle" ] || (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  [ -f "$bundle" ] || build_cli || return 1
   docker run --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" \
@@ -1308,7 +1434,7 @@ claim_respond_notes() {
   log() { echo "[smoke respond-notes] $*" >&2; }
   local work out c=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false) feat="feat(net)!: rename the queue output" fix="fix(net): tag the queue"
   [ -n "${BREAK:-}" ] && { feat="rename the queue output"; fix="tag the queue"; }
-  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/modules/net"
   ( cd "$work" && git init -q -b main && echo '# net' > modules/net/main.tf && git add -A && "${c[@]}" commit -qm "feat: the net module" \
@@ -1327,7 +1453,7 @@ claim_respond_notes() {
 TG_EXAMPLE="$(cd "$HERE/../example-terragrunt" && pwd)"
 TG_REPO_NAME=example-terragrunt
 
-tg_image() { (cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "terragrunt" { print $2 }'); }
+tg_image() { image_tag terragrunt; }
 
 # The plan stage on a copy of the Terragrunt example, run in the CI image the
 # way the plan job runs it: the base is the example as committed, the head is
@@ -1342,7 +1468,7 @@ tg_report_run() { # work, patches...
   local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p base
   image="$(tg_image)"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example-terragrunt up' first" >&2; return 1; }
-  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
+  build_cli || return 1
   cp -R "$TG_EXAMPLE/." "$work/"
   rm -rf "$work/.git"
   git -C "$work" init -q -b main
@@ -1368,6 +1494,44 @@ tg_main_job_log() { # job name
   run="$(api "$URL/api/v1/repos/$USER/$TG_REPO_NAME/actions/runs?branch=main" | jq -r '.workflow_runs[0].id')"
   job="$(api "$URL/api/v1/repos/$USER/$TG_REPO_NAME/actions/runs/$run/jobs" | jq -r --arg n "$1" '.[] | select(.name == $n) | .id' | head -1)"
   api "$URL/api/v1/repos/$USER/$TG_REPO_NAME/actions/jobs/$job/logs"
+}
+
+# Apply some of the Terragrunt example's units as committed, each alone in
+# the CI image. The reset a claim needs when it changed one unit's resources,
+# instead of re-applying all 15 through the pipeline.
+tg_apply_units() { # unit...
+  local work image unit
+  image="$(tg_image)"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$TG_EXAMPLE/." "$work/"
+  for unit in "$@"; do
+    docker run --rm --network terragucci -v "$work:/repo" -w /repo \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
+      "$image" terragrunt run --working-dir "$unit" -- apply -auto-approve -input=false -no-color >&2 || { rm -rf "$work"; return 1; }
+  done
+  rm -rf "$work"
+}
+
+# Put the Terragrunt example's main back to the example as committed, for a
+# claim that pushed to main and has already put floci back itself. The commit
+# asks the forge to skip CI, since there is nothing left to apply; if a run
+# starts anyway, wait for it, so it cannot apply under the next claim.
+tg_restore_main() {
+  local work sha i n repo="$USER/$TG_REPO_NAME"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null || { rm -rf "$work"; return 1; }
+  find "$work/tree" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+  cp -R "$TG_EXAMPLE/." "$work/tree/"
+  sha="$(push_tree "$work/tree" "$repo" main "Reset to the example as committed [skip ci]")" || { rm -rf "$work"; return 1; }
+  rm -rf "$work"
+  for i in 1 2 3 4 5; do
+    sleep 2
+    n="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" 2>/dev/null | jq -r '.workflow_runs | length' 2>/dev/null || true)"
+    if [ -n "$n" ] && [ "$n" != 0 ]; then wait_run "$repo" "$sha"; break; fi
+  done
+  return 0
 }
 
 claim_tg_zero_config() {
@@ -1416,7 +1580,14 @@ claim_tg_waves() {
     [ -n "$last_dev" ] && [ -n "$first_other" ] && [ "$last_dev" -lt "$first_other" ] \
       || { log "dev's applies did not all finish before the first staging or prod apply (last dev line ${last_dev:-none}, first other ${first_other:-none})"; rc=1; }
   fi
-  if [ -n "$work" ]; then rm -rf "$work"; "$HERE/example-terragrunt.sh" reset >&2 || true; fi
+  # The BREAK run left every unit applied and main carrying the no-canary
+  # pipeline: put main back. The runner runs this claim's BREAK before its plain
+  # run, whose `up` pushes the example to a fresh repo, and then says so with
+  # SMOKE_PLAIN_NEXT=1, so there is nothing to put back.
+  if [ -n "$work" ]; then
+    rm -rf "$work"
+    [ -n "${SMOKE_PLAIN_NEXT:-}" ] || tg_restore_main || true
+  fi
   [ $rc = 0 ] && log "15 units applied to floci, the 5 dev units first, then the other 10"
   return $rc
 }
@@ -1546,7 +1717,7 @@ claim_tg_mock_trap() {
   # Put the estate back: billing and ledger destroyed, their state gone, main as committed.
   TG_TREE="$work/tree" "$HERE/example-terragrunt.sh" tg run --all --no-filters-file --filter '{./live/dev/billing}' --filter '{./live/dev/ledger}' -- destroy -auto-approve >&2 || true
   for u in billing ledger; do curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/terragrunt/live/dev/$u/terraform.tfstate" || true; done
-  "$HERE/example-terragrunt.sh" reset >&2 || true
+  tg_restore_main || true
   rm -rf "$work"
   [ $rc = 0 ] && log "ledger applied before billing; billing's state names shop-tg-dev-ledger and holds no mock"
   return $rc
@@ -1578,30 +1749,36 @@ claim_tg_drift() {
   for n in $(open_issues | jq -r '.[].number'); do
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/issues/$n"
   done
+  local deleted=""
   if [ -z "${BREAK:-}" ]; then
     extra="$(curl -fsS -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.GetQueueUrl' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')" || extra=""
     [ -n "$extra" ] || { log "$queue is not in floci; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
     curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.DeleteQueue' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$extra\"}" || { rm -rf "$work"; return 1; }
+    deleted=1
   fi
 
-  drift_run "$work/run1" || { log "the drift run failed"; rm -rf "$work"; return 1; }
   r="$work/run1/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
-  jq -e '.run.stage == "tf-drift"' "$r" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
-  deletes="$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$r")"
-  [ "$deletes" = "$unit aws_sqs_queue.jobs" ] || { log "the deletes are not exactly $unit's queue: $deletes"; rc=1; }
-  [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$r")" = "" ] \
-    || { log "attributes other than tags and metadata drifted"; rc=1; }
-  issues="$(open_issues)"
-  [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
-  body="$(jq -r '.[0].body // ""' <<<"$issues")"
-  grep -q "$unit" <<<"$body" && grep -q "$queue" <<<"$body" || { log "the issue does not name $unit and $queue"; rc=1; }
-  if [ $rc = 0 ]; then
-    drift_run "$work/run2" || { log "the second drift run failed"; rc=1; }
-    [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rc=1; }
+  if ! drift_run "$work/run1"; then log "the drift run failed"; rc=1
+  elif [ ! -f "$r" ]; then log "no report"; rc=1
+  else
+    jq -e '.run.stage == "tf-drift"' "$r" >/dev/null || { log "the report is not a tf-drift report"; rc=1; }
+    deletes="$(jq -r '[.roots[] | .path as $p | .changes[] | select(.action == "delete") | "\($p) \(.address)"] | join(",")' "$r")"
+    [ "$deletes" = "$unit aws_sqs_queue.jobs" ] || { log "the deletes are not exactly $unit's queue: $deletes"; rc=1; }
+    [ "$(jq -r '[.roots[].changes[] | select(.action != "delete") | .attributes[].path] | unique - ["tags", "tags_all", "metadata"] | join(",")' "$r")" = "" ] \
+      || { log "attributes other than tags and metadata drifted"; rc=1; }
+    issues="$(open_issues)"
+    [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
+    body="$(jq -r '.[0].body // ""' <<<"$issues")"
+    grep -q "$unit" <<<"$body" && grep -q "$queue" <<<"$body" || { log "the issue does not name $unit and $queue"; rc=1; }
+    if [ $rc = 0 ]; then
+      drift_run "$work/run2" || { log "the second drift run failed"; rc=1; }
+      [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rc=1; }
+    fi
   fi
   rm -rf "$work"
-  "$HERE/example-terragrunt.sh" reset >&2 || log "could not apply the example again"
+  # Put back what the claim changed: the one queue, by applying its unit alone
+  # rather than the whole example through the pipeline.
+  if [ -n "$deleted" ]; then tg_apply_units "$unit" || log "could not apply $unit again"; fi
   [ $rc = 0 ] && log "$unit and $queue named, one issue kept, a second run updated it"
   return $rc
 }
@@ -1849,18 +2026,372 @@ run_claim() { # name -> prints the SMOKE line, returns 1 on fail
 }
 
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
+# The claims with no issue to wait for, in CLAIMS order.
+runnable_names() { awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS"; }
+
+# ── the runner ────────────────────────────────────────────────────────────
+#
+# What each claim shares with the others, one line per claim:
+#
+#   <claim> <token>...
+#
+# Most tokens are resources the claim's runs hold while they run: shared by
+# default, exclusive with a trailing "!". A run starts only when it can hold
+# all of its resources; any number of runs share a resource, and an exclusive
+# hold waits for everyone else to let go.
+#
+#   ex         the plain example: its repo, its 15 roots' resources and their
+#              state. Plans that only read it share it; boot and drift change
+#              it, so they hold it alone.
+#   tg         the Terragrunt example, the same way
+#   tg-ledger  the Terragrunt example's dev ledger unit, which tg-refuse's BREAK
+#              and tg-mock-trap apply
+#   runner     the Forgejo runner, for claims whose pushes run a pipeline.
+#              apply-serial's BREAK run holds it alone, so it is never free
+#              slots, or the lack of them, that order its two applies.
+#   otel       the collector and Prometheus: traces and metrics stay apart
+#   self       the claim's own fixed names (its repo, branch, state keys), so
+#              its plain and BREAK runs do not overlap
+#   stack      every run holds it shared; a claim with no line here holds it
+#              alone, after boot and tg-waves
+#
+# plain:<lock> and break:<lock> hold a lock in one of the two runs only.
+# after=<claim>[,<claim>...] starts the claim's runs only once every run of
+# those claims has finished: the example it reads must be booted first.
+# break-first runs BREAK before plain, for a claim whose plain run boots from
+# scratch and so puts back what its BREAK run left; that BREAK run sees
+# SMOKE_PLAIN_NEXT=1. weight=<n> orders the queue, heaviest first (default
+# 60): about the seconds both runs take, more for a claim others wait on.
+# A run waiting for a resource keeps any run behind it in the queue from
+# taking that resource first.
+#
+# zero-config, tg-zero-config and respond-notes use no stack at all.
+CLAIM_GROUPS='
+tg-waves        tg! runner break-first weight=1000
+boot            ex! runner break-first weight=900
+drift           ex! after=boot weight=700
+tg-affected     tg after=tg-waves weight=500
+tg-refuse       tg tg-ledger! after=tg-waves weight=490
+tg-check        tg runner self! after=tg-waves weight=480
+tg-mock-lint    tg after=tg-waves weight=470
+tg-drift        tg! after=tg-waves weight=460
+tg-mock-trap    tg! tg-ledger! runner after=tg-waves weight=450
+report          ex after=boot weight=400
+respond-refused ex after=boot weight=350
+metrics         ex otel! after=boot weight=340
+traces          ex otel! after=boot weight=330
+highlight       ex after=boot weight=300
+tips            ex after=boot weight=300
+reconcile       runner self! weight=300
+rollout         runner self! weight=250
+fresh-plan      ex after=boot weight=250
+waves           runner self! weight=200
+refuse          runner self! weight=200
+sealed          runner self! weight=200
+publish         runner self! weight=200
+forgejo-oidc    runner self! weight=200
+grouped         ex runner self! after=boot weight=200
+check           ex runner self! after=boot weight=200
+affected        ex after=boot weight=150
+respond-tips    runner self! weight=150
+apply-serial    runner self! break:runner! weight=100
+respond-drift   self! weight=80
+respond-fmt     self! weight=60
+respond-triage  weight=60
+zero-config     weight=30
+tg-zero-config  weight=30
+respond-notes   weight=20
+'
+
+SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
+
+# ── the stack lock: one lock per shared resource ──
+# $SMOKE_LOCKS/<resource>/<holder>.<s|x> is one hold, shared or exclusive,
+# holding the pid of the process that took it; a hold whose process is gone
+# is dropped. Every change happens under one mutex (a directory, made
+# atomically), so separate smoke.sh processes on one stack take turns too.
+
+lock_mutex() {
+  local owner
+  mkdir -p "$SMOKE_LOCKS"
+  until mkdir "$SMOKE_LOCKS/.mutex" 2>/dev/null; do
+    owner=""
+    read -r owner 2>/dev/null <"$SMOKE_LOCKS/.mutex/pid" || true
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$SMOKE_LOCKS/.mutex"; continue; fi
+    sleep 0.1
+  done
+  echo "$$" >"$SMOKE_LOCKS/.mutex/pid"
+}
+
+unlock_mutex() { rm -rf "$SMOKE_LOCKS/.mutex"; }
+
+# holder, lock... -> 0 with every lock held, or 1 with the resources in the
+# way on stdout. All or nothing, so two runs never each hold half of what the
+# other needs.
+try_lock() {
+  local holder="$1" l res mode f p busy=""
+  shift
+  lock_mutex
+  for f in "$SMOKE_LOCKS"/*/*.s "$SMOKE_LOCKS"/*/*.x; do
+    [ -f "$f" ] || continue
+    p=""; read -r p 2>/dev/null <"$f" || true
+    if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then rm -f "$f"; fi
+  done
+  for l in "$@"; do
+    res="${l%!}"; mode=s; [ "$res" = "$l" ] || mode=x
+    for f in "$SMOKE_LOCKS/$res"/*.s "$SMOKE_LOCKS/$res"/*.x; do
+      [ -f "$f" ] || continue
+      case "$f" in "$SMOKE_LOCKS/$res/$holder".[sx]) continue ;; esac
+      if [ "$mode" = x ] || [ "${f##*.}" = x ]; then busy="$busy $res"; break; fi
+    done
+  done
+  if [ -z "$busy" ]; then
+    for l in "$@"; do
+      res="${l%!}"; mode=s; [ "$res" = "$l" ] || mode=x
+      mkdir -p "$SMOKE_LOCKS/$res"
+      echo "$$" >"$SMOKE_LOCKS/$res/$holder.$mode"
+    done
+  fi
+  unlock_mutex
+  [ -z "$busy" ] || { echo "$busy"; return 1; }
+}
+
+unlock_holder() { # holder
+  [ -d "$SMOKE_LOCKS" ] || return 0
+  lock_mutex
+  rm -f "$SMOKE_LOCKS"/*/"$1".s "$SMOKE_LOCKS"/*/"$1".x
+  unlock_mutex
+}
+
+# Every hold this process took, for the exit trap.
+release_mine() {
+  local f p
+  [ -d "$SMOKE_LOCKS" ] || return 0
+  lock_mutex
+  for f in "$SMOKE_LOCKS"/*/*.s "$SMOKE_LOCKS"/*/*.x; do
+    [ -f "$f" ] || continue
+    p=""; read -r p 2>/dev/null <"$f" || true
+    if [ "$p" = "$$" ]; then rm -f "$f"; fi
+  done
+  unlock_mutex
+  return 0
+}
+
+hold_locks() { # holder, lock... : wait until every lock is held
+  local holder="$1" busy said=""
+  shift
+  until busy="$(try_lock "$holder" "$@")"; do
+    [ "$busy" = "$said" ] || { echo "[smoke] waiting for:$busy" >&2; said="$busy"; }
+    sleep 2
+  done
+}
+
+with_lock() { # resource, command... : run the command holding the resource alone
+  local holder="$$.with.$1.$RANDOM" rc=0
+  hold_locks "$holder" "$1!"
+  shift
+  "$@" || rc=$?
+  unlock_holder "$holder"
+  return $rc
+}
+
+# ── what a claim's runs hold ──
+
+group_tokens() { # claim -> its tokens, or the default for a claim with no line
+  local line
+  line="$(awk -v n="$1" '$1 == n { $1 = ""; print; exit }' <<<"$CLAIM_GROUPS")"
+  if [ -n "${line// /}" ]; then echo "$line"; else echo "stack! after=boot,tg-waves weight=1"; fi
+}
+
+claim_token() { # claim, key -> the value of its key=<value> token, if any
+  local t
+  for t in $(group_tokens "$1"); do
+    case "$t" in "$2"=*) echo "${t#*=}"; return 0 ;; esac
+  done
+  return 0
+}
+
+claim_has() { case " $(group_tokens "$1") " in *" $2 "*) return 0 ;; esac; return 1; }
+
+claim_locks() { # claim, plain|break -> the locks its run holds
+  local name="$1" mode="$2" t out=""
+  for t in $(group_tokens "$name"); do
+    case "$t" in
+      after=*|weight=*|break-first) continue ;;
+      plain:*) [ "$mode" = plain ] || continue; t="${t#plain:}" ;;
+      break:*) [ "$mode" = break ] || continue; t="${t#break:}" ;;
+    esac
+    case "$t" in self) t="claim-$name" ;; 'self!') t="claim-$name!" ;; esac
+    out="$out $t"
+  done
+  case " $out " in *" stack! "*) ;; *) out="$out stack" ;; esac
+  # An exclusive hold covers a shared one of the same resource.
+  for t in $out; do
+    case "$t" in
+      *!) echo "$t" ;;
+      *) case " $out " in *" $t! "*) ;; *) echo "$t" ;; esac ;;
+    esac
+  done | sort -u | tr '\n' ' '
+}
+
+# ── running the queue ──
+
+SMOKE_JOBS="${SMOKE_JOBS:-6}"
+case "$SMOKE_JOBS" in ''|*[!0-9]*|0) SMOKE_JOBS=6 ;; esac
+[ -n "${SMOKE_SERIAL:-}" ] && SMOKE_JOBS=1
+SMOKE_LOG_DIR="${SMOKE_LOG_DIR:-$HERE/.state/smoke-logs/$(date +%Y%m%d-%H%M%S)}"
+SMOKE_LINES_TO=stdout
+SMOKE_BREAK_VALUE=1
+QUEUE=""
+
+# A run's precomputed locks and claims to wait for live in RL_<key> and RA_<key>.
+runvar_key() { local k="${1//-/_}"; RUNVAR_KEY="${k//:/__}"; }
+
+smoke_line() { if [ "$SMOKE_LINES_TO" = stderr ]; then echo "$1" >&2; else echo "$1"; fi; }
+
+# The runs of the named claims, one "<claim>:<plain|break>" per line, heaviest
+# claim first and ties in CLAIMS order.
+build_queue() { # "plain break" | plain | break, claim...
+  local modes="$1" i=0 name w
+  shift
+  for name in "$@"; do
+    i=$((i + 1))
+    w="$(claim_token "$name" weight)"
+    if [ "$modes" = "plain break" ]; then
+      if claim_has "$name" break-first; then
+        echo "${w:-60} $i 1 $name:break"; echo "${w:-60} $i 2 $name:plain"
+      else
+        echo "${w:-60} $i 1 $name:plain"; echo "${w:-60} $i 2 $name:break"
+      fi
+    else
+      echo "${w:-60} $i 1 $name:$modes"
+    fi
+  done | sort -k1,1nr -k2,2n -k3,3n | awk '{ print $4 }'
+}
+
+# Pending claims print their line and run nothing.
+record_pending() {
+  local name issue line
+  for name in $(names); do
+    issue="$(grep "^$name|" <<<"$CLAIMS" | cut -d'|' -f3)"
+    [ -n "$issue" ] || continue
+    line="$(say "$name" pending "needs=$issue")"
+    echo "$line" >"$SMOKE_LOG_DIR/$name.plain.verdict"
+    smoke_line "$line"
+  done
+}
+
+start_run() { # run
+  local name="${1%:*}" mode="${1#*:}" brk="" next=""
+  if [ "$mode" = break ]; then
+    brk="$SMOKE_BREAK_VALUE"
+    # shellcheck disable=SC2086
+    case " $(echo $QUEUE) " in *" $name:plain "*) next=1 ;; esac
+  fi
+  echo "[smoke] start $name ($mode)" >&2
+  BREAK="$brk" SMOKE_PLAIN_NEXT="$next" SMOKE_LOCKS_HELD=1 "$BASH" "$HERE/smoke.sh" "$name" \
+    >"$SMOKE_LOG_DIR/$name.$mode.log" 2>&1 </dev/null &
+  LAST_PID=$!
+}
+
+finish_run() { # run
+  local run="$1" name="${1%:*}" mode="${1#*:}" line
+  line="$(grep "^SMOKE claim=$name " "$SMOKE_LOG_DIR/$name.$mode.log" 2>/dev/null | tail -1 || true)"
+  [ -n "$line" ] || line="SMOKE claim=$name verdict=fail no-verdict"
+  echo "$line" >"$SMOKE_LOG_DIR/$name.$mode.verdict"
+  unlock_holder "$$.$run"
+  smoke_line "$line"
+}
+
+# Run every run in $QUEUE, at most $SMOKE_JOBS at a time, each its own
+# smoke.sh process with its output in $SMOKE_LOG_DIR/<claim>.<mode>.log and its
+# SMOKE line in <claim>.<mode>.verdict. The runner takes a run's locks for it
+# before it starts and lets go when it ends.
+run_queue() {
+  local run name mode k r l locks busy blocked reserved picked waiting pid still n started
+  started=$(date +%s)
+  for run in $QUEUE; do
+    runvar_key "$run"; name="${run%:*}"; mode="${run#*:}"
+    printf -v "RL_$RUNVAR_KEY" '%s' "$(claim_locks "$name" "$mode")"
+    printf -v "RA_$RUNVAR_KEY" '%s' "$(claim_token "$name" after | tr ',' ' ')"
+  done
+  while [ -n "$QUEUE" ] || [ -n "$SMOKE_RUNNING" ]; do
+    still=""
+    while read -r pid run; do
+      [ -n "$pid" ] || continue
+      if kill -0 "$pid" 2>/dev/null; then still="$still$pid $run"$'\n'; continue; fi
+      wait "$pid" 2>/dev/null || true
+      finish_run "$run"
+    done <<<"$SMOKE_RUNNING"
+    SMOKE_RUNNING="$still"
+    while [ -n "$QUEUE" ]; do
+      n="$(grep -c . <<<"$SMOKE_RUNNING" || true)"
+      [ "$n" -lt "$SMOKE_JOBS" ] || break
+      # shellcheck disable=SC2086,SC2046
+      waiting=" $(echo $QUEUE $(awk '{ print $2 }' <<<"$SMOKE_RUNNING")) "
+      picked=""; reserved=" "
+      for run in $QUEUE; do
+        runvar_key "$run"
+        k="RA_$RUNVAR_KEY"; blocked=""
+        for r in ${!k}; do case "$waiting" in *" $r:"*) blocked=1 ;; esac; done
+        [ -z "$blocked" ] || continue
+        k="RL_$RUNVAR_KEY"; locks="${!k}"
+        for l in $locks; do
+          r="${l%!}"
+          case "$reserved" in *" $r "*) blocked="$blocked $r" ;; esac
+        done
+        if [ -z "$blocked" ]; then
+          # shellcheck disable=SC2086
+          if busy="$(try_lock "$$.$run" $locks)"; then picked="$run"; break; fi
+          blocked="$busy"
+        fi
+        for r in $blocked; do reserved="$reserved$r "; done
+      done
+      [ -n "$picked" ] || break
+      QUEUE="$(grep -vxF "$picked" <<<"$QUEUE" || true)"
+      start_run "$picked"
+      SMOKE_RUNNING="$SMOKE_RUNNING$LAST_PID $picked"$'\n'
+    done
+    sleep 1
+  done
+  echo "[smoke] every run finished in $(( $(date +%s) - started ))s, $SMOKE_JOBS at a time; logs in $SMOKE_LOG_DIR" >&2
+}
+
+# Before any run starts: build the bundle and work out the image tags once,
+# build the CI images if they are missing, and start the stack (bootstrap.sh
+# keeps a token that still works, so no run's token goes stale under it).
+runner_prep() {
+  mkdir -p "$SMOKE_LOG_DIR" || return 1
+  echo "[smoke] logs in $SMOKE_LOG_DIR, $SMOKE_JOBS at a time" >&2
+  (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || { echo "[smoke] the CLI did not build" >&2; return 1; }
+  export SMOKE_CLI_BUILT=1
+  SMOKE_TOFU_IMAGE="$(image_tag tofu)"; SMOKE_TG_IMAGE="$(image_tag terragrunt)"
+  export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE
+  if ! docker image inspect "$SMOKE_TOFU_IMAGE" >/dev/null 2>&1 || ! docker image inspect "$SMOKE_TG_IMAGE" >/dev/null 2>&1; then
+    echo "[smoke] building the CI images (a few minutes the first time)" >&2
+    (cd "$HERE/.." && npx tsx scripts/images.ts build >"$SMOKE_LOG_DIR/images.log" 2>&1) \
+      || { echo "[smoke] the CI images did not build; see $SMOKE_LOG_DIR/images.log" >&2; return 1; }
+  fi
+  "$HERE/bootstrap.sh" forgejo >/dev/null 2>"$SMOKE_LOG_DIR/bootstrap.log" \
+    || { cat "$SMOKE_LOG_DIR/bootstrap.log" >&2; echo "[smoke] the stack did not start" >&2; return 1; }
+  # shellcheck disable=SC1091
+  . "$HERE/.state/forgejo.env"
+}
 
 if [ "${1:-}" = --record ]; then
   out="${2:?usage: smoke.sh --record FILE}"
+  SMOKE_LINES_TO=stderr
+  runner_prep || exit 1
+  record_pending
+  # shellcheck disable=SC2046
+  QUEUE="$(build_queue "plain break" $(runnable_names))"
+  run_queue
+  # The rows in CLAIMS order, whatever order the runs finished in.
   rows=()
   for name in $(names); do
-    plain="$(BREAK= run_claim "$name" | tail -1)" || true
-    echo "$plain" >&2
-    broken=""
-    if ! grep -q 'verdict=pending' <<<"$plain"; then
-      broken="$(BREAK=1 run_claim "$name" | tail -1)" || true
-      echo "$broken" >&2
-    fi
+    plain="$(cat "$SMOKE_LOG_DIR/$name.plain.verdict" 2>/dev/null || true)"
+    [ -n "$plain" ] || plain="SMOKE claim=$name verdict=fail no-verdict"
+    broken="$(cat "$SMOKE_LOG_DIR/$name.break.verdict" 2>/dev/null || true)"
     row="$(grep "^$name|" <<<"$CLAIMS")"
     says="$(cut -d'|' -f2 <<<"$row")"; issue="$(cut -d'|' -f3 <<<"$row")"
     rows+=("$(jq -n --arg c "$name" --arg s "$says" --arg i "$issue" --arg p "$plain" --arg b "$broken" '{
@@ -1869,8 +2400,9 @@ if [ "${1:-}" = --record ]; then
       break: (if $b == "" then null else ($b | capture("verdict=(?<v>[a-z]+)").v) end)
     }')")
   done
-  # Leave the example booted and clean for whoever runs next.
-  "$HERE/example.sh" up --fresh >&2
+  # Leave the example booted and clean for whoever runs next. Each claim puts
+  # back what it changed, so this boots afresh only when something was left.
+  "$HERE/example.sh" verify >&2 || "$HERE/example.sh" up --fresh >&2
   new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
   # Same verdicts as the last record: keep it, date and all, so nothing diffs.
   if [ -f "$out" ] && [ "$(jq -S .claims "$out")" = "$(jq -S . <<<"$new")" ]; then
@@ -1885,8 +2417,25 @@ fi
 
 rc=0
 if [ -n "${1:-}" ]; then
-  run_claim "$1" || rc=$?
+  # One claim, in this process. Run by hand it first takes its locks, waiting
+  # while another smoke.sh holds what it needs; run by the runner, the runner
+  # holds them for it (SMOKE_LOCKS_HELD=1).
+  name="$1"
+  row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; exit 2; }
+  if [ -z "${SMOKE_LOCKS_HELD:-}" ] && [ -z "${row##*|}" ]; then
+    mode=plain; [ -n "${BREAK:-}" ] && mode="break"
+    # shellcheck disable=SC2046
+    hold_locks "$$.$name.$mode" $(claim_locks "$name" "$mode")
+  fi
+  run_claim "$name" || rc=$?
 else
-  for name in $(names); do run_claim "$name" || rc=1; done
+  runner_prep || exit 1
+  mode=plain; [ -n "${BREAK:-}" ] && mode="break"
+  SMOKE_BREAK_VALUE="${BREAK:-}"
+  record_pending
+  # shellcheck disable=SC2046
+  QUEUE="$(build_queue "$mode" $(runnable_names))"
+  run_queue
+  if grep -q 'verdict=fail' "$SMOKE_LOG_DIR"/*.verdict 2>/dev/null; then rc=1; fi
 fi
 exit $rc
