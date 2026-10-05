@@ -1,8 +1,5 @@
-# The collector the observability profile runs. Stages send OTLP over HTTP to
-# otel-collector:4318. Traces are written as OTLP/JSON lines to
-# /out/traces.jsonl, which the smoke claims read with `docker cp`; metrics
-# are served to Prometheus on :8889, with resource attributes (the commit
-# among them) copied onto every series so a claim can find its own run.
+# chant: exporter file/traces schema github.com/open-telemetry/opentelemetry-collector-contrib/exporter/fileexporter@v0.130.0
+
 receivers:
   otlp:
     protocols:
@@ -12,12 +9,12 @@ receivers:
         endpoint: 0.0.0.0:4317
 
 exporters:
-  file/traces:
-    path: /out/traces.jsonl
   prometheus:
     endpoint: 0.0.0.0:8889
     resource_to_telemetry_conversion:
       enabled: true
+  file/traces:
+    path: /out/traces.jsonl
 
 extensions:
   health_check:
@@ -26,9 +23,9 @@ extensions:
 service:
   extensions: [health_check]
   pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [file/traces]
     metrics:
       receivers: [otlp]
       exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      exporters: [file/traces]
