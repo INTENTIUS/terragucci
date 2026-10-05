@@ -20,6 +20,8 @@ import { codify, driftOf, hasQuery, importBlocks, type Codified, type Left } fro
 import { moduleNotes } from "./notes";
 import { describeRefused, refusedDiff } from "./refused";
 import { tipProposals } from "./tips";
+import { versionBumps } from "./version-bump";
+import type { DecideFetch } from "../decide";
 import { describeTriage, triage } from "./triage";
 
 export const EVENTS = Object.keys(RESPONSES) as RespondEvent[];
@@ -54,6 +56,8 @@ export interface RespondOptions {
   module?: string;
   version?: string;
   question?: string;
+  /** version-bump: the decision service's HTTP client, for tests. */
+  decideFetch?: DecideFetch;
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
 }
@@ -136,6 +140,11 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
       writeFileSync(join(out, "notes.md"), `${text}\n`);
     }
     r = { text: text || "no published module", data: notes };
+  } else if (ev === "version-bump") {
+    const { suggestions, proposals } = await versionBumps(repo, settings, { module: o.module, env, fetch: o.decideFetch });
+    const proposed = await propose(repo, settings, proposals, { mode, env, fetch: o.fetch });
+    const lines = suggestions.map((s) => `${s.module} ${s.last}${s.version ? ` -> ${s.version}` : ""}: ${s.note}`);
+    r = { text: [...lines, ...proposed.map(said)].join("\n") || "no module", data: suggestions, proposals: proposed };
   } else if (ev === "question") {
     need(o.question, "--question");
     r = { text: "an agent answers from the report and the code", data: { question: o.question } };

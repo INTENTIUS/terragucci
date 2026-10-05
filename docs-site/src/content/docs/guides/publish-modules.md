@@ -35,7 +35,7 @@ npx terragucci publish --dry-run
 
 It lists each module whose content differs from its last release, with the version it would publish. The next version follows the commits since that release that touched the module: `feat` is a minor bump and `fix` or any other type is a patch. A breaking marker (`feat!:` or a `BREAKING CHANGE:` footer) is a major. A module with no release yet starts at `0.1.0`.
 
-A `version` file in the module directory overrides the bump. Once that version is published, change the file to publish the next content.
+A `version` file in the module directory overrides the bump. When a module's commits have no conventional type, `respond.version-bump: suggest` opens a release pull request with a suggested bump and its probability; see [Responses to pipeline events](/terragucci/reference/responses/#version-bump). Once that version is published, change the file to publish the next content.
 
 ### 3. Add the publish job
 

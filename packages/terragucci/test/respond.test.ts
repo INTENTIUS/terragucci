@@ -29,7 +29,7 @@ describe("respond: the config", () => {
 
   it("names a key that is not an event and a response the event does not take", () => {
     expect(problems({ respond: { deploy: "summary", drift: "fix-it" } })).toEqual([
-      "config.respond.deploy is not an event (events: plan, wave-refused, apply-failed, drift, tips, fmt, publish, rollout, question)",
+      "config.respond.deploy is not an event (events: plan, wave-refused, apply-failed, drift, tips, fmt, publish, rollout, question, version-bump)",
       'config.respond.drift is "fix-it"; use one of pull-request, agent, off',
     ]);
   });
