@@ -160,6 +160,17 @@ export function runFacts(repo: string, env: NodeJS.ProcessEnv, forge?: ForgeName
   };
 }
 
+/**
+ * Where a job's `terragucci-report` artifact is, from the CI environment, as
+ * the pipeline passes it to the plan job: report.html itself on GitLab, the
+ * run's page (where the artifact is a download) on GitHub and Forgejo.
+ */
+export function artifactReportUrl(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.CI_JOB_URL) return `${env.CI_JOB_URL}/artifacts/file/terragucci-report/report.html`;
+  if (env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID) return `${(env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "")}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+  return undefined;
+}
+
 /** What the report says about where it can be read and traced, and how the note links it. */
 export interface ReportLinks {
   /** report.run fields: the bucket copy's address, the trace id and its link. */
@@ -172,8 +183,9 @@ export interface ReportLinks {
  * where the bucket is served (never guessed from the bucket's name); else the
  * URL the pipeline passed, which on GitHub and Forgejo is the run's page that
  * holds the report as an artifact; else the relative `report.html`. A
- * tf-apply wave is passed no URL, so its report is absolute only in the
- * bucket. The trace is linked when `telemetry.trace_url` is set.
+ * tf-apply wave is passed no URL; it gives `artifactReportUrl`, since its job
+ * keeps the report as an artifact too. The trace is linked when
+ * `telemetry.trace_url` is set.
  */
 export function reportLinks(
   report: Report,

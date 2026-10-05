@@ -12,7 +12,7 @@ import { readInlineReport, renderHtml } from "../src/report/html";
 import { redactPlan } from "../src/report/redact";
 import { S3Client, sign, type S3Fetch } from "../src/report/s3";
 import { REDACTED, type Report } from "../src/report/schema";
-import { preventDestroyIn, projectFromRemote, reportLinks, runFacts } from "../src/report/stage";
+import { artifactReportUrl, preventDestroyIn, projectFromRemote, reportLinks, runFacts } from "../src/report/stage";
 import { addToIndex, bucketReportUrl, copyToRun, indexEntry, renderIndexHtml, reportsBase, runPath, traceKey, uploadReport, writeReportDir } from "../src/report/store";
 import { isArtifactPage, renderGitLabTerraform, renderNote, renderText } from "../src/report/views";
 import { fixture200, plan, rc, RUN, smallFixture } from "./report-fixtures";
@@ -388,6 +388,14 @@ describe("drill down from every view (#131)", () => {
     const links = reportLinks(small(), { given: url });
     expect(links.note).toEqual({ reportUrl: url });
     expect(renderNote(small(), links.note)).toContain(`${url}#root-envs/prod/orders`);
+  });
+
+  it("a wave's job keeps its report as an artifact, so with no bucket address its note links that", () => {
+    expect(artifactReportUrl({ CI_JOB_URL: "https://gitlab.example/acme/infra/-/jobs/8" })).toBe("https://gitlab.example/acme/infra/-/jobs/8/artifacts/file/terragucci-report/report.html");
+    expect(artifactReportUrl({ GITHUB_SERVER_URL: "https://forgejo.example/", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" })).toBe(RUN_PAGE);
+    expect(artifactReportUrl({})).toBeUndefined();
+    const wave = { ...small(), run: { ...RUN, stage: "tf-apply" as const, wave: 2 } };
+    expect(reportLinks(wave, { given: artifactReportUrl({ GITHUB_SERVER_URL: "https://forgejo.example", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" }) }).note).toEqual({ reportUrl: RUN_PAGE, artifacts: true });
   });
 
   it("a wave's report, given no URL, is absolute once reports.url is set", () => {

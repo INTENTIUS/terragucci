@@ -49,7 +49,7 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { S3Client, s3FromEnv } from "./report/s3";
 import type { PolicyOptions } from "./report/policy";
-import { checkPolicy, eachLimited, reportLinks, rootsParallelism, runFacts } from "./report/stage";
+import { artifactReportUrl, checkPolicy, eachLimited, reportLinks, rootsParallelism, runFacts } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -425,8 +425,9 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   });
   w.observer.addTimings(report, ["plan", "apply"]);
   const dir = join(repo, "terragucci-report");
-  // An absolute address, as the plan report has, once reports.url says where the bucket is served.
-  const links = reportLinks(report, { reports: settings.reports, traceId: w.observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url });
+  // An absolute address, as the plan report has: the bucket's copy once reports.url says where the bucket is served, else the job's artifact.
+  const given = artifactReportUrl(env);
+  const links = reportLinks(report, { reports: settings.reports, ...(given ? { given } : {}), traceId: w.observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url });
   Object.assign(report.run, links.run);
   w.observer.reportUrl = links.run.report_url;
   writeReportDir(dir, report, plans, links.note);
