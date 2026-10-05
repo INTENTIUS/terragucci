@@ -351,7 +351,10 @@ describe("the plan stage", () => {
       const lines = note.body.body.split("\n");
       expect(lines[0]).toBe("<!-- terragucci:plan roots=app,cache,network -->");
       expect(note.body.body).toBe(`${lines[0]}\n${readFileSync(join(repo, "terragucci-report/note.md"), "utf-8")}`);
-      expect(note.body.body).toContain("(http://forge/acme/infra/actions/runs/9#root-cache) (destroy)");
+      // With no reports.url, the report is only in the run's artifact: links go to the run page, with no anchors.
+      expect(note.body.body).toContain("[`cache: aws_db_instance.main`](http://forge/acme/infra/actions/runs/9) (destroy)");
+      expect(note.body.body).toContain("is `report.html` in the `terragucci-report` artifact of [this run](http://forge/acme/infra/actions/runs/9)");
+      expect(note.body.body).not.toContain("runs/9#");
       const report = JSON.parse(readFileSync(join(repo, "terragucci-report/report.json"), "utf-8"));
       expect(report.run).toMatchObject({ commit: "abc123", project: "forge/acme/infra", binary: "tofu" });
       expect(report.roots.map((x: { path: string }) => x.path)).toEqual(["network", "app", "cache"].sort());
