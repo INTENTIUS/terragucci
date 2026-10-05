@@ -101,7 +101,8 @@ respond-fmt|fmt on request commits to the pull request branch and nowhere else|
 respond-notes|release notes come from the conventional commits that touched the module|
 fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
 forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
-steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|'
+steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|
+policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1865,6 +1866,62 @@ TF"
   return $rc
 }
 
+claim_policy() {
+  # A new root plans a terraform_data resource, and the repo's terragucci.yml
+  # turns on policy: a Rego rule denying terraform_data. tf-plan must exit 1,
+  # fail that root, and name the denial in the report and the note; conftest is
+  # fetched on demand, since the CI image does not carry it. BREAK: the rule
+  # denies nothing, so the violation does not fail the plan.
+  log() { echo "[smoke policy] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 run=0 r root=envs/dev/policy-probe edit rule='deny contains msg if {
+  some rc in input.resource_changes
+  rc.type == "terraform_data"
+  msg := sprintf("%s: terraform_data is not allowed here", [rc.address])
+}'
+  [ -n "${BREAK:-}" ] && rule='deny contains msg if {
+  input.nothing_ever_matches
+  msg := "unreachable"
+}'
+  edit="mkdir -p $root policy
+cat > $root/main.tf <<'TF'
+terraform {
+  required_version = \"~> 1.13.0\"
+
+  backend \"s3\" {
+    bucket         = \"shop-terraform-state\"
+    key            = \"envs/dev/policy-probe.tfstate\"
+    region         = \"us-east-1\"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+resource \"terraform_data\" \"probe\" {
+  input = 1
+}
+TF
+cat > policy/plan.rego <<'REGO'
+package main
+
+import rego.v1
+
+$rule
+REGO"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  REPORT_BASE=1 REPORT_EDIT="$edit" REPORT_CONFIG=$'policy:\n  engine: conftest\n  path: policy' report_run "$work" || run=$?
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
+  [ "$run" = 1 ] || { log "the plan job exited $run, not 1: the violation did not fail it"; rc=1; }
+  jq -e --arg n "$root" '.roots[] | select(.path == $n and .status == "failed")' "$r" >/dev/null || { log "$root is not failed in the report"; rc=1; }
+  grep -q "terraform_data.probe: terraform_data is not allowed here" "$r" || { log "the report does not name the violation"; rc=1; }
+  grep -q "terraform_data.probe: terraform_data is not allowed here" "$work/terragucci-report/note.md" || { log "the note does not name the violation"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "conftest denied terraform_data, $root failed the plan job, and the report and the note name the violation"
+  return $rc
+}
+
 claim_forgejo_oidc() {
   # A scratch repo whose one root reads a data source that runs a probe in the
   # job: it reads the token the job wrote to $AWS_WEB_IDENTITY_TOKEN_FILE,
@@ -2127,7 +2184,8 @@ respond-triage  weight=60
 zero-config     weight=30
 tg-zero-config  weight=30
 respond-notes   weight=20
-steward         stack! after=boot,drift,tg-waves,tg-affected,tg-refuse,tg-check,tg-mock-lint,tg-drift,tg-mock-trap weight=10
+policy          ex after=boot weight=150
+steward         stack! after=boot,drift,tg-waves,tg-affected,tg-refuse,tg-check,tg-mock-lint,tg-drift,tg-mock-trap,policy weight=10
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

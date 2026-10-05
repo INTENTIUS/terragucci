@@ -21,12 +21,28 @@ export const FORGES = ["github", "gitlab", "forgejo"] as const;
 export const GATES = ["always", "on-destroy", "never"] as const;
 export const RUNTIMES = ["forge", "fountain"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
+export const POLICY_ENGINES = ["conftest", "opa"] as const;
 
 export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
 export type Gate = (typeof GATES)[number];
 export type Runtime = (typeof RUNTIMES)[number];
 export type Dependents = (typeof DEPENDENTS)[number];
+export type PolicyEngine = (typeof POLICY_ENGINES)[number];
+
+/**
+ * Policy as code, off unless set. `tf-plan` runs the engine over each planned
+ * root's plan JSON and fails the root on a denial. No response, agent or
+ * comment can waive it.
+ */
+export interface PolicySettings {
+  /** The engine. Default `conftest`, which terragucci installs on demand when it is not on the path. */
+  engine?: PolicyEngine;
+  /** The directory of Rego policy, relative to the repo root. Default `policy`. */
+  path?: string;
+  /** The Rego package whose `deny` rules count. conftest default: every namespace. opa default: `main`. */
+  namespace?: string;
+}
 
 /** A plan role and an apply role, for the units under one path. */
 export interface RolePair {
@@ -112,6 +128,8 @@ export interface ProjectSettings {
   parallelism?: number;
   /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
   terragrunt?: TerragruntSettings;
+  /** Opt-in policy checks over each plan; see PolicySettings. */
+  policy?: PolicySettings;
   /** The response to each pipeline event; see RESPONSES. */
   respond?: Partial<Record<RespondEvent, string>>;
   /**
@@ -180,7 +198,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "respond", "agent",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -265,6 +283,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
   if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
+  if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems);
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
     else {
@@ -297,6 +316,21 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
         }
       }
     }
+  }
+}
+
+function checkPolicy(p: unknown, where: string, problems: string[]): void {
+  if (!isObject(p)) {
+    problems.push(`${where} must be a map (settings: engine, path, namespace)`);
+    return;
+  }
+  for (const k of Object.keys(p)) if (!["engine", "path", "namespace"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace)`);
+  oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
+  if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {
+    problems.push(`${where}.path must be a directory inside the repo, such as policy`);
+  }
+  if (p.namespace !== undefined && !(typeof p.namespace === "string" && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(p.namespace))) {
+    problems.push(`${where}.namespace must be a Rego package name, such as terraform.plan`);
   }
 }
 
@@ -530,6 +564,7 @@ function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings 
   if (settings.oidc) out.oidc = { ...base.oidc, ...settings.oidc };
   if (base.terragrunt || settings.terragrunt) out.terragrunt = { ...base.terragrunt, ...settings.terragrunt };
   if (base.respond || settings.respond) out.respond = { ...base.respond, ...settings.respond };
+  if (base.policy || settings.policy) out.policy = { ...base.policy, ...settings.policy };
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
   return out;
 }

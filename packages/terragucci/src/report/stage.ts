@@ -23,7 +23,7 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../../package.json";
 import { applyWaves } from "../apply";
-import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type ForgeName } from "../config";
+import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
 import { ForgeError, type Fetch } from "../forge";
@@ -32,6 +32,7 @@ import { loadHclParser } from "../rollout/parser";
 import { describeTips, repoTips } from "../tips";
 import { driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
+import { checkPlan, describeVerdict, engineBinary, policyPathExists, type PolicyOptions } from "./policy";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
 import { StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
@@ -79,6 +80,8 @@ export interface StageOptions {
   forgeFetch?: Fetch;
   /** How many roots of a layer plan at once. Default: the config's `parallelism`, then from the state backend. */
   parallelism?: number;
+  /** tf-plan with `policy:` set: how the engine runs and is fetched. Default: the real thing. */
+  policy?: PolicyOptions;
 }
 
 /** `a,b;c` as layers: commas inside a layer, semicolons between. */
@@ -706,15 +709,60 @@ export function baseRef(env: NodeJS.ProcessEnv): string | undefined {
   return branch ? `origin/${branch}` : undefined;
 }
 
+/**
+ * Run the project's policy over each planned root. A root the policy denies
+ * becomes a failed root whose error lists the denials; so does one the engine
+ * could not check. Nothing reads a response or agent setting, so no path waives it.
+ */
+async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], options: PolicyOptions = {}, log: (line: string) => void): Promise<RootInput[]> {
+  const engine = policy.engine ?? "conftest";
+  const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional);
+  if (checked.length === 0) return inputs;
+  let binary: string | undefined;
+  let setup: string | undefined;
+  if (!policyPathExists(policy, repo)) setup = `the policy directory ${policy.path ?? "policy"} does not exist`;
+  else {
+    try {
+      binary = await engineBinary(policy, repo, options);
+    } catch (e) {
+      setup = (e as Error).message;
+    }
+  }
+  const failed = new Map<string, string>();
+  let denied = 0;
+  for (const input of checked) {
+    const verdict = setup !== undefined || binary === undefined
+      ? { violations: [], error: setup ?? "no engine" }
+      : await checkPlan(binary, policy, repo, JSON.stringify(input.plan), options);
+    if (verdict.error === undefined && verdict.violations.length === 0) {
+      log(`${input.path}: policy passed`);
+      continue;
+    }
+    denied += verdict.violations.length;
+    failed.set(input.path, describeVerdict(engine, verdict));
+    log(`${input.path}: ${verdict.error ? "policy could not be checked" : `policy denied ${verdict.violations.length}`}`);
+    for (const m of verdict.violations) log(`  ${m}`);
+  }
+  if (failed.size > 0) log(`policy: ${failed.size} root${failed.size === 1 ? "" : "s"} failed${denied ? `, ${denied} violation${denied === 1 ? "" : "s"}` : ""}`);
+  return inputs.map((i) => {
+    const error = failed.get(i.path);
+    if (error === undefined) return i;
+    const { plan: _plan, ...rest } = i;
+    return { ...rest, error };
+  });
+}
+
 async function finish(
   repo: string,
   settings: ReturnType<typeof resolveRepo>,
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names }: Planned,
 ): Promise<StageResult> {
+  let inputs = planned;
   const drift = stage === "tf-drift";
+  if (!drift && settings.policy) inputs = await applyPolicy(repo, settings.policy, inputs, options.policy, log);
   const report = buildReport({
     run: { ...runFacts(repo, env), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: inputs,
