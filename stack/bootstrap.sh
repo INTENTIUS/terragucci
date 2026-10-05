@@ -12,8 +12,9 @@
 #
 # For each forge it also mints a token, registers the runner where there is
 # one to register, and creates the repo the claims push to. Re-running it is
-# safe: the admin is reused, the token is replaced, a runner that is already
-# online is kept, and an existing repo is left alone.
+# safe: the admin is reused, a token that still works is kept (so a smoke run
+# in progress keeps working), a runner that is already online with the same
+# capacity is kept, and an existing repo is left alone.
 #
 # The env vars go to stdout as `export` lines and to stack/.state/<profile>.env,
 # which stack/validate.sh reads, so `eval "$(stack/bootstrap.sh forgejo)"` is
@@ -50,6 +51,11 @@ REPO="validate"
 # chant forgejo dialect maps ubuntu-latest to docker.
 JOB_IMAGE="node:22-bookworm"
 
+# Jobs the Forgejo runner runs at once. The smoke runner runs several claims
+# together; apply-serial's BREAK run holds the runner alone, so its applies are
+# ordered by the concurrency group, never by a lack of free slots.
+RUNNER_CAPACITY="${TERRAGUCCI_RUNNER_CAPACITY:-8}"
+
 log() { echo "[bootstrap] $*" >&2; }
 die() { log "FAIL: $*"; exit 1; }
 
@@ -68,15 +74,16 @@ wait_http() { # url, label, tries (2s apart)
   die "$2 did not answer on $1"
 }
 
-write_env() { # profile, then KEY=VALUE pairs
+write_env() { # profile, then KEY=VALUE pairs; written whole, then moved into place, so a reader never sees half
   local profile="$1"; shift
   mkdir -p "$STATE"
-  : > "$STATE/$profile.env"
+  : > "$STATE/$profile.env.new"
   local kv
   for kv in "$@"; do
-    echo "export $kv" >> "$STATE/$profile.env"
+    echo "export $kv" >> "$STATE/$profile.env.new"
     echo "export $kv"
   done
+  mv "$STATE/$profile.env.new" "$STATE/$profile.env"
   log "wrote $STATE/$profile.env"
 }
 
@@ -304,13 +311,26 @@ fi
 
 # Basic auth mints the token, so a re-run deletes the old one by name and
 # creates a fresh one rather than piling up tokens or failing on the name.
-log "minting an API token…"
-curl -s -o /dev/null -u "$ADMIN_USER:$ADMIN_PW" -X DELETE \
-  "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens/terragucci" || true
-TOKEN="$(curl -fsS -u "$ADMIN_USER:$ADMIN_PW" -H 'content-type: application/json' \
-  -d '{"name":"terragucci","scopes":["all"]}' \
-  "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens" | jq -r '.sha1')"
-[ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || die "could not mint a token"
+# A token from an earlier run that still signs in as the admin is kept: claims
+# running in parallel hold it, and replacing it would fail their next call.
+TOKEN=""
+if [ -f "$STATE/forgejo.env" ]; then
+  TOKEN="$(sed -n 's/^export TERRAGUCCI_FORGEJO_TOKEN=//p' "$STATE/forgejo.env")"
+  if [ -z "$TOKEN" ] || [ "$(curl -fsS -H "Authorization: token $TOKEN" "$FORGEJO_URL/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null)" != "$ADMIN_USER" ]; then
+    TOKEN=""
+  fi
+fi
+if [ -n "$TOKEN" ]; then
+  log "keeping the API token, which still works"
+else
+  log "minting an API token…"
+  curl -s -o /dev/null -u "$ADMIN_USER:$ADMIN_PW" -X DELETE \
+    "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens/terragucci" || true
+  TOKEN="$(curl -fsS -u "$ADMIN_USER:$ADMIN_PW" -H 'content-type: application/json' \
+    -d '{"name":"terragucci","scopes":["all"]}' \
+    "$FORGEJO_URL/api/v1/users/$ADMIN_USER/tokens" | jq -r '.sha1')"
+  [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || die "could not mint a token"
+fi
 api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
 
 # Runner registration on Forgejo 16 / forgejo-runner 13. `forgejo-runner
@@ -325,8 +345,11 @@ runner_online() {
     | jq -e 'map(select(.name == "terragucci-docker" and .status != "offline")) | length > 0' >/dev/null 2>&1
 }
 
-# A config written before the runner carried the AWS environment is replaced.
-if "${COMPOSE[@]}" exec -T forgejo-runner grep -q AWS_ENDPOINT_URL /data/config.yml 2>/dev/null && runner_online; then
+# A config written before the runner carried the AWS environment, or with
+# another capacity, is replaced.
+if "${COMPOSE[@]}" exec -T forgejo-runner grep -q AWS_ENDPOINT_URL /data/config.yml 2>/dev/null \
+  && "${COMPOSE[@]}" exec -T forgejo-runner grep -qx "  capacity: ${RUNNER_CAPACITY}" /data/config.yml 2>/dev/null \
+  && runner_online; then
   log "the runner is already registered and online"
 else
   # A runner from an earlier registration that is no longer polling would
@@ -349,7 +372,7 @@ log:
   job_level: info
 runner:
   file: /data/.runner
-  capacity: 4
+  capacity: ${RUNNER_CAPACITY}
   timeout: 30m
   shutdown_timeout: 0s
   fetch_interval: 2s
