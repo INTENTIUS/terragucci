@@ -168,13 +168,21 @@ step_pin() {
   "$HERE/example.sh" reset >/dev/null 2>&1 || log "pin: reset failed"
 }
 
+# tf-apply on a fountain steward (the move-apply-to-fountain guide): boot the
+# example fresh with the steward taking the apply, and show the thread's turn.
+step_fountain_apply() {
+  run_cmd fountain-apply "just example up --fresh --fountain" "$HERE/example.sh" up --fresh --fountain
+  run_cmd fountain-apply "just example verify" "$HERE/example.sh" verify
+}
+
 # step|claims it needs
 STEPS='boot|boot
 first-pr|check
 check|check
 wave-waiting|waves sealed
 wave-refused|waves sealed refuse
-pin|publish rollout'
+pin|publish rollout
+fountain-apply|steward'
 
 booted=0
 while IFS='|' read -r -u 3 step claims; do

@@ -71,7 +71,8 @@ respond-tips|each tip becomes its own small pull request|
 respond-fmt|fmt on request commits to the pull request branch and nowhere else|
 respond-notes|release notes come from the conventional commits that touched the module|
 fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
-forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|'
+forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
+steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1803,6 +1804,27 @@ JS
   checked terragucci-plan "repo:$subrepo:pull_request" "$plan_role" <<<"$plan_mark" || { log "the plan mark is not a verified pull_request token traded for $plan_role"; rc=1; }
   [ $rc = 0 ] && log "plan and apply jobs each got a token Forgejo signed and took their own role"
   return $rc
+}
+
+claim_steward() {
+  # Changes the example: it boots it fresh with tf-apply handed to the fountain
+  # steward (stack/steward.sh). The push to main goes green, every resource is
+  # in floci, and the steward's thread has one more `chant run tf-apply` turn,
+  # which completed. BREAK: the pipeline keeps its own wave jobs, so the forge
+  # applies and every resource still appears; only the steward's thread can
+  # tell that the steward ran nothing.
+  log() { echo "[smoke steward] $*" >&2; }
+  local handover=1 before after last
+  [ -n "${BREAK:-}" ] && handover=0
+  tf_apply_turns() { "$HERE/steward.sh" turns 2>/dev/null | grep $'\tchant run tf-apply' || true; }
+  before="$(tf_apply_turns | grep -c . || true)"
+  TG_STEWARD_HANDOVER=$handover "$HERE/example.sh" up --fresh --fountain >&2 || return 1
+  "$HERE/example.sh" verify >&2 || return 1
+  after="$(tf_apply_turns | grep -c . || true)"
+  last="$(tf_apply_turns | tail -1 | cut -f2)"
+  [ "$after" -gt "$before" ] || { log "the steward ran no tf-apply turn ($before before the push, $after after)"; return 1; }
+  [ "$last" = completed ] || { log "the steward's tf-apply turn ended '$last'"; return 1; }
+  log "the steward's tf-apply turn completed, and every root's resources are in floci"
 }
 
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail

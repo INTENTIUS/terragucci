@@ -26,7 +26,7 @@
 #   forgejo   floci + Forgejo + forgejo-runner         validated
 #   github    floci + mock GitHub API (+ act on the host)
 #   gitlab    floci + GitLab CE + gitlab-runner
-#   fountain  floci + fountain + Postgres + runner     declared, not yet validated
+#   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
 #   observability  an OpenTelemetry collector and Prometheus   used by the traces and metrics smoke claims
 name: terragucci
@@ -271,12 +271,15 @@ services:
       default:
         aliases: [gitlab-runner]
 
-  # ── fountain: declared, not yet validated ────────────────────────────────
-  # From waterpark's compose/: fountain, its Postgres, and the containerized
-  # sandbox runner (ghcr.io/intentius/waterpark-runner), which points the AWS
-  # SDK at floci. The runner needs a FOUNTAIN_API_KEY that only exists after
-  # an account is registered (waterpark's bin/register.sh). The steward claim
-  # (`chant run tf-apply --on fountain`) has not been run here.
+  # ── fountain ─────────────────────────────────────────────────────────────
+  # A fountain steward for the example's apply: fountain, its Postgres, and a
+  # fountain runner whose sandboxes are directories in its container. Laid out
+  # after waterpark's compose/. bootstrap.sh builds the runner's image
+  # (stack/fountain/Dockerfile: the tofu CI image plus the fountain CLI and
+  # chant), registers an account, mints its API key and starts the runner with
+  # it. stack/steward.sh declares the steward on it for the example repo.
+  # v0.21.0 is the first release whose agents take `runtime: acp` and a
+  # `runtime_command`, which a steward needs.
   fountain-postgres:
     image: postgres:16
     container_name: terragucci-fountain-postgres
@@ -293,7 +296,8 @@ services:
       retries: 20
 
   fountain:
-    image: ghcr.io/binarybourbon/fountain:sha-7f8d16af5100e8a671039fd254543a95e728a40e
+    # v0.21.0, pinned by the index digest resolved on 2026-10-04 (amd64 and arm64).
+    image: ghcr.io/managoat/fountain:v0.21.0@sha256:c90f8ceb369619a0d263ce73c1bda7b9cb0f278104b59bb471eba1350cc92208
     container_name: terragucci-fountain
     profiles: [fountain]
     depends_on:
@@ -311,6 +315,7 @@ services:
       # waterpark's compose/bin/env.sh if this ever leaves the laptop.
       SECRET_KEY_BASE: ${TERRAGUCCI_FOUNTAIN_SECRET_KEY_BASE:-terragucci-local-only-secret-key-base-not-for-use-anywhere-else-0000000000}
       MASTER_SECRETS_KEY: ${TERRAGUCCI_FOUNTAIN_MASTER_SECRETS_KEY:-CH2qg3r4EPKvk9BjGaOvDiWR3CKYXNySFdjpTFe08x0}
+      # Accounts verify themselves and the first one is admin.
       EMAIL_DELIVERY: none
       FIRST_USER_ADMIN: "true"
       SANDBOX_PROVIDER: runner
@@ -325,8 +330,12 @@ services:
       timeout: 3s
       retries: 40
 
+  # The steward's machine. Built by bootstrap.sh, never pulled. A sandbox runs
+  # with this container's environment, so a steward turn reaches floci the way
+  # a forge job does, and the forge by its service name.
   fountain-runner:
-    image: ghcr.io/intentius/waterpark-runner:latest
+    image: terragucci-fountain-steward:local
+    pull_policy: never
     container_name: terragucci-fountain-runner
     profiles: [fountain]
     depends_on:
@@ -337,12 +346,14 @@ services:
       FOUNTAIN_API_KEY: ${TERRAGUCCI_FOUNTAIN_API_KEY:-}
       RUNNER_NAME: terragucci
       AWS_ENDPOINT_URL: http://floci:4566
+      AWS_REGION: us-east-1
       AWS_DEFAULT_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
     volumes:
       - fountain-sandboxes:/sandboxes
-    command: ["sh", "-c", "[ -n \"$$FOUNTAIN_API_KEY\" ] || { echo 'TERRAGUCCI_FOUNTAIN_API_KEY is empty; register an account first' >&2; exit 1; }; exec fountain runner --name \"$$RUNNER_NAME\" --root /sandboxes"]
+    command: ["sh", "-c", "[ -n \"$$FOUNTAIN_API_KEY\" ] || { echo 'TERRAGUCCI_FOUNTAIN_API_KEY is empty; run stack/bootstrap.sh fountain' >&2; exit 1; }; exec fountain runner --name \"$$RUNNER_NAME\" --root /sandboxes"]
+    restart: unless-stopped
     networks:
       default:
         aliases: [fountain-runner]

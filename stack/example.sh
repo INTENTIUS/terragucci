@@ -2,9 +2,13 @@
 #
 # The example: the shop's 15 roots on the stack's Forgejo, applied to floci.
 #
-#   stack/example.sh up [--fresh]     boot the forgejo profile, push the example
+#   stack/example.sh up [--fresh] [--fountain]
+#                                     boot the forgejo profile, push the example
 #                                     to main and apply every root. --fresh wipes
 #                                     floci first, so every resource is new.
+#                                     --fountain also boots the fountain profile
+#                                     and hands tf-apply to a fountain steward
+#                                     (stack/steward.sh).
 #   stack/example.sh verify           every resource the 15 roots declare is in floci
 #   stack/example.sh change <name>    open a pull request with one scenario from
 #                                     example/changes (drift and pin act directly;
@@ -36,7 +40,15 @@ command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
 
 if [ "$CMD" = down ]; then exec "$HERE/down.sh"; fi
 
+FRESH=""; FOUNTAIN=""
 if [ "$CMD" = up ]; then
+  for a in "$@"; do
+    case "$a" in
+      --fresh) FRESH=1 ;;
+      --fountain) FOUNTAIN=1 ;;
+      *) fail "unknown flag '$a' (--fresh, --fountain)" ;;
+    esac
+  done
   # The pipeline runs in terragucci's CI image. Before an image is published,
   # build it into the local daemon, where the runner finds it without pulling.
   ref="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
@@ -51,6 +63,14 @@ if [ "$CMD" = up ]; then
     cat "$boot_log" >&2; rm -f "$boot_log"; fail "the stack did not start"
   fi
   rm -f "$boot_log"
+  if [ -n "$FOUNTAIN" ]; then
+    log "starting fountain and its runner (a few minutes the first time)…"
+    boot_log="$(mktemp)"
+    if ! "$HERE/bootstrap.sh" fountain >"$boot_log" 2>&1; then
+      cat "$boot_log" >&2; rm -f "$boot_log"; fail "fountain did not start"
+    fi
+    rm -f "$boot_log"
+  fi
 fi
 
 # shellcheck source=lib.sh
@@ -155,7 +175,7 @@ waiting_wave() {
 case "$CMD" in
   up)
     started=$(date +%s)
-    if [ "${1:-}" = --fresh ]; then
+    if [ -n "$FRESH" ]; then
       log "wiping floci and the example repo…"
       docker restart terragucci-floci >/dev/null
       until curl -s -o /dev/null "$FLOCI/"; do sleep 1; done
@@ -180,12 +200,21 @@ assert root in open(p).read() and n, root
 open(p, "w").write(s)
 PY
     fi
+    # On a steward, tf-apply is a fountain turn the pipeline starts.
+    if [ -n "$FOUNTAIN" ]; then
+      "$HERE/steward.sh" declare "$REPO"
+      "$HERE/steward.sh" overlay "$WORK/tree"
+    fi
     # The roots keep their state in this bucket. In a real account it exists
     # before the first pipeline runs; on a fresh floci, make it.
     curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
     # The sha depends only on the example's contents, so a capture can rely on it.
     TG_FIXED_DATE=1 apply_main_tree "The shop's estate"
     log "ready in $(( $(date +%s) - started ))s"
+    if [ -n "$FOUNTAIN" ]; then
+      turn="$("$HERE/steward.sh" turns | tail -1)"
+      [ -n "$turn" ] && printf '\n  Steward     terragucci-steward, turn %s: %s (%s)\n' "$(cut -f1 <<<"$turn")" "$(cut -f3 <<<"$turn")" "$(cut -f2 <<<"$turn")"
+    fi
     cat <<OUT
 
   The example is running.
