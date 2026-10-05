@@ -1,10 +1,10 @@
 {
   "step": "check",
-  "source_hash": "1ee86c0a461fb69e",
+  "source_hash": "53d2ce1a38f1fe7f",
   "commands": [
     {
       "cmd": "just example change unformatted",
-      "output": "[example] pushed change/unformatted at 6148726d\n[example] run 5 for 6148726d: failure (http://localhost:3300/terragucci-admin/example/actions/runs/5)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/5 (failure)",
+      "output": "[example] pushed change/unformatted at 851a7f08\n[example] run 5 for 851a7f08: failure (http://localhost:3300/terragucci-admin/example/actions/runs/5)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/5 (failure)",
       "exit": 0
     },
     {
@@ -12,5 +12,11 @@
       "output": "envs/dev/orders/locals.tf\n--- old/envs/dev/orders/locals.tf\n+++ new/envs/dev/orders/locals.tf\n@@ -1,4 +1,4 @@\n locals {\n-    team   = \"orders\"\n+  team  = \"orders\"\n   owner = \"shop\"\n }",
       "exit": 0
     }
-  ]
+  ],
+  "shots": {
+    "pull-light": "d5ead84ad73ae21d",
+    "pull-dark": "a5ea6aa006833088",
+    "log-light": "13febaa05b94f248",
+    "log-dark": "14c990f14cff46e1"
+  }
 }
