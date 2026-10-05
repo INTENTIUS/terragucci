@@ -29,6 +29,21 @@ export function readInlineReport(html: string): Report {
   return JSON.parse(html.slice(start, end)) as Report;
 }
 
+/** The pull request the run planned, linked when its page is known. */
+function pullRequest(run: Report["run"]): string {
+  if (!run.pull_request) return "";
+  const n = `#${esc(run.pull_request)}`;
+  return `, pull request ${run.pull_request_url ? `<a href="${esc(run.pull_request_url)}">${n}</a>` : n}`;
+}
+
+/** The run's trace: a link when a viewer is configured (telemetry.trace_url), else its id as text to search by. */
+function traceLink(run: Report["run"]): string {
+  if (!run.trace_id) return "";
+  return run.trace_url
+    ? `, <a href="${esc(run.trace_url)}" id="trace">trace</a>`
+    : `, trace <code id="trace">${esc(run.trace_id)}</code>`;
+}
+
 const SYMBOL: Record<string, string> = { create: "+", update: "~", replace: "-/+", delete: "-", read: "<=", forget: "forget", "no-op": " ", import: "import", refused: "!" };
 
 function value(v: unknown): string {
@@ -273,7 +288,7 @@ export function renderHtml(report: Report): string {
 <body>
 <main>
 <h1>${esc(run.project)}: ${esc(run.stage)}${run.wave !== undefined ? `, wave ${run.wave}` : ""}</h1>
-<p class="run">commit <code>${esc(run.commit)}</code>${run.base ? ` against <code>${esc(run.base)}</code>` : ""}, ${esc(run.binary)} on ${esc(run.runtime)}, ${esc(run.started)} to ${esc(run.finished)}${run.job_url ? `, <a href="${esc(run.job_url)}">job</a>` : ""}<br>${report.units} ${report.unit === "instance" ? "instances" : "roots"} in ${report.groups.length} groups: ${esc(totals)}. Change set <code class="digest">${esc(report.change_set)}</code></p>
+<p class="run">commit ${run.commit_url ? `<a href="${esc(run.commit_url)}"><code>${esc(run.commit)}</code></a>` : `<code>${esc(run.commit)}</code>`}${run.base ? ` against <code>${esc(run.base)}</code>` : ""}${pullRequest(run)}, ${esc(run.binary)} on ${esc(run.runtime)}, ${esc(run.started)} to ${esc(run.finished)}${run.job_url ? `, <a href="${esc(run.job_url)}">job</a>` : ""}${traceLink(run)}<br>${report.units} ${report.unit === "instance" ? "instances" : "roots"} in ${report.groups.length} groups: ${esc(totals)}. Change set <code class="digest">${esc(report.change_set)}</code></p>
 <p class="notice">Every value a plan marks sensitive is replaced with <code>${esc(report.redaction.marker)}</code> in the stored plans (${report.redaction.values} in this run). Plan digests are taken before that, over the plans as planned.</p>
 ${pinned}
 ${first}

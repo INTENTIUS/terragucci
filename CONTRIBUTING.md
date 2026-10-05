@@ -68,7 +68,7 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `images/images.ts` | `images/Dockerfile.*` |
 | `workflows/shared.ts` | the pins they share |
 | `observability/collector.ts`, `observability/prometheus.ts` | `stack/observability/collector.yaml` and `prometheus.yml` |
-| `packages/terragucci/src/dashboards/` (through `scripts/render-dashboards.ts`) | `stack/observability/terragucci/`, the dashboards and rules the stack's Grafana and Prometheus load, and `stack/observability/grafana-datasources.yaml` |
+| `packages/terragucci/src/dashboards/` (through `scripts/render-dashboards.ts`) | `stack/observability/terragucci/`, the dashboards and rules the stack's Grafana and Prometheus load, rendered with the stack's reports address (`http://localhost:4580/terragucci-reports`, prefix `reports`) so the Runs and Estate links resolve in the `drill-down` claim, and `stack/observability/grafana-datasources.yaml` |
 
 The dashboards are rendered at run time by `init` through the grafana and prometheus lexicons' build functions and entities, never their entry points, as the pipeline is through the forge lexicons. That keeps `just bundle-check` clean, and it brings js-yaml and the lezer PromQL parser (which the prometheus lexicon's `Slo` checks its expressions with) into the bundle.
 

@@ -15,7 +15,10 @@
  * pages from Grafana rather than Alertmanager. The dashboards read the
  * metrics a stage sends (names.ts) and the span metrics a collector's
  * `spanmetrics` connector makes from the stage spans, and the Runs
- * dashboard lists the runs' traces from Tempo.
+ * dashboard lists the runs' traces from Tempo. When terragucci.yml says
+ * where the reports bucket is served (`reports.url`), the Runs dashboard's
+ * trace rows link each run's report, and the Estate dashboard links the
+ * report index.
  */
 import type { Declarable } from "@intentius/chant/declarable";
 import { spanMetricsNames } from "@intentius/chant-lexicon-otel/metric-names";
@@ -46,6 +49,16 @@ export const DASHBOARD_DEFAULTS: Required<DashboardSettings> = {
   wave_wait: "4h",
   schedule: "2d",
 };
+
+/**
+ * Where the dashboards link down to: `reports` is the address of the reports
+ * bucket's prefix (`reports.url` and `reports.prefix`), when terragucci.yml
+ * says where the bucket is served. Without it the dashboards link nothing
+ * outside Grafana.
+ */
+export interface DashboardLinks {
+  reports?: string;
+}
 
 /** The settings with every default filled in. */
 export function dashboardSettings(s: boolean | DashboardSettings | undefined): Required<DashboardSettings> | undefined {
@@ -115,13 +128,15 @@ const projectVar = (ds: ReturnType<typeof prom>, metric: string, label: string) 
 const P: Matcher = ["project", "=~", "$project"];
 const SP: Matcher = [PROJECT_L, "=~", "$project"];
 
-const table = (title: string, description: string, ds: ReturnType<typeof prom>, expr: string, w = 12, h = 8) =>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const table = (title: string, description: string, ds: ReturnType<typeof prom>, expr: string, w = 12, h = 8, overrides: any[] = []) =>
   new TablePanel({
     title,
     description,
     datasource: ds,
     gridPos: { w, h },
     targets: [new PromQuery({ expr, instant: true, range: false, format: "table" })],
+    ...(overrides.length ? { fieldConfig: { overrides } } : {}),
   });
 
 const series = (title: string, description: string, ds: ReturnType<typeof prom>, expr: string, legend: string, unit = "short", w = 12) =>
@@ -145,12 +160,13 @@ const stat = (title: string, description: string, ds: ReturnType<typeof prom>, e
     fieldConfig: { defaults: { unit } },
   });
 
-function dashboard(s: Required<DashboardSettings>, uid: string, title: string, description: string, panels: DashboardItem[], variables: unknown[], time = "now-7d"): DashboardEntity {
+function dashboard(s: Required<DashboardSettings>, uid: string, title: string, description: string, panels: DashboardItem[], variables: unknown[], time = "now-7d", links: { title: string; url: string }[] = []): DashboardEntity {
   return new Dashboard({
     title,
     uid,
     description,
     tags: [DASHBOARD_TAG],
+    ...(links.length ? { links: links.map((l) => ({ ...l, type: "link" as const, targetBlank: true, icon: "doc" as const })) } : {}),
     time: { from: time, to: "now" },
     refresh: "1m",
     graphTooltip: "sharedCrosshair",
@@ -287,13 +303,34 @@ function drift(s: Required<DashboardSettings>): DashboardEntity {
   ], [projectVar(ds, METRIC.lastRun, "project")]);
 }
 
-function estate(s: Required<DashboardSettings>): DashboardEntity {
+/** A table field override: each cell of `field` links to `url`, where `${__value.raw}` and `${__data.fields.<name>}` are the row's values. */
+const fieldLink = (field: string, title: string, url: string) => ({
+  matcher: { id: "byName", options: field },
+  properties: [{ id: "links", value: [{ title, url, targetBlank: true }] }],
+});
+
+/** The URL of the report index of the project a cell names. */
+export const projectIndexUrl = (reports: string): string => `${reports}/\${__value.raw}/index.html`;
+/** The URL of the page that sends a trace's reader to its run's report. */
+export const traceReportUrl = (reports: string): string => `${reports}/traces/\${__data.fields.traceID}.html`;
+
+function estate(s: Required<DashboardSettings>, links: DashboardLinks): DashboardEntity {
   const ds = prom(s.prometheus);
+  // Each project links to its report index in the bucket.
+  const perProject = table(
+    "Roots per project",
+    `Roots in each project's latest plan or drift run.${links.reports ? " Each project links to its report index." : ""}`,
+    ds,
+    latest(METRIC.rootsPlanned, [["stage", "=~", "tf-plan|tf-drift"], P], ["project"], "7d"),
+    12,
+    8,
+    links.reports ? [fieldLink("project", "Report index", projectIndexUrl(links.reports))] : [],
+  );
   return dashboard(s, DASHBOARD_UIDS.estate, "terragucci: Estate", "Roots per project, the binary and terragucci versions they run, module pins across repos and tips by rule.", [
     new Row({
       title: "Projects",
       panels: [
-        table("Roots per project", "Roots in each project's latest plan or drift run.", ds, latest(METRIC.rootsPlanned, [["stage", "=~", "tf-plan|tf-drift"], P], ["project"], "7d")),
+        perProject,
         table("Versions", "The binary, its version and the terragucci release each project's latest run used.", ds, `count by (project, binary, version, service_version) (last_over_time(${selector(METRIC.binaryVersion, [P])}[7d]))`),
       ],
     }),
@@ -304,10 +341,10 @@ function estate(s: Required<DashboardSettings>): DashboardEntity {
         table("Tips by rule", "Tips the latest run of each project gave, by rule.", ds, `sum by (rule) (${latest(METRIC.tips, [P], ["project", "rule"], "7d")})`),
       ],
     }),
-  ], [projectVar(ds, METRIC.lastRun, "project")]);
+  ], [projectVar(ds, METRIC.lastRun, "project")], undefined, links.reports ? [{ title: "Report index", url: `${links.reports}/index.html` }] : []);
 }
 
-function runs(s: Required<DashboardSettings>): DashboardEntity {
+function runs(s: Required<DashboardSettings>, links: DashboardLinks): DashboardEntity {
   const ds = prom(s.prometheus);
   const t = tempo(s.tempo);
   const top = (metric: string, by: string[]) => `topk(10, max by (${by.join(", ")}) (max_over_time(${selector(metric, [P])}[$__range])))`;
@@ -331,14 +368,18 @@ function runs(s: Required<DashboardSettings>): DashboardEntity {
       panels: [
         new TablePanel({
           title: "Runs",
-          description: "The trace of each stage run. Open one to see its waves, roots and the binary's own spans.",
+          description: links.reports
+            ? "The trace of each stage run. Open one to see its waves, roots and the binary's own spans; a run's name links to its report."
+            : "The trace of each stage run. Open one to see its waves, roots and the binary's own spans.",
           datasource: t,
           gridPos: { w: 24, h: 10 },
           targets: [new TempoQuery({ queryType: "traceql", query: `{ resource.service.name = "terragucci" && name =~ "terragucci .*" && span.terragucci.project =~ "$project" }`, limit: 50, tableType: "traces" })],
+          // The trace id keeps Grafana's own link to the trace; the name links the run's report.
+          ...(links.reports ? { fieldConfig: { overrides: [fieldLink("traceName", "Report", traceReportUrl(links.reports))] }, links: [{ title: "Report index", url: `${links.reports}/index.html`, targetBlank: true }] } : {}),
         }),
       ],
     }),
-  ], [projectVar(ds, METRIC.lastRun, "project")]);
+  ], [projectVar(ds, METRIC.lastRun, "project")], undefined, links.reports ? [{ title: "Report index", url: `${links.reports}/index.html` }] : []);
 }
 
 /** The three SLOs: plans finish within ten minutes, applies succeed, drift is corrected within a day. */
@@ -422,7 +463,7 @@ export function pipelineAlerts(s: Required<DashboardSettings>): RuleGroupEntity 
 }
 
 /** Every entity the dashboards and rules are built from. */
-export function dashboardEntities(settings: Required<DashboardSettings>): { grafana: Declarable[]; prometheus: Declarable[] } {
+export function dashboardEntities(settings: Required<DashboardSettings>, links: DashboardLinks = {}): { grafana: Declarable[]; prometheus: Declarable[] } {
   const s = settings;
   const ds = prom(s.prometheus);
   const sl = slos();
@@ -432,8 +473,8 @@ export function dashboardEntities(settings: Required<DashboardSettings>): { graf
     changeReview(s),
     rolloutsAndWaves(s),
     drift(s),
-    estate(s),
-    runs(s),
+    estate(s, links),
+    runs(s, links),
   ];
   for (const slo of Object.values(sl)) {
     grafana.push(SloDashboard({ slo, datasource: ds, tags: [DASHBOARD_TAG, "slo"] }).dashboard);
@@ -456,9 +497,9 @@ export interface RenderedFile {
  *   grafana/provisioning/alerting/terragucci.yaml     the SLO burn-rate alerts, Grafana-managed
  *   prometheus/terragucci.rules.yml               the SLO recording rules and alerts, and the pipeline alerts
  */
-export function renderDashboards(settings: Required<DashboardSettings>): RenderedFile[] {
+export function renderDashboards(settings: Required<DashboardSettings>, links: DashboardLinks = {}): RenderedFile[] {
   const dir = settings.dir.replace(/\/+$/, "");
-  const { grafana, prometheus } = dashboardEntities(settings);
+  const { grafana, prometheus } = dashboardEntities(settings, links);
   const built = buildGrafana(grafana);
   const out: RenderedFile[] = [];
   for (const d of built.dashboards) out.push({ path: `${dir}/grafana/dashboards/${d.uid}.json`, content: built.files[d.file] });

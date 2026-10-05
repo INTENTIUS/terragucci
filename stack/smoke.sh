@@ -111,7 +111,8 @@ dash-waves|the Rollouts and waves dashboard init writes shows a wave waiting for
 dash-drift|the Drift dashboard init writes shows the roots a drift run found drifted and how old the drift is|
 dash-estate|the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs|
 dash-runs|the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo|
-dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes|'
+dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes|
+drill-down|the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2384,7 +2385,8 @@ dash_rendered() { # work, uid
   mkdir -p "$dir"
   cp -R "$EXAMPLE/." "$dir/"
   rm -rf "$dir/.git"
-  printf '\ndashboards: true\n' >> "$dir/terragucci.yml"
+  # The stack's reports bucket, as scripts/render-dashboards.ts names it: the Runs and Estate dashboards link it.
+  printf '\ndashboards: true\nreports:\n  bucket: s3://terragucci-reports\n  prefix: reports\n  url: http://localhost:4580/terragucci-reports\n' >> "$dir/terragucci.yml"
   (cd "$dir" && "$TERRAGUCCI" init --forge forgejo --dry-run --json) | jq -j --arg f "$f" '.results.files[] | select(.path == $f) | .content' > "$1/rendered.json"
   [ -s "$1/rendered.json" ] || { log "init wrote no $f"; return 1; }
   cmp -s "$1/rendered.json" "$HERE/observability/terragucci/grafana/dashboards/$2.json" \
@@ -2548,6 +2550,93 @@ claim_dash_slos() {
   log "the plan SLO recorded $DASH_PROJECT's plans"
 }
 
+# ── drill-down ────────────────────────────────────────────────────────────
+# One plan run with reports.url and telemetry.trace_url set, then the path a
+# reader clicks: the note's link to report.html in the bucket (its anchors
+# there), a root's plan from the report, the report's trace link (Tempo's API,
+# which answers only for a trace it holds) whose stage span names the report's
+# address, the Runs dashboard's link from the trace to the report and the
+# Estate dashboard's link to the index, and the index row's links to the
+# commit, the pull request and the job.
+# BREAK: reports.url names a bucket that does not exist, so the note's link is
+# broken and the walk stops at its first step.
+
+claim_drill_down() {
+  log() { echo "[smoke drill-down] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_up || return 1
+  local work rc=0 id project base cfg env url html dir f anchor trace link body i dash got index row page
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  id="$(date +%s)$$${BREAK:+b}"
+  project="smoke.local/drill/run-$id"
+  # The prefix and address the stack's dashboards are rendered with (scripts/render-dashboards.ts).
+  base="$FLOCI/$REPORT_BUCKET"
+  [ -n "${BREAK:-}" ] && base="$FLOCI/$REPORT_BUCKET-gone"
+  cfg="$(printf 'reports:\n  bucket: s3://%s\n  prefix: reports\n  url: "%s"\ntelemetry:\n  trace_url: "%s"\n' "$REPORT_BUCKET" "$base" "$TEMPO/api/traces/{trace_id}")"
+  env="GITHUB_SERVER_URL=http://smoke.local GITHUB_REPOSITORY=drill/run-$id GITHUB_RUN_ID=1 TG_PR=7 OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
+  mkdir -p "$work/run"
+  # The run's page, as the pipeline passes it on GitHub and Forgejo: the bucket's copy must win over it.
+  (REPORT_ARGS=(--root envs/staging/orders --report-url "http://smoke.local/drill/run-$id/actions/runs/1"); REPORT_CONFIG="$cfg" REPORT_ENV="$env" report_run "$work/run" module-bump) || true
+  dir="$work/run/terragucci-report"
+  [ -f "$dir/note.md" ] && [ -f "$dir/report.json" ] || { log "the plan wrote no report"; drop_work "$work"; return 1; }
+
+  # 1. The note links report.html in the bucket, and the page is there.
+  url="$(grep -o '\[Full report\]([^)]*)' "$dir/note.md" | head -1 | sed -E 's/^\[Full report\]\((.*)\)$/\1/')"
+  [ "$url" = "$(jq -r '.run.report_url // empty' "$dir/report.json")" ] && [ -n "$url" ] || { log "the note links '$url', not the bucket's report.html"; rc=1; }
+  html="$work/report.html"
+  if [ $rc = 0 ] && ! curl -fsS -o "$html" "$url"; then log "the note's link $url does not open"; rc=1; fi
+  # 2. Its anchors are on that page, and it links a root's plan, which opens.
+  if [ $rc = 0 ]; then
+    for anchor in $(grep -o "$url#[^)]*" "$dir/note.md" | sed 's/.*#//' | sort -u); do
+      grep -q "id=\"$anchor\"" "$html" || { log "the note links #$anchor, which the report does not have"; rc=1; }
+    done
+    f="$(jq -r '[.roots[] | select(.status == "planned")][0].plan.text // empty' "$dir/report.json")"
+    [ -n "$f" ] && grep -q "href=\"$f\"" "$html" || { log "the report does not link a root's plan"; rc=1; }
+    [ -n "$f" ] && curl -fsS -o /dev/null "${url%/report.html}/$f" || { log "the plan ${url%/report.html}/$f does not open"; rc=1; }
+  fi
+  # 3. The report links the run's trace, and the trace links the report.
+  trace="$(jq -r '.run.trace_id // empty' "$dir/report.json")"
+  if [ $rc = 0 ]; then
+    link="$(grep -o '<a href="[^"]*" id="trace">' "$html" | sed -E 's/<a href="([^"]*)".*/\1/' | sed 's/&amp;/\&/g')"
+    [ -n "$trace" ] && [ "$link" = "$TEMPO/api/traces/$trace" ] || { log "the report links trace '$link' for trace id '$trace'"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    got=""
+    for i in $(seq 1 18); do   # Tempo's ingest
+      body="$(curl -fsS "$link" 2>/dev/null)" && got="$(jq -r '[.. | objects | select(.key? == "terragucci.report.url") | .value.stringValue][0] // empty' <<<"$body" 2>/dev/null)"
+      [ -n "$got" ] && break
+      sleep 5
+    done
+    [ "$got" = "$url" ] || { log "trace $trace does not name the report (terragucci.report.url '$got')"; rc=1; }
+  fi
+  # 4. The Runs dashboard links the trace to its report; the Estate dashboard links the index.
+  if [ $rc = 0 ]; then
+    dash="$(curl -fsS "$GRAFANA/api/dashboards/uid/terragucci-runs")" || { log "Grafana does not serve the Runs dashboard"; rc=1; }
+    page="$(jq -r '[.dashboard.panels[] | (., (.panels // [])[]) | select(.title == "Runs") | .fieldConfig.overrides[]? | select(.matcher.options == "traceName") | .properties[].value[]?.url][0] // empty' <<<"$dash" 2>/dev/null)"
+    page="${page//\$\{__data.fields.traceID\}/$trace}"
+    [ -n "$page" ] && curl -fsS "$page" 2>/dev/null | grep -q "${url#"$base"/reports/}" \
+      || { log "the Runs dashboard's link from trace $trace ($page) does not lead to its report"; rc=1; }
+    dash="$(curl -fsS "$GRAFANA/api/dashboards/uid/terragucci-estate")" || { log "Grafana does not serve the Estate dashboard"; rc=1; }
+    index="$(jq -r '[.dashboard.links[]?.url][0] // empty' <<<"$dash" 2>/dev/null)"
+    [ -n "$index" ] && curl -fsS "$index" 2>/dev/null | grep -q "$project" \
+      || { log "the Estate dashboard's index link ($index) does not list $project"; rc=1; }
+  fi
+  # 5. The project's index row links the commit, the pull request and the job.
+  if [ $rc = 0 ]; then
+    row="$(curl -fsS "$base/reports/$project/index.json" | jq -c --arg c "$(git -C "$work/run" rev-parse HEAD)" '[.reports[] | select(.commit == $c)][0] // empty')"
+    [ -n "$row" ] && [ "$(jq -r '.commit_url' <<<"$row")" = "http://smoke.local/drill/run-$id/commit/$(jq -r .commit <<<"$row")" ] \
+      && [ "$(jq -r '.pull_request_url' <<<"$row")" = "http://smoke.local/drill/run-$id/pull/7" ] \
+      && [ "$(jq -r '.job_url' <<<"$row")" = "http://smoke.local/drill/run-$id/actions/runs/1" ] \
+      || { log "the index row does not link the commit, the pull request and the job: $row"; rc=1; }
+    curl -fsS "$base/reports/$project/index.html" | grep -q 'href="http://smoke.local/drill/run-'"$id"'/pull/7"' \
+      || { log "the index page does not link the pull request"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] || return 1
+  log "note -> $url -> $f -> trace $trace -> back to the report; the dashboards and the index row link down"
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -2659,6 +2748,7 @@ dash-drift      ex otel after=boot weight=120
 dash-estate     ex otel after=boot weight=120
 dash-runs       ex otel after=boot weight=120
 dash-slos       ex otel after=boot weight=120
+drill-down      ex otel after=boot weight=120
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

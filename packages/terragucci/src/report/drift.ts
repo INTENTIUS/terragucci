@@ -74,6 +74,8 @@ export function drifted(report: Report): { roots: number; failed: number } {
 export interface IssueOptions {
   /** Where the full report is, when the run has a page for it. */
   reportUrl?: string;
+  /** `reportUrl` is the CI run's page, which holds the report in its artifacts. */
+  artifacts?: boolean;
   /** Per root, the real names of its drifted objects by address (see driftNames). */
   names?: Map<string, Map<string, string>>;
 }
@@ -85,7 +87,7 @@ export function renderDriftIssue(report: Report, options: IssueOptions = {}): st
   const lines = [DRIFT_MARKER, ""];
   lines.push(
     `${d.roots} of ${report.roots.length} roots have drifted from what Terraform last applied, found at ${code(run.commit.slice(0, 12))} on ${run.finished.slice(0, 10)}.` +
-      (options.reportUrl ? ` [Full report](${options.reportUrl})` : ""),
+      (options.reportUrl ? (options.artifacts ? ` The full report is in the artifacts of [this run](${options.reportUrl}).` : ` [Full report](${options.reportUrl})`) : ""),
     "",
     "A drift run only reads. Correct drift with a pull request, or by applying the code as it is.",
     "",

@@ -46,6 +46,7 @@ Each feature on this site has one check, run against the [tutorial's example](/t
 | Dashboards and alert rules, declared with chant's grafana and prometheus lexicons | built: `dashboards:` in `terragucci.yml` makes `init` and `reconcile` write seven dashboards, the SLO and pipeline alert rules, and Grafana's provisioning files; the observability profile adds Grafana and Tempo; their smoke claims have not been recorded yet |
 | A fountain steward started by a pull request | planned after launch |
 | A re-plan comment command | planned after launch |
+| Links down from every view: the note to the bucket's report with `reports.url`, the report to its trace with `telemetry.trace_url`, the trace and the Runs and Estate dashboards back to the report and the index, index rows to the commit, pull request and job | built; its smoke claim (`drill-down`) has not been recorded yet |
 | Opt-in policy checks with conftest or OPA, read from the base branch for a pull request, failing `tf-plan` and refusing a `tf-apply` wave | built; its smoke claim has not been recorded yet |
 | Typed decisions (`decide`): a mismatched pull-request description, drift attribution and version-bump suggestions | built: the `terragucci-decide` image and the client, the mismatched-description check (`respond.description`), drift attribution (`respond.drift: attribute`) and version-bump suggestions (`respond.version-bump: suggest`); none of the three has a recorded smoke claim yet |
 

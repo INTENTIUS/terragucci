@@ -49,7 +49,7 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { S3Client, s3FromEnv } from "./report/s3";
 import type { PolicyOptions } from "./report/policy";
-import { checkPolicy, eachLimited, rootsParallelism, runFacts } from "./report/stage";
+import { checkPolicy, eachLimited, reportLinks, rootsParallelism, runFacts } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -416,7 +416,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     plans.set(p.root, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
   }
   const report = buildReport({
-    run: { ...runFacts(repo, env), stage: APPLY_OP, wave, binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
+    run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => (p.error
       ? { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0] }
       : { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json } })),
@@ -425,13 +425,17 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   });
   w.observer.addTimings(report, ["plan", "apply"]);
   const dir = join(repo, "terragucci-report");
-  writeReportDir(dir, report, plans);
+  // An absolute address, as the plan report has, once reports.url says where the bucket is served.
+  const links = reportLinks(report, { reports: settings.reports, traceId: w.observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url });
+  Object.assign(report.run, links.run);
+  w.observer.reportUrl = links.run.report_url;
+  writeReportDir(dir, report, plans, links.note);
   const slowest = report.timings?.roots[0];
   if (slowest) console.log(`wave ${wave}: report in terragucci-report/, slowest root ${slowest.root} (${slowest.seconds}s)`);
   if (settings.reports?.bucket) {
     try {
       const up = await uploadReport(new S3Client(s3FromEnv(settings.reports, env)), dir, report, settings.reports.prefix);
-      console.log(`wave ${wave}: report copied to ${up.prefix}`);
+      console.log(`wave ${wave}: report copied to ${up.prefix}${report.run.report_url ? `, at ${report.run.report_url}` : ""}`);
     } catch (e) {
       console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
     }

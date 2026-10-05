@@ -38,7 +38,8 @@ import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportDeferred, ReportMockRead, ReportRun } from "./schema";
-import { uploadReport, writeReportDir, type Uploaded } from "./store";
+import { bucketReportUrl, uploadReport, writeReportDir, type Uploaded } from "./store";
+import { isArtifactPage, type NoteOptions } from "./views";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
@@ -59,7 +60,7 @@ export interface StageOptions {
   /** The binary, when the pipeline names it. Default: the config's, then detection. */
   binary?: string;
   /** Where to copy the report, when the pipeline names a bucket. Default: the config's `reports`. */
-  reports?: { bucket: string; endpoint?: string; prefix?: string };
+  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string };
   /** Globs for wave 1. Default: the config's `waves.canary`. */
   canary?: string[];
   /** tf-drift: the forge the drift issue lives on, when the environment alone does not say. */
@@ -113,17 +114,30 @@ export function projectFromRemote(url: string): string | undefined {
   return m ? `${m[1]}/${m[2]}` : undefined;
 }
 
-/** The run's facts, from the CI environment when there is one and from git when not. */
-export function runFacts(repo: string, env: NodeJS.ProcessEnv): Pick<ReportRun, "project" | "commit" | "base" | "job_url"> {
+type RunFacts = Pick<ReportRun, "project" | "commit" | "base" | "job_url" | "commit_url" | "pull_request" | "pull_request_url">;
+
+/**
+ * The run's facts, from the CI environment when there is one and from git
+ * when not: the project, the commit and its page, the pull request the
+ * pipeline names in `TG_PR` (or GitLab's merge request) and its page, and the
+ * job. `forge` tells Forgejo's pull request pages (`/pulls/<n>`) from
+ * GitHub's (`/pull/<n>`), which share the environment.
+ */
+export function runFacts(repo: string, env: NodeJS.ProcessEnv, forge?: ForgeName): RunFacts {
   let project: string | undefined;
   let job_url: string | undefined;
+  let web: string | undefined;
+  let gitlab = false;
   if (env.GITHUB_REPOSITORY) {
-    const server = env.GITHUB_SERVER_URL ?? "https://github.com";
+    const server = (env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "");
     project = `${new URL(server).host}/${env.GITHUB_REPOSITORY}`;
-    if (env.GITHUB_RUN_ID) job_url = `${server}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+    web = `${server}/${env.GITHUB_REPOSITORY}`;
+    if (env.GITHUB_RUN_ID) job_url = `${web}/actions/runs/${env.GITHUB_RUN_ID}`;
   } else if (env.CI_PROJECT_PATH) {
     project = `${env.CI_SERVER_HOST ?? "gitlab.com"}/${env.CI_PROJECT_PATH}`;
     job_url = env.CI_JOB_URL;
+    web = env.CI_PROJECT_URL ?? (env.CI_SERVER_URL ? `${env.CI_SERVER_URL.replace(/\/+$/, "")}/${env.CI_PROJECT_PATH}` : undefined);
+    gitlab = true;
   }
   project ??= (() => {
     const remote = git(repo, "remote", "get-url", "origin");
@@ -131,7 +145,48 @@ export function runFacts(repo: string, env: NodeJS.ProcessEnv): Pick<ReportRun, 
   })() ?? basename(resolve(repo));
   const commit = env.TG_SHA || env.GITHUB_SHA || env.CI_COMMIT_SHA || git(repo, "rev-parse", "HEAD") || "unknown";
   const base = env.GITHUB_BASE_REF || env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME || undefined;
-  return { project, commit, ...(base ? { base } : {}), ...(job_url ? { job_url } : {}) };
+  const pr = (env.TG_PR || env.CI_MERGE_REQUEST_IID || "").trim();
+  const number = /^\d+$/.test(pr) ? pr : undefined;
+  const forgejo = forge === "forgejo" || env.FORGEJO_ACTIONS === "true" || env.GITEA_ACTIONS === "true";
+  const prPath = gitlab ? "-/merge_requests" : forgejo ? "pulls" : "pull";
+  return {
+    project,
+    commit,
+    ...(base ? { base } : {}),
+    ...(job_url ? { job_url } : {}),
+    ...(web && commit !== "unknown" ? { commit_url: `${web}/${gitlab ? "-/" : ""}commit/${commit}` } : {}),
+    ...(number ? { pull_request: number } : {}),
+    ...(web && number ? { pull_request_url: `${web}/${prPath}/${number}` } : {}),
+  };
+}
+
+/** What the report says about where it can be read and traced, and how the note links it. */
+export interface ReportLinks {
+  /** report.run fields: the bucket copy's address, the trace id and its link. */
+  run: Pick<ReportRun, "report_url" | "trace_id" | "trace_url">;
+  note: NoteOptions;
+}
+
+/**
+ * Where the note links the report. The bucket's copy when `reports.url` says
+ * where the bucket is served (never guessed from the bucket's name); else the
+ * URL the pipeline passed, which on GitHub and Forgejo is the run's page that
+ * holds the report as an artifact; else the relative `report.html`. A
+ * tf-apply wave is passed no URL, so its report is absolute only in the
+ * bucket. The trace is linked when `telemetry.trace_url` is set.
+ */
+export function reportLinks(
+  report: Report,
+  o: { reports?: { bucket?: string; prefix?: string; url?: string }; given?: string; traceId?: string; traceUrl?: string },
+): ReportLinks {
+  const bucket = o.reports?.bucket ? bucketReportUrl(report, o.reports) : undefined;
+  const url = bucket ?? o.given;
+  const note: NoteOptions = url ? { reportUrl: url, ...(isArtifactPage(url) ? { artifacts: true } : {}) } : {};
+  const traceUrl = o.traceId && o.traceUrl ? o.traceUrl.replaceAll("{trace_id}", o.traceId) : undefined;
+  return {
+    run: { ...(bucket ? { report_url: bucket } : {}), ...(o.traceId ? { trace_id: o.traceId } : {}), ...(traceUrl ? { trace_url: traceUrl } : {}) },
+    note,
+  };
 }
 
 function tfFiles(dir: string): string[] {
@@ -808,7 +863,7 @@ async function finish(
     inputs = await applyPolicy(repo, settings.policy, inputs, options.base ?? baseRef(env), { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) }, options.policy, log);
   }
   const report = buildReport({
-    run: { ...runFacts(repo, env), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
+    run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: inputs,
     waves,
     redacted,
@@ -830,17 +885,22 @@ async function finish(
   }
   observer.addTimings(report);
   const dir = resolve(repo, options.out ?? "terragucci-report");
-  writeReportDir(dir, report, plans, { ...(options.reportUrl ? { reportUrl: options.reportUrl } : {}) });
+  // The bucket's address comes from the config when the pipeline names the same bucket without it.
+  const named = options.reports;
+  const configured = named && !named.url && settings.reports?.bucket === named.bucket ? settings.reports.url : undefined;
+  const reports = named ? { ...named, ...(configured ? { url: configured } : {}) } : settings.reports;
+  const links = reportLinks(report, { reports, given: options.reportUrl, traceId: observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url });
+  Object.assign(report.run, links.run);
+  observer.reportUrl = links.run.report_url;
+  writeReportDir(dir, report, plans, links.note);
   let uploaded: Uploaded | undefined;
-  const reports = options.reports ?? settings.reports;
   if (reports?.bucket) {
     const s3 = new S3Client(s3FromEnv(reports, env), options.fetch);
     uploaded = await uploadReport(s3, dir, report, reports.prefix);
   }
   let issue: StageResult["issue"];
   if (drift) {
-    const url = options.reportUrl;
-    const issueOptions = { ...(names ? { names } : {}), ...(url ? { reportUrl: url } : {}) };
+    const issueOptions = { ...(names ? { names } : {}), ...links.note };
     writeFileSync(join(dir, "issue.md"), renderDriftIssue(report, issueOptions));
     const token = options.token ?? env.TG_TOKEN;
     const target = targetFromEnv(options.forge, env, token);

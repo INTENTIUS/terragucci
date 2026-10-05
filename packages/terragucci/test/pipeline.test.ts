@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
-import { applyScript, planScript, renderPipeline } from "../src/render";
+import { applyScript, driftScript, planScript, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -380,6 +380,13 @@ describe("the plan stage", () => {
     const s = planScript("tofu", layers, "github", undefined, { reports: { bucket: "s3://r", endpoint: "http://minio:9000", prefix: "p" }, canary: ["network"] });
     expect(s).toContain("terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'network;app,cache'");
     expect(s).toContain("--canary 'network' --bucket 's3://r' --bucket-endpoint 'http://minio:9000' --bucket-prefix 'p'");
+    expect(s).not.toContain("--bucket-url");
+  });
+
+  it("passes the bucket's address when reports.url is set, so the note links the bucket's copy (#131)", () => {
+    const reports = { bucket: "s3://r", prefix: "p", url: "https://reports.example" };
+    expect(planScript("tofu", layers, "forgejo", undefined, { reports })).toContain("--bucket-prefix 'p' --bucket-url 'https://reports.example'");
+    expect(driftScript("tofu", layers, "github", undefined, { reports })).toContain("--bucket-url 'https://reports.example'");
   });
 
   it.each(FORGES)("%s: the plan job keeps the report with the job", (forge) => {
@@ -648,6 +655,17 @@ describe("telemetry headers secret", () => {
     expect(validateConfig({ telemetry: { headers_secret: "OTLP_HEADERS" } }, "t").telemetry).toEqual({ headers_secret: "OTLP_HEADERS" });
     expect(() => validateConfig({ telemetry: { headers_secret: "not a name" } }, "t")).toThrow(/headers_secret/);
     expect(() => validateConfig({ telemetry: {} }, "t")).toThrow(/headers_secret/);
+  });
+
+  it("validates trace_url and reports.url (#131)", () => {
+    const trace = "https://grafana.example/explore?left={trace_id}";
+    expect(validateConfig({ telemetry: { trace_url: trace } }, "t").telemetry).toEqual({ trace_url: trace });
+    expect(validateConfig({ telemetry: { headers_secret: "OTLP_HEADERS", trace_url: trace } }, "t").telemetry).toEqual({ headers_secret: "OTLP_HEADERS", trace_url: trace });
+    expect(() => validateConfig({ telemetry: { trace_url: "https://grafana.example/explore" } }, "t")).toThrow(/trace_url .*\{trace_id\}/);
+    expect(() => validateConfig({ telemetry: { trace_url: "grafana/{trace_id}" } }, "t")).toThrow(/trace_url/);
+    expect(validateConfig({ reports: { bucket: "s3://r", url: "https://reports.example/r" } }, "t").reports).toEqual({ bucket: "s3://r", url: "https://reports.example/r" });
+    expect(() => validateConfig({ reports: { bucket: "s3://r", url: "s3://r" } }, "t")).toThrow(/reports.url/);
+    expect(() => validateConfig({ reports: { bucket: "s3://r", url: "https://reports.example/?x=1" } }, "t")).toThrow(/reports.url/);
   });
 });
 

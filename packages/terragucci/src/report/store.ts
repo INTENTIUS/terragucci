@@ -6,6 +6,12 @@
  * `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-N]/`, and the
  * index at the project's path and at the top of the prefix gains a row.
  * Links inside a report are relative, so they resolve in both layouts.
+ *
+ * With `reports.url`, the address that serves the bucket to a browser, the
+ * run's copy has an absolute address (`reportUrl`), which the note, the drift
+ * issue, the stage span and the dashboards link. Each trace also gets a page
+ * at `<prefix>/traces/<trace id>.html` that sends the reader on to its
+ * run's report, so a dashboard that lists traces can link the report.
  */
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -45,6 +51,43 @@ export function runPath(report: Report): string {
   return `${yyyy}/${mm}/${report.run.commit}/${stage}`;
 }
 
+/** Where a bucket's objects are: `reports` without `bucket`. */
+export interface ReportsAddress {
+  prefix?: string;
+  /** The http(s) address that serves the bucket's objects. */
+  url?: string;
+}
+
+const trim = (s: string): string => s.replace(/^\/+|\/+$/g, "");
+const joinKey = (...p: string[]): string => p.map(trim).filter(Boolean).join("/");
+
+/** The run's directory under the bucket: `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-N]`. */
+export const runKey = (report: Report, prefix = ""): string => joinKey(prefix, report.run.project, runPath(report));
+
+/** The address of the bucket's `<prefix>`, or undefined when `reports.url` is not set. Never guessed from the bucket's name. */
+export function reportsBase(reports: ReportsAddress | undefined): string | undefined {
+  if (!reports?.url) return undefined;
+  return [reports.url.replace(/\/+$/, ""), trim(reports.prefix ?? "")].filter(Boolean).join("/");
+}
+
+/** Where the run's report.html is served from the bucket, when `reports.url` says. */
+export function bucketReportUrl(report: Report, reports: ReportsAddress | undefined): string | undefined {
+  const base = reports?.url?.replace(/\/+$/, "");
+  return base ? `${base}/${runKey(report, reports?.prefix)}/report.html` : undefined;
+}
+
+/** The key of the page that sends a trace's reader on to its run's report. */
+export const traceKey = (traceId: string, prefix = ""): string => joinKey(prefix, "traces", `${traceId}.html`);
+
+/** That page: a redirect to the report, relative, so it works wherever the bucket is served. */
+export function renderTracePage(report: Report): string {
+  const target = `../${report.run.project}/${runPath(report)}/report.html`;
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=${esc(target)}"><title>terragucci report</title></head>
+<body><p><a href="${esc(target)}">${esc(report.run.project)}: ${esc(report.run.stage)}${report.run.wave !== undefined ? ` wave ${report.run.wave}` : ""} at ${esc(report.run.commit.slice(0, 12))}</a></p></body></html>
+`;
+}
+
 export const INDEX_SCHEMA = "terragucci.report-index/v1";
 
 export interface IndexEntry {
@@ -61,6 +104,15 @@ export interface IndexEntry {
   refused: number;
   /** Every destroy and replacement, as `root: address`. */
   destroys: string[];
+  /** The commit's page on the forge. */
+  commit_url?: string;
+  /** The pull or merge request, by number, and its page. */
+  pull_request?: string;
+  pull_request_url?: string;
+  /** The CI job that produced the report. */
+  job_url?: string;
+  /** The run's trace, when a viewer is configured. */
+  trace_url?: string;
 }
 
 export interface ReportIndex {
@@ -82,6 +134,11 @@ export function indexEntry(report: Report, path: string): IndexEntry {
     totals: { create: t.create, update: t.update, replace: t.replace, delete: t.delete },
     refused: report.named.filter((n) => n.action === "refused").length,
     destroys: report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => `${n.root}: ${n.address}`),
+    ...(report.run.commit_url ? { commit_url: report.run.commit_url } : {}),
+    ...(report.run.pull_request ? { pull_request: report.run.pull_request } : {}),
+    ...(report.run.pull_request_url ? { pull_request_url: report.run.pull_request_url } : {}),
+    ...(report.run.job_url ? { job_url: report.run.job_url } : {}),
+    ...(report.run.trace_url ? { trace_url: report.run.trace_url } : {}),
   };
 }
 
@@ -106,7 +163,15 @@ export function renderIndexHtml(index: ReportIndex, title: string): string {
   const rows = index.reports.map((r) => {
     const t = r.totals;
     const destroys = r.destroys.length ? `<details><summary>${r.destroys.length}</summary><ul>${r.destroys.map((d) => `<li><code>${esc(d)}</code></li>`).join("")}</ul></details>` : "0";
-    return `<tr><td>${esc(r.project)}</td><td><code>${esc(r.commit.slice(0, 12))}</code></td><td>${esc(r.stage)}${r.wave !== undefined ? ` wave ${r.wave}` : ""}</td><td>${esc(r.finished)}</td><td>${r.roots}</td><td>+${t.create} ~${t.update} -/+${t.replace} -${t.delete}${r.refused ? `, ${r.refused} refused` : ""}</td><td>${destroys}</td><td><a href="${esc(r.path)}/report.html">report</a> <a href="${esc(r.path)}/report.json">json</a></td></tr>`;
+    const commit = `<code>${esc(r.commit.slice(0, 12))}</code>`;
+    const pr = r.pull_request ? (r.pull_request_url ? `<a href="${esc(r.pull_request_url)}">#${esc(r.pull_request)}</a>` : `#${esc(r.pull_request)}`) : "";
+    const links = [
+      `<a href="${esc(r.path)}/report.html">report</a>`,
+      `<a href="${esc(r.path)}/report.json">json</a>`,
+      ...(r.job_url ? [`<a href="${esc(r.job_url)}">job</a>`] : []),
+      ...(r.trace_url ? [`<a href="${esc(r.trace_url)}">trace</a>`] : []),
+    ];
+    return `<tr><td>${esc(r.project)}</td><td>${r.commit_url ? `<a href="${esc(r.commit_url)}">${commit}</a>` : commit}</td><td>${pr}</td><td>${esc(r.stage)}${r.wave !== undefined ? ` wave ${r.wave}` : ""}</td><td>${esc(r.finished)}</td><td>${r.roots}</td><td>+${t.create} ~${t.update} -/+${t.replace} -${t.delete}${r.refused ? `, ${r.refused} refused` : ""}</td><td>${destroys}</td><td>${links.join(" ")}</td></tr>`;
   });
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
@@ -114,7 +179,7 @@ export function renderIndexHtml(index: ReportIndex, title: string): string {
 <style>:root{--bg:#fbfbfa;--fg:#1d1d1b;--line:#deded8;--link:#1f5fbf}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--line:#34342f;--link:#8ab4ff}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px;overflow-x:auto}a{color:var(--link)}table{border-collapse:collapse}td,th{border-bottom:1px solid var(--line);padding:4px 12px 4px 0;text-align:left;vertical-align:top}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1>${esc(title)}</h1><p>${index.reports.length} reports, newest first.</p>
-<table><tr><th>Project</th><th>Commit</th><th>Stage</th><th>Finished</th><th>Roots</th><th>Changes</th><th>Destroys</th><th></th></tr>
+<table><tr><th>Project</th><th>Commit</th><th>Pull request</th><th>Stage</th><th>Finished</th><th>Roots</th><th>Changes</th><th>Destroys</th><th></th></tr>
 ${rows.join("\n")}
 </table></main></body></html>
 `;
@@ -144,13 +209,14 @@ export interface Uploaded {
  * upload's row is added to it.
  */
 export async function uploadReport(s3: S3Client, dir: string, report: Report, prefix = ""): Promise<Uploaded> {
-  const top = prefix.replace(/^\/+|\/+$/g, "");
+  const top = trim(prefix);
   const join2 = (...p: string[]) => p.filter(Boolean).join("/");
   const project = report.run.project;
   const run = runPath(report);
-  const runKey = join2(top, project, run);
+  const key = runKey(report, top);
   const files = walk(dir);
-  for (const f of files) await s3.put(join2(runKey, relative(dir, f).split("\\").join("/")), readFileSync(f), typeOf(f));
+  for (const f of files) await s3.put(join2(key, relative(dir, f).split("\\").join("/")), readFileSync(f), typeOf(f));
+  if (report.run.trace_id) await s3.put(traceKey(report.run.trace_id, top), renderTracePage(report), TYPES.html);
   const indexes: string[] = [];
   for (const [at, path, title] of [
     [join2(top, project), run, `Plan reports: ${project}`],
@@ -162,5 +228,21 @@ export async function uploadReport(s3: S3Client, dir: string, report: Report, pr
     await s3.put(join2(at, "index.html"), renderIndexHtml(index, title), TYPES.html);
     indexes.push(key);
   }
-  return { prefix: runKey, files: files.length, indexes };
+  return { prefix: key, files: files.length, indexes };
+}
+
+/**
+ * Copy files a later step changed in a run's report directory (respond
+ * description's flag in note.md and report.html, its intent.json) over the
+ * bucket's copy, so the bucket holds what the job's artifact holds.
+ */
+export async function copyToRun(s3: S3Client, dir: string, report: Report, files: string[], prefix = ""): Promise<string[]> {
+  const key = runKey(report, prefix);
+  const put: string[] = [];
+  for (const f of files) {
+    const k = `${key}/${f.split("\\").join("/")}`;
+    await s3.put(k, readFileSync(join(dir, f)), typeOf(f));
+    put.push(k);
+  }
+  return put;
 }
