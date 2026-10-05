@@ -5,11 +5,23 @@
  *
  * Stages send OTLP over HTTP to otel-collector:4318. Traces are written as
  * OTLP/JSON lines to /out/traces.jsonl, which the smoke claims read with
- * `docker cp`. Metrics are served to Prometheus on :8889, with resource
- * attributes (the commit among them) copied onto every series so a claim can
- * find its own run.
+ * `docker cp`, and sent on to Tempo, which Grafana's Runs dashboard reads.
+ * Metrics are served to Prometheus on :8889, with resource attributes (the
+ * commit among them) copied onto every series so a claim can find its own
+ * run. A `spanmetrics` connector turns the stage spans into the run counts and
+ * durations the dashboards read, with the settings the dashboards are built
+ * from (packages/terragucci/src/dashboards/names.ts).
  */
-import { defineComponent, HealthCheckExtension, OtlpReceiver, Pipeline, PrometheusExporter } from "@intentius/chant-lexicon-otel";
+import {
+  defineComponent,
+  HealthCheckExtension,
+  OtlpExporter,
+  OtlpReceiver,
+  Pipeline,
+  PrometheusExporter,
+  SpanMetricsConnector,
+} from "@intentius/chant-lexicon-otel";
+import { SPANMETRICS } from "../packages/terragucci/src/dashboards/names";
 
 interface FileExporterConfig {
   path: string;
@@ -40,7 +52,18 @@ export const prometheus = new PrometheusExporter({
   resource_to_telemetry_conversion: { enabled: true },
 });
 
+export const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
+
+// Flushed every 5s so a smoke claim sees a run's counts soon after it ends.
+export const stageSpans = new SpanMetricsConnector({
+  namespace: SPANMETRICS.namespace,
+  dimensions: SPANMETRICS.dimensions,
+  resource_metrics_key_attributes: SPANMETRICS.resource_metrics_key_attributes,
+  histogram: SPANMETRICS.histogram,
+  metrics_flush_interval: "5s",
+});
+
 export const health = new HealthCheckExtension({ endpoint: "0.0.0.0:13133" });
 
-export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [traceFile] });
-export const metrics = new Pipeline({ signal: "metrics", receivers: [otlp], exporters: [prometheus] });
+export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [traceFile, tempo, stageSpans] });
+export const metrics = new Pipeline({ signal: "metrics", receivers: [otlp, stageSpans], exporters: [prometheus] });

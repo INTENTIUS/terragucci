@@ -1,0 +1,162 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Drifted roots by project, how long the drift has stood, and the roots corrected.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Drift",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "Drifted roots",
+      "description": "Roots each drift run found drifted, by project.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max by (project) (terragucci_drift_roots{project=~\"$project\"})",
+          "legendFormat": "{{project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "id": 3,
+      "title": "Drift age",
+      "description": "How long since each project's open drift was first found (its drift issue opened).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "time() - ((\n(max by (project) (last_over_time(terragucci_drift_since_seconds{project=~\"$project\"}[7d]))) unless on (project) (max by (project) (last_over_time(terragucci_drift_clear_seconds{project=~\"$project\"}[7d])))\n)\nor\n(\n(max by (project) (last_over_time(terragucci_drift_since_seconds{project=~\"$project\"}[7d]))) > on (project) (max by (project) (last_over_time(terragucci_drift_clear_seconds{project=~\"$project\"}[7d])))\n))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "id": 4,
+      "title": "Roots corrected",
+      "description": "Drifted roots fewer than the day before, by project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "clamp_min(max by (project) (max_over_time(terragucci_drift_roots{project=~\"$project\"}[1d] offset 1d)) - max by (project) (max_over_time(terragucci_drift_roots{project=~\"$project\"}[1d])), 0)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "terragucci"
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "project",
+        "label": "Project",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(terragucci_last_run_seconds, project)",
+        "definition": "label_values(terragucci_last_run_seconds, project)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "terragucci: Drift",
+  "uid": "terragucci-drift",
+  "weekStart": ""
+}

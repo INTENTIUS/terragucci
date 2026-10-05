@@ -7,7 +7,7 @@
 #   stack/bootstrap.sh github         floci + the mock GitHub API (the runner is act, on the host)
 #   stack/bootstrap.sh gitlab         floci + GitLab CE + gitlab-runner (GitLab runs under emulation on arm64)
 #   stack/bootstrap.sh aws            floci alone
-#   stack/bootstrap.sh observability  an OpenTelemetry collector and Prometheus
+#   stack/bootstrap.sh observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana
 #   stack/bootstrap.sh fountain       floci + fountain + a fountain runner for a steward
 #
 # For each forge it also mints a token, registers the runner where there is
@@ -94,7 +94,8 @@ case "$PROFILE" in
     "${COMPOSE[@]}" --profile observability up -d >&2
     wait_http "http://localhost:${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}/" "the collector" 30
     wait_http "http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}/-/ready" "Prometheus" 30
-    write_env observability "TERRAGUCCI_OTLP_URL=http://localhost:${TERRAGUCCI_OTLP_PORT:-4328}" "TERRAGUCCI_PROMETHEUS_URL=http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}"
+    wait_http "http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}/api/health" "Grafana" 60
+    write_env observability "TERRAGUCCI_OTLP_URL=http://localhost:${TERRAGUCCI_OTLP_PORT:-4328}" "TERRAGUCCI_PROMETHEUS_URL=http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}" "TERRAGUCCI_GRAFANA_URL=http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}"
     exit 0
     ;;
   *) die "unknown profile '$PROFILE' (aws, forgejo, observability, github, gitlab, fountain)" ;;

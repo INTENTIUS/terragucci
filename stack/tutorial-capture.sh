@@ -175,6 +175,17 @@ step_fountain_apply() {
   run_cmd fountain-apply "just example verify" "$HERE/example.sh" verify
 }
 
+# The dashboards (the see-your-runs page): three runs of the example sent to
+# the observability profile, and four of the dashboards that show them.
+# Grafana follows the browser's light or dark preference.
+step_see_runs() {
+  run_cmd see-runs "just see-runs" "$HERE/see-runs.sh"
+  local grafana="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}" d
+  for d in pipeline-health:pipeline rollouts-waves:waves drift:drift runs:runs; do
+    shot see-runs "${d#*:}" "$grafana/d/terragucci-${d%%:*}?orgId=1&kiosk"
+  done
+}
+
 # step|claims it needs
 STEPS='boot|boot
 first-pr|check
@@ -182,7 +193,8 @@ check|check
 wave-waiting|waves sealed
 wave-refused|waves sealed refuse
 pin|publish rollout
-fountain-apply|steward'
+fountain-apply|steward
+see-runs|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos'
 
 booted=0
 while IFS='|' read -r -u 3 step claims; do

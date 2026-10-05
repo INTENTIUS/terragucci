@@ -35,7 +35,7 @@ import { driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, tra
 import { redactPlan } from "./redact";
 import { checkPlan, describeVerdict, engineBinary, policyPathExists, type PolicyOptions } from "./policy";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
-import { StageObserver } from "./observe";
+import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportDeferred, ReportMockRead, ReportRun } from "./schema";
 import { uploadReport, writeReportDir, type Uploaded } from "./store";
@@ -840,6 +840,11 @@ async function finish(
         log(`the drift issue could not be kept: ${e.message}`);
       }
     }
+  }
+  observer.pins = modulePins(inputs);
+  if (drift && issue && "issue" in issue && issue.action !== "closed") {
+    // A newly opened issue was opened by this run, so its drift starts now.
+    observer.drift = { since: issue.action === "opened" ? report.run.finished : (issue.issue.created ?? report.run.finished) };
   }
   await observer.finish(report, env, log, options.otlpFetch);
   return { report, dir, ...(uploaded ? { uploaded } : {}), ...(issue ? { issue } : {}), failed: report.roots.some((r) => r.status === "failed" && !r.terragrunt?.provisional) || issue?.error !== undefined };

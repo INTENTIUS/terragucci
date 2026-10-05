@@ -109,6 +109,8 @@ export interface Issue {
   /** GitHub and Forgejo number; GitLab iid. */
   number: number;
   body: string;
+  /** When it was opened (ISO 8601), when the forge said. */
+  created?: string;
 }
 
 const gitlabId = (t: ForgeTarget): string => encodeURIComponent(t.path);
@@ -116,13 +118,13 @@ const gitlabId = (t: ForgeTarget): string => encodeURIComponent(t.path);
 /** The open issue whose body carries `marker`, if any. */
 export async function findIssue(fetch: Fetch, t: ForgeTarget, marker: string): Promise<Issue | undefined> {
   if (t.forge === "gitlab") {
-    const list = (await call(fetch, t, "GET", `/projects/${gitlabId(t)}/issues?state=opened&per_page=100`)) as Array<{ web_url: string; iid: number; description?: string | null }>;
+    const list = (await call(fetch, t, "GET", `/projects/${gitlabId(t)}/issues?state=opened&per_page=100`)) as Array<{ web_url: string; iid: number; description?: string | null; created_at?: string }>;
     const hit = list.find((i) => (i.description ?? "").includes(marker));
-    return hit ? { url: hit.web_url, number: hit.iid, body: hit.description ?? "" } : undefined;
+    return hit ? { url: hit.web_url, number: hit.iid, body: hit.description ?? "", ...(hit.created_at ? { created: hit.created_at } : {}) } : undefined;
   }
-  const list = (await call(fetch, t, "GET", `/repos/${t.path}/issues?state=open&type=issues&per_page=100`)) as Array<{ html_url: string; number: number; body?: string | null; pull_request?: unknown }>;
+  const list = (await call(fetch, t, "GET", `/repos/${t.path}/issues?state=open&type=issues&per_page=100`)) as Array<{ html_url: string; number: number; body?: string | null; pull_request?: unknown; created_at?: string }>;
   const hit = list.find((i) => !i.pull_request && (i.body ?? "").includes(marker));
-  return hit ? { url: hit.html_url, number: hit.number, body: hit.body ?? "" } : undefined;
+  return hit ? { url: hit.html_url, number: hit.number, body: hit.body ?? "", ...(hit.created_at ? { created: hit.created_at } : {}) } : undefined;
 }
 
 export async function openIssue(fetch: Fetch, t: ForgeTarget, issue: { title: string; body: string }): Promise<Issue> {

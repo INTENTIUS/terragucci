@@ -21,6 +21,7 @@ import {
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
+import { dashboardSettings, renderDashboards, writtenByTerragucci } from "./dashboards";
 import { MARKER, RenderError, renderPipeline, type PipelineInput } from "./render";
 import { terragruntInstalls } from "./render-terragrunt";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
@@ -208,6 +209,18 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
+
+  // Dashboards and alert rules, next to the pipeline, when terragucci.yml asks for them.
+  const dashboards = dashboardSettings(settings.dashboards);
+  if (dashboards) {
+    for (const f of renderDashboards(dashboards)) {
+      const path = join(repo, f.path);
+      if (existsSync(path) && !options.force && !writtenByTerragucci(f.path, readFileSync(path, "utf-8"))) {
+        throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside, set dashboards.dir, or pass --force`);
+      }
+      files.push(plan(path, f.content));
+    }
+  }
 
   // Every tf-apply wave gate needs a sealed approval (chant approve --sign).
   if (!tgMode) files.push(declaration(repo, applyWaves(layers, settings.waves?.canary).length, options.name));

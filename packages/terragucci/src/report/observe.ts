@@ -10,8 +10,48 @@
  */
 import { spawnSync } from "node:child_process";
 import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
+import { METRIC } from "../dashboards/names";
+import { pinVersion } from "../rollout/pins";
 import type { Report } from "./schema";
+import { drifted } from "./drift";
+import { waveGauges, waveResult, type WaveFacts } from "./wave-telemetry";
 import { rootTimings, runTimings, SpanReceiver } from "./spans";
+
+/** One module call's pin in a root, as the Estate and Rollouts dashboards count them. */
+export interface ModulePin {
+  root: string;
+  module: string;
+  version: string;
+}
+
+/**
+ * The pinned module calls of each root, from its plan's configuration: a
+ * registry module's version, or a git or OCI source's ref or tag. A local
+ * module (`./modules/x`) has no pin and is left out.
+ */
+export function modulePins(roots: { path: string; plan?: unknown }[]): ModulePin[] {
+  const out: ModulePin[] = [];
+  for (const r of roots) {
+    const calls = ((r.plan as { configuration?: { root_module?: { module_calls?: Record<string, { source?: string; version_constraint?: string }> } } } | undefined)
+      ?.configuration?.root_module?.module_calls) ?? {};
+    for (const call of Object.values(calls)) {
+      const source = call.source ?? "";
+      if (!source || source.startsWith(".") || source.startsWith("/")) continue;
+      const [base, query = ""] = source.split("?");
+      const ref = new URLSearchParams(query).get("ref") ?? new URLSearchParams(query).get("tag");
+      const version = ref ? pinVersion(ref) : call.version_constraint;
+      if (!version) continue;
+      out.push({ root: r.path, module: base.replace(/^git::/, "").replace(/\.git(\/\/|$)/, "$1"), version });
+    }
+  }
+  return out;
+}
+
+/** What a drift run found, beyond its report: when its drift was first found. */
+export interface DriftFacts {
+  /** When the open drift issue was opened, or when this run found drift with no issue to read. */
+  since?: string;
+}
 
 interface RootTiming {
   path: string;
@@ -45,8 +85,19 @@ export class StageObserver {
   private receiver?: SpanReceiver;
   /** Terragrunt units' times from its run report, by unit, in seconds. */
   private readonly units = new Map<string, number>();
+  /** Set by the stage before `finish`: the module pins its plans read. */
+  pins: ModulePin[] = [];
+  /** Set by a drift stage before `finish`. */
+  drift?: DriftFacts;
+  /** Set by a tf-apply wave: its number, what it found out, and its exit code once it has one. */
+  wave?: { number: number; facts: WaveFacts; code?: number };
+
+  /** The pull request a tf-plan runs for (`TG_PR`, which the pipeline sets). */
+  private readonly pullRequest?: string;
 
   constructor(readonly telemetry: Telemetry | undefined, readonly stage: string, env: NodeJS.ProcessEnv) {
+    const pr = env.TG_PR?.trim();
+    if (pr) this.pullRequest = pr;
     if (telemetry?.traces) {
       this.trace = new Trace(env.TRACEPARENT);
       this.stageSpan = this.trace.start(`terragucci ${stage}`, undefined, { "terragucci.stage": stage });
@@ -152,7 +203,9 @@ export class StageObserver {
     const project = report.run.project;
     const stage = this.stage;
     const result = report.roots.some((r) => r.status === "failed") ? "failure" : "success";
-    const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>): Gauge => ({ name, unit, description, value, attributes: { project, stage, ...attributes } });
+    // A pull request's plan names it, so Change review can show roots per pull request.
+    const pr = stage === "tf-plan" && this.pullRequest ? { pull_request: this.pullRequest } : {};
+    const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>): Gauge => ({ name, unit, description, value, attributes: { project, stage, ...pr, ...attributes } });
     const out: Gauge[] = [
       g("terragucci_stage_duration_seconds", "s", "How long the stage ran", seconds(this.start, end), { result }),
       g("terragucci_roots_planned", "{root}", "Roots the stage planned, failed ones included", report.roots.length, {}),
@@ -165,6 +218,35 @@ export class StageObserver {
       out.push(g("terragucci_plan_changes", "{change}", "Proposed changes by action", n, { action }));
     }
     if (version) out.push(g("terragucci_binary_version", "", "The binary and version a stage ran", 1, { binary: report.run.binary, version }));
+    return [...out, ...this.dashboardGauges(report, end, g)];
+  }
+
+  /** The gauges the dashboards read beyond the plan counts (dashboards/names.ts). */
+  private dashboardGauges(report: Report, end: bigint, g: (name: string, unit: string, description: string, value: number, attributes: Record<string, string>) => Gauge): Gauge[] {
+    const at = Number(end / 1_000_000n) / 1000;
+    const out: Gauge[] = [
+      g(METRIC.lastRun, "s", "When the stage last ran, in Unix seconds", at, {}),
+      g(METRIC.rootsChanged, "{root}", "Roots whose plan changes something", report.roots.filter((r) => r.status === "planned" && r.changes.length > 0).length, {}),
+    ];
+    if (report.tips) {
+      const byRule = new Map<string, number>();
+      for (const t of report.tips) byRule.set(t.rule, (byRule.get(t.rule) ?? 0) + 1);
+      for (const [rule, n] of byRule) out.push(g(METRIC.tips, "{tip}", "Tips the run gave, by rule", n, { rule }));
+    }
+    for (const p of this.pins) out.push(g(METRIC.modulePin, "", "A module call's pin in a root", 1, { root: p.root, module: p.module, version: p.version }));
+    for (const r of report.roots) {
+      for (const p of r.timings?.provider_init ?? []) out.push(g(METRIC.providerInit, "s", "Time spent starting a provider in a root", p.ms / 1000, { root: r.path, provider: p.provider }));
+      const wait = (r.timings?.lock_waits ?? []).reduce((n, w) => n + w.ms, 0);
+      if (r.timings?.lock_waits?.length) out.push(g(METRIC.lockWait, "s", "Time spent waiting for a state lock in a root", wait / 1000, { root: r.path }));
+    }
+    for (const x of report.timings?.resources ?? []) out.push(g(METRIC.resource, "s", "How long one of the run's slowest resources took", x.ms / 1000, { root: x.root, address: x.address }));
+    if (report.run.stage === "tf-drift") {
+      const d = drifted(report);
+      out.push(g(METRIC.driftRoots, "{root}", "Roots the drift run found drifted", d.roots, {}));
+      if (d.roots > 0) out.push(g(METRIC.driftSince, "s", "When the open drift was first found, in Unix seconds", Date.parse(this.drift?.since ?? report.run.finished) / 1000, {}));
+      else if (d.failed === 0) out.push(g(METRIC.driftClear, "s", "When a drift run last found no drift, in Unix seconds", at, {}));
+    }
+    if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, at, g));
     return out;
   }
 
@@ -191,6 +273,7 @@ export class StageObserver {
 
     if (tel.traces && this.trace && this.stageSpan) {
       const failed = report.roots.filter((r) => r.status === "failed").length;
+      const result = this.wave ? waveResult(this.wave.code ?? 1, this.wave.facts) : failed ? "failure" : "success";
       this.trace.end(this.stageSpan, {
         "terragucci.project": run.project,
         "vcs.ref.head.revision": run.commit,
@@ -199,8 +282,11 @@ export class StageObserver {
         "terragucci.change_set": report.change_set,
         "terragucci.roots": report.roots.length,
         "terragucci.roots_failed": failed,
+        // How the stage or the wave ended, a dimension of the span metrics the dashboards read.
+        "terragucci.result": result,
+        ...(this.wave ? { "terragucci.wave": this.wave.number } : {}),
         ...Object.fromEntries(Object.entries(report.totals).map(([a, n]) => [`terragucci.plan.${a}`, n])),
-      }, failed ? `${failed} root(s) failed` : undefined);
+      }, failed ? `${failed} root(s) failed` : result === "failed" ? `wave ${this.wave?.number} failed` : undefined);
       // Waves are known once every root has planned, so their spans are set
       // around the roots they hold.
       for (const w of report.waves) {

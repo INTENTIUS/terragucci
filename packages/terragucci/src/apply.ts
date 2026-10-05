@@ -53,6 +53,7 @@ import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { sealRefusal, sealRule } from "./seal";
+import type { WaveFacts } from "./report/wave-telemetry";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -359,9 +360,14 @@ export async function applyWave(repo: string, options: ApplyWaveOptions): Promis
   const work = mkdtempSync(join(tmpdir(), "terragucci-apply-"));
   const env = options.env ?? process.env;
   const observer = new StageObserver(telemetryFromEnv(env), APPLY_OP, env);
+  // How the wave ended, for its stage span and the waves dashboard's gauges.
+  const facts: WaveFacts = {};
+  observer.wave = { number: options.wave, facts };
   const wave: WaveRun = { observer };
   try {
-    return await runWave(repo, options, work, wave);
+    const code = await runWave(repo, options, work, wave, facts);
+    observer.wave.code = code;
+    return code;
   } finally {
     // The report is written once the wave's roots planned, whatever came of the gate and the apply.
     if (wave.planned) await writeWaveReport(repo, options, wave as Required<WaveRun>, env).catch((e) => console.log(`wave ${options.wave}: the report was not written: ${(e as Error).message}`));
@@ -419,16 +425,18 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   await w.observer.finish(report, env, (l) => console.log(l));
 }
 
-async function runWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun): Promise<number> {
+async function runWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun, facts: WaveFacts = {}): Promise<number> {
   const { wave, binary, gate } = options;
   if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
   const waves = applyWaves(options.layers, options.canary);
   if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("--wave must be a wave number from 1");
   const roots = waves[wave - 1];
   if (!roots) {
+    facts.nothing = true;
     console.log(`wave ${wave}: this repo has ${waves.length} waves, so there is nothing to apply`);
     return EXIT.applied;
   }
+  facts.roots = roots;
   const label = `wave ${wave} of ${waves.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
   let limit: { value: number; reason: string };
@@ -460,6 +468,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   const destroys = planned.reduce((n, p) => n + p.destroys, 0);
   console.log(`${label}: set digest ${digest}, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
 
+  if (changes === 0) facts.nothing = true;
   // A wave with nothing to change has nothing to approve.
   const gated = changes > 0 && (gate === "always" || (gate === "on-destroy" && destroys > 0));
   if (gated) {
@@ -481,6 +490,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
       console.log(`${label}: approved by ${decision.by} for this digest`);
     } else {
       const env = options.env ?? process.env;
+      facts.waitingSince = decision.standing?.timestamp ?? now;
       // The report of this wave's plans, as respond wave-refused reads it.
       const report = (): string =>
         JSON.stringify(buildReport({
