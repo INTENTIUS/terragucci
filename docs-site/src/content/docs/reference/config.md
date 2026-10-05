@@ -77,6 +77,7 @@ projects:
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event, none of them an agent | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge` or `fountain`), `token_env` and an optional read-only `role`: where an event set to `agent` runs |
+| `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 
 The file can also be `terragucci.ts`, typed with `TerragucciConfig`. terragucci folds it to plain data without running it, so a value that reads the environment is refused with its line number.
 
@@ -101,6 +102,29 @@ terragrunt:
 | `credentials` | none | plan and apply roles by unit path glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
 
 Terragrunt 1.1 or later is required. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers what changes in a Terragrunt repo.
+
+## The decide block
+
+A few responses read free text that no rule can judge: a pull request's description beside its plan, drift that neither the known-defaults table nor the audit log explains, and commit messages with no conventional type. For those, terragucci can ask a typed-decision model a yes-or-no or a choice question and get back a probability. With no `decide` block, nothing is asked and every response is the deterministic one.
+
+```yaml
+decide:
+  backend: laya
+  url: http://decide:8790
+  thresholds: { noul: 0.8, choice: 0.7 }
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `backend` | required | `laya` (terragucci's `terragucci-decide` image), `von`, `decider` or `jev` (TypeSafe's API); each answers the same request shape |
+| `url` | required, except `jev` | the service's base URL; `jev` defaults to `https://api.typesafe.ai` |
+| `model` | required, except `laya` | the pinned model version, such as `jev-1.13.0`; a moving alias such as `jev-latest` is refused, and an answer from any other version is not used |
+| `token_env` | none, required for `jev` | the environment variable holding the service's bearer token |
+| `thresholds` | `noul` 0.8, `choice` 0.7, `score` 0.7 | the probability an answer needs before a response acts on it |
+
+An answer below its threshold, a service that does not answer, or an answer from another model leaves the response as it would be with no `decide` block. A decision raises a flag, picks a route or suggests a value for a person to confirm. It never approves, applies or resolves a gate. The model reads the redacted report, never a secret or a raw plan value.
+
+`terragucci-decide` runs the Laya model on CPU and carries its weights, so it is an image of its own: the CI images stay small, and only the job or host that runs the service downloads it.
 
 ## Parameters
 

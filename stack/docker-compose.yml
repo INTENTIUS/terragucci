@@ -29,6 +29,7 @@
 #   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
 #   observability  an OpenTelemetry collector and Prometheus   used by the traces and metrics smoke claims
+#   decide    terragucci-decide, Laya on CPU behind the Jev shape   opt-in; stack/decide.sh starts it
 name: terragucci
 
 networks:
@@ -357,3 +358,18 @@ services:
     networks:
       default:
         aliases: [fountain-runner]
+
+  # ── decide ───────────────────────────────────────────────────────────────
+  # The opt-in decision service (terragucci#29): Laya on CPU behind the Jev
+  # /v1/systemone shape, as one pinned model. The image is built locally
+  # (`just decide-image`, from images/Dockerfile.decide) and carries its
+  # weights, so it needs no volume and no network beyond this one. A job on the
+  # terragucci network reaches it at http://decide:8790; the host at
+  # localhost:${TERRAGUCCI_DECIDE_PORT:-8790}. stack/decide.sh starts it and
+  # asks the three uses' questions.
+  decide:
+    image: terragucci-decide:local
+    container_name: terragucci-decide
+    profiles: [decide]
+    ports:
+      - "127.0.0.1:${TERRAGUCCI_DECIDE_PORT:-8790}:8790"

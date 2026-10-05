@@ -1,0 +1,9 @@
+{
+  "use": "#32 a version bump for commits that are not conventional",
+  "question": "versionBump",
+  "expect": "minor",
+  "state": {
+    "commits": ["add an optional tags variable to the queue module", "tidy the readme"],
+    "diff": "variables.tf: a new variable tags (map(string), default {}); main.tf: tags = var.tags on aws_sqs_queue.jobs; README.md: wording"
+  }
+}

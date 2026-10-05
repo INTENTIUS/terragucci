@@ -1,0 +1,39 @@
+FROM python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3 AS build
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN python -m venv --upgrade-deps /opt/venv
+RUN /opt/venv/bin/pip install "torch==2.14.0" --index-url https://download.pytorch.org/whl/cpu
+RUN /opt/venv/bin/pip install "laya[serve]==0.3.28" && /opt/venv/bin/pip check
+RUN HF_HOME=/opt/hf /opt/venv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("convaiinnovations/laya", revision="55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851", allow_patterns=["rl_agent_config.json", "model.safetensors", "tokenizer/*", "encoder/*"])' && echo "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c  /opt/hf/hub/models--convaiinnovations--laya/snapshots/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/model.safetensors" | sha256sum -c -
+FROM python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+ENV PATH="/opt/venv/bin:$PATH"
+ENV HOME=/tmp
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV HF_HOME=/opt/hf
+ENV HF_HUB_OFFLINE=1
+ENV USE_TF=0
+ENV TOKENIZERS_PARALLELISM=false
+ENV TORCH_DISABLE_NATIVE_JIT=1
+ENV OMP_NUM_THREADS=4
+ENV LAYA_THREADS=4
+ENV LAYA_DEVICE=cpu
+ENV LAYA_MODELS=english
+ENV LAYA_PRELOAD=1
+ENV LAYA_REVISION=55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851
+ENV LAYA_SHA256_DIGESTS='{"model.safetensors":"891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c"}'
+ENV DECIDE_MODEL=laya-0.3.28-english@55cf4c4ebb4e
+ENV DECIDE_CHECKPOINT=english
+ENV DECIDE_PORT=8790
+USER 10001:10001
+COPY --from=build /opt/venv /opt/venv
+COPY --from=build --chown=10001:10001 /opt/hf /opt/hf
+COPY images/decide/server.py /opt/decide/server.py
+EXPOSE 8790
+LABEL org.opencontainers.image.title="terragucci-decide"
+LABEL org.opencontainers.image.description="Laya 0.3.28 (convaiinnovations/laya@55cf4c4ebb4e) on CPU behind the Jev /v1/systemone shape"
+LABEL org.opencontainers.image.version="0.2.0"
+LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+CMD ["python", "/opt/decide/server.py"]
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5m --retries=3 CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8790/health', timeout=4)"]

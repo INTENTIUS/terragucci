@@ -3,11 +3,12 @@
 //   npx tsx scripts/images.ts tags                 print each image's name and reference
 //   npx tsx scripts/images.ts build [--platform p]  build all three for one platform, into the local daemon
 //   npx tsx scripts/images.ts check [--platform p]  run each image's tools, and compare sizes with images/budget.json
+//   npx tsx scripts/images.ts build-decide [--platform p]  build the opt-in terragucci-decide image (not one of the three)
 // Tags and tool versions come from packages/terragucci, the same source `init` reads.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { REGISTRY, TOOL_VERSIONS, imageTag } from "../packages/terragucci/src/images";
+import { REGISTRY, TOOL_VERSIONS, decideImage, imageTag } from "../packages/terragucci/src/images";
 
 const root = join(import.meta.dirname, "..");
 const NAMES = ["tofu", "terraform", "terragrunt"] as const;
@@ -63,7 +64,12 @@ if (cmd === "tags") {
     console.log(`${over || max === undefined ? "FAIL" : "ok  "} ${n}: ${mb(bytes)} MB${max === undefined ? ", no budget in images/budget.json" : ` (budget ${mb(max)} MB)`}`);
   }
   process.exit(failed ? 1 : 0);
+} else if (cmd === "build-decide") {
+  // terragucci-decide (terragucci#29) is opt-in: tags, build and check above
+  // never name it, and images/budget.json holds no budget for it. The stack's
+  // decide profile runs it as terragucci-decide:local.
+  run("docker", ["buildx", "build", "--load", ...(platform ? ["--platform", platform] : []), "-f", "images/Dockerfile.decide", "-t", decideImage(), "-t", "terragucci-decide:local", "."]);
 } else {
-  console.error("usage: npx tsx scripts/images.ts tags|build|check [--platform linux/amd64|linux/arm64]");
+  console.error("usage: npx tsx scripts/images.ts tags|build|check|build-decide [--platform linux/amd64|linux/arm64]");
   process.exit(2);
 }
