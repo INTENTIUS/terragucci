@@ -69,7 +69,8 @@ respond-triage|a failed apply is triaged from the known-error table|
 respond-drift|drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged|
 respond-tips|each tip becomes its own small pull request|
 respond-fmt|fmt on request commits to the pull request branch and nowhere else|
-respond-notes|release notes come from the conventional commits that touched the module|'
+respond-notes|release notes come from the conventional commits that touched the module|
+fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1593,6 +1594,78 @@ claim_tg_drift() {
   rm -rf "$work"
   "$HERE/example-terragrunt.sh" reset >&2 || log "could not apply the example again"
   [ $rc = 0 ] && log "$unit and $queue named, one issue kept, a second run updated it"
+  return $rc
+}
+
+claim_fresh_plan() {
+  # Two roots nothing has applied are added: fresh-net, and fresh-app, which
+  # reads fresh-net's state. The plan job must stay green, plan fresh-net, not
+  # plan fresh-app, and say in the report and the note that fresh-app waits
+  # for fresh-net. BREAK: fresh-app reads dev's platform state, which is
+  # applied, so the upstream counts as applied and fresh-app plans.
+  log() { echo "[smoke fresh-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 run=0 r net=envs/dev/fresh-net app=envs/dev/fresh-app key=envs/dev/fresh-net.tfstate edit
+  [ -n "${BREAK:-}" ] && key=envs/dev/platform.tfstate
+  edit="mkdir -p $net $app
+cat > $net/main.tf <<'TF'
+terraform {
+  required_version = \"~> 1.13.0\"
+
+  backend \"s3\" {
+    bucket         = \"shop-terraform-state\"
+    key            = \"envs/dev/fresh-net.tfstate\"
+    region         = \"us-east-1\"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+output \"logs_bucket\" {
+  value = \"shop-dev-fresh\"
+}
+TF
+cat > $app/main.tf <<TF
+terraform {
+  required_version = \"~> 1.13.0\"
+
+  backend \"s3\" {
+    bucket         = \"shop-terraform-state\"
+    key            = \"envs/dev/fresh-app.tfstate\"
+    region         = \"us-east-1\"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+data \"terraform_remote_state\" \"net\" {
+  backend = \"s3\"
+  config = {
+    bucket         = \"shop-terraform-state\"
+    key            = \"$key\"
+    region         = \"us-east-1\"
+    use_path_style = true
+  }
+}
+
+output \"seen\" {
+  value = data.terraform_remote_state.net.outputs.logs_bucket
+}
+TF"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  # The fresh estate has no state for either new root: clear any a past run left.
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/envs/dev/fresh-net.tfstate" || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/envs/dev/fresh-app.tfstate" || true
+  REPORT_BASE=1 REPORT_EDIT="$edit" report_run "$work" || run=$?
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
+  [ "$run" = 0 ] || { log "the plan job exited $run, so it is not green"; rc=1; }
+  jq -e --arg n "$net" '.roots[] | select(.path == $n and .status == "planned")' "$r" >/dev/null || { log "$net was not planned"; rc=1; }
+  jq -e --arg a "$app" '[.roots[] | select(.path == $a)] | length == 0' "$r" >/dev/null || { log "$app was planned though its upstream is unapplied"; rc=1; }
+  jq -e --arg a "$app" --arg n "$net" '.deferred[] | select(.unit == $a and (.after | index($n)))' "$r" >/dev/null || { log "the report does not say $app waits for $net"; rc=1; }
+  rm -rf "$work"
+  [ $rc = 0 ] && log "$net planned; $app held back until $net applies, and the job stayed green"
   return $rc
 }
 
