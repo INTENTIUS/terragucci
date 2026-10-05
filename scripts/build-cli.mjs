@@ -4,7 +4,7 @@
 // chant is a build dependency only. The TypeScript folder that a .ts config
 // needs, and the HCL parser a module rollout needs, stay external and optional.
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
 import { dirname, join } from "node:path";
@@ -14,8 +14,12 @@ import { build } from "esbuild";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = join(root, "packages/terragucci");
 const dist = join(pkg, "dist");
-rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
+// Everything is built in a private stage inside dist and renamed into place at
+// the end, so a build that runs while another one does never leaves a reader
+// with a missing or half-written dist/terragucci.mjs. Renames within one
+// directory are atomic; the last build to finish wins whole.
+const stage = mkdtempSync(join(dist, ".stage-"));
 
 // One set of options for the shipped bundle and for the origin/main baseline.
 const options = (pkgDir) => ({
@@ -39,7 +43,7 @@ const options = (pkgDir) => ({
 
 const result = await build({
   ...options(pkg),
-  outfile: join(dist, "terragucci.mjs"),
+  outfile: join(stage, "terragucci.mjs"),
   sourcemap: "linked",
   // bundle-check reads this to refuse a denied input (terragucci#87).
   metafile: true,
@@ -48,20 +52,25 @@ const result = await build({
 const metaDir = join(root, "node_modules/.cache/terragucci");
 mkdirSync(metaDir, { recursive: true });
 writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
-chmodSync(join(dist, "terragucci.mjs"), 0o755);
+chmodSync(join(stage, "terragucci.mjs"), 0o755);
 
 // The report's JSON Schema, published so a reader can validate terragucci.report/v1.
-copyFileSync(join(pkg, "src/report/report.schema.json"), join(dist, "report.schema.json"));
+copyFileSync(join(pkg, "src/report/report.schema.json"), join(stage, "report.schema.json"));
 
 // The config types, for `import type { TerragucciConfig } from "@intentius/terragucci"`.
 execFileSync(
   join(root, "node_modules/.bin/tsc"),
-  [join(pkg, "src/config.ts"), "--declaration", "--emitDeclarationOnly", "--outDir", join(dist, "types"),
+  [join(pkg, "src/config.ts"), "--declaration", "--emitDeclarationOnly", "--outDir", join(stage, "types"),
     "--module", "esnext", "--moduleResolution", "bundler", "--target", "es2022", "--skipLibCheck", "--types", "node"],
   { stdio: "inherit" },
 );
-renameSync(join(dist, "types/config.d.ts"), join(dist, "types.d.ts"));
-rmSync(join(dist, "types"), { recursive: true, force: true });
+renameSync(join(stage, "types/config.d.ts"), join(stage, "types.d.ts"));
+rmSync(join(stage, "types"), { recursive: true, force: true });
+// The map goes first and the bundle last, so a bundle that is there has its map.
+for (const f of readdirSync(stage).sort((a, b) => Number(a === "terragucci.mjs") - Number(b === "terragucci.mjs"))) {
+  renameSync(join(stage, f), join(dist, f));
+}
+rmSync(stage, { recursive: true, force: true });
 
 // Size report: raw and gzipped, the change against origin/main, the ten largest
 // inputs. It informs and never fails; bundle-check holds the ceiling.
@@ -70,14 +79,25 @@ const raw = outBytes.length;
 const gz = gzipSync(outBytes).length;
 const fmt = (n) => `${(n / 1024).toFixed(1)} KB`;
 console.log(`  bundle ${fmt(raw)} raw, ${fmt(gz)} gzipped`);
+// Both builds resolve chant from this node_modules, so the baseline is the
+// origin/main sources on the chant build installed here. Say which, because it
+// is not always the pin: chant-local installs a local build, and a bundle that
+// differs from one built on the pin by a few KB is that, not the sources.
+const chantBuild = (() => {
+  try {
+    const p = JSON.parse(readFileSync(join(root, "node_modules/@intentius/chant/package.json"), "utf8"));
+    return `chant ${p.version}${p.chantLocal ? " (local build)" : ""}`;
+  } catch { return "chant (not installed)"; }
+})();
 try {
+  const baseSha = execFileSync("git", ["rev-parse", "--short", "origin/main"], { cwd: root, stdio: "pipe" }).toString().trim();
   const tmp = mkdtempSync(join(tmpdir(), "terragucci-base-"));
   execFileSync("sh", ["-c", `git archive origin/main packages scripts | tar -x -C "${tmp}"`], { cwd: root, stdio: "pipe" });
   symlinkSync(join(root, "node_modules"), join(tmp, "node_modules"));
   const base = await build({ ...options(join(tmp, "packages/terragucci")), write: false, outfile: join(tmp, "base.mjs") });
   const baseRaw = base.outputFiles[0].contents;
   const sign = (n) => `${n >= 0 ? "+" : "-"}${fmt(Math.abs(n))}`;
-  console.log(`  vs origin/main ${sign(raw - baseRaw.length)} raw, ${sign(gz - gzipSync(baseRaw).length)} gzipped (origin/main is ${fmt(baseRaw.length)} raw)`);
+  console.log(`  vs origin/main ${sign(raw - baseRaw.length)} raw, ${sign(gz - gzipSync(baseRaw).length)} gzipped (origin/main ${baseSha} is ${fmt(baseRaw.length)} raw; both built with ${chantBuild})`);
   rmSync(tmp, { recursive: true, force: true });
 } catch (e) {
   console.log(`  vs origin/main: not measured (${String(e.message).split("\n")[0]})`);
