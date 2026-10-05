@@ -8,7 +8,7 @@ just site-dev   # serve the docs locally
 
 ## The package
 
-`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. `just build-cli` bundles it into one file, `dist/terragucci.mjs`, with no runtime dependencies; chant is a build dependency of this repo only. `just bundle-check`, part of `just check`, fails if the package gains a dependency, the bundle passes its size budget, or it imports anything but Node's modules and the optional TypeScript folder that a `terragucci.ts` config needs. `npm pack` in that directory builds the tarball; publishing to npm waits for an explicit go.
+`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. `just build-cli` bundles it into one file, `dist/terragucci.mjs`, with no runtime dependencies; chant is a build dependency of this repo only. `just bundle-check`, part of `just check`, fails if the package gains a dependency, the bundle imports anything but Node's modules and the two optional packages (the TypeScript folder that a `terragucci.ts` config needs, and the HCL parser), or the build's esbuild metafile lists an input from the TypeScript compiler, chant's lint rules, codegen or CLI, or a lexicon's entry point, lint rules or codegen. The size is not budgeted: 1 MB is an accident ceiling, and every `just build-cli` prints the raw and gzipped size, the change against origin/main and the ten largest inputs without failing on growth. `npm pack` in that directory builds the tarball; publishing to npm waits for an explicit go.
 
 ## The CI images
 
