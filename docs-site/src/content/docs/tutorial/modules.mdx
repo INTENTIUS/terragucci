@@ -7,6 +7,7 @@ claims: [publish, rollout]
 ---
 
 import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
 
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step, and removes the release tags this page makes.
@@ -20,7 +21,11 @@ The example's roots call `modules/service` by path, so the scenario first does w
 just example change pin
 ```
 
-<Captured step="pin" optional />
+<Captured step="pin" />
+
+<Shot step="pin" view="pull" alt="The rollout's wave 1 pull request on the local Forgejo, opened for the four dev service roots" />
+
+<Shot step="pin" view="files" alt="The pull request's files: each dev service main.tf moves its ref from modules/service/v1.0.0 to v1.1.0" />
 
 The last command it ran is `terragucci rollout modules/service --mode apply`. With no version given, the rollout takes the newest one published, `1.1.0`, and opens the pull request for the first wave. That wave is the canary, the dev services. It changes only their `main.tf` files, and the `ref` in each moves from `modules/service/v1.0.0` to `modules/service/v1.1.0`. The usual stages plan it as they plan any pull request.
 

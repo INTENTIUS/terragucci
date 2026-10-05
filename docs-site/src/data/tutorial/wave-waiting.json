@@ -1,10 +1,10 @@
 {
   "step": "wave-waiting",
-  "source_hash": "c0204984f98eaa7d",
+  "source_hash": "1ee86c0a461fb69e",
   "commands": [
     {
       "cmd": "just example change destroy",
-      "output": "[example] pushed change/destroy at e079d669\n[example] run 7 for e079d669: success (http://localhost:3300/terragucci-admin/example/actions/runs/7)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/3\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/7 (success)",
+      "output": "[example] pushed change/destroy at ddbe1bff\n[example] run 7 for ddbe1bff: success (http://localhost:3300/terragucci-admin/example/actions/runs/7)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/3\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/7 (success)",
       "exit": 0
     },
     {

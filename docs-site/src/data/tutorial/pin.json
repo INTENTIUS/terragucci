@@ -1,0 +1,11 @@
+{
+  "step": "pin",
+  "source_hash": "1ee86c0a461fb69e",
+  "commands": [
+    {
+      "cmd": "just example change pin",
+      "output": "service 1.0.0: published to git-tags sha256:d2162ff6868b8a068314199b1697772bfd5d43dbc1cc8be3d7244dc05b03bdb1\n[pin] main pins the service roots to modules/service 1.0.0; the pipeline applies them\nservice 1.1.0: published to git-tags sha256:ae02f0e19f72634d94fe7828396cc4ebcc6ec4fdd6dc4871be48d3d3156428e7\nmodules/service 1.0.0 -> 1.1.0 (newest published: tag modules/service/v1.1.0): opened\n  wave 1 (canaries)\n    pull request opened http://forgejo:3000/terragucci-admin/example/pulls/5\n      roots: envs/dev/email, envs/dev/orders, envs/dev/payments, envs/dev/search\n      files: envs/dev/email/main.tf, envs/dev/orders/main.tf, envs/dev/payments/main.tf, envs/dev/search/main.tf\n  wave 2\n    not opened\n      roots: envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/16 (success)",
+      "exit": 0
+    }
+  ]
+}
