@@ -31,6 +31,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
+JOB_CACHE_VOLUME=terragucci-job-cache
+# shellcheck source=mounted.sh
+. "$HERE/mounted.sh"
 
 # Every claim's temp work dir is recorded here and removed on every exit path:
 # when the claim returns (run_claim), and on exit, interrupt or termination.
@@ -40,7 +43,7 @@ SMOKE_WORKS=()
 track_work() { SMOKE_WORKS+=("$1"); }
 cleanup_works() {
   local d
-  for d in ${SMOKE_WORKS[@]+"${SMOKE_WORKS[@]}"}; do [ -n "$d" ] && rm -rf "$d"; done
+  for d in ${SMOKE_WORKS[@]+"${SMOKE_WORKS[@]}"}; do [ -n "$d" ] && drop_work "$d"; done
   SMOKE_WORKS=()
 }
 SMOKE_RUNNING=""
@@ -58,9 +61,10 @@ trap 'cleanup_works; exit 130' INT
 trap 'cleanup_works; exit 143' TERM
 
 # The provider and binary cache the forge's job containers mount at /cache
-# (container.options in bootstrap.sh). The local report runs mount it too, so
-# a provider downloads once per stack pass, not once per root per run.
-JOB_CACHE_VOLUME=terragucci-job-cache
+# (container.options in bootstrap.sh). Every local run that installs providers
+# mounts it too, so a provider downloads once per stack pass, not once per
+# root per run, and no provider binary sits in a bind-mounted work dir.
+# JOB_CACHE_VOLUME is set at the top, next to mounted.sh.
 
 # name|what the site says|issue that builds it (empty: implemented here)
 CLAIMS='boot|the example boots and deploys locally|
@@ -176,7 +180,7 @@ claim_check() {
   local repo="$USER/example" work sha logs
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
-    || { log "no example repo; run 'just example up' first"; rm -rf "$work"; return 1; }
+    || { log "no example repo; run 'just example up' first"; drop_work "$work"; return 1; }
   local unformatted='locals {
     unformatted   = "tofu fmt rewrites this file"
   also = 1
@@ -184,13 +188,13 @@ claim_check() {
   [ -n "${BREAK:-}" ] && echo "$unformatted" > "$work/tree/envs/dev/orders/unformatted.tf"
   sha="$(push_tree "$work/tree" "$repo" smoke/check "smoke check: clean $(date +%s)")"
   wait_run "$repo" "$sha"
-  if [ "$RUN_STATUS" != success ]; then log "the clean push ended '$RUN_STATUS'"; rm -rf "$work"; return 1; fi
+  if [ "$RUN_STATUS" != success ]; then log "the clean push ended '$RUN_STATUS'"; drop_work "$work"; return 1; fi
   echo "$unformatted" > "$work/tree/envs/dev/orders/unformatted.tf"
   sha="$(push_tree "$work/tree" "$repo" smoke/check "smoke check: unformatted $(date +%s)")"
   wait_run "$repo" "$sha"
   logs="$(print_logs "$repo" "$RUN_ID")"
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branches/smoke%2Fcheck" || true
-  rm -rf "$work"
+  drop_work "$work"
   [ "$RUN_STATUS" = failure ] || { log "the unformatted push ended '$RUN_STATUS'"; return 1; }
   grep -q "unformatted.tf" <<<"$logs" || { log "the run failed but its log does not name unformatted.tf"; return 1; }
   log "the unformatted push failed at the format check and named envs/dev/orders/unformatted.tf"
@@ -214,7 +218,7 @@ claim_zero_config() {
     echo "[smoke zero-config] init wrote a different pipeline" >&2
     rc=1
   fi
-  rm -rf "$work"
+  drop_work "$work"
   return $rc
 }
 
@@ -291,10 +295,10 @@ TF
   sha2="$(push_tree "$work" "$repo" main "serial: second")"
   wait_run "$repo" "$sha1"
   wait_run "$repo" "$sha2"
-  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the second run ended $RUN_STATUS"; rm -rf "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the second run ended $RUN_STATUS"; drop_work "$work"; return 1; }
   marks="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g; s#.*/[0-9]*-##' | tr '\n' ' ')"
   log "marks in key order: $marks"
-  rm -rf "$work"
+  drop_work "$work"
   # Keys sort by millisecond timestamp, so the listing is the order they happened in.
   [ "$marks" = "start end start end " ] || { log "the applies overlapped or one did not run"; return 1; }
   local statuses
@@ -364,7 +368,7 @@ claim_waves() {
   . "$HERE/lib.sh"
   local work repo="$USER/waves" sha applied rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo waves || { rm -rf "$work"; return 1; }
+  gated_repo waves || { drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
     rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
@@ -387,7 +391,7 @@ claim_waves() {
     log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting for its own approval"; rc=1; }
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
   return $rc
 }
@@ -425,7 +429,7 @@ claim_sealed() {
   . "$HERE/lib.sh"
   local work repo="$USER/sealed" sha applied logs rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo sealed || { rm -rf "$work"; return 1; }
+  gated_repo sealed || { drop_work "$work"; return 1; }
   [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
   ssh-keygen -q -t ed25519 -N "" -C agent -f "$work/agent" || rc=1
   sha="$(push_tree "$work/tree" "$repo" main "sealed: first")"
@@ -457,7 +461,7 @@ claim_sealed() {
     log "after the sealed approval: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ "$applied" = "canary/one " ] || { log "expected canary/one to apply on the sealed approval"; rc=1; }
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "unsealed and agent-sealed approvals let nothing apply; the sealed one let wave 1 apply"
   return $rc
 }
@@ -472,7 +476,7 @@ claim_refuse() {
   . "$HERE/lib.sh"
   local work repo="$USER/refuse" sha applied logs rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo refuse || { rm -rf "$work"; return 1; }
+  gated_repo refuse || { drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
     rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
@@ -496,7 +500,7 @@ claim_refuse() {
     grep -q "changed after it was approved, so nothing in it was applied" <<<"$logs" || { log "wave 1 did not refuse as changed"; rc=1; }
     grep -q "planned differently since: canary/one" <<<"$logs" || { log "the refusal does not name canary/one"; rc=1; }
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "wave 1 changed after its approval, applied nothing and named canary/one"
   return $rc
 }
@@ -577,9 +581,9 @@ projects:
     url: $URL/$repo
 YML
   [ -n "${BREAK:-}" ] && mode=dry-run   # BREAK: a dry run opens nothing
-  out="$(TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" reconcile --config "$work/terragucci.yml" --mode "$mode" 2>&1)" || { echo "$out" >&2; rm -rf "$work"; return 1; }
+  out="$(TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" reconcile --config "$work/terragucci.yml" --mode "$mode" 2>&1)" || { echo "$out" >&2; drop_work "$work"; return 1; }
   echo "$out" >&2
-  rm -rf "$work"
+  drop_work "$work"
   grep -q "localhost/$USER/in-line: unchanged" <<<"$out" || { log "in-line was not left alone"; return 1; }
   pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open" | jq -r '.[] | select(.head.ref == "terragucci/pipeline") | .number' | head -1)"
   [ -n "$pr" ] || { log "no pull request on $repo"; return 1; }
@@ -628,7 +632,7 @@ build_cli() {
 
 report_run() {
   local work="$1"; shift
-  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p
+  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p rc=0
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
   build_cli || return 1
@@ -657,7 +661,9 @@ report_run() {
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     ${REPORT_EXTRA[@]+"${REPORT_EXTRA[@]}"} \
-    "$image" terragucci stage "${REPORT_STAGE:-tf-plan}" ${REPORT_ARGS[@]+"${REPORT_ARGS[@]}"} >&2
+    "$image" terragucci stage "${REPORT_STAGE:-tf-plan}" ${REPORT_ARGS[@]+"${REPORT_ARGS[@]}"} >&2 || rc=$?
+  clean_mounted "$work" "$image"
+  return $rc
 }
 
 # Apply some of the example's roots as committed, each in the tofu CI image as
@@ -673,9 +679,9 @@ apply_roots() { # root...
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
-      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { rm -rf "$work"; return 1; }
+      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { drop_work "$work"; return 1; }
   done
-  rm -rf "$work"
+  drop_work "$work"
 }
 
 claim_report() {
@@ -724,7 +730,7 @@ claim_report() {
       done
     fi
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] || return 1
   log "two runs, each root linked to its plan, both in $REPORT_BUCKET/$prefix/index.json"
 }
@@ -742,10 +748,10 @@ claim_affected() {
   [ -n "${BREAK:-}" ] && base=""
   REPORT_BASE="$base" REPORT_EDIT='printf "\n# smoke affected: a change to this root alone\n" >> envs/dev/platform/main.tf' report_run "$work" || true
   r="$work/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
   got="$(jq -r '[.roots[] | select(.status == "planned") | .path] | sort | join(",")' "$r")"
   [ "$got" = "$want" ] || { log "planned $got, not $want"; rc=1; }
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "envs/dev/platform changed: it and the four dev services that read its state planned, nothing else"
   return $rc
 }
@@ -763,16 +769,16 @@ claim_grouped() {
   want="$(for e in dev prod staging; do for s in email orders payments search; do echo "envs/$e/$s"; done; done | sort | paste -sd, -)"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
-    || { log "no example repo; run 'just example up' first"; rm -rf "$work"; return 1; }
+    || { log "no example repo; run 'just example up' first"; drop_work "$work"; return 1; }
   # The pipeline this tree renders, so the pull request runs it whatever main carries.
   cp "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$work/tree/.forgejo/workflows/terragucci.yml"
-  git -C "$work/tree" apply "$EXAMPLE/changes/module-bump.patch" || { rm -rf "$work"; return 1; }
+  git -C "$work/tree" apply "$EXAMPLE/changes/module-bump.patch" || { drop_work "$work"; return 1; }
   [ -n "${BREAK:-}" ] && sed -i.bak "s#terragucci stage tf-plan --out#terragucci stage tf-plan --root 'envs/dev/*' --out#" "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
   sha="$(push_tree "$work/tree" "$repo" "$branch" "smoke grouped: module-bump $(date +%s)")"
   pr="$(open_pr "$repo" "$branch")"
   [ -n "$pr" ] || pr="$(api -H 'content-type: application/json' -X POST \
     -d "$(jq -n --arg h "$branch" '{head: $h, base: "main", title: "smoke grouped: module-bump"}')" "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
-  [ -n "$pr" ] && [ "$pr" != null ] || { log "no pull request"; rm -rf "$work"; return 1; }
+  [ -n "$pr" ] && [ "$pr" != null ] || { log "no pull request"; drop_work "$work"; return 1; }
   # The plan job's status on the head commit says when its note is up.
   deadline=$(( $(date +%s) + TIMEOUT ))
   state=pending
@@ -796,7 +802,7 @@ claim_grouped() {
   fi
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/pulls/$pr" || true
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branches/smoke%2Fgrouped" || true
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "one note on pull request $pr groups the 12 service roots in $groups groups"
   return $rc
 }
@@ -856,7 +862,7 @@ claim_traces() {
     [ "$spans" = "$roots" ] && [ "$roots" -ge 15 ] || { log "trace $trace has $spans root spans for $roots roots"; rc=1; }
     [ "$binary" -gt 0 ] || { log "no span from the binary carries trace $trace"; rc=1; }
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] || return 1
   log "trace $trace: $spans root spans for $roots roots, and $binary spans from the binary inside it"
 }
@@ -877,7 +883,7 @@ claim_metrics() {
   REPORT_ENV="$env" report_run "$work/run" module-bump destroy || true
   commit="$(git -C "$work/run" rev-parse HEAD)"
   report="$work/run/terragucci-report/report.json"
-  [ -f "$report" ] || { log "the run wrote no report"; rm -rf "$work"; return 1; }
+  [ -f "$report" ] || { log "the run wrote no report"; drop_work "$work"; return 1; }
   value() { curl -fsS -G "$PROMETHEUS/api/v1/query" --data-urlencode "query=$1" | jq -r '.data.result[0].value[1] // empty'; }
   for i in $(seq 1 12); do   # Prometheus scrapes every 5s
     rc=0
@@ -892,7 +898,7 @@ claim_metrics() {
     [ $rc = 0 ] && break
     sleep 5
   done
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] || { log "Prometheus does not hold the run's metrics ($q)"; return 1; }
   log "Prometheus holds commit $commit's roots planned and changes by action, equal to the report"
 }
@@ -909,7 +915,7 @@ claim_highlight() {
   [ -n "${BREAK:-}" ] && patches=(module-bump replace)   # BREAK: no destroy to name
   report_run "$work" "${patches[@]}" || true
   dir="$work/terragucci-report"
-  [ -f "$dir/report.json" ] || { log "no report"; rm -rf "$work"; return 1; }
+  [ -f "$dir/report.json" ] || { log "no report"; drop_work "$work"; return 1; }
   del="$(jq -r '.named[] | select(.action == "delete" and .root == "envs/staging/email") | .address' "$dir/report.json" | head -1)"
   rep="$(jq -r '.named[] | select(.action == "replace" and .root == "envs/prod/search") | .address' "$dir/report.json" | head -1)"
   [ -n "$del" ] || { log "the destroy in envs/staging/email is not named"; rc=1; }
@@ -925,7 +931,7 @@ claim_highlight() {
     jq -e --arg g "$big" '.groups[] | select(.id == $g) | .fold == "folded"' "$dir/report.json" >/dev/null || { log "group $big is not folded"; rc=1; }
     grep -qE "<details class=\"group\" id=\"group-$big\"[^>]* open>" "$dir/report.html" && { log "group $big is open in the HTML"; rc=1; }
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] || return 1
   log "named $del (delete) and $rep (replace), both roots open; group $big folded"
 }
@@ -961,7 +967,7 @@ claim_drift() {
   done
   local deleted=""
   if [ -z "${BREAK:-}" ]; then
-    TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { rm -rf "$work"; return 1; }
+    TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { drop_work "$work"; return 1; }
     deleted=1
   fi
   drift_checks() {
@@ -1001,7 +1007,7 @@ claim_drift() {
     [ "$(open_issues | jq length)" = 0 ] || { log "the drift issue is still open with no drift"; return 1; }
   }
   drift_checks || rc=1
-  rm -rf "$work"
+  drop_work "$work"
   # A run that stopped before the example was applied again leaves the queue
   # deleted; put it back, so the next claim meets the example as committed.
   if [ -n "$deleted" ]; then apply_roots "$root" || log "could not apply $root again"; fi
@@ -1026,7 +1032,7 @@ claim_tips() {
   REPORT_CONFIG="$cfg" report_run "$work/on" float || true
   REPORT_CONFIG="tips: false" report_run "$work/off" float || true
   on="$work/on/terragucci-report"; off="$work/off/terragucci-report"
-  [ -f "$on/report.json" ] && [ -f "$off/report.json" ] || { log "a run wrote no report"; rm -rf "$work"; return 1; }
+  [ -f "$on/report.json" ] && [ -f "$off/report.json" ] || { log "a run wrote no report"; drop_work "$work"; return 1; }
   jq -e '.tips[] | select(.rule == "terragucci-floating-range" and .root == "envs/dev/search" and (.url | startswith("https://")))' "$on/report.json" >/dev/null \
     || { log "the floating provider in envs/dev/search is not tipped with its rule and page"; rc=1; }
   grep -q 'id="tips"' "$on/report.html" || { log "the HTML has no Tips section"; rc=1; }
@@ -1038,7 +1044,7 @@ claim_tips() {
             <(jq -S '{change_set, digests: [.roots[] | {path, plan_digest}], sets: [.waves[] | .set_digest]}' "$off/report.json") >&2; then
     log "tips changed a plan digest or a set digest"; rc=1
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] || return 1
   log "terragucci-floating-range names envs/dev/search; tips: false removes it; the digests match"
 }
@@ -1064,27 +1070,27 @@ claim_publish() {
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,DNS:registry,IP:127.0.0.1" \
     -keyout "$work/certs/registry.key" -out "$work/certs/registry.crt" >/dev/null 2>&1 \
-    || { log "openssl could not make a certificate"; rm -rf "$work"; return 1; }
+    || { log "openssl could not make a certificate"; drop_work "$work"; return 1; }
   chmod 644 "$work/certs/registry.key"
   with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$work/certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
-    --profile registry up -d --force-recreate registry >&2 || { rm -rf "$work"; return 1; }
+    --profile registry up -d --force-recreate registry >&2 || { drop_work "$work"; return 1; }
   local i
   for i in $(seq 1 30); do
     curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 && break
     sleep 1
   done
   curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 \
-    || { log "the registry did not come up"; rm -rf "$work"; return 1; }
+    || { log "the registry did not come up"; drop_work "$work"; return 1; }
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
-  settle "repos/$repo" 404 || { rm -rf "$work"; return 1; }
+  settle "repos/$repo" 404 || { drop_work "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X POST \
     -d "{\"name\":\"$name\",\"private\":false,\"auto_init\":false,\"default_branch\":\"main\"}" "$URL/api/v1/user/repos"
-  settle "repos/$repo" 200 || { rm -rf "$work"; return 1; }
+  settle "repos/$repo" 200 || { drop_work "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   # The registry takes any credentials; the job still has to be handed them.
   for t in TERRAGUCCI_REGISTRY_USER TERRAGUCCI_REGISTRY_PASSWORD; do
     api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"data":"smoke"}' "$URL/api/v1/repos/$repo/actions/secrets/$t" \
-      || { log "could not set the $t secret"; rm -rf "$work"; return 1; }
+      || { log "could not set the $t secret"; drop_work "$work"; return 1; }
   done
   # The job container reaches the registry as registry:5000 on the stack network
   # and trusts its certificate from the repo's copy, a path relative to the checkout.
@@ -1095,8 +1101,8 @@ claim_publish() {
   printf 'resource "terraform_data" "queue" {}\n' > "$tree/modules/queue/main.tf"
   printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "%s/dev.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "dev" {}\n' "$name" > "$tree/envs/dev/main.tf"
   printf 'binary: tofu\nforge: forgejo\nenv:\n  NODE_EXTRA_CA_CERTS: registry.crt\nmodules:\n  path: modules/*\n  publish:\n    - oci://registry:5000/%s\n    - git-tags\n' "$repo" > "$tree/terragucci.yml"
-  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { rm -rf "$work"; return 1; }
-  grep -q "terragucci publish" "$tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no publish job"; rm -rf "$work"; return 1; }
+  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { drop_work "$work"; return 1; }
+  grep -q "terragucci publish" "$tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no publish job"; drop_work "$work"; return 1; }
   tags() { curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/$repo/$1/tags/list" | jq -r '.tags // [] | sort | join(",")'; }
   gittags() { git ls-remote --tags "$remote" 'refs/tags/modules/*' | sed -E 's#.*refs/tags/##; /\^\{\}$/d' | sort | paste -sd, -; }
   run() { # message: push the tree and wait for the run on it
@@ -1104,27 +1110,27 @@ claim_publish() {
     wait_run "$repo" "$sha"
     [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run for '$1' ended $RUN_STATUS"; return 1; }
   }
-  run "feat: modules" || { rm -rf "$work"; return 1; }
-  [ "$(tags service)" = "0.1.0" ] && [ "$(tags queue)" = "0.1.0" ] || { print_logs "$repo" "$RUN_ID" >&2; log "first merge: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
-  [ "$(gittags)" = "modules/queue/v0.1.0,modules/service/v0.1.0" ] || { log "first merge: the remote has tags '$(gittags)'"; rm -rf "$work"; return 1; }
+  run "feat: modules" || { drop_work "$work"; return 1; }
+  [ "$(tags service)" = "0.1.0" ] && [ "$(tags queue)" = "0.1.0" ] || { print_logs "$repo" "$RUN_ID" >&2; log "first merge: service has '$(tags service)', queue '$(tags queue)'"; drop_work "$work"; return 1; }
+  [ "$(gittags)" = "modules/queue/v0.1.0,modules/service/v0.1.0" ] || { log "first merge: the remote has tags '$(gittags)'"; drop_work "$work"; return 1; }
   # A clone without the release tags is told the version is published, and exits 0.
-  git clone -q --no-tags "$remote" "$work/clone" || { rm -rf "$work"; return 1; }
+  git clone -q --no-tags "$remote" "$work/clone" || { drop_work "$work"; return 1; }
   printf 'modules:\n  path: modules/*\n  publish: git-tags\n' > "$work/git-only.yml"
-  out="$(cd "$work/clone" && "$TERRAGUCCI" publish --config "$work/git-only.yml" 2>&1)" || { echo "$out" >&2; log "a clone without tags did not exit 0"; rm -rf "$work"; return 1; }
+  out="$(cd "$work/clone" && "$TERRAGUCCI" publish --config "$work/git-only.yml" 2>&1)" || { echo "$out" >&2; log "a clone without tags did not exit 0"; drop_work "$work"; return 1; }
   echo "$out" >&2
-  grep -q ": published" <<<"$out" && { log "a clone without tags published again"; rm -rf "$work"; return 1; }
+  grep -q ": published" <<<"$out" && { log "a clone without tags published again"; drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     for t in $(gittags | tr ',' ' '); do git -C "$tree" push -q "$remote" ":refs/tags/$t"; done
   fi
   before="$(git ls-remote --tags "$remote" 'refs/tags/modules/*' | sort)"
-  run "chore: nothing changed" || { rm -rf "$work"; return 1; }
+  run "chore: nothing changed" || { drop_work "$work"; return 1; }
   [ "$(tags service)" = "0.1.0" ] && [ "$(tags queue)" = "0.1.0" ] && [ "$(git ls-remote --tags "$remote" 'refs/tags/modules/*' | sort)" = "$before" ] \
-    || { print_logs "$repo" "$RUN_ID" >&2; log "a push that changed nothing published: registry '$(tags service)' '$(tags queue)', remote tags '$(gittags)'"; rm -rf "$work"; return 1; }
+    || { print_logs "$repo" "$RUN_ID" >&2; log "a push that changed nothing published: registry '$(tags service)' '$(tags queue)', remote tags '$(gittags)'"; drop_work "$work"; return 1; }
   printf 'output "id" { value = terraform_data.service.id }\n' > "$tree/modules/service/outputs.tf"
-  run "feat(service): an id output" || { rm -rf "$work"; return 1; }
-  [ "$(tags service)" = "0.1.0,0.2.0" ] && [ "$(tags queue)" = "0.1.0" ] || { print_logs "$repo" "$RUN_ID" >&2; log "after a change: service has '$(tags service)', queue '$(tags queue)'"; rm -rf "$work"; return 1; }
+  run "feat(service): an id output" || { drop_work "$work"; return 1; }
+  [ "$(tags service)" = "0.1.0,0.2.0" ] && [ "$(tags queue)" = "0.1.0" ] || { print_logs "$repo" "$RUN_ID" >&2; log "after a change: service has '$(tags service)', queue '$(tags queue)'"; drop_work "$work"; return 1; }
   log "the pipeline published both modules on merge, a rerun published nothing, and a change to service alone moved it to 0.2.0"
-  rm -rf "$work"
+  drop_work "$work"
 }
 
 claim_rollout() {
@@ -1162,27 +1168,27 @@ claim_rollout() {
   root prod/net prod-net ""
   root prod/app prod-app 'data "terraform_remote_state" "net" {\n  backend = "s3"\n  config = {\n    bucket         = "shop-terraform-state"\n    key            = "rollout/prod-net.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\n'
   printf 'binary: tofu\nforge: forgejo\nurl: %s/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\nwaves:\n  canary: ["dev/*"]\nmodules:\n  path: modules/*\n  publish: git-tags\n' "$URL" "$repo" > "$tree/terragucci.yml"
-  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { rm -rf "$work"; return 1; }
+  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { drop_work "$work"; return 1; }
   ( cd "$tree" && git init -q -b main && git remote add origin "$remote" && git add -A \
     && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat: three roots on modules/network 0.1.0" \
     && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.1.0 -m "modules/network 0.1.0" \
-    && git push -q origin refs/tags/modules/network/v0.1.0 main ) 2>/dev/null || { log "could not push the repo"; rm -rf "$work"; return 1; }
+    && git push -q origin refs/tags/modules/network/v0.1.0 main ) 2>/dev/null || { log "could not push the repo"; drop_work "$work"; return 1; }
   sha="$(git -C "$tree" rev-parse HEAD)"
   wait_run "$repo" "$sha"
-  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first apply ended $RUN_STATUS"; rm -rf "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
 
   # A new module version, published by tf-publish as a git tag.
   printf '\noutput "version" {\n  value = "0.2.0"\n}\n' >> "$tree/modules/network/main.tf"
   ( cd "$tree" && git add -A && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -q -m "feat(network): a version output" \
-    && git push -q origin main ) 2>/dev/null || { rm -rf "$work"; return 1; }
+    && git push -q origin main ) 2>/dev/null || { drop_work "$work"; return 1; }
   wait_run "$repo" "$(git -C "$tree" rev-parse HEAD)"
-  (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" publish) >&2 || { rm -rf "$work"; return 1; }
+  (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" publish) >&2 || { drop_work "$work"; return 1; }
 
   ro() { (cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout modules/network "$@" 2>&1); }
-  out="$(ro)" || { echo "$out" >&2; rm -rf "$work"; return 1; }
+  out="$(ro)" || { echo "$out" >&2; drop_work "$work"; return 1; }
   echo "$out" >&2
   grep -q "modules/network 0.1.0 -> 0.2.0 (newest published: tag modules/network/v0.2.0): would-open" <<<"$out" \
-    || { log "the dry run did not find 0.2.0 on its own"; rm -rf "$work"; return 1; }
+    || { log "the dry run did not find 0.2.0 on its own"; drop_work "$work"; return 1; }
   [ -n "${BREAK:-}" ] && mode=dry-run
 
   pr_for() { api "$URL/api/v1/repos/$repo/pulls?state=all&limit=50" | jq -r --arg b "terragucci/rollout/modules-network-0.2.0/wave-$1" '.[] | select(.head.ref == $b) | .number' | head -1; }
@@ -1191,26 +1197,26 @@ claim_rollout() {
     out="$(ro --mode "$mode")"; rc=$?
     echo "$out" >&2
     pr="$(pr_for "$wave")"
-    [ -n "$pr" ] || { log "wave $wave: no pull request opened"; rm -rf "$work"; return 1; }
+    [ -n "$pr" ] || { log "wave $wave: no pull request opened"; drop_work "$work"; return 1; }
     files="$(api "$URL/api/v1/repos/$repo/pulls/$pr/files" | jq -r '[.[].filename] | join(",")')"
-    [ "$files" = "${expect[$wave]}" ] || { log "wave $wave's pull request changes '$files', not ${expect[$wave]}"; rm -rf "$work"; return 1; }
+    [ "$files" = "${expect[$wave]}" ] || { log "wave $wave's pull request changes '$files', not ${expect[$wave]}"; drop_work "$work"; return 1; }
     # Open: the next run waits and opens nothing.
     out="$(ro --mode "$mode")"; rc=$?
-    [ $rc = 3 ] && [ -z "$(pr_for $((wave + 1)))" ] || { echo "$out" >&2; log "wave $wave open: exit $rc, or the next wave opened"; rm -rf "$work"; return 1; }
+    [ $rc = 3 ] && [ -z "$(pr_for $((wave + 1)))" ] || { echo "$out" >&2; log "wave $wave open: exit $rc, or the next wave opened"; drop_work "$work"; return 1; }
     api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge"
     sha="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merge_commit_sha)"
     # Merged, apply not yet reported: still nothing opens.
     out="$(ro --mode "$mode")"; rc=$?
     if [ -n "$(pr_for $((wave + 1)))" ]; then
       n="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context | test("/ apply"))] | max_by(.id) | .status // "none"')"
-      [ "$n" = success ] || { echo "$out" >&2; log "wave $((wave + 1)) opened while wave $wave's apply was '$n'"; rm -rf "$work"; return 1; }
+      [ "$n" = success ] || { echo "$out" >&2; log "wave $((wave + 1)) opened while wave $wave's apply was '$n'"; drop_work "$work"; return 1; }
     fi
     wait_run "$repo" "$sha"
-    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "wave $wave's apply ended $RUN_STATUS"; rm -rf "$work"; return 1; }
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "wave $wave's apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
   done
   out="$(ro --mode "$mode")"; rc=$?
   echo "$out" >&2
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && grep -q ": complete" <<<"$out" || { log "after three waves the rollout is not complete (exit $rc)"; return 1; }
   log "0.2.0 found from its tag; three waves, one pull request each moving only its root, each opened only after the last applied"
 }
@@ -1242,6 +1248,7 @@ in_image() { # dir, command...
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
   [ -f "$bundle" ] || build_cli || return 1
   docker run --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -1287,8 +1294,8 @@ claim_respond_refused() {
   mkdir -p "$work/approved" "$work/current"
   report_run "$work/approved" || true
   report_run "$work/current" "${patches[@]}" || true
-  out="$(cd "$work/current" && "$TERRAGUCCI" respond wave-refused --approved "$work/approved/terragucci-report" --current terragucci-report --json)" || { rm -rf "$work"; return 1; }
-  rm -rf "$work" 2>/dev/null || true
+  out="$(cd "$work/current" && "$TERRAGUCCI" respond wave-refused --approved "$work/approved/terragucci-report" --current terragucci-report --json)" || { drop_work "$work"; return 1; }
+  drop_work "$work" 2>/dev/null || true
   jq -r .results.text <<<"$out" >&2
   [ "$(jq -c '[.results.data.roots[].root]' <<<"$out")" = '["envs/prod/search"]' ] || { log "expected envs/prod/search alone to have moved"; return 1; }
   jq -e '[.results.data.roots[0].changes[].attributes[]] | index("hash_key")' <<<"$out" >/dev/null || { log "hash_key is not named"; return 1; }
@@ -1313,8 +1320,8 @@ claim_respond_triage() {
     "$FLOCI/shop-terraform-state/$key.tflock"
   in_image "$work" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color -lock-timeout=0s' > "$work/apply.log" 2>&1 || true
   tail -20 "$work/apply.log" >&2
-  out="$(in_image "$work" terragucci respond apply-failed --log apply.log --json)" || { rm -rf "$work" 2>/dev/null; return 1; }
-  rm -rf "$work" 2>/dev/null || true
+  out="$(in_image "$work" terragucci respond apply-failed --log apply.log --json)" || { drop_work "$work" 2>/dev/null; return 1; }
+  drop_work "$work" 2>/dev/null || true
   curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key.tflock" || true
   jq -r .results.text <<<"$out" >&2
   [ "$(jq -r '.results.data.known[0].class // empty' <<<"$out")" = state-lock ] || { log "the failure was not triaged as a state lock"; return 1; }
@@ -1345,9 +1352,9 @@ claim_respond_drift() {
     xurl="$(sqs CreateQueue "{\"QueueName\":\"$extra\"}" | jq -r .QueueUrl)"
     args=(--import "aws_sqs_queue.extra=$xurl")
   fi
-  out="$(in_image "$work/tree" terragucci respond drift --root app --mode apply "${args[@]}" 2>&1)" || { echo "$out" >&2; rm -rf "$work" 2>/dev/null; return 1; }
+  out="$(in_image "$work/tree" terragucci respond drift --root app --mode apply "${args[@]}" 2>&1)" || { echo "$out" >&2; drop_work "$work" 2>/dev/null; return 1; }
   echo "$out" >&2
-  rm -rf "$work" 2>/dev/null || true
+  drop_work "$work" 2>/dev/null || true
   pr="$(open_pr "$repo" terragucci/drift)"
   [ -n "$pr" ] || { log "no drift pull request"; return 1; }
   files="$(pr_files "$repo" "$pr")"
@@ -1416,9 +1423,9 @@ claim_respond_fmt() {
   printf 'locals {\n    team   = "orders"\n  owner = "shop"\n}\n' > "$work/tree/app/locals.tf"
   push_tree "$work/tree" "$repo" smoke-fmt "unformatted" >/dev/null || return 1
   [ -n "${BREAK:-}" ] && mode=dry-run
-  out="$(in_image "$work/tree" terragucci respond fmt --branch smoke-fmt --mode "$mode" 2>&1)" || { echo "$out" >&2; rm -rf "$work" 2>/dev/null; return 1; }
+  out="$(in_image "$work/tree" terragucci respond fmt --branch smoke-fmt --mode "$mode" 2>&1)" || { echo "$out" >&2; drop_work "$work" 2>/dev/null; return 1; }
   echo "$out" >&2
-  rm -rf "$work" 2>/dev/null || true
+  drop_work "$work" 2>/dev/null || true
   subject="$(api "$URL/api/v1/repos/$repo/branches/smoke-fmt" | jq -r '.commit.message' | head -1)"
   [ "$subject" = "style: tofu fmt" ] || { log "the branch's last commit is '$subject'"; return 1; }
   api "$URL/api/v1/repos/$repo/raw/app/locals.tf?ref=smoke-fmt" | grep -q '^  team  = "orders"$' || { log "locals.tf is not formatted on the branch"; return 1; }
@@ -1439,9 +1446,9 @@ claim_respond_notes() {
   mkdir -p "$work/modules/net"
   ( cd "$work" && git init -q -b main && echo '# net' > modules/net/main.tf && git add -A && "${c[@]}" commit -qm "feat: the net module" \
     && git tag modules/net/v0.1.0 && echo '# tags' >> modules/net/main.tf && "${c[@]}" commit -qam "$fix" \
-    && echo '# output' >> modules/net/main.tf && "${c[@]}" commit -qam "$feat" && git tag modules/net/v1.0.0 ) || { rm -rf "$work"; return 1; }
-  out="$(cd "$work" && "$TERRAGUCCI" respond publish --json)" || { rm -rf "$work"; return 1; }
-  rm -rf "$work"
+    && echo '# output' >> modules/net/main.tf && "${c[@]}" commit -qam "$feat" && git tag modules/net/v1.0.0 ) || { drop_work "$work"; return 1; }
+  out="$(cd "$work" && "$TERRAGUCCI" respond publish --json)" || { drop_work "$work"; return 1; }
+  drop_work "$work"
   jq -r .results.text <<<"$out" >&2
   jq -e '.results.data[0] | .version == "1.0.0" and .previous == "0.1.0" and (.notes | test("### Breaking changes\n\n- net: rename the queue output")) and (.notes | test("### Fixes"))' <<<"$out" >/dev/null \
     || { log "the 1.0.0 notes do not lead with the breaking change and list the fix"; return 1; }
@@ -1465,7 +1472,7 @@ TG_RUN_EXTRA=()
 TG_STAGE_ARGS=()
 tg_report_run() { # work, patches...
   local work="$1"; shift
-  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p base
+  local image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" p base rc=0
   image="$(tg_image)"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example-terragrunt up' first" >&2; return 1; }
   build_cli || return 1
@@ -1485,7 +1492,9 @@ tg_report_run() { # work, patches...
     -e TG_BASE="${TG_BASE_OVERRIDE-$base}" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     ${TG_RUN_EXTRA[@]+"${TG_RUN_EXTRA[@]}"} \
-    "$image" terragucci stage "${TG_STAGE:-tf-plan}" --terragrunt --binary tofu ${TG_STAGE_ARGS[@]+"${TG_STAGE_ARGS[@]}"} >&2
+    "$image" terragucci stage "${TG_STAGE:-tf-plan}" --terragrunt --binary tofu ${TG_STAGE_ARGS[@]+"${TG_STAGE_ARGS[@]}"} >&2 || rc=$?
+  clean_mounted "$work" "$image"
+  return $rc
 }
 
 # The last run on the Terragrunt example's main, and one of its jobs' whole log.
@@ -1509,9 +1518,9 @@ tg_apply_units() { # unit...
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
-      "$image" terragrunt run --working-dir "$unit" -- apply -auto-approve -input=false -no-color >&2 || { rm -rf "$work"; return 1; }
+      "$image" terragrunt run --working-dir "$unit" -- apply -auto-approve -input=false -no-color >&2 || { drop_work "$work"; return 1; }
   done
-  rm -rf "$work"
+  drop_work "$work"
 }
 
 # Put the Terragrunt example's main back to the example as committed, for a
@@ -1521,11 +1530,11 @@ tg_apply_units() { # unit...
 tg_restore_main() {
   local work sha i n repo="$USER/$TG_REPO_NAME"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null || { rm -rf "$work"; return 1; }
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null || { drop_work "$work"; return 1; }
   find "$work/tree" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
   cp -R "$TG_EXAMPLE/." "$work/tree/"
-  sha="$(push_tree "$work/tree" "$repo" main "Reset to the example as committed [skip ci]")" || { rm -rf "$work"; return 1; }
-  rm -rf "$work"
+  sha="$(push_tree "$work/tree" "$repo" main "Reset to the example as committed [skip ci]")" || { drop_work "$work"; return 1; }
+  drop_work "$work"
   for i in 1 2 3 4 5; do
     sleep 2
     n="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" 2>/dev/null | jq -r '.workflow_runs | length' 2>/dev/null || true)"
@@ -1550,7 +1559,7 @@ claim_tg_zero_config() {
     echo "[smoke tg-zero-config] init wrote a different pipeline" >&2
     rc=1
   fi
-  rm -rf "$work"
+  drop_work "$work"
   return $rc
 }
 
@@ -1565,7 +1574,7 @@ claim_tg_waves() {
     work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
     cp -R "$TG_EXAMPLE/." "$work/"
     printf 'binary: tofu\n' > "$work/terragucci.yml"
-    (cd "$work" && "$TERRAGUCCI" init >/dev/null) || { rm -rf "$work"; return 1; }
+    (cd "$work" && "$TERRAGUCCI" init >/dev/null) || { drop_work "$work"; return 1; }
     TG_PIPELINE="$work/.forgejo/workflows/terragucci.yml" TG_CONFIG="$work/terragucci.yml" "$HERE/example-terragrunt.sh" up >&2 || rc=1
   else
     "$HERE/example-terragrunt.sh" up >&2 || rc=1
@@ -1585,7 +1594,7 @@ claim_tg_waves() {
   # run, whose `up` pushes the example to a fresh repo, and then says so with
   # SMOKE_PLAIN_NEXT=1, so there is nothing to put back.
   if [ -n "$work" ]; then
-    rm -rf "$work"
+    drop_work "$work"
     [ -n "${SMOKE_PLAIN_NEXT:-}" ] || tg_restore_main || true
   fi
   [ $rc = 0 ] && log "15 units applied to floci, the 5 dev units first, then the other 10"
@@ -1604,17 +1613,17 @@ claim_tg_check() {
 }'
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
-    || { log "no example repo; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
+    || { log "no example repo; run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
   [ -n "${BREAK:-}" ] && echo "$bad" > "$work/tree/live/dev/orders/owner.hcl"
   sha="$(push_tree "$work/tree" "$repo" smoke/check "smoke tg-check: clean $(date +%s)")"
   wait_run "$repo" "$sha"
-  if [ "$RUN_STATUS" != success ]; then log "the clean push ended '$RUN_STATUS'"; rm -rf "$work"; return 1; fi
+  if [ "$RUN_STATUS" != success ]; then log "the clean push ended '$RUN_STATUS'"; drop_work "$work"; return 1; fi
   echo "$bad" > "$work/tree/live/dev/orders/owner.hcl"
   sha="$(push_tree "$work/tree" "$repo" smoke/check "smoke tg-check: unformatted $(date +%s)")"
   wait_run "$repo" "$sha"
   logs="$(print_logs "$repo" "$RUN_ID")"
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branches/smoke%2Fcheck" || true
-  rm -rf "$work"
+  drop_work "$work"
   [ "$RUN_STATUS" = failure ] || { log "the unformatted push ended '$RUN_STATUS'"; return 1; }
   grep -q "owner.hcl" <<<"$logs" || { log "the run failed but its log does not name owner.hcl"; return 1; }
   log "the unformatted push failed at the format check and named live/dev/orders/owner.hcl"
@@ -1632,12 +1641,12 @@ claim_tg_affected() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then TG_BASE_OVERRIDE="" tg_report_run "$work" module-bump || true; else tg_report_run "$work" module-bump || true; fi
   r="$work/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
   n="$(jq '[.roots[] | select(.status == "planned")] | length' "$r")"
   [ "$n" = 12 ] || { log "$n units planned, not the 12 services"; rc=1; }
   jq -e '[.roots[] | select(.path | endswith("/platform"))] | length == 0' "$r" >/dev/null || { log "a platform unit was planned"; rc=1; }
   jq -e '[.roots[] | select(.terragrunt.selection | test("policy.json"))] | length == 12' "$r" >/dev/null || { log "not every service names policy.json as its reason"; rc=1; }
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "12 service units planned for policy.json, no platform unit"
   return $rc
 }
@@ -1655,7 +1664,7 @@ claim_tg_mock_lint() {
   TG_EDIT="$edit" tg_report_run "$work" one-unit || true
   jq -e '.tips[] | select(.rule == "TF041" and .root == "live/prod/email" and (.url | startswith("https://")))' "$work/terragucci-report/report.json" >/dev/null 2>&1 \
     || { log "no TF041 tip names live/prod/email"; rc=1; }
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "TF041 names live/prod/email, whose mocks have no allow-list"
   return $rc
 }
@@ -1689,7 +1698,7 @@ claim_tg_refuse() {
     TG_TREE="$tree" "$HERE/example-terragrunt.sh" tg run --working-dir live/dev/ledger -- destroy -auto-approve >&2 || true
     curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/terragrunt/live/dev/ledger/terraform.tfstate" || true
   fi
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "ledger planned; billing held back until ledger applies, with the mock read named"
   return $rc
 }
@@ -1705,8 +1714,8 @@ claim_tg_mock_trap() {
   local repo="$USER/$TG_REPO_NAME" work sha rc=0 state
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
-    || { log "no example repo; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
-  git -C "$work/tree" apply "$TG_EXAMPLE/changes/new-service.patch" || { rm -rf "$work"; return 1; }
+    || { log "no example repo; run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
+  git -C "$work/tree" apply "$TG_EXAMPLE/changes/new-service.patch" || { drop_work "$work"; return 1; }
   [ -n "${BREAK:-}" ] && sed -i.bak 's#terragrunt run --all --no-color --no-filters-file#terragrunt run --all --no-color --no-filters-file --queue-ignore-dag-order#' "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
   sha="$(push_tree "$work/tree" "$repo" main "smoke tg-mock-trap: add billing and its ledger $(date +%s)")"
   wait_run "$repo" "$sha"
@@ -1718,7 +1727,7 @@ claim_tg_mock_trap() {
   TG_TREE="$work/tree" "$HERE/example-terragrunt.sh" tg run --all --no-filters-file --filter '{./live/dev/billing}' --filter '{./live/dev/ledger}' -- destroy -auto-approve >&2 || true
   for u in billing ledger; do curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/terragrunt/live/dev/$u/terraform.tfstate" || true; done
   tg_restore_main || true
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "ledger applied before billing; billing's state names shop-tg-dev-ledger and holds no mock"
   return $rc
 }
@@ -1752,8 +1761,8 @@ claim_tg_drift() {
   local deleted=""
   if [ -z "${BREAK:-}" ]; then
     extra="$(curl -fsS -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.GetQueueUrl' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')" || extra=""
-    [ -n "$extra" ] || { log "$queue is not in floci; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
-    curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.DeleteQueue' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$extra\"}" || { rm -rf "$work"; return 1; }
+    [ -n "$extra" ] || { log "$queue is not in floci; run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
+    curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.DeleteQueue' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$extra\"}" || { drop_work "$work"; return 1; }
     deleted=1
   fi
 
@@ -1775,7 +1784,7 @@ claim_tg_drift() {
       [ "$(open_issues | jq length)" = 1 ] || { log "a second run left $(open_issues | jq length) open issues"; rc=1; }
     fi
   fi
-  rm -rf "$work"
+  drop_work "$work"
   # Put back what the claim changed: the one queue, by applying its unit alone
   # rather than the whole example through the pipeline.
   if [ -n "$deleted" ]; then tg_apply_units "$unit" || log "could not apply $unit again"; fi
@@ -1845,13 +1854,13 @@ TF"
   curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/envs/dev/fresh-app.tfstate" || true
   REPORT_BASE=1 REPORT_EDIT="$edit" report_run "$work" || run=$?
   r="$work/terragucci-report/report.json"
-  [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
   [ "$run" = 0 ] || { log "the plan job exited $run, so it is not green"; rc=1; }
   jq -e --arg n "$net" '.roots[] | select(.path == $n and .status == "planned")' "$r" >/dev/null || { log "$net was not planned"; rc=1; }
   jq -e --arg a "$app" '[.roots[] | select(.path == $a)] | length == 0' "$r" >/dev/null || { log "$app was planned though its upstream is unapplied"; rc=1; }
   jq -e --arg a "$app" --arg n "$net" '.deferred[] | select(.unit == $a and (.after | index($n)))' "$r" >/dev/null || { log "the report does not say $app waits for $net"; rc=1; }
   grep -qF "\`$app\` after \`$net\`" "$work/terragucci-report/note.md" || { log "the note does not name $app as waiting for $net"; rc=1; }
-  rm -rf "$work"
+  drop_work "$work"
   [ $rc = 0 ] && log "$net planned; $app held back until $net applies, named in the report and the note, and the job stayed green"
   return $rc
 }
@@ -2396,9 +2405,31 @@ runner_prep() {
   . "$HERE/.state/forgejo.env"
 }
 
+# Free space on the host's data volume, in GB. Docker Desktop's VM can hold
+# deleted bind-mounted files until it restarts, which df on the host shows as
+# space that never comes back (#113).
+free_gb() {
+  local vol=/System/Volumes/Data
+  [ -d "$vol" ] || vol="${TMPDIR:-/tmp}"
+  df -Pk "$vol" 2>/dev/null | awk 'NR == 2 { printf "%d", $4 / 1048576 }'
+}
+SMOKE_DISK_WARN_GB="${SMOKE_DISK_WARN_GB:-50}"
+# disk_check START_GB: say how much free space the record cost, and warn past the threshold.
+disk_check() {
+  local start="$1" end lost
+  end="$(free_gb)"
+  [ -n "$start" ] && [ -n "$end" ] || return 0
+  lost=$((start - end))
+  echo "smoke: free space ${start} GB at the start of the record, ${end} GB now" >&2
+  if [ "$lost" -gt "$SMOKE_DISK_WARN_GB" ]; then
+    echo "smoke: WARNING the record used ${lost} GB of disk, more than SMOKE_DISK_WARN_GB=${SMOKE_DISK_WARN_GB}. Docker Desktop may be holding deleted bind-mounted files; 'lsof +L1 -a -p <pid of the VM process>' lists them, and restarting Docker Desktop frees them." >&2
+  fi
+}
+
 if [ "${1:-}" = --record ]; then
   out="${2:?usage: smoke.sh --record FILE}"
   SMOKE_LINES_TO=stderr
+  disk_start="$(free_gb)"
   runner_prep || exit 1
   record_pending
   # shellcheck disable=SC2046
@@ -2421,6 +2452,7 @@ if [ "${1:-}" = --record ]; then
   # Leave the example booted and clean for whoever runs next. Each claim puts
   # back what it changed, so this boots afresh only when something was left.
   "$HERE/example.sh" verify >&2 || "$HERE/example.sh" up --fresh >&2
+  disk_check "$disk_start"
   new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
   # Same verdicts as the last record: keep it, date and all, so nothing diffs.
   if [ -f "$out" ] && [ "$(jq -S .claims "$out")" = "$(jq -S . <<<"$new")" ]; then
