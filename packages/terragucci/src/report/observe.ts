@@ -212,13 +212,26 @@ export class StageObserver {
       g("terragucci_plan_groups", "{group}", "Groups the plans fold into", report.groups.length, {}),
     ];
     for (const t of this.roots) {
-      if (t.end !== undefined) out.push(g("terragucci_root_plan_seconds", "s", "How long one root took to plan", seconds(t.start, t.end), { root: t.path }));
+      if (t.end !== undefined) out.push(g(METRIC.rootPlan, "s", "How long one root took to plan", seconds(t.start, t.end), { root: t.path }));
     }
     for (const [action, n] of Object.entries(report.totals)) {
       out.push(g("terragucci_plan_changes", "{change}", "Proposed changes by action", n, { action }));
     }
     if (version) out.push(g("terragucci_binary_version", "", "The binary and version a stage ran", 1, { binary: report.run.binary, version }));
     return [...out, ...this.dashboardGauges(report, end, g)];
+  }
+
+  /** The metrics a tf-apply wave sends: how long each root's apply took. */
+  applyGauges(report: Report): Gauge[] {
+    const project = report.run.project;
+    const wave = this.wave ? { wave: String(this.wave.number) } : {};
+    const out: Gauge[] = [];
+    for (const r of report.roots) {
+      const seconds = r.timings?.apply_seconds;
+      if (seconds === undefined) continue;
+      out.push({ name: METRIC.rootApply, unit: "s", description: "How long one root took to apply", value: seconds, attributes: { project, stage: this.stage, ...wave, root: r.path } });
+    }
+    return out;
   }
 
   /** The gauges the dashboards read beyond the plan counts (dashboards/names.ts). */
@@ -312,9 +325,9 @@ export class StageObserver {
       else sent.push(`trace ${this.trace.traceId} (${this.trace.spans.length} spans)`);
     }
 
-    // A tf-apply wave sends its trace only: the metrics are the plan's, and a wave's would count its roots twice.
-    if (tel.metrics && this.stage !== "tf-apply") {
-      const gauges = this.gauges(report, binaryVersion(run.binary, env), end);
+    // A tf-apply wave sends its trace and each root's apply time. The plan's other metrics stay the plan's, since a wave's would count its roots twice.
+    if (tel.metrics) {
+      const gauges = this.stage === "tf-apply" ? this.applyGauges(report) : this.gauges(report, binaryVersion(run.binary, env), end);
       const problem = await send(tel.metrics, metricsBody(gauges, resource, run.terragucci ?? "0.0.0", end), fetchFn);
       if (problem) log(`telemetry: the metrics were not sent: ${problem}`);
       else sent.push(`${gauges.length} metric points`);

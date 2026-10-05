@@ -671,7 +671,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: script(bash("APPLY", job.body)),
-        ...(agentApply ? { artifacts: { name: `${RESPOND_DIR}-${job.name}`, when: "on_failure", paths: [`${RESPOND_DIR}/`] } } : {}),
+        // The wave's report stays with the job, like the plan's; the agent's input joins it when there is one.
+        artifacts: { name: `${REPORT_DIR}-${job.name}`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
     }
     if (tipsOn) {
@@ -835,6 +836,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       },
       steps: [
         ...steps(new Step({ name: tg ? `Apply every ${what}` : `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
+        new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-${job.name}`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ...(agentApply
           ? [new Step({ name: "Keep the agent input", if: "failure()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${RESPOND_DIR}-${job.name}`, path: `${RESPOND_DIR}/`, "if-no-files-found": "ignore" } })]
           : []),
