@@ -2186,6 +2186,11 @@ TF
   after="$(statuses "$head_sha" terragucci/plan)"
   if [ "$after" -le "$before" ]; then
     log "the comment posted no new plan status on the pull request's head ($before before, $after after)"
+    # The replan job's decision line says why: who asked, and what stopped it.
+    local run job
+    run="$(api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq -r '[.workflow_runs[] | select(.event == "issue_comment")] | max_by(.id) | .id // empty')"
+    job="$([ -n "$run" ] && api "$URL/api/v1/repos/$repo/actions/runs/$run/jobs" | jq -r '.[] | select(.name == "replan") | .id' | head -1)"
+    [ -n "$job" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$job/logs" 2>/dev/null | grep -E 'terragucci( comment)?:' | cut -c30- | sed 's/^/[smoke comment-plan]   /' >&2
     return 1
   fi
   log "the comment re-planned: terragucci/plan statuses on the head went from $before to $after"

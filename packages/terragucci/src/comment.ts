@@ -78,6 +78,8 @@ const MAY_PLAN = new Set(["admin", "owner", "maintain", "write"]);
 export interface CommentOptions {
   /** The roots the pipeline was written with, one array per layer. */
   layers: string[][];
+  /** Where the job runs, which decides how the commenter's permission is read. GitHub when unset. */
+  forge?: "github" | "forgejo";
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
 }
@@ -127,13 +129,25 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   };
 
   // Who asked comes first: a stranger's comment gets no reply, no plan and no credentials.
-  let permission: unknown;
-  try {
-    permission = (await call("GET", `repos/${repo}/collaborators/${encodeURIComponent(user)}/permission`))?.permission;
-  } catch (e) {
-    return stop(`could not read ${user}'s permission, so nothing runs (${(e as Error).message})`);
+  if (o.forge === "forgejo") {
+    // Forgejo answers 403 when a job's token asks for another user's permission
+    // (only an admin, a repository admin or the user may). The forge writes the
+    // commenter's permission into the event instead: the issue_comment payload's
+    // repository.permissions is computed for the comment's author when the
+    // comment is created, and the comment's text cannot change it.
+    if (event.repository?.full_name !== repo) return stop("the event is not for this repository");
+    if (event.sender?.login !== user) return stop("the comment's author is not the event's sender");
+    const p = event.repository?.permissions;
+    if (p?.push !== true && p?.admin !== true) return stop(`${user} has no write access, so the comment is ignored`);
+  } else {
+    let permission: unknown;
+    try {
+      permission = (await call("GET", `repos/${repo}/collaborators/${encodeURIComponent(user)}/permission`))?.permission;
+    } catch (e) {
+      return stop(`could not read ${user}'s permission, so nothing runs (${(e as Error).message})`);
+    }
+    if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the comment is ignored`);
   }
-  if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the comment is ignored`);
 
   if (parsed.kind === "refused") {
     await reply(parsed.reason);

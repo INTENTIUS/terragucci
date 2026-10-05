@@ -463,7 +463,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
   return [
     "set -uo pipefail",
     forgeApi(forge),
-    ...(replan ? [replanPrelude(layers)] : []),
+    ...(replan ? [replanPrelude(layers, forge)] : []),
     ...(oidc ? [oidcScript(forge, oidc.plan_role, "terragucci-plan", oidc.audience)] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     'tg status terragucci/plan pending "planning"',
@@ -494,11 +494,14 @@ const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[
  * comment is read by `terragucci comment`, which writes a decision file; the
  * shell only reads four values from it (a number, a sha, a branch and a root,
  * each already checked against a pattern with no shell syntax), never the
- * comment. The job then checks out the pull request's head.
+ * comment. On Forgejo the command reads the commenter's permission from the
+ * event, since the job's token may not ask the API for it. The job then checks
+ * out the pull request's head: the event's sha is the default branch's, so the
+ * head comes from the pull request, fetched by its number.
  */
-function replanPrelude(layers: string[][]): string {
+function replanPrelude(layers: string[][], forge: ForgeName): string {
   return [
-    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))} --out terragucci-comment.json || exit 1`,
+    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-comment.json || exit 1`,
     `read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF`,
     `$(node -e '${DECISION_JS}' terragucci-comment.json)`,
     "EOF",

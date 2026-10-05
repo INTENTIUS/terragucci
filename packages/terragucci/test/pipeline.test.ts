@@ -80,6 +80,14 @@ describe("the comment trigger", () => {
     expect(planScript("tofu", layers, "github", OIDC)).not.toContain("terragucci comment");
   });
 
+  it("forgejo: the re-plan reads the commenter's permission from the event, and checks out the pull request's head by number", () => {
+    const script = planScript("tofu", layers, "forgejo", OIDC, {}, true);
+    expect(script).toMatch(/terragucci comment --layers [^\n]* --forge forgejo --out /);
+    expect(planScript("tofu", layers, "github", OIDC, {}, true)).not.toContain("--forge");
+    expect(script).toContain('git fetch --quiet origin "refs/pull/$TG_PR/head"');
+    expect(script.indexOf('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(script.indexOf("tg status terragucci/plan pending"));
+  });
+
   it("gitlab: no comment trigger", () => {
     expect(render("gitlab")).not.toContain("issue_comment");
     expect(body(render("gitlab")).replan).toBeUndefined();
