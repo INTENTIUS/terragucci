@@ -9,6 +9,7 @@ import {
 } from "@intentius/chant/plan-summary";
 import { groupAnchor, rootAnchor } from "./build";
 import { actionWord, type Report, type ReportNamed } from "./schema";
+import { duration } from "./spans";
 
 /** chant's plan summary, rebuilt from the report. */
 export function planSummaryOf(report: Report): PlanSummary {
@@ -101,6 +102,11 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   if (report.roots.length === 0 && run.stage === "tf-plan") head.push("This change reaches no root, so nothing was planned.", "");
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the [full report](${url}#tips).`, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
+  // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
+  const slow = report.timings?.resources.slice(0, 3) ?? [];
+  if (slow.length > 0) {
+    head.push(`Slowest: ${slow.map((r) => `${code(`${r.root}: ${r.address}`)} ${duration(r.ms)}`).join(", ")}. [Where the time went](${url}#timings)`, "");
+  }
 
   const blocks: { text: string; group: boolean; units: number }[] = [];
   const named = report.named;
