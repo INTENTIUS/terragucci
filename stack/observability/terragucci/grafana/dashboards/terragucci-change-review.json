@@ -124,7 +124,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "sum by (action) (terragucci_plan_changes{stage=\"tf-plan\", project=~\"$project\"})",
+          "expr": "sum by (action) (max_over_time(terragucci_plan_changes{stage=\"tf-plan\", project=~\"$project\"}[$__interval]))",
           "legendFormat": "{{action}}"
         }
       ],

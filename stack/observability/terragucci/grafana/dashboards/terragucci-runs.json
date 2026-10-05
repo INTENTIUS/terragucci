@@ -239,7 +239,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "max by (project, stage) (terragucci_stage_duration_seconds{project=~\"$project\"})",
+          "expr": "max by (project, stage) (max_over_time(terragucci_stage_duration_seconds{project=~\"$project\"}[$__interval]))",
           "legendFormat": "{{project}} {{stage}}"
         }
       ],
