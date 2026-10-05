@@ -312,6 +312,7 @@ export class SpanReceiver {
 export const TOP = 10;
 
 const RESOURCE_SPANS = new Set(["Plan resource instance changes", "Apply resource instance changes"]);
+const BUILTIN_PROVIDER = "terraform.io/builtin/terraform";
 const PROVIDER_CALL = /^tfplugin[56]\.Provider\/(\w+)$/;
 
 const ms = (s: CollectedSpan): number => Math.round(Number(s.end - s.start) / 1e5) / 10;
@@ -362,10 +363,16 @@ export function rootTimings(spans: CollectedSpan[], facts: RootFacts): ReportRoo
     }));
   }
 
+  // choudoufu starts each provider process inside a "Start provider" span.
+  // OpenTofu has none: the nearest it sends is "Configure provider", which
+  // names the provider in opentofu.provider.source. The builtin provider runs
+  // in-process and is left out. A root with Start spans is read from those
+  // alone, so choudoufu's Configure spans are not counted a second time.
+  const startSpans = spans.filter((s) => s.name === "Start provider");
+  const initSpans = startSpans.length > 0 ? startSpans : spans.filter((s) => s.name === "Configure provider" && str(s.attributes["opentofu.provider.source"]) !== BUILTIN_PROVIDER);
   const starts = new Map<string, { provider: string; count: number; ms: number; max_ms: number }>();
-  for (const s of spans) {
-    if (s.name !== "Start provider") continue;
-    const provider = str(s.attributes["opentofu.provider.address"]) ?? "(unnamed)";
+  for (const s of initSpans) {
+    const provider = str(s.attributes["opentofu.provider.address"]) ?? str(s.attributes["opentofu.provider.source"]) ?? "(unnamed)";
     const e = starts.get(provider) ?? { provider, count: 0, ms: 0, max_ms: 0 };
     e.count++;
     e.ms = Math.round((e.ms + ms(s)) * 10) / 10;

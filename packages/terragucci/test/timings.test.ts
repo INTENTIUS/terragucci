@@ -150,6 +150,29 @@ describe("a root's timings", () => {
     expect(t.aggregates).toEqual([]);
   });
 
+  // What stock OpenTofu sends for a root with an AWS provider: no "Start
+  // provider" span, a "Configure provider" span per configured provider
+  // (the builtin one included), the provider named in provider.source.
+  const TOFU: SpanSpec[] = [
+    { id: "0000000000000041", name: "Plan phase", from: 0, to: 600 },
+    { id: "0000000000000042", parent: "0000000000000041", name: "Configure provider", from: 10, to: 20, attrs: { "opentofu.provider.source": "terraform.io/builtin/terraform", "opentofu.provider_config.address": "provider[\"terraform.io/builtin/terraform\"]" } },
+    { id: "0000000000000043", parent: "0000000000000041", name: "Configure provider", from: 100, to: 220, attrs: { "opentofu.provider.source": "registry.opentofu.org/hashicorp/aws", "opentofu.provider_config.address": "provider[\"registry.opentofu.org/hashicorp/aws\"]" } },
+    { id: "0000000000000044", parent: "0000000000000041", name: "Configure provider", from: 300, to: 450, attrs: { "opentofu.provider.source": "registry.opentofu.org/hashicorp/aws" } },
+    { id: "0000000000000045", parent: "0000000000000041", name: "Validate provider configuration", from: 0, to: 90, attrs: { "opentofu.provider.source": "registry.opentofu.org/hashicorp/aws" } },
+  ];
+
+  it("reads OpenTofu's Configure provider spans as the provider start-up when no Start provider span came", () => {
+    const t = rootTimings(decodeTracesJson(otlpJson(TOFU)), facts);
+    expect(t.provider_init).toEqual([{ provider: "registry.opentofu.org/hashicorp/aws", count: 2, ms: 270, max_ms: 150 }]);
+    expect(t.lock_waits).toEqual([]);
+  });
+
+  it("does not count choudoufu's Configure provider spans a second time beside its Start provider spans", () => {
+    const both = [...DETAILED, ...TOFU];
+    const t = rootTimings(decodeTracesJson(otlpJson(both)), facts);
+    expect(t.provider_init).toEqual([{ provider: "registry.opentofu.org/hashicorp/aws", count: 2, ms: 500, max_ms: 400 }]);
+  });
+
   it("lists aggregate-mode summaries by type, and says the resources are summed", () => {
     const t = rootTimings(decodeTracesJson(otlpJson(AGGREGATED)), facts);
     expect(t.detail).toBe("aggregate");

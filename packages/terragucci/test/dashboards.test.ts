@@ -267,6 +267,23 @@ describe("dashboards: what a stage sends", () => {
     expect(g.some((x) => x.name === METRIC.waveSettled)).toBe(false);
   });
 
+  it("a tf-apply wave and a plan send a root's provider start-up and lock wait", () => {
+    const report = buildReport({ run: { ...RUN, stage: "tf-apply" as never }, roots: smallFixture() });
+    report.roots[0].timings = {
+      seconds: 9, spans: 3, detail: "none", resources: [], provider_calls: [], aggregates: [],
+      provider_init: [{ provider: "registry.opentofu.org/hashicorp/aws", count: 2, ms: 250, max_ms: 130 }],
+      lock_waits: [{ ms: 1500, attempts: 3 }, { ms: 500, attempts: 1 }],
+    };
+    const root = report.roots[0].path;
+    for (const [stage, gauges] of [
+      ["tf-apply", new StageObserver(undefined, "tf-apply", {}).applyGauges(report, 1_759_572_000_000_000_000n)],
+      ["tf-plan", new StageObserver(undefined, "tf-plan", {}).gauges(report, undefined, 1_759_572_000_000_000_000n)],
+    ] as const) {
+      expect(gauges.find((x) => x.name === METRIC.providerInit), stage).toMatchObject({ value: 0.25, attributes: { project: RUN.project, stage, root, provider: "registry.opentofu.org/hashicorp/aws" } });
+      expect(gauges.find((x) => x.name === METRIC.lockWait), stage).toMatchObject({ value: 2, attributes: { project: RUN.project, stage, root } });
+    }
+  });
+
   it("reads each root's module pins from its plan's configuration", () => {
     const calls = (c: Record<string, unknown>) => ({ configuration: { root_module: { module_calls: c } } });
     expect(modulePins([
