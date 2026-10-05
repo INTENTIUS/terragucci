@@ -13,7 +13,7 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 | `github` | floci, a mock GitHub API, `act` on the host | validated: `check`, `apply` and `reconcile` pass |
 | `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply` and `reconcile` pass |
 | `fountain` | floci, fountain 0.21.0, Postgres, a fountain runner built for the steward | runs the example's apply on a steward (`just example up --fountain`); the `steward` smoke claim checks it |
-| `observability` | an OpenTelemetry collector and Prometheus (`stack/observability/`) | started by the `traces` and `metrics` claims when it is not up; `stack/down.sh` removes it |
+| `observability` | an OpenTelemetry collector, Prometheus, Tempo and Grafana with terragucci's dashboards (`stack/observability/`) | started by the `traces`, `metrics` and `dash-*` claims when it is not up; Grafana answers on `localhost:3310`; `stack/down.sh` removes it |
 
 
 - `github`: GitHub has no self-hostable edition. `mock-github/server.mjs` is a small stateful GitHub: it creates repos, serves their git over smart HTTP (`git http-backend`), opens, lists and merges pull requests, and stores issue comments. The runner is `act` on the host, which runs the repo's real workflow file with its job containers on the `terragucci` network. A push is a git push to the mock, and a run is `act push` on a fresh clone of the pushed commit with a push event for that branch, so `github.ref` and the default-branch condition behave as on GitHub. `act` has to be installed (`brew install act`).

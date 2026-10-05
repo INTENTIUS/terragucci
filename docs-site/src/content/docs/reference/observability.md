@@ -70,5 +70,80 @@ A stage pushes its metrics once, when it ends, so a short CI job needs no scrape
 | `terragucci_plan_changes` | `action` | creates, updates, replaces and deletes, over time |
 | `terragucci_plan_groups` | | how far a change folds |
 | `terragucci_binary_version` | `binary`, `version` | the binary versions in use across repos |
+| `terragucci_last_run_seconds` | | when each stage last ran, in Unix seconds |
+| `terragucci_roots_changed` | `pull_request` on a plan | how many roots a pull request changes |
+| `terragucci_tips` | `rule` | tips by rule |
+| `terragucci_module_pin` | `root`, `module`, `version` | which version of each module each root pins |
+| `terragucci_provider_init_seconds` | `root`, `provider` | provider start-up |
+| `terragucci_lock_wait_seconds` | `root` | time spent waiting for a state lock |
+| `terragucci_resource_seconds` | `root`, `address` | the run's slowest resources |
+| `terragucci_drift_roots` | | roots a drift run found drifted |
+| `terragucci_drift_since_seconds`, `terragucci_drift_clear_seconds` | | when the open drift was first found (its drift issue opened), and when a drift run last found none |
+| `terragucci_wave_roots` | `wave` | roots in a `tf-apply` wave |
+| `terragucci_wave_waiting_since_seconds`, `terragucci_wave_settled_seconds` | `wave` | when a wave started waiting for its approval, and when it last stopped waiting |
+
+A plan run for a pull request labels its metrics with `pull_request`. The stage span's `terragucci.result` attribute says how the run ended. A plan or drift run ends in `success` or `failure`, and a wave in one of `applied`, `nothing`, `waiting`, `refused` and `failed`.
 
 The resource carries `terragucci.project`, `vcs.ref.head.revision` (the commit) and `cicd.pipeline.run.url.full` (the CI job). A collector set to copy resource attributes onto series can then find one run's numbers by its commit.
+
+## Dashboards and alerts
+
+Set `dashboards: true` in `terragucci.yml` and `init` writes Grafana dashboards and alert rules into the repo, next to the pipeline. `reconcile` writes them into each project the same way. They change only when the config does, and `init` leaves a file there that it did not write alone.
+
+```
+observability/terragucci/
+  grafana/dashboards/<uid>.json                    one per dashboard
+  grafana/provisioning/dashboards/terragucci.yaml  the provider that loads them
+  grafana/provisioning/alerting/terragucci.yaml    the SLO burn-rate alerts, as Grafana-managed rules
+  prometheus/terragucci.rules.yml                  the SLO recording rules and alerts, and the pipeline alerts
+```
+
+| Dashboard | Shows |
+|---|---|
+| Pipeline health | runs per hour, errors and duration for each stage and project, and runs by result |
+| Change review | roots changed and groups for each pull request, and creates, updates, replaces and destroys over time |
+| Rollouts and waves | waves waiting for an approval and for how long, wave runs by result, and how many roots pin each module version |
+| Drift | drifted roots by project, how old the open drift is, and roots corrected |
+| Estate | roots per project, the binary and terragucci versions each runs, module pins and tips by rule |
+| Runs | the slowest roots and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
+| One per SLO | the SLI against its objective, the error budget left and the burn rates |
+
+There are three SLOs, each over 28 days. Plans finish within ten minutes 95% of the time. Wave applies succeed 99% of the time. Drift is corrected within a day 90% of the time.
+
+| Alert | Fires when |
+|---|---|
+| `TerragucciDriftOld` | a project's open drift is older than `drift_age` |
+| `TerragucciWaveWaiting` | a wave has waited for its approval longer than `wave_wait` |
+| `TerragucciApplyFailed` | an apply failed in the last hour |
+| `TerragucciWaveRefused` | a wave was refused in the last hour because its plans moved |
+| `TerragucciDriftStopped` | a project's drift run has not run for `schedule` |
+
+| Key under `dashboards` | Default | Meaning |
+|---|---|---|
+| `dir` | `observability/terragucci` | where the files go |
+| `prometheus` | `prometheus` | the uid of the Grafana datasource reading the Prometheus that holds the metrics |
+| `tempo` | `tempo` | the uid of the Grafana datasource reading Tempo |
+| `folder` | `terragucci` | the Grafana folder for the dashboards and the Grafana-managed rules |
+| `path` | `/var/lib/grafana/dashboards/terragucci` | where Grafana finds the dashboard files |
+| `drift_age`, `wave_wait`, `schedule` | `1d`, `4h`, `2d` | the alert thresholds |
+
+Mount `grafana/provisioning/` under Grafana's `/etc/grafana/provisioning/` and `grafana/dashboards/` at `path`, and add `prometheus/terragucci.rules.yml` to Prometheus's `rule_files`. Load the alerting file or the Prometheus file's `ErrorBudgetBurn` alerts, whichever you page from; both alert on the same burn rates.
+
+Pipeline health, the SLOs and the wave results read span metrics, which your collector makes from the stage spans with a `spanmetrics` connector. Turn the stage spans into the metrics the dashboards read with these settings, and send its output to the metrics pipeline your Prometheus reads:
+
+```yaml
+connectors:
+  spanmetrics:
+    namespace: terragucci.spans
+    dimensions:
+      - name: terragucci.stage
+      - name: terragucci.project
+      - name: terragucci.result
+    resource_metrics_key_attributes: [service.name, terragucci.project]
+    histogram:
+      unit: s
+      explicit:
+        buckets: [5s, 15s, 30s, 60s, 120s, 300s, 600s, 1200s, 1800s, 3600s]
+```
+
+The Runs dashboard lists traces from Tempo. A collector that exports traces elsewhere still fills every other panel.

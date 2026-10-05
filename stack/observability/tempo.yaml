@@ -1,0 +1,22 @@
+# Tempo for the stack's observability profile: one process, OTLP over gRPC
+# from the collector, traces kept on local disk inside the container.
+stream_over_http_enabled: true
+server:
+  http_listen_port: 3200
+  log_level: warn
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+ingester:
+  # Cut blocks quickly, so a smoke claim's trace is searchable soon after it ends.
+  max_block_duration: 1m
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks

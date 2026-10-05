@@ -1,0 +1,299 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Waves waiting for an approval and for how long, how wave runs ended, and how far each module version has rolled out.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Waiting",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Waves waiting",
+      "description": "Waves whose latest run waits for an approval of its digest.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "count((\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) unless on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n)\nor\n(\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) > on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n))",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "id": 3,
+      "title": "Waiting for",
+      "description": "Each waiting wave, and how long since it first asked for an approval.",
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "time() - ((\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) unless on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n)\nor\n(\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) > on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Wave runs",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 4,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 5,
+      "title": "Wave runs by result",
+      "description": "tf-apply runs over the range: applied, nothing to apply, waiting for an approval, refused because the plans moved after approval, or failed.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (terragucci_project, terragucci_result) (increase(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Refused and failed waves",
+      "description": "Wave runs refused or failed per hour.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (terragucci_result) (increase(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"}[1h]))",
+          "legendFormat": "{{terragucci_result}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "id": 7,
+      "title": "Roots per wave",
+      "description": "Roots in each wave of the latest apply run, by project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max by (project, wave) (last_over_time(terragucci_wave_roots{project=~\"$project\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Rollouts",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 8,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 9,
+      "title": "Roots per module version",
+      "description": "How many roots pin each module version, across the projects: a rollout's progress.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "count by (module, version) (max by (project, root, module, version) (last_over_time(terragucci_module_pin{project=~\"$project\"}[7d])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "terragucci"
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "project",
+        "label": "Project",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(terragucci_last_run_seconds, project)",
+        "definition": "label_values(terragucci_last_run_seconds, project)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "terragucci: Rollouts and waves",
+  "uid": "terragucci-rollouts-waves",
+  "weekStart": ""
+}

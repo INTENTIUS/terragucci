@@ -104,7 +104,14 @@ forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and re
 steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|
 policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
-lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|'
+lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
+dash-pipeline|the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave|
+dash-changes|the Change review dashboard init writes shows the roots, groups and changes by action of a pull request|
+dash-waves|the Rollouts and waves dashboard init writes shows a wave waiting for its approval, how long, and wave runs by result|
+dash-drift|the Drift dashboard init writes shows the roots a drift run found drifted and how old the drift is|
+dash-estate|the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs|
+dash-runs|the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo|
+dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2326,6 +2333,206 @@ HCL
   log "the wave's plan waited ${ms}ms over $attempts attempts for the lock the second plan held; trace $trace carries the State lock wait span"
 }
 
+# ── dashboards ────────────────────────────────────────────────────────────
+# The dashboards `dashboards: true` writes into a repo, provisioned in the
+# observability profile's Grafana from stack/observability/terragucci/ (the
+# same renderer init runs, so each claim first checks init writes the file
+# Grafana serves). Each claim runs a plan, a drift run and a gated wave as a
+# project of its own, with telemetry on, then runs some of the dashboard's
+# panels through Grafana's query API for that project: every one must return
+# data. Needs the example booted for the plan and the drift run.
+# BREAK: the three runs send no telemetry (OTEL_SDK_DISABLED=true), so the
+# project has no data and the panels come back empty.
+
+GRAFANA="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}"
+TEMPO="http://localhost:${TERRAGUCCI_TEMPO_PORT:-3210}"
+
+dash_up() {
+  collector_up || return 1
+  local i
+  dash_answers() { curl -fsS -o /dev/null -m 3 "$GRAFANA/api/health" && curl -fsS -o /dev/null -m 3 "$TEMPO/ready"; }
+  dash_answers 2>/dev/null && return 0
+  echo "starting Grafana and Tempo" >&2
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile observability up -d >&2 || return 1
+  for i in $(seq 1 45); do
+    dash_answers 2>/dev/null && return 0
+    sleep 2
+  done
+  echo "Grafana or Tempo did not answer after 90s" >&2
+  return 1
+}
+
+# init, run on the example with `dashboards: true`, must write the dashboard
+# file Grafana serves (stack/observability/terragucci, provisioned).
+dash_rendered() { # work, uid
+  local dir="$1/init" f="observability/terragucci/grafana/dashboards/$2.json"
+  mkdir -p "$dir"
+  cp -R "$EXAMPLE/." "$dir/"
+  rm -rf "$dir/.git"
+  printf '\ndashboards: true\n' >> "$dir/terragucci.yml"
+  (cd "$dir" && "$TERRAGUCCI" init --forge forgejo --dry-run --json) | jq -r --arg f "$f" '.results.files[] | select(.path == $f) | .content' > "$1/rendered.json"
+  [ -s "$1/rendered.json" ] || { log "init wrote no $f"; return 1; }
+  cmp -s "$1/rendered.json" "$HERE/observability/terragucci/grafana/dashboards/$2.json" \
+    || { log "init renders $f differently from what Grafana is provisioned with; run 'just ci'"; return 1; }
+  curl -fsS -o /dev/null "$GRAFANA/api/dashboards/uid/$2" || { log "Grafana does not serve dashboard $2"; return 1; }
+}
+
+# A plan, a drift run and a gated wave, all as project $DASH_PROJECT.
+dash_data() { # work
+  local work="$1" image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" id env rc=0 code=0 kv
+  local -a extra=()
+  id="$(date +%s)$$${BREAK:+b}"
+  DASH_PROJECT="smoke.local/dash/run-$id"
+  env="GITHUB_SERVER_URL=http://smoke.local GITHUB_REPOSITORY=dash/run-$id TG_PR=7 OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
+  [ -n "${BREAK:-}" ] && env="$env OTEL_SDK_DISABLED=true"
+  image="$(image_tag tofu)"
+  mkdir -p "$work/plan" "$work/drift" "$work/wave/gate"
+  # One root is enough for every panel, and keeps the runs short.
+  # Each run in a subshell, so REPORT_ARGS and REPORT_STAGE stay with it.
+  (REPORT_ARGS=(--root envs/staging/orders); REPORT_ENV="$env" report_run "$work/plan") || true
+  [ -f "$work/plan/terragucci-report/report.json" ] || { log "the plan wrote no report"; rc=1; }
+  (REPORT_STAGE=tf-drift; REPORT_ARGS=(--root envs/staging/orders); REPORT_ENV="$env" report_run "$work/drift") || true
+  [ -f "$work/drift/terragucci-report/report.json" ] || { log "the drift run wrote no report"; rc=1; }
+  # The gated wave: one root that creates something, --gate always, and a bare
+  # repo for origin, so the wave records its pending fact and waits (exit 3).
+  cat >"$work/wave/gate/main.tf" <<'HCL'
+terraform {
+  backend "local" {}
+}
+
+resource "terraform_data" "dash" {
+  input = "dashboards"
+}
+HCL
+  git init -q --bare "$work/origin.git"
+  git -C "$work/wave" init -q -b main
+  git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke dashboards $id"
+  git -C "$work/wave" remote add origin /origin.git
+  for kv in $env; do extra+=(-e "$kv"); done
+  docker run --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "${extra[@]}" "$image" terragucci stage tf-apply --wave 1 --layers gate --binary tofu --gate always >&2 || code=$?
+  clean_mounted "$work/wave" "$image"
+  [ "$code" = 3 ] || { log "the wave did not wait for an approval (exit $code)"; rc=1; }
+  return $rc
+}
+
+# How many values a dashboard panel's queries return for $DASH_PROJECT over the
+# last hour, run through Grafana's query API as the panel runs them: the
+# dashboard's variables are filled in ($project with the project), the rest
+# of the query is the dashboard's own.
+panel_points() { # uid, panel title
+  local dash body
+  dash="$(curl -fsS "$GRAFANA/api/dashboards/uid/$1")" || { echo 0; return 0; }
+  body="$(jq -c --arg t "$2" --arg p "$DASH_PROJECT" '
+    def fill: gsub("\\$project"; $p) | gsub("\\$stage"; ".+") | gsub("\\$__range"; "1h") | gsub("\\$__rate_interval"; "1m");
+    [.dashboard.panels[] | (., (.panels // [])[]) | select(.title == $t) | (.datasource // {}) as $ds | (.targets // [])[]
+      | . + {datasource: (.datasource // $ds), intervalMs: 15000, maxDataPoints: 200}
+      | if .expr then .expr |= fill else . end
+      | if .query then .query |= fill else . end]
+    | {queries: ., from: "now-1h", to: "now"}' <<<"$dash")"
+  [ "$(jq '.queries | length' <<<"$body")" -gt 0 ] || { echo 0; return 0; }
+  curl -fsS -H 'content-type: application/json' -X POST -d "$body" "$GRAFANA/api/ds/query" 2>/dev/null \
+    | jq '[.results[]?.frames[]?.data.values // [] | .[1:][]? | length] | add // 0' 2>/dev/null || echo 0
+}
+
+# The claim: render, data, then every named panel has data (retried while
+# the collector, Prometheus and Tempo catch up).
+dash_claim() { # uid, panel title...
+  local uid="$1" work rc=0 i t n missing
+  shift
+  dash_up || return 1
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  dash_rendered "$work" "$uid" || rc=1
+  [ $rc = 0 ] && { dash_data "$work" || rc=1; }
+  if [ $rc = 0 ]; then
+    for i in $(seq 1 18); do   # up to 90s: the span metrics flush, the scrape and Tempo's ingest
+      missing=""
+      for t in "$@"; do
+        n="$(panel_points "$uid" "$t")"
+        [ "${n:-0}" -gt 0 ] || missing="$missing, $t"
+      done
+      [ -z "$missing" ] && break
+      sleep 5
+    done
+    [ -z "$missing" ] || { log "$uid: no data for $DASH_PROJECT in ${missing#, }"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] || return 1
+  log "$uid renders as init writes it, and $# panel(s) show $DASH_PROJECT's plan, drift run and gated wave: $*"
+}
+
+claim_dash_pipeline() {
+  log() { echo "[smoke dash-pipeline] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_claim terragucci-pipeline-health "Runs per hour" "Errors" "Runs by result"
+}
+
+claim_dash_changes() {
+  log() { echo "[smoke dash-changes] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_claim terragucci-change-review "Roots changed per pull request" "Groups per pull request" "Changes by action"
+}
+
+claim_dash_waves() {
+  log() { echo "[smoke dash-waves] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_claim terragucci-rollouts-waves "Waves waiting" "Waiting for" "Wave runs by result" "Roots per wave"
+}
+
+claim_dash_drift() {
+  log() { echo "[smoke dash-drift] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_claim terragucci-drift "Drifted roots" "Drift age"
+}
+
+claim_dash_estate() {
+  log() { echo "[smoke dash-estate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_claim terragucci-estate "Roots per project" "Versions"
+}
+
+claim_dash_runs() {
+  log() { echo "[smoke dash-runs] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_claim terragucci-runs "Slowest roots" "Stage duration" "Runs"
+}
+
+claim_dash_slos() {
+  # The plan SLO's dashboard, and its recorded SLI for this project: the
+  # rules file init writes is loaded in Prometheus (promtool checks it), and
+  # its recording rules record the project's plans.
+  log() { echo "[smoke dash-slos] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  docker exec terragucci-prometheus promtool check rules /etc/prometheus/rules/terragucci.rules.yml >&2 \
+    || { log "promtool does not accept the rules file"; return 1; }
+  local slo
+  for slo in slo-terragucci-apply-success slo-terragucci-drift-corrected; do
+    curl -fsS -o /dev/null "$GRAFANA/api/dashboards/uid/$slo" || { log "Grafana does not serve dashboard $slo"; return 1; }
+  done
+  dash_claim slo-terragucci-plan-time "Error budget remaining" || return 1
+  # The SLO panels read every project's series; this project's own must be among them.
+  local q n=0 i
+  q="slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\",terragucci_project=\"$DASH_PROJECT\"}"
+  for i in $(seq 1 12); do   # the rule evaluates every 5s once the counter has two samples
+    n="$(curl -fsS -G "$PROMETHEUS/api/v1/query" --data-urlencode "query=$q" | jq '.data.result | length')"
+    [ "${n:-0}" -gt 0 ] && break
+    sleep 5
+  done
+  [ "${n:-0}" -gt 0 ] || { log "Prometheus recorded no plan SLI for $DASH_PROJECT"; return 1; }
+  log "the plan SLO recorded $DASH_PROJECT's plans"
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -2430,6 +2637,13 @@ policy          ex after=boot weight=150
 steward         stack! after=boot,drift,tg-waves,tg-affected,tg-refuse,tg-check,tg-mock-lint,tg-drift,tg-mock-trap,policy weight=10
 comment-plan    runner self! weight=150
 lock-wait       otel! self! weight=150
+dash-pipeline   ex otel after=boot weight=120
+dash-changes    ex otel after=boot weight=120
+dash-waves      ex otel after=boot weight=120
+dash-drift      ex otel after=boot weight=120
+dash-estate     ex otel after=boot weight=120
+dash-runs       ex otel after=boot weight=120
+dash-slos       ex otel after=boot weight=120
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

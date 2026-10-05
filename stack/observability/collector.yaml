@@ -13,8 +13,26 @@ exporters:
     endpoint: 0.0.0.0:8889
     resource_to_telemetry_conversion:
       enabled: true
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
   file/traces:
     path: /out/traces.jsonl
+
+connectors:
+  spanmetrics:
+    namespace: terragucci.spans
+    dimensions:
+      - name: terragucci.stage
+      - name: terragucci.project
+      - name: terragucci.result
+    resource_metrics_key_attributes: [service.name, terragucci.project]
+    histogram:
+      unit: s
+      explicit:
+        buckets: [5s, 15s, 30s, 60s, 120s, 300s, 600s, 1200s, 1800s, 3600s]
+    metrics_flush_interval: 5s
 
 extensions:
   health_check:
@@ -24,8 +42,8 @@ service:
   extensions: [health_check]
   pipelines:
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, spanmetrics]
       exporters: [prometheus]
     traces:
       receivers: [otlp]
-      exporters: [file/traces]
+      exporters: [file/traces, otlp/tempo, spanmetrics]

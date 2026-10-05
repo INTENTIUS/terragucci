@@ -43,7 +43,7 @@ Each feature on this site has one check, run against the [tutorial's example](/t
 | The npm package, `@intentius/terragucci` | not yet published; run it from a checkout until it is |
 | The CI images | built and checked, not yet pushed to a registry |
 | Terragrunt explicit stacks (`terragrunt.stack.hcl`) | in development |
-| Dashboards and alert rules, declared with chant's grafana and prometheus lexicons | in development |
+| Dashboards and alert rules, declared with chant's grafana and prometheus lexicons | built: `dashboards:` in `terragucci.yml` makes `init` and `reconcile` write seven dashboards, the SLO and pipeline alert rules, and Grafana's provisioning files; the observability profile adds Grafana and Tempo; their smoke claims have not been recorded yet |
 | A fountain steward started by a pull request | planned after launch |
 | A re-plan comment command | planned after launch |
 | Opt-in policy checks with conftest or OPA, failing `tf-plan` | built; its smoke claim has not been recorded yet |
