@@ -48,7 +48,8 @@ import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { S3Client, s3FromEnv } from "./report/s3";
-import { eachLimited, rootsParallelism, runFacts } from "./report/stage";
+import type { PolicyOptions } from "./report/policy";
+import { checkPolicy, eachLimited, rootsParallelism, runFacts } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -352,6 +353,10 @@ export interface ApplyWaveOptions {
   parallelism?: number;
   /** The config file; default: the one found from the repo. */
   config?: string;
+  /** The ref the policy is read from. Default: TG_BASE, then the checkout (main, when the job runs there). */
+  base?: string;
+  /** With `policy:` set: how the engine runs and is fetched. Default: the real thing. */
+  policy?: PolicyOptions;
 }
 
 /** Run one wave. Returns the exit code; what happened is printed. */
@@ -431,12 +436,13 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   }
   const label = `wave ${wave} of ${waves.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
+  const configPath = options.config ?? findConfig(repo);
+  const settings = resolveRepo(configPath ? await loadConfig(configPath) : {});
   let limit: { value: number; reason: string };
   if (options.parallelism !== undefined) {
     limit = { value: options.parallelism, reason: "--parallelism" };
   } else {
-    const configPath = options.config ?? findConfig(repo);
-    limit = rootsParallelism(repo, roots, resolveRepo(configPath ? await loadConfig(configPath) : {}), options.env ?? process.env);
+    limit = rootsParallelism(repo, roots, settings, options.env ?? process.env);
   }
   if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   const planned: PlannedRoot[] = new Array(roots.length);
@@ -453,6 +459,24 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     for (const p of failed) console.log(indent(p.error!));
     console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
     return EXIT.failed;
+  }
+  // Policy is opt-in. A wave whose plans the policy denies, or that it cannot check, applies nothing and records no approval to wait for.
+  if (settings.policy) {
+    const env = options.env ?? process.env;
+    const base = options.base ?? (env.TG_BASE || undefined);
+    const denied = await checkPolicy(repo, settings.policy, planned.map((p) => ({ path: p.root, plan: p.plan })), base, configPath ? { config: configPath } : {}, options.policy ?? {}, (l) => console.log(l));
+    if (denied.size > 0) {
+      for (const p of planned) {
+        const error = denied.get(p.root);
+        if (error === undefined) continue;
+        p.error = error;
+        console.log(`FAILED ${p.root}: ${error.split("\n")[0]}`);
+        console.log(indent(error));
+      }
+      console.log(`${label}: policy refused ${denied.size} root${denied.size === 1 ? "" : "s"}, so nothing in it was applied`);
+      writeOutcome(options.env, `wave ${wave} refused by policy: ${[...denied.keys()].join(", ")}`);
+      return EXIT.failed;
+    }
   }
   const members = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const digest = waveSetDigest(members);
