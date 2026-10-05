@@ -12,14 +12,13 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 | `forgejo` | floci, Forgejo, forgejo-runner (docker executor) | validated: the `check` and `apply` claims pass |
 | `github` | floci, a mock GitHub API, `act` on the host | validated: `check`, `apply` and `reconcile` pass |
 | `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply` and `reconcile` pass |
-| `fountain` | floci, fountain, Postgres, waterpark's sandbox runner | declared, not yet validated |
+| `fountain` | floci, fountain 0.21.0, Postgres, a fountain runner built for the steward | runs the example's apply on a steward (`just example up --fountain`); the `steward` smoke claim checks it |
 | `observability` | an OpenTelemetry collector and Prometheus (`stack/observability/`) | started by the `traces` and `metrics` claims when it is not up; `stack/down.sh` removes it |
 
-Declared means the services are in `docker-compose.yml`, readable, with comments on what they still need. `bootstrap.sh` refuses `fountain` unless `TERRAGUCCI_UNVALIDATED=1`, and then only starts its containers. No claim runs on it.
 
 - `github`: GitHub has no self-hostable edition. `mock-github/server.mjs` is a small stateful GitHub: it creates repos, serves their git over smart HTTP (`git http-backend`), opens, lists and merges pull requests, and stores issue comments. The runner is `act` on the host, which runs the repo's real workflow file with its job containers on the `terragucci` network. A push is a git push to the mock, and a run is `act push` on a fresh clone of the pushed commit with a push event for that branch, so `github.ref` and the default-branch condition behave as on GitHub. `act` has to be installed (`brew install act`).
 - `gitlab`: GitLab CE 17.11 and gitlab-runner 17.11 with the docker executor, taken from gitlab-warden's e2e stack. The GitLab image is linux/amd64 only, so on Apple silicon it runs under emulation and cold boot takes a few minutes. Speed does not matter here, and the runner and the job containers are native. `bootstrap.sh` mints a root token with `gitlab-rails runner`, creates an instance runner over `POST /api/v4/user/runners` and registers it with `--docker-network-mode terragucci`.
-- `fountain`: copied from waterpark's `compose/`. The runner needs an API key that exists only after an account is registered.
+- `fountain`: laid out after waterpark's `compose/`. `bootstrap.sh fountain` builds `terragucci-fountain-steward:local` (`fountain/Dockerfile`: the tofu CI image, the fountain 0.21.0 CLI and the chant terragucci pins, with its fountain lexicon), registers the admin account, mints an API key and starts `fountain runner` with it. A sandbox is a directory in that container and inherits its floci credentials. `steward.sh` does the rest for a repo: it declares the steward on fountain through `POST /api/apply` (an Environment whose setup makes the sandbox a checkout of the repo, an Agent on the `acp` runtime running `chant acp`, and a Teammate so its turns share one thread), stores the fountain key as the repo's `FOUNTAIN_TOKEN` secret, and rewrites a pushed tree so the pipeline's wave jobs become one `apply` job running `chant run tf-apply --on fountain` in the steward image, with a `tf-apply` Op that runs the same `terragucci stage tf-apply` waves on the steward. fountain points a turn's working directory at the sandbox itself, which is why the sandbox, not a subdirectory, is the checkout.
 
 ## The example and the smoke claims
 
@@ -27,7 +26,7 @@ Declared means the services are in `docker-compose.yml`, readable, with comments
 
 | Command | Does |
 |---|---|
-| `just example up [--fresh]` | boots the forgejo profile, pushes the example to `terragucci-admin/example` (public) and applies every root; `--fresh` wipes floci and the repo first |
+| `just example up [--fresh] [--fountain]` | boots the forgejo profile, pushes the example to `terragucci-admin/example` (public) and applies every root; `--fresh` wipes floci and the repo first; `--fountain` also boots the fountain profile and hands tf-apply to a steward (`steward.sh`) |
 | `just example verify` | checks that every bucket, queue and table main declares is in floci |
 | `just example change <scenario>` | opens a pull request with one of `example/changes/` (`drift` and `pin` act directly) |
 | `just example merge <scenario>` | merges that scenario's pull request as the reader would, listing the reader's ssh key in `.chant/allowed_signers` first, and prints the approval a waiting wave asks for or the refusal a changed one gives |
@@ -135,6 +134,6 @@ Forgejo serves Actions OIDC tokens from version 15 and Forgejo Runner from 12.5,
 | mock GitHub | `node:22-bookworm` running `mock-github/server.mjs` |
 | act | 0.2.89 on the host |
 | GitLab | `gitlab/gitlab-ce:17.11.0-ce.0`, `gitlab/gitlab-runner:v17.11.0` |
-| fountain (declared) | `ghcr.io/binarybourbon/fountain:sha-7f8d16af…`, `postgres:16`, `ghcr.io/intentius/waterpark-runner:latest` |
+| fountain | `ghcr.io/managoat/fountain:v0.21.0@sha256:c90f8ceb…` (amd64 and arm64), `postgres:16`, the fountain 0.21.0 CLI from its GitHub release in `terragucci-fountain-steward:local` |
 
 Jobs fetch `actions/checkout@v4` from data.forgejo.org and OpenTofu from GitHub releases, so the forgejo profile needs network access. The github and gitlab pipelines run in terragucci's tofu image, built into the local daemon by `bootstrap.sh` when it is missing; they download the AWS provider on every run.

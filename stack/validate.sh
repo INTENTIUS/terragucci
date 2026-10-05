@@ -64,7 +64,7 @@ case "$FORGE:$CLAIM" in
   forgejo:check|forgejo:apply) ;;
   github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
   fountain:*)
-    echo "the $FORGE profile is declared but not validated yet; no claims run on it (see stack/README.md)" >&2; exit 2 ;;
+    echo "the $FORGE profile has no validate.sh claims; the steward smoke claim checks it (just smoke steward)" >&2; exit 2 ;;
   forgejo:*)
     echo "claim '$CLAIM' is not implemented for forgejo yet (implemented: check, apply)" >&2; exit 2 ;;
   *) usage ;;

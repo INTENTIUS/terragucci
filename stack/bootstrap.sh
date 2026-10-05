@@ -8,6 +8,7 @@
 #   stack/bootstrap.sh gitlab         floci + GitLab CE + gitlab-runner (GitLab runs under emulation on arm64)
 #   stack/bootstrap.sh aws            floci alone
 #   stack/bootstrap.sh observability  an OpenTelemetry collector and Prometheus
+#   stack/bootstrap.sh fountain       floci + fountain + a fountain runner for a steward
 #
 # For each forge it also mints a token, registers the runner where there is
 # one to register, and creates the repo the claims push to. Re-running it is
@@ -18,9 +19,11 @@
 # which stack/validate.sh reads, so `eval "$(stack/bootstrap.sh forgejo)"` is
 # optional. Progress goes to stderr.
 #
-# fountain is declared in docker-compose.yml but not validated; this script
-# refuses it unless TERRAGUCCI_UNVALIDATED=1, and then only starts its
-# containers.
+# fountain starts floci, fountain and a fountain runner whose sandboxes run the
+# steward's turns. It builds the runner's image (stack/fountain/Dockerfile),
+# registers the admin account, mints an API key (an existing key that still
+# authenticates is kept) and starts the runner with it. stack/steward.sh
+# declares the steward for a repo on top of it.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +35,7 @@ FORGEJO_PORT="${TERRAGUCCI_FORGEJO_PORT:-3300}"
 FLOCI_PORT="${TERRAGUCCI_FLOCI_PORT:-4580}"
 GITHUB_PORT="${TERRAGUCCI_GITHUB_PORT:-8198}"
 GITLAB_PORT="${TERRAGUCCI_GITLAB_PORT:-8939}"
+FOUNTAIN_PORT="${TERRAGUCCI_FOUNTAIN_PORT:-4010}"
 FORGEJO_URL="http://localhost:${FORGEJO_PORT}"
 FLOCI_URL="http://localhost:${FLOCI_PORT}"
 NETWORK="terragucci"
@@ -77,15 +81,7 @@ write_env() { # profile, then KEY=VALUE pairs
 }
 
 case "$PROFILE" in
-  aws|forgejo|github|gitlab) ;;
-  fountain)
-    if [ "${TERRAGUCCI_UNVALIDATED:-}" != "1" ]; then
-      die "the $PROFILE profile is declared but not validated yet (see stack/README.md). Set TERRAGUCCI_UNVALIDATED=1 to start its containers anyway."
-    fi
-    log "starting the $PROFILE profile's containers; nothing is configured or checked"
-    "${COMPOSE[@]}" --profile "$PROFILE" up -d >&2
-    exit 0
-    ;;
+  aws|forgejo|github|gitlab|fountain) ;;
   observability)
     log "starting the observability profile…"
     "${COMPOSE[@]}" --profile observability up -d >&2
@@ -110,6 +106,74 @@ ensure_ci_image() {
   fi
   CI_IMAGE="$ref"
 }
+
+# ── fountain ───────────────────────────────────────────────────────────────
+if [ "$PROFILE" = fountain ]; then
+  started=$(date +%s)
+  FOUNTAIN_URL="http://localhost:${FOUNTAIN_PORT}"
+  STEWARD_IMAGE="terragucci-fountain-steward:local"
+  # The runner's image: the tofu CI image, the fountain CLI of the server's
+  # release, and the chant terragucci pins. A label records all three, so a
+  # change to any of them rebuilds it.
+  ensure_ci_image
+  fountain_version="$(sed -n 's#.*image: ghcr.io/managoat/fountain:\(v[0-9.]*\)@.*#\1#p' "$HERE/docker-compose.yml")"
+  chant_version="$(jq -r '.devDependencies["@intentius/chant"]' "$HERE/../package.json")"
+  [ -n "$fountain_version" ] && [ "$chant_version" != null ] || die "cannot read the fountain or chant version to build the steward image"
+  want="$CI_IMAGE fountain=$fountain_version chant=$chant_version"
+  have="$(docker image inspect -f '{{index .Config.Labels "terragucci.steward"}}' "$STEWARD_IMAGE" 2>/dev/null || true)"
+  if [ "$have" != "$want" ]; then
+    log "building $STEWARD_IMAGE (fountain $fountain_version, chant $chant_version)…"
+    docker build -q --label "terragucci.steward=$want" \
+      --build-arg "BASE=$CI_IMAGE" --build-arg "FOUNTAIN_VERSION=$fountain_version" --build-arg "CHANT_VERSION=$chant_version" \
+      -t "$STEWARD_IMAGE" "$HERE/fountain" >&2 || die "the steward image did not build"
+  fi
+
+  log "starting floci, fountain and its database…"
+  "${COMPOSE[@]}" --profile fountain up -d floci fountain-postgres fountain >&2
+  wait_http "$FLOCI_URL/" "floci" 60
+  wait_http "$FOUNTAIN_URL/health" "fountain" 90
+
+  # The key from an earlier run is kept while it authenticates. Otherwise
+  # register the admin (an existing account answers 422 and is kept) and mint
+  # a full-scope key, which the runner and a steward's caller both need.
+  KEY=""
+  [ -f "$STATE/fountain.env" ] && KEY="$(sed -n 's/^export TERRAGUCCI_FOUNTAIN_TOKEN=//p' "$STATE/fountain.env")"
+  if [ -n "$KEY" ] && curl -fs -o /dev/null -H "Authorization: Bearer $KEY" "$FOUNTAIN_URL/api/auth/me"; then
+    log "the API key from the last run still authenticates"
+  else
+    body="$(jq -n --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PW" '{email: $e, password: $p}')"
+    reg="$(mktemp)"
+    code="$(curl -s -o "$reg" -w '%{http_code}' -H 'content-type: application/json' -d "$body" "$FOUNTAIN_URL/api/auth/register" || true)"
+    case "$code" in
+      2*) log "registered $ADMIN_EMAIL" ;;
+      409) log "$ADMIN_EMAIL is registered already" ;;
+      # 422 is both "taken" and "password refused"; only the first is fine.
+      422) grep -q 'already been taken' "$reg" || die "fountain refused the registration: $(cat "$reg")"
+           log "$ADMIN_EMAIL is registered already" ;;
+      *) die "fountain answered ${code:-nothing} to the registration: $(cat "$reg")" ;;
+    esac
+    rm -f "$reg"
+    KEY="$(curl -fsS -H 'content-type: application/json' -d "$body" "$FOUNTAIN_URL/api/auth/token" | jq -r '.api_key // empty')"
+    [ -n "$KEY" ] || die "fountain minted no API key for $ADMIN_EMAIL"
+  fi
+
+  log "starting the fountain runner…"
+  TERRAGUCCI_FOUNTAIN_API_KEY="$KEY" "${COMPOSE[@]}" --profile fountain up -d fountain-runner >&2
+  for i in $(seq 1 60); do
+    curl -fsS -H "Authorization: Bearer $KEY" "$FOUNTAIN_URL/api/runners" 2>/dev/null \
+      | jq -e '.data | map(select(.name == "terragucci" and .online)) | length > 0' >/dev/null 2>&1 \
+      && { log "runner online after ~$((i * 2))s"; break; }
+    sleep 2
+    if [ "$i" = 60 ]; then "${COMPOSE[@]}" logs --tail=40 fountain-runner >&2 || true; die "the fountain runner did not come online"; fi
+  done
+  write_env fountain \
+    "TERRAGUCCI_FOUNTAIN_URL=$FOUNTAIN_URL" \
+    "TERRAGUCCI_FOUNTAIN_TOKEN=$KEY" \
+    "TERRAGUCCI_FOUNTAIN_STEWARD_IMAGE=$STEWARD_IMAGE" \
+    "TERRAGUCCI_FLOCI_URL=$FLOCI_URL"
+  log "ready in $(( $(date +%s) - started ))s"
+  exit 0
+fi
 
 started=$(date +%s)
 log "starting the $PROFILE profile…"

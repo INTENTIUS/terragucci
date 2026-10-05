@@ -135,7 +135,7 @@ site-dev:
 # A real forge, a real runner and floci on one Docker network; see
 # stack/README.md. Each target skips with a message when Docker is not there.
 
-[doc("Bring up a profile of the validation stack (aws, forgejo, github, gitlab; fountain is declared, not validated).")]
+[doc("Bring up a profile of the validation stack (aws, forgejo, github, gitlab, fountain).")]
 stack-up profile="forgejo":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -153,8 +153,8 @@ stack-for config:
     for p in $profiles; do
       case "$p" in
         aws) ;;
-        forgejo|github|gitlab) stack/bootstrap.sh "$p" ;;
-        *) echo "  the $p profile is declared but not validated yet; skipping it (TERRAGUCCI_UNVALIDATED=1 stack/bootstrap.sh $p starts its containers)" ;;
+        forgejo|github|gitlab|fountain) stack/bootstrap.sh "$p" ;;
+        *) echo "  no stack profile is called $p; skipping it" ;;
       esac
     done
     case " $profiles " in *" forgejo "*|*" github "*|*" gitlab "*) ;; *) stack/bootstrap.sh aws ;; esac
