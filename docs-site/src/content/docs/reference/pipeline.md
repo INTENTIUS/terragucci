@@ -29,7 +29,7 @@ oidc:
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Apply gets the write role and runs only on the default branch. Forks get no plan job, so nothing reaches their pull requests.
 
-GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs ask the runner's token endpoint.
+GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs set `enable-openid-connect: true` and ask the runner's token endpoint, which needs Forgejo 15 or later and Forgejo Runner 12.5 or later. On an older Forgejo the token request fails and the job stops, so leave `oidc` unset there and give the runner static credentials instead.
 
 ### Terragrunt
 

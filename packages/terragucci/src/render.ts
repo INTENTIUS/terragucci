@@ -225,10 +225,26 @@ export function forgeApi(forge: ForgeName): string {
 
 const AUDIENCE = "sts.amazonaws.com";
 
-/** Take the role over OIDC: AWS reads the token file and exchanges it for the role. */
-/** Write the job's OIDC token to `$AWS_WEB_IDENTITY_TOKEN_FILE`. */
+/** What a job that got no OIDC token needs, by forge. */
+const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
+  github: "the job needs permissions: id-token: write",
+  forgejo: "Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job that sets enable-openid-connect: true; on an older Forgejo leave oidc unset and give the runner static credentials",
+};
+
+/**
+ * Write the job's OIDC token to `$AWS_WEB_IDENTITY_TOKEN_FILE`, or stop the job:
+ * the scripts run without `set -e`, and a job that went on would plan or apply
+ * with whatever credentials the runner happens to hold.
+ */
 export function tokenScript(forge: ForgeName, audience = AUDIENCE): string {
-  return forge === "gitlab" ? 'printf \'%s\' "$TERRAGUCCI_OIDC" >"$AWS_WEB_IDENTITY_TOKEN_FILE"' : `tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" ${sh(audience)}`;
+  if (forge === "gitlab") return 'printf \'%s\' "$TERRAGUCCI_OIDC" >"$AWS_WEB_IDENTITY_TOKEN_FILE"';
+  return [
+    'if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then',
+    `  echo ${sh(`terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); ${NO_TOKEN[forge]}`)} >&2`,
+    "  exit 1",
+    "fi",
+    `tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" ${sh(audience)} || exit 1`,
+  ].join("\n");
 }
 
 export function oidcScript(forge: ForgeName, role: string, session: string, audience = AUDIENCE): string {
@@ -665,6 +681,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
 
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
   const isFork = "github.event.pull_request.head.repo.full_name != github.repository";
+  // Forgejo (15 and later, with runner 12.5 or later) serves a job an OIDC token
+  // only when the job sets enable-openid-connect; it does not read id-token: write.
+  const openid = (on: boolean): Record<string, boolean> => (on && forge === "forgejo" ? { "enable-openid-connect": true } : {});
   const workflow = new Workflow({
     name: "terragucci",
     on: {
@@ -712,6 +731,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     container: { image },
     if: `github.event_name == 'pull_request' && ${sameRepo}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+    ...openid(needsToken),
     env: {
       TG_TOKEN: "${{ github.token }}",
       TG_SHA: "${{ github.event.pull_request.head.sha }}",
@@ -743,6 +763,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
       // contents: write only to record a waiting wave's plan on the chant/lifecycle branch.
       permissions: { contents: writesLedger ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+      ...openid(needsToken),
       // One apply per project at a time; a push that waits is not cancelled.
       concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
       env: {
@@ -805,6 +826,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       container: { image },
       if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
       permissions: { contents: driftPr ? "write" : "read", issues: "write", ...(driftPr ? { "pull-requests": "write" } : {}), ...(oidc ? { "id-token": "write" } : {}) },
+      ...openid(Boolean(oidc)),
       env: {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",

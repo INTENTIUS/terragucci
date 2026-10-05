@@ -115,12 +115,22 @@ describe("credentials", () => {
     expect(never.jobs["apply-wave-1"].permissions.contents).toBe("read");
   });
 
-  it("forgejo: the jobs that assume a role ask for id-token: write, and the token comes from the runner's OIDC endpoint", () => {
+  it("forgejo: the jobs that assume a role set enable-openid-connect, and the token comes from the runner's OIDC endpoint", () => {
     const text = render("forgejo", OIDC);
     const doc = body(text);
-    expect(doc.jobs.plan.permissions["id-token"]).toBe("write");
-    expect(doc.jobs["apply-wave-1"].permissions["id-token"]).toBe("write");
+    for (const j of ["plan", "apply-wave-1", "apply-wave-2"]) {
+      expect(doc.jobs[j]["enable-openid-connect"]).toBe(true);
+      expect(doc.jobs[j].permissions["id-token"]).toBe("write");
+    }
+    expect(doc.jobs.check["enable-openid-connect"]).toBeUndefined();
+    expect(doc["enable-openid-connect"]).toBeUndefined();
     expect(text).toContain("tg oidc");
+    // A runner that serves no token stops the job and says what Forgejo needs.
+    expect(text).toContain('if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then');
+    expect(text).toContain("Forgejo Runner 12.5 or later, to a job that sets enable-openid-connect: true");
+    expect(text).toContain("|| exit 1");
+    expect(render("forgejo")).not.toContain("enable-openid-connect");
+    expect(render("github", OIDC)).not.toContain("enable-openid-connect");
   });
 
   it.each(["github", "forgejo"] as const)("%s: a fork's pull request runs no plan, so no token or OIDC reaches it", (forge) => {

@@ -70,7 +70,8 @@ respond-drift|drift on a literal becomes a pull request with the live value, and
 respond-tips|each tip becomes its own small pull request|
 respond-fmt|fmt on request commits to the pull request branch and nowhere else|
 respond-notes|release notes come from the conventional commits that touched the module|
-fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|'
+fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
+forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1666,6 +1667,128 @@ TF"
   jq -e --arg a "$app" --arg n "$net" '.deferred[] | select(.unit == $a and (.after | index($n)))' "$r" >/dev/null || { log "the report does not say $app waits for $net"; rc=1; }
   rm -rf "$work"
   [ $rc = 0 ] && log "$net planned; $app held back until $net applies, and the job stayed green"
+  return $rc
+}
+
+claim_forgejo_oidc() {
+  # A scratch repo whose one root reads a data source that runs a probe in the
+  # job: it reads the token the job wrote to $AWS_WEB_IDENTITY_TOKEN_FILE,
+  # verifies its signature against Forgejo's published keys, trades it with
+  # floci's STS for $AWS_ROLE_ARN, and writes what it saw to floci. The push to
+  # main runs the apply job (the apply role); a pull request runs the plan job
+  # (the plan role). floci accepts any token from an issuer it does not host,
+  # so the signature check is the probe's own.
+  # BREAK: enable-openid-connect is cut from the pushed pipeline, so the runner
+  # serves no token and the apply job stops before it plans.
+  log() { echo "[smoke forgejo-oidc] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/oidc" sha pr i mark plan_mark apply_mark rc=0 role trust
+  local plan_role=terragucci-oidc-plan apply_role=terragucci-oidc-apply marks=shop-terraform-state/oidc-marks
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo oidc || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for mark in terragucci-plan terragucci-apply; do curl -s -o /dev/null -X DELETE "$FLOCI/$marks/$mark.json" || true; done
+  # The two roles, trusting Forgejo's issuer for this repo. floci checks only
+  # that the role exists for a token it cannot verify; AWS would check all of it.
+  iam() { curl -sS -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' --data-urlencode "Action=$1" --data-urlencode Version=2010-05-08 "${@:2}"; }
+  for role in "$plan_role" "$apply_role"; do
+    trust="$(jq -cn --arg repo "$repo" '{Version: "2012-10-17", Statement: [{Effect: "Allow", Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: {Federated: "arn:aws:iam::000000000000:oidc-provider/forgejo:3000/api/actions"},
+      Condition: {StringEquals: {"forgejo:3000/api/actions:aud": "sts.amazonaws.com"}, StringLike: {"forgejo:3000/api/actions:sub": "repo:\($repo):*"}}}]}')"
+    iam CreateRole --data-urlencode "RoleName=$role" --data-urlencode "AssumeRolePolicyDocument=$trust" >/dev/null || true
+    iam GetRole --data-urlencode "RoleName=$role" | grep -q "<RoleName>$role</RoleName>" || { log "floci has no role $role"; return 1; }
+  done
+  mkdir -p "$work/tree/app"
+  echo 1 > "$work/tree/app/rev.txt"
+  cat > "$work/tree/app/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+data "external" "oidc" {
+  program = ["node", "${path.module}/probe.mjs"]
+}
+
+resource "terraform_data" "rev" {
+  input = file("${path.module}/rev.txt")
+}
+
+output "assumed" {
+  value = data.external.oidc.result.assumed
+}
+TF
+  cat > "$work/tree/app/probe.mjs" <<'JS'
+import { readFileSync } from "node:fs";
+import { createPublicKey, verify } from "node:crypto";
+const e = process.env;
+const fail = (m) => { console.error("oidc probe: " + m); process.exit(1); };
+if (!e.AWS_WEB_IDENTITY_TOKEN_FILE || !e.AWS_ROLE_ARN) fail("no AWS_WEB_IDENTITY_TOKEN_FILE or AWS_ROLE_ARN, so the job took no role");
+const jwt = readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim();
+const [h, p, s] = jwt.split(".");
+if (!s) fail("the token file holds no JWT");
+const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
+const head = dec(h), claims = dec(p);
+const server = (e.GITHUB_SERVER_URL || "").replace(/\/$/, "");
+const conf = await (await fetch(server + "/api/actions/.well-known/openid-configuration")).json();
+const jwks = await (await fetch(conf.jwks_uri)).json();
+const jwk = jwks.keys.find((k) => !head.kid || k.kid === head.kid);
+if (!jwk) fail("no published key matches kid " + head.kid);
+const key = createPublicKey({ key: jwk, format: "jwk" });
+const data = Buffer.from(h + "." + p), sig = Buffer.from(s, "base64url");
+const hash = { 256: "sha256", 384: "sha384", 512: "sha512" }[head.alg.slice(2)];
+const verified = head.alg === "EdDSA" ? verify(null, data, key, sig)
+  : verify(hash, data, head.alg.startsWith("ES") ? { key, dsaEncoding: "ieee-p1363" } : key, sig);
+const body = new URLSearchParams({ Action: "AssumeRoleWithWebIdentity", Version: "2011-06-15", RoleArn: e.AWS_ROLE_ARN, RoleSessionName: e.AWS_ROLE_SESSION_NAME, WebIdentityToken: jwt });
+const r = await fetch(e.AWS_ENDPOINT_URL + "/", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+const xml = await r.text();
+const assumed = xml.match(/<AssumedRoleUser>[\s\S]*?<Arn>([^<]+)<\/Arn>/)?.[1];
+if (!r.ok || !assumed) fail("STS answered " + r.status + ": " + xml.slice(0, 300));
+const mark = { iss: claims.iss, sub: claims.sub, aud: claims.aud, alg: head.alg, issuer: conf.issuer, verified, assumed };
+await fetch(e.AWS_ENDPOINT_URL + "/shop-terraform-state/oidc-marks/" + e.AWS_ROLE_SESSION_NAME + ".json", { method: "PUT", body: JSON.stringify(mark) });
+console.log(JSON.stringify({ assumed }));
+JS
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\noidc:\n  plan_role: arn:aws:iam::000000000000:role/%s\n  apply_role: arn:aws:iam::000000000000:role/%s\n' "$plan_role" "$apply_role" > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; return 1; }
+  local wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q 'enable-openid-connect: true' "$wf" || { log "the pipeline sets no enable-openid-connect"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    grep -v 'enable-openid-connect: true' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  checked() { # session, sub, role (mark on stdin) -> 0 when the mark shows a verified token for sub traded for role
+    local m="$1"
+    jq -e --arg sub "$2" --arg role "$3/$m" '.verified == true and .iss == .issuer and (.iss | endswith("/api/actions"))
+      and .sub == $sub and ([.aud] | flatten | index("sts.amazonaws.com")) and (.assumed | contains(":assumed-role/" + $role))' >/dev/null
+  }
+  sha="$(push_tree "$work/tree" "$repo" main "oidc: first")"
+  wait_run "$repo" "$sha"
+  apply_mark="$(curl -fsS "$FLOCI/$marks/terragucci-apply.json" 2>/dev/null || true)"
+  log "apply job: run $RUN_STATUS, mark ${apply_mark:-none}"
+  if [ "$RUN_STATUS" != success ] || [ -z "$apply_mark" ]; then
+    print_logs "$repo" "$RUN_ID" | grep -E 'OIDC|oidc probe|ACTIONS_ID_TOKEN' >&2 || true
+    log "the apply job did not take the apply role over OIDC"
+    return 1
+  fi
+  checked terragucci-apply "repo:$repo:ref:refs/heads/main" "$apply_role" <<<"$apply_mark" || { log "the apply mark is not a verified token for main traded for $apply_role"; rc=1; }
+  echo 2 > "$work/tree/app/rev.txt"
+  sha="$(push_tree "$work/tree" "$repo" oidc-change "oidc: change")"
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"oidc-change","base":"main","title":"oidc: plan"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  log "pull request $pr for ${sha:0:8}"
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    plan_mark="$(curl -fsS "$FLOCI/$marks/terragucci-plan.json" 2>/dev/null || true)"
+    [ -n "$plan_mark" ] && break
+    sleep 3
+  done
+  log "plan job: mark ${plan_mark:-none}"
+  [ -n "$plan_mark" ] || { log "the plan job wrote no mark"; return 1; }
+  checked terragucci-plan "repo:$repo:pull_request" "$plan_role" <<<"$plan_mark" || { log "the plan mark is not a verified pull_request token traded for $plan_role"; rc=1; }
+  [ $rc = 0 ] && log "plan and apply jobs each got a token Forgejo signed and took their own role"
   return $rc
 }
 

@@ -57,7 +57,15 @@ oidc:
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
-GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs ask the runner's token endpoint. The job writes the token to the file `AWS_WEB_IDENTITY_TOKEN_FILE` names and sets `AWS_ROLE_ARN`, so the AWS SDKs in the binary and its providers pick the role up. Your role's trust policy must accept the forge's issuer and your repo.
+GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs set `enable-openid-connect: true` and ask the runner's token endpoint; Forgejo serves it from version 15, with Forgejo Runner 12.5 or later. The job writes the token to the file `AWS_WEB_IDENTITY_TOKEN_FILE` names and sets `AWS_ROLE_ARN`, so the AWS SDKs in the binary and its providers pick the role up. Your role's trust policy must accept the forge's issuer and your repo.
+
+| Forge | Issuer | Subject |
+|---|---|---|
+| GitHub | `https://token.actions.githubusercontent.com` | `repo:<owner>/<repo>:ref:refs/heads/<branch>`, or `repo:<owner>/<repo>:pull_request` |
+| GitLab | your GitLab URL | `project_path:<group>/<project>:ref_type:branch:ref:<branch>` |
+| Forgejo | your Forgejo URL followed by `/api/actions` | `repo:<owner>/<repo>:ref:refs/heads/<branch>`, or `repo:<owner>/<repo>:pull_request` |
+
+A Forgejo older than 15, or a runner older than 12.5, serves no token: the token request fails and the job stops before it plans. Leave `oidc` unset on such a forge and give the runner static credentials as environment variables in its config.
 
 In a Terragrunt repo, roles can follow unit paths. See [The generated pipeline](/terragucci/reference/pipeline/#terragrunt).
 

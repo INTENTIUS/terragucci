@@ -79,6 +79,9 @@ services:
   # ── forgejo ──────────────────────────────────────────────────────────────
   # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the
   # admin and its token afterwards (the forgejo-warden e2e pattern).
+  # Forgejo 15 and later, with runner 12.5 and later, serves Actions OIDC
+  # tokens to a job that sets enable-openid-connect; the signing key is
+  # generated under /data on first use, so no setting is needed here.
   forgejo:
     image: codeberg.org/forgejo/forgejo:16.0.5
     container_name: terragucci-forgejo
