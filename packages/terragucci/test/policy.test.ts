@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkPlan, trustedPolicy, conftestViolations, describeVerdict, engineBinary, opaViolations, CONFTEST_SHA256, type PolicyExec } from "../src/report/policy";
+import { checkPlan, trustedPolicy, conftestViolations, describeVerdict, engineBinary, opaViolations, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
 import { runStage } from "../src/report/stage";
 import { git, tmp, write } from "./helpers";
 
@@ -64,9 +64,14 @@ describe("engineBinary", () => {
     expect(createHash("sha256").update("x").digest("hex")).toHaveLength(64);
   });
 
-  it("will not fetch opa", async () => {
+  it("fetches opa on demand from its pinned release, and refuses a download that misses the digest", async () => {
     const absent: PolicyExec = async () => ({ status: null, stdout: "", stderr: "ENOENT" });
-    await expect(engineBinary({ engine: "opa" }, tmp(), { exec: absent })).rejects.toThrow(/not on the path/);
+    let url = "";
+    const download = async (u: string) => ((url = u), Buffer.from("not opa"));
+    await expect(engineBinary({ engine: "opa" }, tmp(), { exec: absent, cache: tmp(), arch: "arm64", download })).rejects.toThrow(/opa .* does not match its pinned digest/);
+    expect(url).toBe(`https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_arm64_static`);
+    expect(OPA_SHA256.x86_64).toMatch(/^[0-9a-f]{64}$/);
+    expect(OPA_SHA256.arm64).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

@@ -35,6 +35,7 @@ export const METRIC = {
   planGroups: "terragucci_plan_groups",
   planChanges: "terragucci_plan_changes",
   rootPlan: "terragucci_root_plan_seconds",
+  rootApply: "terragucci_root_apply_seconds",
   binaryVersion: "terragucci_binary_version",
   tips: "terragucci_tips",
   modulePin: "terragucci_module_pin",

@@ -27,12 +27,20 @@ export interface PolicyRun {
 
 export type PolicyExec = (file: string, args: string[], cwd: string) => Promise<PolicyRun>;
 
-export const CONFTEST_VERSION = "0.56.0";
+export const CONFTEST_VERSION = "0.71.0";
 
-/** SHA-256 of the Linux release archives, so a download is checked against a pin and not against itself. */
+/** SHA-256 of the Linux release archives, from the release's checksums.txt, so a download is checked against a pin and not against itself. */
 export const CONFTEST_SHA256: Record<string, string> = {
-  x86_64: "620f41640d63bbde1646a108ce2816ba54c980466ceebb7e754dda2d508e8cd5",
-  arm64: "86334e4ca57b991f0dca0dd3d011270edda50fdff2b2e208954ea639bb1c99ec",
+  x86_64: "765dfefdf0730693d7541ea0147e10d530a54ed257bbfec055ff34c837ffdf72",
+  arm64: "542f255081cfab9919cba327d3c4014fd46d6ee3f0441c634b14b1465e9469d9",
+};
+
+export const OPA_VERSION = "1.21.1";
+
+/** SHA-256 of the static Linux builds, from the release's `.sha256` files. OPA ships a bare binary, not an archive. */
+export const OPA_SHA256: Record<string, string> = {
+  x86_64: "668506eb17a2eaa1fce6cc0d1f42ef85125d4ac5bda5fc74d1152d0c77145031",
+  arm64: "9a1f3625529c6f01240fe68286dde06aa0b23c5253da700ac48f4d943ff8a4de",
 };
 
 export const defaultPolicyExec: PolicyExec = (file, args, cwd) =>
@@ -64,29 +72,36 @@ export interface PolicyOptions {
   arch?: string;
 }
 
-/** The engine's executable: the one on the path, or conftest fetched once and checked against its pinned digest. */
+/** The engine's executable: the one on the path, or conftest or OPA fetched once and checked against its pinned digest. */
 export async function engineBinary(policy: PolicySettings, repo: string, options: PolicyOptions = {}): Promise<string> {
   const exec = options.exec ?? defaultPolicyExec;
   const name = policy.engine ?? "conftest";
-  const onPath = await exec(name, ["--version"], repo);
+  const onPath = await exec(name, name === "opa" ? ["version"] : ["--version"], repo);
   if (onPath.status === 0) return name;
-  if (name !== "conftest") throw new Error(`policy.engine is ${name}, but ${name} is not on the path; put it in the job's image or install it in an earlier step`);
   const arch = (options.arch ?? process.arch) === "arm64" ? "arm64" : "x86_64";
-  const dir = join(options.cache ?? tmpdir(), `terragucci-conftest-${CONFTEST_VERSION}-${arch}`);
-  const bin = join(dir, "conftest");
+  const dir = join(options.cache ?? tmpdir(), `terragucci-${name}-${name === "opa" ? OPA_VERSION : CONFTEST_VERSION}-${arch}`);
+  const bin = join(dir, name);
   if (existsSync(bin)) return bin;
-  const asset = `conftest_${CONFTEST_VERSION}_Linux_${arch}.tar.gz`;
-  const url = `https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/${asset}`;
+  const archive = name === "conftest";
+  const version = archive ? CONFTEST_VERSION : OPA_VERSION;
+  const asset = archive ? `conftest_${CONFTEST_VERSION}_Linux_${arch}.tar.gz` : `opa_linux_${arch === "arm64" ? "arm64" : "amd64"}_static`;
+  const url = archive
+    ? `https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/${asset}`
+    : `https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/${asset}`;
   const body = await (options.download ?? fetchBytes)(url);
   const sum = createHash("sha256").update(body).digest("hex");
-  if (sum !== CONFTEST_SHA256[arch]) throw new Error(`conftest ${CONFTEST_VERSION} from ${url} does not match its pinned digest (got ${sum}); not running it`);
-  const work = mkdtempSync(join(tmpdir(), "terragucci-conftest-"));
+  if (sum !== (archive ? CONFTEST_SHA256 : OPA_SHA256)[arch]) throw new Error(`${name} ${version} from ${url} does not match its pinned digest (got ${sum}); not running it`);
+  const work = mkdtempSync(join(tmpdir(), `terragucci-${name}-`));
   try {
     writeFileSync(join(work, asset), body);
-    const untar = await exec("tar", ["-xzf", join(work, asset), "-C", work, "conftest"], work);
-    if (untar.status !== 0) throw new Error(`could not unpack conftest: ${untar.stderr.trim()}`);
+    if (archive) {
+      const untar = await exec("tar", ["-xzf", join(work, asset), "-C", work, "conftest"], work);
+      if (untar.status !== 0) throw new Error(`could not unpack conftest: ${untar.stderr.trim()}`);
+    } else {
+      renameSync(join(work, asset), join(work, "opa"));
+    }
     mkdirSync(dir, { recursive: true });
-    renameSync(join(work, "conftest"), bin);
+    renameSync(join(work, name), bin);
     chmodSync(bin, 0o755);
   } finally {
     rmSync(work, { recursive: true, force: true });

@@ -58,13 +58,47 @@
     {
       "type": "table",
       "id": 3,
-      "title": "Slowest resources",
-      "description": "The ten slowest resources over the range, from the binary's spans, in seconds.",
+      "title": "Slowest root applies",
+      "description": "The ten slowest root applies over the range, in seconds.",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
         "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "topk(10, max by (project, root) (max_over_time(terragucci_root_apply_seconds{project=~\"$project\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "id": 4,
+      "title": "Slowest resources",
+      "description": "The ten slowest resources over the range, from the binary's spans, in seconds.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
       },
       "datasource": {
         "type": "prometheus",
@@ -91,13 +125,13 @@
     },
     {
       "type": "table",
-      "id": 4,
+      "id": 5,
       "title": "Provider init",
       "description": "Time spent starting each provider, in seconds.",
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 9
       },
       "datasource": {
@@ -125,14 +159,14 @@
     },
     {
       "type": "table",
-      "id": 5,
+      "id": 6,
       "title": "Lock waits",
       "description": "Time spent waiting for a state lock, by root, in seconds.",
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 9
+        "x": 0,
+        "y": 17
       },
       "datasource": {
         "type": "prometheus",
@@ -165,21 +199,21 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 17
+        "y": 25
       },
-      "id": 6,
+      "id": 7,
       "panels": []
     },
     {
       "type": "timeseries",
-      "id": 7,
+      "id": 8,
       "title": "Stage duration",
       "description": "How long each stage run took.",
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 18
+        "y": 26
       },
       "datasource": {
         "type": "prometheus",
@@ -212,21 +246,21 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 34
       },
-      "id": 8,
+      "id": 9,
       "panels": []
     },
     {
       "type": "table",
-      "id": 9,
+      "id": 10,
       "title": "Runs",
       "description": "The trace of each stage run. Open one to see its waves, roots and the binary's own spans.",
       "gridPos": {
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 35
       },
       "datasource": {
         "type": "tempo",

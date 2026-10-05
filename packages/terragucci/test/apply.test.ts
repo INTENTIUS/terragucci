@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, applyWaves, approvedPath, decideGate, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
+import { applyWave, applyWaves, approvedPath, decideGate, lockTimeoutArgs, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
 import type { PolicyExec } from "../src/report/policy";
 import { refusedDiff } from "../src/respond/refused";
 import { gateSealPayload } from "../src/seal";
@@ -308,5 +308,15 @@ exit 0
     writeFileSync(join(work, "terragucci.yml"), "parallelism: 3\n");
     expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env })).toBe(0);
     expect(most(run)).toBe(3);
+  });
+});
+
+describe("the default -lock-timeout", () => {
+  it("is five minutes unless TF_CLI_ARGS or the command's own variable names one", () => {
+    expect(lockTimeoutArgs("plan", {})).toEqual(["-lock-timeout=5m"]);
+    expect(lockTimeoutArgs("apply", { TF_CLI_ARGS_plan: "-lock-timeout=1s" })).toEqual(["-lock-timeout=5m"]);
+    expect(lockTimeoutArgs("plan", { TF_CLI_ARGS_plan: "-lock-timeout=150s" })).toEqual([]);
+    expect(lockTimeoutArgs("apply", { TF_CLI_ARGS: "-no-color -lock-timeout=0s" })).toEqual([]);
+    expect(lockTimeoutArgs("apply", { TF_CLI_ARGS_apply: "--lock-timeout 30s" })).toEqual([]);
   });
 });

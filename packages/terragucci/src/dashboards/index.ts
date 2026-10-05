@@ -316,6 +316,7 @@ function runs(s: Required<DashboardSettings>): DashboardEntity {
       title: "Slowest",
       panels: [
         table("Slowest roots", "The ten slowest root plans over the range, in seconds.", ds, top(METRIC.rootPlan, ["project", "root"])),
+        table("Slowest root applies", "The ten slowest root applies over the range, in seconds.", ds, top(METRIC.rootApply, ["project", "root"])),
         table("Slowest resources", "The ten slowest resources over the range, from the binary's spans, in seconds.", ds, top(METRIC.resource, ["project", "root", "address"])),
         table("Provider init", "Time spent starting each provider, in seconds.", ds, top(METRIC.providerInit, ["project", "provider"])),
         table("Lock waits", "Time spent waiting for a state lock, by root, in seconds.", ds, top(METRIC.lockWait, ["project", "root"])),

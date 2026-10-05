@@ -385,6 +385,13 @@ jobs:
             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
           esac
           echo "wave 1 of 4 applied"
+      - name: Keep the apply report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report-apply-wave-1
+          path: terragucci-report/
+          if-no-files-found: ignore
   apply-wave-2:
     runs-on: docker
     container:
@@ -497,6 +504,13 @@ jobs:
             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
           esac
           echo "wave 2 of 4 applied"
+      - name: Keep the apply report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report-apply-wave-2
+          path: terragucci-report/
+          if-no-files-found: ignore
   apply-wave-3:
     runs-on: docker
     container:
@@ -609,6 +623,13 @@ jobs:
             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
           esac
           echo "wave 3 of 4 applied"
+      - name: Keep the apply report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report-apply-wave-3
+          path: terragucci-report/
+          if-no-files-found: ignore
   apply-wave-4:
     runs-on: docker
     container:
@@ -722,6 +743,13 @@ jobs:
           esac
           tg status terragucci/apply success "15 roots in 2 groups applied"
           echo "all roots applied"
+      - name: Keep the apply report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report-apply-wave-4
+          path: terragucci-report/
+          if-no-files-found: ignore
   tips:
     runs-on: docker
     container:

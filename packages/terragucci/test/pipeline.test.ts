@@ -387,6 +387,19 @@ describe("the plan stage", () => {
     }
   });
 
+  it.each(FORGES)("%s: each apply job keeps the wave's report with the job", (forge) => {
+    const doc = body(render(forge));
+    const name = Object.keys(forge === "gitlab" ? doc : doc.jobs).find((k) => k.startsWith("apply"))!;
+    if (forge === "gitlab") {
+      expect(doc[name].artifacts).toMatchObject({ name: `terragucci-report-${name}`, when: "always", paths: expect.arrayContaining(["terragucci-report/"]) });
+    } else {
+      const keep = doc.jobs[name].steps.find((s: { name?: string }) => s.name === "Keep the apply report");
+      expect(keep.if).toBe("always()");
+      expect(keep.uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
+      expect(keep.with).toMatchObject({ name: `terragucci-report-${name}`, path: "terragucci-report/" });
+    }
+  });
+
   it("the stage plans without taking the state lock, so a pull request never blocks an apply", () => {
     expect(readFileSync(join(import.meta.dirname, "../src/report/stage.ts"), "utf-8")).toContain('"-lock=false"');
   });

@@ -384,6 +384,7 @@ jobs:
           fi
           tg status terragucci/apply pending "applying"
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
+          case "${TF_CLI_ARGS:-} ${TF_CLI_ARGS_apply:-}" in *-lock-timeout*) ;; *) export TF_CLI_ARGS_apply="-lock-timeout=5m ${TF_CLI_ARGS_apply:-}" ;; esac
           log="$(mktemp)"
           apply_wave() {
             terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false 2>&1 | tee -a "$log"
@@ -395,6 +396,13 @@ jobs:
           apply_wave --filter '{./live/prod/email}' --filter '{./live/prod/orders}' --filter '{./live/prod/payments}' --filter '{./live/prod/platform}' --filter '{./live/prod/search}' --filter '{./live/staging/email}' --filter '{./live/staging/orders}' --filter '{./live/staging/payments}' --filter '{./live/staging/platform}' --filter '{./live/staging/search}' || failed
           tg status terragucci/apply success "15 units in 2 waves applied"
           echo "all units applied"
+      - name: Keep the apply report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report-apply
+          path: terragucci-report/
+          if-no-files-found: ignore
   tips:
     runs-on: docker
     container:

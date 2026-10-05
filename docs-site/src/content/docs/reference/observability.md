@@ -54,19 +54,20 @@ choudoufu times each resource instance and each provider call. On a large estate
 
 A root whose binary reports nothing per resource says so where the lists would be. Terraform exports no traces, and OpenTofu's stop above the resource. In a Terragrunt run, Terragrunt runs the binary, so each unit's time comes from Terragrunt's run report (when the unit started and ended) and the report lists the units slowest first, with no per-resource timings.
 
-A `tf-plan` never takes the state lock, so it never waits for one. A `tf-apply` wave's plan and apply do. With choudoufu, a wait shows as a `State lock wait` span, with the number of attempts it took, and the wave's report lists it under the root's lock waits. A wave writes its report to `terragucci-report/`, and copies it to the `reports` bucket when one is set.
+A `tf-plan` never takes the state lock, so it never waits for one. A `tf-apply` wave's plan and apply do, and each waits up to five minutes (`-lock-timeout=5m`) unless `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` already sets a `-lock-timeout`. The same default applies to a Terragrunt apply. With choudoufu, a wait shows as a `State lock wait` span, with the number of attempts it took, and the wave's report lists it under the root's lock waits. A wave writes its report to `terragucci-report/`, copies it to the `reports` bucket when one is set, and the apply job keeps the directory as a job artifact, as the plan job does.
 
 The HTML report shows the run's timings under "Where the time went", and folds each root's own under its changes. When a binary did time its resources, the plan note gets one line naming the three slowest. `report.json` carries them as `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 
 ## The metrics
 
-A stage pushes its metrics once, when it ends, so a short CI job needs no scrape. Point a Prometheus exporter or remote write on your collector at them. They are read from the run's report, so they match what reviewers saw. Every metric is a gauge with the labels `project` and `stage`, plus those below.
+A stage pushes its metrics once, when it ends, so a short CI job needs no scrape. Point a Prometheus exporter or remote write on your collector at them. They are read from the run's report, so they match what reviewers saw. A `tf-apply` wave sends its trace and `terragucci_root_apply_seconds`, and leaves the plan's metrics to the plan so a root is not counted twice. Every metric is a gauge with the labels `project` and `stage`, plus those below.
 
 | Metric | Labels | Answers |
 |---|---|---|
 | `terragucci_stage_duration_seconds` | `result` | how long each stage takes, and whether it failed |
 | `terragucci_roots_planned` | | how many roots a change touches |
 | `terragucci_root_plan_seconds` | `root` | the slowest roots |
+| `terragucci_root_apply_seconds` | `root`, `wave` | the slowest root applies; sent by a `tf-apply` wave |
 | `terragucci_plan_changes` | `action` | creates, updates, replaces and deletes, over time |
 | `terragucci_plan_groups` | | how far a change folds |
 | `terragucci_binary_version` | `binary`, `version` | the binary versions in use across repos |
@@ -105,7 +106,7 @@ observability/terragucci/
 | Rollouts and waves | waves waiting for an approval and for how long, wave runs by result, and how many roots pin each module version |
 | Drift | drifted roots by project, how old the open drift is, and roots corrected |
 | Estate | roots per project, the binary and terragucci versions each runs, module pins and tips by rule |
-| Runs | the slowest roots and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
+| Runs | the slowest roots, root applies and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
 | One per SLO | the SLI against its objective, the error budget left and the burn rates |
 
 There are three SLOs, each over 28 days. Plans finish within ten minutes 95% of the time. Wave applies succeed 99% of the time. Drift is corrected within a day 90% of the time.
