@@ -1,0 +1,15 @@
+{
+  "step": "one-note",
+  "source_hash": "53d2ce1a38f1fe7f",
+  "commands": [
+    {
+      "cmd": "just example change module-bump",
+      "output": "[example] pushed change/module-bump at 12ac68d6\n[example] run 7 for 12ac68d6: success (http://localhost:3300/terragucci-admin/example/actions/runs/7)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/3\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/7 (success)",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "pull-light": "af567afbc86594dc",
+    "pull-dark": "52dc9b6a2cc24e56"
+  }
+}

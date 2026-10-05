@@ -1,0 +1,21 @@
+{
+  "step": "see-runs",
+  "source_hash": "53d2ce1a38f1fe7f",
+  "commands": [
+    {
+      "cmd": "just see-runs",
+      "output": "tf-plan: 15 roots planned, 3 groups (pull request 1)\ntf-drift: 15 roots drifted\ntf-apply wave 1: nothing to change, so nothing to approve\ntf-apply wave 2: waits for an approval\nGrafana shows the runs: forgejo:3000/terragucci-admin/example\n\nThe dashboards, in Grafana at http://localhost:3310 (folder terragucci):\n  http://localhost:3310/d/terragucci-pipeline-health\n  http://localhost:3310/d/terragucci-change-review\n  http://localhost:3310/d/terragucci-rollouts-waves\n  http://localhost:3310/d/terragucci-drift\n  http://localhost:3310/d/terragucci-estate\n  http://localhost:3310/d/terragucci-runs\n  http://localhost:3310/d/slo-terragucci-plan-time",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "pipeline-light": "862c048a083a5594",
+    "pipeline-dark": "801ecd492bae935e",
+    "waves-light": "ea8c2d54851bb9cd",
+    "waves-dark": "21c8e4a9e05f80f7",
+    "drift-light": "cb8c2b8f2e3355f1",
+    "drift-dark": "7db7fc2461662eec",
+    "runs-light": "a60ada90ebe874ed",
+    "runs-dark": "712bce1a398f7cf0"
+  }
+}

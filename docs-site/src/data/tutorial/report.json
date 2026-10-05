@@ -1,0 +1,15 @@
+{
+  "step": "report",
+  "source_hash": "53d2ce1a38f1fe7f",
+  "commands": [],
+  "shots": {
+    "top-light": "bdb9ad8669963f46",
+    "top-dark": "41f6b61b1f2624d4",
+    "root-light": "c9280f90a80e8c3a",
+    "root-dark": "8105eb3bed71c693",
+    "plan-light": "0d29cb2b670d7640",
+    "plan-dark": "066e5ad961e03283",
+    "index-light": "aacbfa45aca3bef7",
+    "index-dark": "45dbbc5e1af40afa"
+  }
+}
