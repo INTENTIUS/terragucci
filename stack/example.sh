@@ -8,6 +8,13 @@
 #   stack/example.sh verify           every resource the 15 roots declare is in floci
 #   stack/example.sh change <name>    open a pull request with one scenario from
 #                                     example/changes (drift and pin act directly)
+#   stack/example.sh merge <name>     merge that scenario's pull request into main,
+#                                     as the reader would, and show which wave waits
+#                                     or refuses. The first merge lists the reader's
+#                                     ssh key in .chant/allowed_signers on main.
+#   stack/example.sh approve [wave-N] approve a waiting wave as the reader, sealed
+#                                     with the reader's key. With no argument, the
+#                                     wave the last run printed an approval for.
 #   stack/example.sh logs             the last failed run's failing lines
 #   stack/example.sh reset            close every pull request, put main back to
 #                                     the example as committed, and apply it again
@@ -121,6 +128,29 @@ apply_main_tree() { # message -> waits for the run and verifies
   verify_tree "$WORK/tree"
 }
 
+# The reader's ssh key: it seals approvals, and its public half is the one line
+# in .chant/allowed_signers. It lives in the stack's state, not in example/.
+READER_KEY="$HERE/.state/reader"
+
+# What a run asks of the reader: the approval command a waiting wave printed, or
+# the lines of a refusal. One line each, without timestamps.
+held_lines() { # run id
+  local job
+  for job in $(api "$URL/api/v1/repos/$REPO/actions/runs/$1/jobs" | jq -r '.[] | select(.status == "failure") | .id'); do
+    api "$URL/api/v1/repos/$REPO/actions/jobs/$job/logs" 2>/dev/null \
+      | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
+      | grep -E 'chant approve tf-apply wave-|changed after it was approved|planned differently since' || true
+  done
+}
+
+# The wave that the most recent failed run asked the reader to approve.
+waiting_wave() {
+  local run
+  run="$(api "$URL/api/v1/repos/$REPO/actions/runs" | jq -r '[.workflow_runs[] | select(.status == "failure")][0].id // empty')"
+  [ -n "$run" ] || return 0
+  held_lines "$run" | grep -o 'chant approve tf-apply wave-[0-9]*' | head -1 | sed 's/.*tf-apply //' || true
+}
+
 case "$CMD" in
   up)
     started=$(date +%s)
@@ -202,6 +232,48 @@ OUT
   Pull request  $pr
   Pipeline      $RUN_URL ($RUN_STATUS)
 OUT
+    ;;
+
+  merge)
+    name="${1:-}"
+    [ -n "$name" ] || fail "usage: example.sh merge <scenario>"
+    pr="$(api "$URL/api/v1/repos/$REPO/pulls?state=open&limit=50" | jq -r --arg h "change/$name" '.[] | select(.head.ref == $h) | .number' | head -1)"
+    [ -n "$pr" ] || fail "no open pull request for change/$name; run 'just example change $name' first"
+    # wait_run's own line names a commit, which is not the same twice; the
+    # summary below shows the run's link and status instead.
+    log() { case "$*" in "run "*) ;; *) echo "[example] $*" >&2 ;; esac; }
+    if [ ! -f "$READER_KEY" ]; then
+      mkdir -p "$(dirname "$READER_KEY")"
+      ssh-keygen -q -t ed25519 -N "" -C "$USER" -f "$READER_KEY"
+    fi
+    line="$USER $(cut -d' ' -f1,2 "$READER_KEY.pub")"
+    clone_main "$WORK/tree"
+    if ! grep -qxF "$line" "$WORK/tree/.chant/allowed_signers" 2>/dev/null; then
+      mkdir -p "$WORK/tree/.chant"
+      echo "$line" >> "$WORK/tree/.chant/allowed_signers"
+      sha="$(push_tree "$WORK/tree" "$REPO" main "List the reader's key in .chant/allowed_signers")"
+      log "listed the reader's key in .chant/allowed_signers"
+      wait_run "$REPO" "$sha"
+    fi
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$REPO/pulls/$pr/merge" \
+      || fail "could not merge pull request $pr"
+    sha="$(api "$URL/api/v1/repos/$REPO/branches/main" | jq -r '.commit.id')"
+    log "merged change/$name into main"
+    wait_run "$REPO" "$sha"
+    printf '\n  Merged    pull request %s into main\n  Pipeline  %s (%s)\n' "$pr" "$RUN_URL" "$RUN_STATUS"
+    held_lines "$RUN_ID" | sed 's/^/  /'
+    ;;
+
+  approve)
+    wave="${1:-$(waiting_wave)}"
+    [ -n "$wave" ] || fail "no wave is waiting; run 'just example change destroy' and 'just example merge destroy' first"
+    [ -f "$READER_KEY" ] || fail "the reader's key is listed by 'just example merge'; merge a scenario first"
+    clone_main "$WORK/approve"
+    git -C "$WORK/approve" config user.name "$USER"
+    git -C "$WORK/approve" config user.email "$USER@terragucci.local"
+    out="$(cd "$WORK/approve" && "$HERE/../node_modules/.bin/chant" approve tf-apply "$wave" --actor "$USER" --sign "$READER_KEY" 2>&1)" \
+      || { echo "$out" >&2; fail "chant approve tf-apply $wave failed"; }
+    printf '\n  Approved  %s, signed as %s\n' "$wave" "$USER"
     ;;
 
   logs)

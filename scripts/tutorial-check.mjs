@@ -61,6 +61,19 @@ for (const name of existsSync(pages) ? readdirSync(pages).sort() : []) {
   }
   console.log(`ok    ${name}`);
 }
+// Guides that embed a capture are held to the same rule: the capture exists
+// and was made from the example as it is now.
+const guides = join(root, "docs-site/src/content/docs/guides");
+for (const name of existsSync(guides) ? readdirSync(guides).sort() : []) {
+  if (!name.endsWith(".mdx")) continue;
+  const text = readFileSync(join(guides, name), "utf8");
+  for (const [, step] of text.matchAll(/<Captured\s+step="([^"]+)"/g)) {
+    const file = join(data, `${step}.json`);
+    if (!existsSync(file)) { problems.push(`guides/${name}: no capture for step ${step}; run just tutorial-capture`); continue; }
+    const got = JSON.parse(readFileSync(file, "utf8")).source_hash;
+    if (got !== exampleHash) problems.push(`guides/${name}: capture ${step} was made from example ${got}, but example/ is now ${exampleHash}; run just tutorial-capture`);
+  }
+}
 if (problems.length) {
   for (const p of problems) console.log(`FAIL  ${p}`);
   process.exit(1);

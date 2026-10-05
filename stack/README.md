@@ -30,6 +30,8 @@ Declared means the services are in `docker-compose.yml`, readable, with comments
 | `just example up [--fresh]` | boots the forgejo profile, pushes the example to `terragucci-admin/example` (public) and applies every root; `--fresh` wipes floci and the repo first |
 | `just example verify` | checks that every bucket, queue and table main declares is in floci |
 | `just example change <scenario>` | opens a pull request with one of `example/changes/` (`drift` and `pin` act directly) |
+| `just example merge <scenario>` | merges that scenario's pull request as the reader would, listing the reader's ssh key in `.chant/allowed_signers` first, and prints the approval a waiting wave asks for or the refusal a changed one gives |
+| `just example approve [wave-N]` | approves the waiting wave as the reader, sealed with the reader's key (by default the wave the last run asked about) |
 | `just example reset` | closes the pull requests, puts main back, applies again |
 | `just smoke [claim]` | one line per claim: `SMOKE claim=… verdict=pass\|caught\|fail\|pending`; `BREAK=1` must print `caught` |
 | `just smoke-record` | every claim plain and under `BREAK=1`, written to `docs-site/src/data/smoke.json` for the status page |

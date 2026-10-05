@@ -137,10 +137,26 @@ step_check() {
   shot check log "$FORGEJO/actions/runs/3/jobs/0/attempt/1"
 }
 
+# The example's gate is on-destroy, so only a change that destroys makes a wave
+# wait. Merge the destroy scenario as the reader would, and read what waits.
+step_wave_waiting() {
+  run_cmd wave-waiting "just example change destroy" "$HERE/example.sh" change destroy
+  run_cmd wave-waiting "just example merge destroy" "$HERE/example.sh" merge destroy
+}
+
+# Approve that wave, then merge a change that moves its plans: it refuses.
+step_wave_refused() {
+  run_cmd wave-refused "just example approve" "$HERE/example.sh" approve
+  run_cmd wave-refused "just example change module-bump" "$HERE/example.sh" change module-bump
+  run_cmd wave-refused "just example merge module-bump" "$HERE/example.sh" merge module-bump
+}
+
 # step|claims it needs
 STEPS='boot|boot
 first-pr|check
-check|check'
+check|check
+wave-waiting|waves sealed
+wave-refused|waves sealed refuse'
 
 booted=0
 while IFS='|' read -r -u 3 step claims; do
