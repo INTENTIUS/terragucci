@@ -3,21 +3,17 @@
  * (stack/observability/prometheus.yml). It scrapes the collector, which holds
  * the metrics each stage pushed.
  *
- * The prometheus lexicon types rule files and Alertmanager, not the scrape
- * config, so this is a plain object emitted with the lexicon's own YAML
- * emitter. `scripts/render-prometheus.ts` writes it; `just ci` runs that and
- * `just ci-check` fails when the committed file differs.
+ * It is declared with the prometheus lexicon's `PrometheusConfig` and
+ * `ScrapeConfig` entities. `scripts/render-prometheus.ts` writes it; `just ci`
+ * runs that and `just ci-check` fails when the committed file differs.
  */
-import { emitYaml } from "@intentius/chant-lexicon-prometheus";
+import { PrometheusConfig, ScrapeConfig, prometheusConfigYaml } from "@intentius/chant-lexicon-prometheus";
 
-export const prometheusConfig = {
-  global: { scrape_interval: "5s" },
-  scrape_configs: [
-    {
-      job_name: "otel-collector",
-      static_configs: [{ targets: ["otel-collector:8889"] }],
-    },
-  ],
-};
+export const config = new PrometheusConfig({ global: { scrape_interval: "5s" } });
 
-export const prometheusYaml = (): string => emitYaml(prometheusConfig);
+export const collector = new ScrapeConfig({
+  job_name: "otel-collector",
+  static_configs: [{ targets: ["otel-collector:8889"] }],
+});
+
+export const prometheusYaml = (): string => prometheusConfigYaml([config, collector]);
