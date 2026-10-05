@@ -6,3 +6,6 @@ dist/
 docs-site/dist/
 docs-site/.astro/
 packages/terragucci/dist/
+
+# Tarballs and the commit from `just chant-local`.
+.chant-local/

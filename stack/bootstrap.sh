@@ -126,11 +126,20 @@ if [ "$PROFILE" = fountain ]; then
   fountain_version="$(sed -n 's#.*image: ghcr.io/managoat/fountain:\(v[0-9.]*\)@.*#\1#p' "$HERE/docker-compose.yml")"
   chant_version="$(jq -r '.devDependencies["@intentius/chant"]' "$HERE/../package.json")"
   [ -n "$fountain_version" ] && [ "$chant_version" != null ] || die "cannot read the fountain or chant version to build the steward image"
+  # After `just chant-local`, node_modules holds a local chant build marked
+  # with its commit; the steward installs the same build from .chant-local/.
+  chant_local="$(jq -r '.chantLocal.commit // empty' "$HERE/../node_modules/@intentius/chant/package.json" 2>/dev/null || true)"
+  local_args=()
+  if [ -n "$chant_local" ]; then
+    [ -f "$HERE/../.chant-local/intentius-chant-lexicon-fountain.tgz" ] || die "node_modules has chant $chant_local but .chant-local/ has no fountain tarball; run 'just chant-local' again"
+    chant_version="local-$chant_local"
+    local_args=(--build-context "chant-local=$HERE/../.chant-local")
+  fi
   want="$CI_IMAGE fountain=$fountain_version chant=$chant_version"
   have="$(docker image inspect -f '{{index .Config.Labels "terragucci.steward"}}' "$STEWARD_IMAGE" 2>/dev/null || true)"
   if [ "$have" != "$want" ]; then
     log "building $STEWARD_IMAGE (fountain $fountain_version, chant $chant_version)…"
-    docker build -q --label "terragucci.steward=$want" \
+    docker build -q --label "terragucci.steward=$want" ${local_args[@]+"${local_args[@]}"} \
       --build-arg "BASE=$CI_IMAGE" --build-arg "FOUNTAIN_VERSION=$fountain_version" --build-arg "CHANT_VERSION=$chant_version" \
       -t "$STEWARD_IMAGE" "$HERE/fountain" >&2 || die "the steward image did not build"
   fi

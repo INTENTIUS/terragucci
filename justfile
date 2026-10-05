@@ -223,6 +223,10 @@ images platform="":
 images-check platform="":
     npx tsx scripts/images.ts check {{ if platform == "" { "" } else { "--platform " + platform } }}
 
+[doc("Build terragucci on a local chant: pack chant from <chant-dir> (default: a worktree at chant origin/main), install it with --no-save, rebuild the bundle and images. --reset goes back to the pin. CHANT_LOCAL_IMAGES=0 skips the images.")]
+chant-local *args:
+    scripts/chant-local.sh {{args}}
+
 [doc("Rebuild both examples' changes/*.patch from the examples as committed.")]
 example-patches: build-cli
     python3 stack/example-patches.py
