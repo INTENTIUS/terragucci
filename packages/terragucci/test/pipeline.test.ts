@@ -551,13 +551,21 @@ describe("telemetry headers secret", () => {
   const withHeaders = (forge: ForgeName): string =>
     renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, headersSecret: "OTLP_HEADERS" }).content;
 
-  it.each(["github", "forgejo"] as const)("%s: the secret is mapped into the job environment", (forge) => {
-    expect(body(withHeaders(forge)).env.OTEL_EXPORTER_OTLP_HEADERS).toBe("${{ secrets.OTLP_HEADERS }}");
+  const withDrift = (forge: ForgeName): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, headersSecret: "OTLP_HEADERS", drift: "0 6 * * *", publish: true }).content;
+  const SENDERS = ["plan", "apply-wave-1", "apply-wave-2", "drift"];
+
+  it.each(["github", "forgejo"] as const)("%s: the secret is on the jobs that send telemetry alone", (forge) => {
+    const doc = body(withDrift(forge));
+    expect(doc.env?.OTEL_EXPORTER_OTLP_HEADERS).toBeUndefined();
+    for (const job of SENDERS) expect(doc.jobs[job].env.OTEL_EXPORTER_OTLP_HEADERS).toBe("${{ secrets.OTLP_HEADERS }}");
+    for (const job of ["check", "publish"]) expect(doc.jobs[job].env?.OTEL_EXPORTER_OTLP_HEADERS).toBeUndefined();
   });
 
-  it("gitlab: the CI/CD variable is mapped on every job", () => {
-    const doc = body(withHeaders("gitlab"));
-    for (const job of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBe("$OTLP_HEADERS");
+  it("gitlab: the CI/CD variable is on the jobs that send telemetry alone", () => {
+    const doc = body(withDrift("gitlab"));
+    for (const job of SENDERS) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBe("$OTLP_HEADERS");
+    for (const job of ["check", "publish"]) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBeUndefined();
   });
 
   it.each(FORGES)("%s: no headers setting renders no header variable", (forge) => {
