@@ -22,7 +22,9 @@ just see-runs
 
 <Captured step="see-runs" />
 
-It starts the profile, then runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set, as a pipeline job would have it. The first plans the module-bump change for pull request 1. The second is a drift run. The third runs the apply's waves in order with the gate set to `always`, as the pipeline would. The bump changes nothing in wave 1 (the dev platform), so that wave has nothing to approve and passes. Wave 2 plans the dev services and waits for an approval. The approval ledger goes to a scratch repo, so the example on Forgejo stays as it was. The command returns once Grafana shows the runs.
+It starts the profile, then runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set, as a pipeline job would have it. The first plans the module-bump change for pull request 1. The second is a drift run, after deleting staging orders' jobs queue from floci the way the [Drift](/terragucci/tutorial/drift/) page does (`just example reset` puts it back). The third runs the apply's waves in order with the gate set to `always`, as the pipeline would.
+
+Wave 1 holds only the dev platform, which the bump leaves alone, so it has nothing to approve and passes. Wave 2 plans the dev services and waits for an approval. The approval ledger goes to a scratch repo, so the example on Forgejo stays as it was. The command returns once Grafana shows the runs.
 
 Open Grafana at [localhost:3310](http://localhost:3310) and look in the `terragucci` folder for the dashboards. They open on the last seven days, where a graph's points are a quarter of an hour apart. The pictures below show the last hour instead, so that runs made a minute ago are on the graphs.
 
@@ -42,7 +44,7 @@ Wave 2 waits for an approval of its digest, and the table counts how long it has
 
 <Shot step="see-runs" view="drift" alt="The Drift dashboard: the example's drifted roots, and how long its drift has stood" />
 
-floci keeps no tags, so the drift run finds every root drifted, as on the [Drift](/terragucci/tutorial/drift/) page. The age counts from the drift issue's opening; with no issue to read, as here, from the run. Drift older than `drift_age` (a day) fires `TerragucciDriftOld`.
+The drift run finds the deleted queue, so staging orders shows as drifted until a later run no longer finds it. The age counts from the drift issue's opening; with no issue to read, as here, from the run. Once that age passes `drift_age` (a day), `TerragucciDriftOld` fires.
 
 ## Runs
 

@@ -9,7 +9,9 @@
 # Grafana with the dashboards `dashboards: true` writes), then runs three
 # stages on a copy of the example in its CI image, each sending its traces and
 # metrics to the collector as a pipeline job does once OTEL_EXPORTER_OTLP_ENDPOINT
-# is set: a plan of the module-bump change for pull request 1, a drift run,
+# is set: a plan of the module-bump change for pull request 1, a drift run
+# after staging orders' jobs queue is deleted from floci (the Drift page's
+# change, example/changes/drift.sh; `just example reset` brings it back),
 # and the apply's waves in order with the gate set to always, up to the first
 # one with changes, which waits for an approval (wave 1, the dev platform,
 # has nothing the bump changes; wave 2, the dev services, waits). The waves'
@@ -69,6 +71,8 @@ stage() { # log name, stage arguments...
 stage plan tf-plan || true
 [ -f "$work/repo/terragucci-report/report.json" ] || fail "the plan wrote no report: $(tail -5 "$work/plan.log")"
 log "tf-plan: $(jq -r '"\(.roots | length) roots planned, \(.groups | length) groups"' "$work/repo/terragucci-report/report.json") (pull request 1)"
+# Drift for the drift run to find, made the way the Drift page makes it.
+"$EXAMPLE/changes/drift.sh" >/dev/null || fail "could not delete the queue the drift run is to find; is the example booted?"
 stage drift tf-drift || true
 log "tf-drift: $(jq -r '[.roots[] | select(.status == "planned" and (.changes | length) > 0)] | length' "$work/repo/terragucci-report/report.json") roots drifted"
 layers="$(cd "$work/repo" && "$ROOT/node_modules/.bin/terragucci" init --forge forgejo --dry-run --json | jq -r '.results.layers | map(join(",")) | join(";")')"
