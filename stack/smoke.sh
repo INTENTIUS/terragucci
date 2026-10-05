@@ -2439,7 +2439,10 @@ HCL
 # How many values a dashboard panel's queries return for $DASH_PROJECT over the
 # last hour, run through Grafana's query API as the panel runs them: the
 # dashboard's variables are filled in ($project with the project), the rest
-# of the query is the dashboard's own.
+# of the query is the dashboard's own. Panels can share a title (an SLO
+# dashboard shows its error budget as a stat and as a graph), so each query
+# gets its own refId; Grafana refuses a request that repeats one. A NaN comes
+# back as null and is not counted: the panel shows no number for it.
 panel_points() { # uid, panel title
   local dash body
   dash="$(curl -fsS "$GRAFANA/api/dashboards/uid/$1")" || { echo 0; return 0; }
@@ -2449,10 +2452,11 @@ panel_points() { # uid, panel title
       | . + {datasource: (.datasource // $ds), intervalMs: 15000, maxDataPoints: 200}
       | if .expr then .expr |= fill else . end
       | if .query then .query |= fill else . end]
+    | to_entries | map(.value + {refId: "q\(.key)"})
     | {queries: ., from: "now-1h", to: "now"}' <<<"$dash")"
   [ "$(jq '.queries | length' <<<"$body")" -gt 0 ] || { echo 0; return 0; }
   curl -fsS -H 'content-type: application/json' -X POST -d "$body" "$GRAFANA/api/ds/query" 2>/dev/null \
-    | jq '[.results[]?.frames[]?.data.values // [] | .[1:][]? | length] | add // 0' 2>/dev/null || echo 0
+    | jq '[.results[]?.frames[]?.data.values // [] | .[1:][]? | map(select(. != null)) | length] | add // 0' 2>/dev/null || echo 0
 }
 
 # The claim: render, data, then every named panel has data (retried while
@@ -2538,16 +2542,18 @@ claim_dash_slos() {
     curl -fsS -o /dev/null "$GRAFANA/api/dashboards/uid/$slo" || { log "Grafana does not serve dashboard $slo"; return 1; }
   done
   dash_claim slo-terragucci-plan-time "Error budget remaining" || return 1
-  # The SLO panels read every project's series; this project's own must be among them.
+  # The SLO panels read every project's series; this project's own error
+  # budget must be among them, as a number: its one plan counts, so the
+  # budget is not 0/0.
   local q n=0 i
-  q="slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\",terragucci_project=\"$DASH_PROJECT\"}"
-  for i in $(seq 1 12); do   # the rule evaluates every 5s once the counter has two samples
-    n="$(curl -fsS -G "$PROMETHEUS/api/v1/query" --data-urlencode "query=$q" | jq '.data.result | length')"
+  q="slo:error_budget:remaining{slo=\"terragucci-plan-time\",terragucci_project=\"$DASH_PROJECT\"}"
+  for i in $(seq 1 12); do   # the rules evaluate every 5s
+    n="$(curl -fsS -G "$PROMETHEUS/api/v1/query" --data-urlencode "query=$q" | jq '[.data.result[] | select(.value[1] != "NaN")] | length')"
     [ "${n:-0}" -gt 0 ] && break
     sleep 5
   done
-  [ "${n:-0}" -gt 0 ] || { log "Prometheus recorded no plan SLI for $DASH_PROJECT"; return 1; }
-  log "the plan SLO recorded $DASH_PROJECT's plans"
+  [ "${n:-0}" -gt 0 ] || { log "Prometheus recorded no plan SLO error budget for $DASH_PROJECT"; return 1; }
+  log "the plan SLO recorded $DASH_PROJECT's plans, and its error budget"
 }
 
 # ── drill-down ────────────────────────────────────────────────────────────

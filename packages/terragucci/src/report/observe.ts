@@ -223,16 +223,23 @@ export class StageObserver {
     return [...out, ...this.dashboardGauges(report, end, g)];
   }
 
-  /** The metrics a tf-apply wave sends: how long each root's apply took. */
-  applyGauges(report: Report): Gauge[] {
+  /**
+   * The metrics a tf-apply wave sends: how long each root's apply took, and
+   * the wave's own gauges (report/wave-telemetry.ts), which the Rollouts and
+   * waves dashboard and the waiting-wave alert read.
+   */
+  applyGauges(report: Report, end: bigint): Gauge[] {
     const project = report.run.project;
-    const wave = this.wave ? { wave: String(this.wave.number) } : {};
+    const stage = this.stage;
+    const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>): Gauge => ({ name, unit, description, value, attributes: { project, stage, ...attributes } });
+    const wave: Record<string, string> = this.wave ? { wave: String(this.wave.number) } : {};
     const out: Gauge[] = [];
     for (const r of report.roots) {
       const seconds = r.timings?.apply_seconds;
       if (seconds === undefined) continue;
-      out.push({ name: METRIC.rootApply, unit: "s", description: "How long one root took to apply", value: seconds, attributes: { project, stage: this.stage, ...wave, root: r.path } });
+      out.push(g(METRIC.rootApply, "s", "How long one root took to apply", seconds, { ...wave, root: r.path }));
     }
+    if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, Number(end / 1_000_000n) / 1000, g));
     return out;
   }
 
@@ -261,7 +268,6 @@ export class StageObserver {
       if (d.roots > 0) out.push(g(METRIC.driftSince, "s", "When the open drift was first found, in Unix seconds", Date.parse(this.drift?.since ?? report.run.finished) / 1000, {}));
       else if (d.failed === 0) out.push(g(METRIC.driftClear, "s", "When a drift run last found no drift, in Unix seconds", at, {}));
     }
-    if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, at, g));
     return out;
   }
 
@@ -329,9 +335,9 @@ export class StageObserver {
       else sent.push(`trace ${this.trace.traceId} (${this.trace.spans.length} spans)`);
     }
 
-    // A tf-apply wave sends its trace and each root's apply time. The plan's other metrics stay the plan's, since a wave's would count its roots twice.
+    // A tf-apply wave sends its trace, each root's apply time and its wave gauges. The plan's other metrics stay the plan's, since a wave's would count its roots twice.
     if (tel.metrics) {
-      const gauges = this.stage === "tf-apply" ? this.applyGauges(report) : this.gauges(report, binaryVersion(run.binary, env), end);
+      const gauges = this.stage === "tf-apply" ? this.applyGauges(report, end) : this.gauges(report, binaryVersion(run.binary, env), end);
       const problem = await send(tel.metrics, metricsBody(gauges, resource, run.terragucci ?? "0.0.0", end), fetchFn);
       if (problem) log(`telemetry: the metrics were not sent: ${problem}`);
       else sent.push(`${gauges.length} metric points`);

@@ -4,51 +4,51 @@ groups:
     rules:
       - record: slo:sli_error:ratio_rate5m
         expr: |-
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[5m])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 5m, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 5m)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 5m, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 5m)))
           /
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"}[5m])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 5m, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 5m)) > 0)
         labels:
           slo: terragucci-apply-success
       - record: slo:sli_error:ratio_rate30m
         expr: |-
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[30m])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 30m, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 30m)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 30m, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 30m)))
           /
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"}[30m])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 30m, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 30m)) > 0)
         labels:
           slo: terragucci-apply-success
       - record: slo:sli_error:ratio_rate1h
         expr: |-
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[1h])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 1h)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1h)))
           /
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"}[1h])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1h)) > 0)
         labels:
           slo: terragucci-apply-success
       - record: slo:sli_error:ratio_rate2h
         expr: |-
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[2h])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 2h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 2h)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 2h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 2h)))
           /
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"}[2h])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 2h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 2h)) > 0)
         labels:
           slo: terragucci-apply-success
       - record: slo:sli_error:ratio_rate6h
         expr: |-
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[6h])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 6h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 6h)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 6h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 6h)))
           /
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"}[6h])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 6h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 6h)) > 0)
         labels:
           slo: terragucci-apply-success
       - record: slo:sli_error:ratio_rate1d
         expr: |-
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[1d])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 1d, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 1d)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1d, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1d)))
           /
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"}[1d])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1d, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 1d)) > 0)
         labels:
           slo: terragucci-apply-success
       - record: slo:sli_error:ratio_rate3d
         expr: |-
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[3d])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 3d, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 3d)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 3d, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 3d)))
           /
-          (sum by (terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"}[3d])))
+          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 3d, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result=~"applied|failed"} offset 3d)) > 0)
         labels:
           slo: terragucci-apply-success
       - record: slo:sli_error:ratio_rate28d
@@ -220,63 +220,63 @@ groups:
       - record: slo:sli_error:ratio_rate5m
         expr: |-
           1 - (
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"}[5m])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} - terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 5m, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 5m)))
             /
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"}[5m])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} - terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 5m, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} unless terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 5m)) > 0)
           )
         labels:
           slo: terragucci-plan-time
       - record: slo:sli_error:ratio_rate30m
         expr: |-
           1 - (
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"}[30m])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} - terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 30m, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 30m)))
             /
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"}[30m])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} - terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 30m, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} unless terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 30m)) > 0)
           )
         labels:
           slo: terragucci-plan-time
       - record: slo:sli_error:ratio_rate1h
         expr: |-
           1 - (
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"}[1h])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} - terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 1h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 1h)))
             /
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"}[1h])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} - terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 1h, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} unless terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 1h)) > 0)
           )
         labels:
           slo: terragucci-plan-time
       - record: slo:sli_error:ratio_rate2h
         expr: |-
           1 - (
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"}[2h])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} - terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 2h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 2h)))
             /
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"}[2h])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} - terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 2h, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} unless terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 2h)) > 0)
           )
         labels:
           slo: terragucci-plan-time
       - record: slo:sli_error:ratio_rate6h
         expr: |-
           1 - (
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"}[6h])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} - terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 6h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 6h)))
             /
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"}[6h])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} - terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 6h, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} unless terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 6h)) > 0)
           )
         labels:
           slo: terragucci-plan-time
       - record: slo:sli_error:ratio_rate1d
         expr: |-
           1 - (
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"}[1d])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} - terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 1d, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 1d)))
             /
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"}[1d])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} - terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 1d, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} unless terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 1d)) > 0)
           )
         labels:
           slo: terragucci-plan-time
       - record: slo:sli_error:ratio_rate3d
         expr: |-
           1 - (
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"}[3d])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} - terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 3d, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage="tf-plan", le=~"600(\\.0)?"} offset 3d)))
             /
-            (sum by (terragucci_project) (rate(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"}[3d])))
+            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} - terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 3d, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} unless terragucci_spans_duration_seconds_count{terragucci_stage="tf-plan"} offset 3d)) > 0)
           )
         labels:
           slo: terragucci-plan-time
