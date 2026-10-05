@@ -103,6 +103,16 @@ describe("dashboards: rendering", () => {
     expect(alerts[4].expr).toMatch(/> 172800$/);
     // The plan SLO counts plans within the 600s bucket, as Prometheus 3 writes le.
     expect(rules).toContain('le=~"600(\\\\.0)?"');
+    // The plan and apply SLIs count a series that appeared in the window from
+    // zero (rate() misses a project's first run), and record nothing for a
+    // window without runs (0/0 would record NaN).
+    for (const name of ["slo-terragucci-plan-time", "slo-terragucci-apply-success"]) {
+      const ratio = parsed.groups.find((g) => g.name === name)!.rules.find((r) => r.record === "slo:sli_error:ratio_rate5m")!.expr;
+      expect(ratio).not.toContain("rate(");
+      expect(ratio).toContain("unless");
+      expect(ratio).toContain("offset 5m");
+      expect(ratio).toMatch(/> 0\)\s*\)?$/);
+    }
   });
 
   it("thresholds follow the settings", () => {
@@ -216,6 +226,16 @@ describe("dashboards: what a stage sends", () => {
     expect(waiting.every((x) => x.attributes.wave === "2")).toBe(true);
     const applied = waveGauges(2, 0, { roots: ["a"] }, 2_000_000_000, g);
     expect(applied.map((x) => [x.name, x.value])).toEqual([[METRIC.waveRoots, 1], [METRIC.waveSettled, 2_000_000_000]]);
+  });
+
+  it("a tf-apply wave sends its wave gauges with its project and stage", () => {
+    const observer = new StageObserver(undefined, "tf-apply", {});
+    observer.wave = { number: 1, facts: { roots: ["gate"], waitingSince: "2026-10-04T00:00:00Z" }, code: 3 };
+    const report = buildReport({ run: { ...RUN, stage: "tf-apply" as never }, roots: smallFixture() });
+    const g = observer.applyGauges(report, 1_759_572_000_000_000_000n);
+    expect(g.find((x) => x.name === METRIC.waveRoots)).toMatchObject({ value: 1, attributes: { project: RUN.project, stage: "tf-apply", wave: "1" } });
+    expect(g.find((x) => x.name === METRIC.waveWaitingSince)).toMatchObject({ value: Date.parse("2026-10-04T00:00:00Z") / 1000, attributes: { project: RUN.project, wave: "1" } });
+    expect(g.some((x) => x.name === METRIC.waveSettled)).toBe(false);
   });
 
   it("reads each root's module pins from its plan's configuration", () => {

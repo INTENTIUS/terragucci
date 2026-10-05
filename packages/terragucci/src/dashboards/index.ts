@@ -382,10 +382,28 @@ function runs(s: Required<DashboardSettings>, links: DashboardLinks): DashboardE
   ], [projectVar(ds, METRIC.lastRun, "project")], undefined, links.reports ? [{ title: "Report index", url: `${links.reports}/index.html` }] : []);
 }
 
+/**
+ * How many events a span-metrics counter counted over an SLI's window, per
+ * project. The collector starts a project's counter at its first run, so
+ * that run is the series' first sample, which `rate()` and `increase()`
+ * never count: a series the window does not see at its start is counted
+ * from zero. A counter that went down (the collector restarted) counts none.
+ */
+const counted = (sel: string): string =>
+  `sum by (${PROJECT_L}) (clamp_min(${sel} - ${sel} offset {{window}}, 0) or (${sel} unless ${sel} offset {{window}}))`;
+
+/**
+ * An SLI's total events, only where there were some: a window with no runs
+ * records no ratio, where 0/0 would record NaN, and the SLO window's
+ * average over the shorter ratios would then be NaN from then on.
+ */
+const someEvents = (sel: string): string => `${counted(sel)} > 0`;
+
 /** The three SLOs: plans finish within ten minutes, applies succeed, drift is corrected within a day. */
 export function slos(): Record<keyof typeof SLO_NAMES, SloInstance> {
   const plan = [[STAGE_L, "=", "tf-plan"]] as Matcher[];
   const apply = [[STAGE_L, "=", "tf-apply"]] as Matcher[];
+  const applied = selector(CALLS, [...apply, [RESULT_L, "=~", "applied|failed"]]);
   return {
     plans: Slo({
       name: SLO_NAMES.plans,
@@ -393,8 +411,8 @@ export function slos(): Record<keyof typeof SLO_NAMES, SloInstance> {
       window: "28d",
       description: `Plans finish within ${PLAN_SLO_SECONDS / 60} minutes.`,
       sli: {
-        good: `sum by (${PROJECT_L}) (rate(${selector(DURATION_BUCKETS, [...plan, ["le", "=~", `${PLAN_SLO_SECONDS}(\\.0)?`]])}[{{window}}]))`,
-        total: `sum by (${PROJECT_L}) (rate(${selector(`${spans.duration!.prometheus}_count`, plan)}[{{window}}]))`,
+        good: counted(selector(DURATION_BUCKETS, [...plan, ["le", "=~", `${PLAN_SLO_SECONDS}(\\.0)?`]])),
+        total: someEvents(selector(`${spans.duration!.prometheus}_count`, plan)),
       },
     }),
     applies: Slo({
@@ -403,8 +421,9 @@ export function slos(): Record<keyof typeof SLO_NAMES, SloInstance> {
       window: "28d",
       description: "Wave applies succeed.",
       sli: {
-        errors: `sum by (${PROJECT_L}) (rate(${selector(CALLS, [...apply, [RESULT_L, "=", "failed"]])}[{{window}}]))`,
-        total: `sum by (${PROJECT_L}) (rate(${selector(CALLS, [...apply, [RESULT_L, "=~", "applied|failed"]])}[{{window}}]))`,
+        // A project that never failed has no failed series: its errors are 0, not missing.
+        errors: `${counted(selector(CALLS, [...apply, [RESULT_L, "=", "failed"]]))} or 0 * ${counted(applied)}`,
+        total: someEvents(applied),
       },
     }),
     drift: Slo({
