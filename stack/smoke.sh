@@ -2066,6 +2066,9 @@ runnable_names() { awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS"; }
 # taking that resource first.
 #
 # zero-config, tg-zero-config and respond-notes use no stack at all.
+# steward boots the example with `up --fresh`, which restarts floci and so
+# wipes every claim's state and the Terragrunt example: it runs alone, after
+# every claim that needs the Terragrunt example.
 CLAIM_GROUPS='
 tg-waves        tg! runner break-first weight=1000
 boot            ex! runner break-first weight=900
@@ -2101,6 +2104,7 @@ respond-triage  weight=60
 zero-config     weight=30
 tg-zero-config  weight=30
 respond-notes   weight=20
+steward         stack! after=boot,drift,tg-waves,tg-affected,tg-refuse,tg-check,tg-mock-lint,tg-drift,tg-mock-trap weight=10
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
