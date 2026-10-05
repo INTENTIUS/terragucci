@@ -268,9 +268,19 @@ const headers = { authorization: `Bearer ${process.env.FOUNTAIN_TOKEN}`, "conten
 const say = (m) => console.error(`[steward] ${m}`);
 const fail = (m) => { say(`FAIL: ${m}`); process.exit(1); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// One connection per call: fountain closes idle keep-alive sockets, and a
+// reused one fails the next request with EPIPE. A network error is retried.
 const call = async (method, path) => {
-  const res = await fetch(api + path, { method, headers });
-  return { status: res.status, body: await res.json().catch(() => ({})) };
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(api + path, { method, headers: { ...headers, connection: "close" } });
+      return { status: res.status, body: await res.json().catch(() => ({})) };
+    } catch (err) {
+      if (attempt >= 5) throw err;
+      say(`${method} ${path}: ${err.cause?.code ?? err.message}, retrying`);
+      await sleep(2000 * attempt);
+    }
+  }
 };
 const teammate = async () => {
   const { status, body } = await call("GET", "/team");
