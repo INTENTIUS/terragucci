@@ -8,7 +8,7 @@ import type { ChantConfig } from "@intentius/chant";
  * kit's lifecycle Ops will add the terraform lexicon when they land.
  */
 export default {
-  lexicons: ["github", "docker"],
+  lexicons: ["github", "docker", "otel"],
 
   lint: {
     rules: {

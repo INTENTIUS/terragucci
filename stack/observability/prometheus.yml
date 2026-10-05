@@ -1,9 +1,7 @@
-# Prometheus for the observability profile: it scrapes the collector, which
-# holds the metrics each stage pushed.
 global:
   scrape_interval: 5s
-
 scrape_configs:
   - job_name: otel-collector
     static_configs:
-      - targets: ["otel-collector:8889"]
+      - targets:
+          - otel-collector:8889
