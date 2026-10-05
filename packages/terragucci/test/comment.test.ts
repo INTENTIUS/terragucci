@@ -59,13 +59,14 @@ describe("allowRoot", () => {
 
 interface Sent { method: string; path: string; body?: any }
 
-function setup(opts: { comment: string; user?: string; permission?: string; pr?: any; isPull?: boolean; action?: string }): { env: NodeJS.ProcessEnv; fetch: Fetch; sent: Sent[] } {
+function setup(opts: { comment: string; user?: string; permission?: string; pr?: any; isPull?: boolean; action?: string; event?: Record<string, unknown> }): { env: NodeJS.ProcessEnv; fetch: Fetch; sent: Sent[] } {
   const dir = tmp("tg-comment-");
   const file = join(dir, "event.json");
   writeFileSync(file, JSON.stringify({
     action: opts.action ?? "created",
     comment: { body: opts.comment, user: { login: opts.user ?? "dev" } },
     issue: { number: 7, ...(opts.isPull === false ? {} : { pull_request: {} }) },
+    ...opts.event,
   }));
   const sent: Sent[] = [];
   const pr = opts.pr ?? { state: "open", head: { sha: "a".repeat(40), repo: { full_name: "acme/infra" } }, base: { ref: "main" } };
@@ -73,7 +74,7 @@ function setup(opts: { comment: string; user?: string; permission?: string; pr?:
     const path = url.replace("https://forge.test/api/v1/", "");
     sent.push({ method: init?.method ?? "GET", path, body: init?.body ? JSON.parse(init.body) : undefined });
     const answer = (status: number, json: unknown) => ({ ok: status < 300, status, json: async () => json, text: async () => JSON.stringify(json) });
-    if (path.includes("/permission")) return answer(200, { permission: opts.permission ?? "write" }) as never;
+    if (path.includes("/permission")) return (opts.permission === "403" ? answer(403, {}) : answer(200, { permission: opts.permission ?? "write" })) as never;
     if (path.includes("/pulls/")) return answer(200, pr) as never;
     return answer(201, {}) as never;
   };
@@ -126,5 +127,58 @@ describe("decideComment", () => {
   it("an edited comment does not run again", async () => {
     const s = setup({ comment: "/terragucci plan", action: "edited" });
     expect((await decideComment({ layers, env: s.env, fetch: s.fetch })).go).toBe(false);
+  });
+
+  it("on GitHub, a permission the API will not give stops the re-plan", async () => {
+    const s = setup({ comment: "/terragucci plan", permission: "403" });
+    const d = await decideComment({ layers, env: s.env, fetch: s.fetch });
+    expect(d.go).toBe(false);
+    expect(d.reason).toContain("answered 403");
+  });
+});
+
+describe("decideComment on Forgejo", () => {
+  // Forgejo answers 403 to a job token that asks for another user's permission,
+  // and writes the commenter's permission into the issue_comment event instead.
+  const forgejo = (permissions: unknown, extra: Record<string, unknown> = {}) =>
+    setup({ comment: "/terragucci plan envs/dev/app", permission: "403", event: { repository: { full_name: "acme/infra", permissions }, sender: { login: "dev" }, is_pull: true, ...extra } });
+
+  it("re-plans the pull request's head for a commenter the event says can push, without asking the API", async () => {
+    const s = forgejo({ admin: false, push: true, pull: true });
+    const d = await decideComment({ layers, env: s.env, fetch: s.fetch, forge: "forgejo" });
+    expect(d).toMatchObject({ go: true, pr: 7, sha: "a".repeat(40), base: "main", root: "envs/dev/app" });
+    expect(s.sent.some((x) => x.path.includes("/permission"))).toBe(false);
+    expect(s.sent.map((x) => x.path)).toContain("repos/acme/infra/pulls/7");
+  });
+
+  it("the head comes from the pull request, not from the event", async () => {
+    const s = forgejo({ admin: true, push: true, pull: true }, { after: "b".repeat(40), head_commit: { id: "b".repeat(40) } });
+    expect((await decideComment({ layers, env: s.env, fetch: s.fetch, forge: "forgejo" })).sha).toBe("a".repeat(40));
+  });
+
+  it("a commenter who can only read, or an event with no permissions, gets nothing: no plan, no reply", async () => {
+    for (const p of [{ admin: false, push: false, pull: true }, undefined, { push: "true" }]) {
+      const s = forgejo(p);
+      expect((await decideComment({ layers, env: s.env, fetch: s.fetch, forge: "forgejo" })).go).toBe(false);
+      expect(s.sent).toEqual([]);
+    }
+  });
+
+  it("an event for another repository, or whose sender is not the comment's author, is not trusted", async () => {
+    const other = setup({ comment: "/terragucci plan", event: { repository: { full_name: "evil/infra", permissions: { push: true } }, sender: { login: "dev" } } });
+    expect((await decideComment({ layers, env: other.env, fetch: other.fetch, forge: "forgejo" })).go).toBe(false);
+    const sender = setup({ comment: "/terragucci plan", event: { repository: { full_name: "acme/infra", permissions: { push: true } }, sender: { login: "admin" } } });
+    expect((await decideComment({ layers, env: sender.env, fetch: sender.fetch, forge: "forgejo" })).go).toBe(false);
+    expect([...other.sent, ...sender.sent]).toEqual([]);
+  });
+
+  it("the untrusted-input guards still hold: apply is refused by name, an unknown root is refused, a fork is not planned", async () => {
+    const apply = setup({ comment: "/terragucci apply", event: { repository: { full_name: "acme/infra", permissions: { push: true } }, sender: { login: "dev" } } });
+    expect((await decideComment({ layers, env: apply.env, fetch: apply.fetch, forge: "forgejo" })).go).toBe(false);
+    expect(apply.sent.filter((x) => x.method === "POST")[0].body.body).toContain("never runs `apply`");
+    const root = setup({ comment: "/terragucci plan $(id)", event: { repository: { full_name: "acme/infra", permissions: { push: true } }, sender: { login: "dev" } } });
+    expect((await decideComment({ layers, env: root.env, fetch: root.fetch, forge: "forgejo" })).go).toBe(false);
+    const fork = setup({ comment: "/terragucci plan", pr: { state: "open", head: { sha: "a".repeat(40), repo: { full_name: "evil/infra" } }, base: { ref: "main" } }, event: { repository: { full_name: "acme/infra", permissions: { push: true } }, sender: { login: "dev" } } });
+    expect((await decideComment({ layers, env: fork.env, fetch: fork.fetch, forge: "forgejo" })).go).toBe(false);
   });
 });
