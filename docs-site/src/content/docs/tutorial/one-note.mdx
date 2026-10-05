@@ -6,18 +6,23 @@ sidebar:
 claims: [affected, grouped, report, highlight]
 ---
 
+import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
+
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
 Every queue in every service should wait 60 seconds before retrying a job. That is one line in `modules/service`, and twelve roots call the module.
 
-```bash
-just example change module-bump
-```
+<Captured step="one-note" optional />
 
 terragucci plans only the twelve service roots the change reaches. The three platform roots are left alone. The pull request gets one note instead of twelve. Eleven roots take the identical change and appear as one group. Payments in prod sits apart, because its dead-letter queue changes too.
 
+<Shot step="one-note" view="pull" alt="The plan note on the module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" optional />
+
 The note links to the full report. The report opens on what differs and folds the eleven identical plans into one. Every root in it links to its full plan.
+
+<Shot step="report" view="top" alt="The HTML report of the module change: the run's counts, the roots to read first, and the eleven identical plans folded into one group" optional />
 
 Next, try `just example change replace` and `just example change destroy`. A replacement or a destroy is always named on its own and highlighted, never folded into a group.

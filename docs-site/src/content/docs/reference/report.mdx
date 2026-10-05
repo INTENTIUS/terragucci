@@ -3,6 +3,8 @@ title: The plan report
 description: One JSON document per run, rendered as the pull-request note, a self-contained HTML report and an index of every past report.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one report. The report is a JSON document, and everything a person reads is rendered from it.
 
 ## Running it
@@ -46,6 +48,8 @@ The plan note stays under your forge's comment limit however many roots change. 
 
 If every change plans hundreds of roots, the report is where you read them. It opens on what a reviewer looks for and folds away the rest.
 
+<Shot step="report" view="top" alt="The top of an HTML report for a change to a shared module: twelve roots, the roots to read first, and eleven identical plans folded into one group" optional />
+
 Open and highlighted:
 
 - every destroy, replacement and refusal, with the attributes that forced each replacement;
@@ -76,6 +80,12 @@ Folded, one click away:
 ## Back to the full plan
 
 Nothing is summarized away. Every root's full plan is kept beside the report, as the binary printed it and as JSON. Every group, root and named change in the HTML links to that plan and to the CI job that produced it. In the plan note, each group links to its place in the report and each destroy to its root. One click from the pull request lands on the line you were reading about.
+
+<Shot step="report" view="root" alt="One root's row in the HTML report, envs/prod/payments, with its links to plan, plan.json and the job" optional />
+
+The plan link opens the root's plan as the binary printed it:
+
+<Shot step="report" view="plan" alt="The full plan text of envs/prod/payments, opened from the report" optional />
 
 The page opens on two lists: every destroy, replacement and refusal, and the outlier roots and highlighted changes to read first. Both fit on the first screen and neither is ever folded.
 
@@ -125,3 +135,5 @@ With `tips` on, which is the default, the report ends with advice on how your ro
 ## The report index
 
 Every upload rewrites `index.html` and `index.json` for the project, at the project's path, and for every project, at the top of the prefix. Each run gets a row in the index with its counts and destroys, and the row links to that run's report. Serve the bucket as a static site and the index is the home page for every plan you have run. Retention is your bucket's lifecycle rule.
+
+<Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />

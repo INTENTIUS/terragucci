@@ -81,3 +81,39 @@ The site is for people using terragucci. It describes the finished product, link
 ## The example, the checks and the tutorial
 
 `stack/README.md` covers the local stack, `just example`, `just smoke` and `just tutorial-capture`. The capture workflow refreshes the tutorial's output and screenshots weekly and opens a pull request when they change.
+
+### Capturing one step or all of them
+
+```bash
+just tutorial-capture              # every step whose smoke claims pass, from a fresh boot
+just capture --list                # each step: what it needs, the files it writes, what they show
+just capture check                 # one step; several names capture several
+just capture --reuse wave-refused  # one step on the example as it is running now
+```
+
+The steps run in a fixed order (`STEPS` in `stack/tutorial-capture.sh`), each starting where the one before it left the example, so pull request and run numbers are the same on every capture. A step needs one of three things:
+
+| Needs | Steps | Captured alone, the script |
+|---|---|---|
+| `fresh` | boot, fountain-apply | starts the stack from nothing, as the step itself does |
+| `chain` | first-pr, check, one-note, wave-waiting, wave-refused, pin | boots the example fresh and replays every step before it without recording anything, so its numbers match a full capture |
+| `booted` | report, drift, see-runs | resets a running example to its committed state, or boots one |
+
+`--reuse` skips all of that. Use it when the example is already where the step expects it, and expect its pull request and run numbers to differ from a full capture's. A step whose claims do not pass in `smoke.json` is not captured; named alone, the command fails and says so.
+
+Screenshots of a job log or a note are found from the forge, never from a fixed number: a job by the run on its branch's head commit (`run_on`, `job_page`), a note by its `<!-- terragucci:plan` marker (`note_page`), a pull request by the number the command printed. `shot` takes a height when 860 pixels cut a note or log off, and a URL with a `#fragment` opens at that element.
+
+The report step plans three scenarios of the example in its tofu CI image, each against its base commit, with `reports.bucket` naming the floci bucket `terragucci-reports`. Its four screenshots (the module bump's `report.html`, its prod payments row, that root's `plan.txt`, and the project's `index.html`) are served by floci's S3 endpoint. The drift step deletes the queue, dispatches the pipeline's drift job through the Forgejo API and photographs the issue it keeps, then resets the example.
+
+### What makes a capture stale
+
+Each step writes only its own files: `docs-site/src/data/tutorial/<step>.json` and `docs-site/src/assets/tutorial/<step>-<view>-<theme>.png`. The JSON holds the commands and their normalized output, `source_hash` (a hash of every file under `example/`) and `shots`, the hash of each screenshot it took. A step is rewritten, JSON and screenshots together, when its output or any screenshot differs byte for byte from what is committed. Otherwise its files are kept. Forgejo prints relative times, so a recapture usually rewrites the screenshots.
+
+`just tutorial-check` holds every page that embeds a capture to these rules, step by step:
+
+- a `<Captured>` step is stale when its `source_hash` is not the hash of `example/` as it is now;
+- a `<Shot>` is stale when its step is, and wrong when the PNG on disk is not the one its step's JSON records.
+
+So recapturing one step makes that step current and leaves every other step as it was: current if it was captured from the same `example/`, stale if not. Each step carries its own hash, so a fresh step cannot make another step look fresh, and a hand-copied or leftover PNG fails the check. After an edit under `example/`, every step is stale until it is recaptured: run `just tutorial-capture`, or `just capture` with each stale step the check names. `manifest.json` records the date, commit and tool versions of the last capture that changed anything. It is for contributors and the check does not read it.
+
+`<Shot optional>` and `<Captured optional>` let the site build before a step's first capture. The check still fails on them until the step is captured.

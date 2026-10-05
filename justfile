@@ -230,6 +230,10 @@ job-cache-prune:
 tutorial-capture:
     stack/tutorial-capture.sh
 
+[doc("Capture tutorial steps on demand: `just capture <step>...`, `just capture --reuse <step>` on the running example, `just capture --list`.")]
+capture *args:
+    stack/tutorial-capture.sh {{args}}
+
 [doc("Build the terragucci CLI into one bundled file, as a release does.")]
 build-cli:
     node scripts/build-cli.mjs
