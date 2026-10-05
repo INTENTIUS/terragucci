@@ -340,6 +340,20 @@ describe("the forge", () => {
     expect(appliedState([{ name: "apply/envs/dev/app", state: "failure" }, { name: "apply", state: "success" }], "envs/dev/app")).toBe("failure");
     expect(appliedState([{ name: "terragucci / check (push)", state: "success" }], "x")).toBe("pending");
   });
+
+  it("reads one apply job per wave, and the terragucci/apply status over them", () => {
+    const waves = (a: CommitCheck["state"], b: CommitCheck["state"]): CommitCheck[] => [
+      { name: "terragucci / apply-wave-1 (push)", state: a },
+      { name: "terragucci / apply-wave-2 (push)", state: b },
+    ];
+    expect(appliedState(waves("success", "success"), "x")).toBe("success");
+    expect(appliedState(waves("success", "pending"), "x")).toBe("pending");
+    expect(appliedState(waves("success", "failure"), "x")).toBe("failure");
+    expect(appliedState([{ name: "apply-wave-1", state: "success" }], "x")).toBe("success");
+    // The status the apply jobs write wins over the jobs themselves.
+    expect(appliedState([...waves("success", "success"), { name: "terragucci/apply", state: "pending" }], "x")).toBe("pending");
+    expect(appliedState([...waves("success", "pending"), { name: "terragucci/apply", state: "success" }], "x")).toBe("success");
+  });
 });
 
 describe("the command line", () => {

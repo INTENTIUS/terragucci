@@ -63,7 +63,9 @@ GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id
 |---|---|---|
 | GitHub | `https://token.actions.githubusercontent.com` | `repo:<owner>/<repo>:ref:refs/heads/<branch>`, or `repo:<owner>/<repo>:pull_request` |
 | GitLab | your GitLab URL | `project_path:<group>/<project>:ref_type:branch:ref:<branch>` |
-| Forgejo | your Forgejo URL followed by `/api/actions` | `repo:<owner>/<repo>:ref:refs/heads/<branch>`, or `repo:<owner>/<repo>:pull_request` |
+| Forgejo | your Forgejo URL followed by `/api/actions` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<branch>`, or `repo:<owner>-<owner id>/<repo>-<repo id>:pull_request` |
+
+Forgejo 16 puts the owner's and the repo's numeric IDs in the subject, for example `repo:shop-12/infra-345:pull_request`. A repo that had Actions enabled before Forgejo 16 keeps `repo:<owner>/<repo>` until Actions is turned off and on again for it. The repo's settings page and `GET /api/v1/repos/<owner>/<repo>` show both IDs.
 
 A Forgejo older than 15, or a runner older than 12.5, serves no token: the token request fails and the job stops before it plans. Leave `oidc` unset on such a forge and give the runner static credentials as environment variables in its config.
 
