@@ -2074,10 +2074,10 @@ claim_steward() {
   # fountain steward (stack/steward.sh). The push to main goes green, every
   # resource is in floci, and the steward has a `chant run tf-apply` turn it
   # did not have before the push, which completed. The steward may already
-  # exist from an earlier boot: the apply job moves it to a fresh conversation,
-  # so the new turn is told apart by its id, not by a count. BREAK: the
-  # pipeline keeps its own wave jobs, so the forge applies and every resource
-  # still appears; only the steward's turns can tell that the steward ran
+  # exist from an earlier boot with turns on its thread, so the new turn is told
+  # apart by its id, not by a count. BREAK: the pipeline
+  # keeps its own wave jobs, so the forge applies and every resource still
+  # appears; only the steward's turns can tell that the steward ran
   # nothing.
   # Like boot, it wipes only the example (its repo, resources and state), not
   # all of floci, so claims on other repos and the Terragrunt example keep
