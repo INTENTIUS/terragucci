@@ -1,8 +1,8 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index f16095e..cafd281 100644
+index 5ff45ff..46aa170 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
-@@ -124,7 +124,7 @@ jobs:
+@@ -127,7 +127,7 @@ jobs:
            }' -- "$@"; }
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
            tg status terragucci/plan pending "planning"
@@ -11,7 +11,25 @@ index f16095e..cafd281 100644
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              tg status terragucci/plan failure "the plan report was not written"
-@@ -235,7 +235,7 @@ jobs:
+@@ -230,7 +230,7 @@ jobs:
+             console.log("terragucci: " + cmd + " failed: " + err.message);
+             if (cmd === "oidc") process.exit(1);
+           }' -- "$@"; }
+-          terragucci comment --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
++          terragucci comment --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
+           read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
+           $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
+           EOF
+@@ -242,7 +242,7 @@ jobs:
+           git checkout --quiet --detach "$TG_SHA"
+           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
+           tg status terragucci/plan pending "planning"
+-          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
++          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
+           rc=$?
+           if [ ! -f terragucci-report/report.json ]; then
+             tg status terragucci/plan failure "the plan report was not written"
+@@ -353,7 +353,7 @@ jobs:
              changed=
            fi
            moved=""
@@ -20,7 +38,7 @@ index f16095e..cafd281 100644
              if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -q "^$dir/"; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these units: plan notes that cover them are stale.
-@@ -271,11 +271,11 @@ jobs:
+@@ -390,11 +390,11 @@ jobs:
              terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false 2>&1 | tee -a "$log"
            }
            failed() { tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1; }
@@ -33,8 +51,8 @@ index f16095e..cafd281 100644
 -          tg status terragucci/apply success "15 units in 2 waves applied"
 +          tg status terragucci/apply success "17 units in 2 waves applied"
            echo "all units applied"
-   tips:
-     runs-on: docker
+       - name: Keep the apply report
+         if: always()
 diff --git a/live/dev/billing/terragrunt.hcl b/live/dev/billing/terragrunt.hcl
 new file mode 100644
 index 0000000..6fb7c2e
