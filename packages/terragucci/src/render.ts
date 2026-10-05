@@ -84,6 +84,8 @@ export interface PipelineInput {
   tokenEnv?: string;
   /** The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, mapped into the environment of the plan, apply and drift jobs. */
   headersSecret?: string;
+  /** The variable holding the decision service's key (`decide.token_env`), for the plan jobs of a repo with respond.description on. A secret of that name is mapped into their environment on GitHub and Forgejo; GitLab's CI variables are already there. */
+  decideTokenEnv?: string;
   /** A bucket for plan reports, besides the job's artifact. */
   reports?: PlanReportInput["reports"];
   /** Set when `modules.publish` is: the pipeline gets a job that publishes changed modules after apply. */
@@ -593,6 +595,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env };
   // Only the jobs that run a stage send telemetry (plan, apply, drift), so only they get the headers secret; check and publish never see it.
   const headersEnv = headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {};
+  // Only the description check asks the service from the plan jobs.
+  const decideEnv = input.decideTokenEnv && responds(input.respond, "description") ? { [input.decideTokenEnv]: `\${{ secrets.${input.decideTokenEnv} }}` } : {};
   const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
@@ -771,6 +775,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_SHA: "${{ github.event.pull_request.head.sha }}",
       TG_PR: "${{ github.event.pull_request.number }}",
       ...headersEnv,
+      ...decideEnv,
     },
     steps: [
       ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true),
@@ -792,7 +797,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv },
     steps: [
       ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report, true) }), true, true),
       new Step({

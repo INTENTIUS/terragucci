@@ -47,6 +47,6 @@ Each feature on this site has one check, run against the [tutorial's example](/t
 | A fountain steward started by a pull request | planned after launch |
 | A re-plan comment command | planned after launch |
 | Opt-in policy checks with conftest or OPA, read from the base branch for a pull request, failing `tf-plan` and refusing a `tf-apply` wave | built; its smoke claim has not been recorded yet |
-| Typed decisions (`decide`): a mismatched pull-request description, drift attribution and version-bump suggestions | the `terragucci-decide` image and the client are built; the mismatched-description check (`respond.description`) is built; the other two uses are in development |
+| Typed decisions (`decide`): a mismatched pull-request description, drift attribution and version-bump suggestions | built: the `terragucci-decide` image and the client, the mismatched-description check (`respond.description`), drift attribution (`respond.drift: attribute`) and version-bump suggestions (`respond.version-bump: suggest`); none of the three has a recorded smoke claim yet |
 
 The tutorial grows a page each time one of these passes its check.

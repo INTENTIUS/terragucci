@@ -112,8 +112,9 @@ export const terragrunt = new Dockerfile({
  * image: `just images` and `just images-check` leave it out, it has no entry in
  * images/budget.json, and no pipeline runs in it. `just decide-image` builds it.
  *
- * The build stage installs the CPU build of torch and `laya[serve]` into a
- * virtualenv and downloads the checkpoint at its pinned Hub commit, checking
+ * The build stage installs images/decide/requirements.txt (the CPU build of
+ * torch, `laya[serve]` and everything they need, each wheel pinned by its
+ * sha256, `pip install --require-hashes`) into a virtualenv and downloads the checkpoint at its pinned Hub commit, checking
  * the weights' SHA-256. The final stage carries the virtualenv, the weights
  * and images/decide/server.py, runs as an unprivileged user, and never reaches
  * the Hub: it serves one preloaded checkpoint on CPU at port 8790.
@@ -132,10 +133,10 @@ export const decide = new Dockerfile({
       from: PYTHON,
       as: "build",
       env: ["PIP_NO_CACHE_DIR=1", "PIP_DISABLE_PIP_VERSION_CHECK=1"],
+      // Every wheel, torch and laya included, comes from the hash-locked file: nothing resolves at build time.
       run: [
         "python -m venv --upgrade-deps /opt/venv",
-        `/opt/venv/bin/pip install "torch==${DECIDE_IMAGE.torch}" --index-url https://download.pytorch.org/whl/cpu`,
-        `/opt/venv/bin/pip install "laya[serve]==${DECIDE_IMAGE.laya}" && /opt/venv/bin/pip check`,
+        "--mount=type=bind,source=images/decide/requirements.txt,target=/tmp/requirements.txt /opt/venv/bin/pip install --require-hashes --no-deps --only-binary=:all: --extra-index-url https://download.pytorch.org/whl/cpu -r /tmp/requirements.txt && /opt/venv/bin/pip check",
         download,
       ],
     },

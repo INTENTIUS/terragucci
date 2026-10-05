@@ -194,3 +194,46 @@ describe("respond description", () => {
     expect((r.data as { flagged: boolean }).flagged).toBe(true);
   });
 });
+
+describe("respond description from the forge API", () => {
+  const repoWithConfig = (): { dir: string; repo: string; cfg: string } => {
+    const dir = reportDir("destroy");
+    const repo = join(dir, "..");
+    const cfg = join(repo, "terragucci.yml");
+    writeFileSync(cfg, "respond:\n  description: check\ndecide:\n  backend: laya\n  url: http://decide.local:8790\n");
+    return { dir, repo, cfg };
+  };
+  const forge = (payload: unknown, urls: string[]) =>
+    (async (url: string) => {
+      urls.push(url);
+      return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) };
+    });
+
+  it("a re-plan's comment event has no pull request, so GitHub's pull is read", async () => {
+    const { repo, cfg } = repoWithConfig();
+    const event = join(repo, "comment.json");
+    writeFileSync(event, JSON.stringify({ comment: { body: "/terragucci plan" } }));
+    const urls: string[] = [];
+    const env = { GITHUB_EVENT_PATH: event, TG_FORGE: "github", TG_PR: "7", TG_TOKEN: "t", GITHUB_API_URL: "https://api.github.com", GITHUB_REPOSITORY: "o/r" };
+    const r = await respond("description", repo, { config: cfg, mode: "apply", env, fetch: forge({ title: RETAG.title, body: RETAG.description }, urls), decideFetch: answers(0.93) });
+    expect(urls).toEqual(["https://api.github.com/repos/o/r/pulls/7"]);
+    expect((r.data as { flagged: boolean }).flagged).toBe(true);
+  });
+
+  it("reads a GitLab merge request's description", async () => {
+    const { repo, cfg } = repoWithConfig();
+    const urls: string[] = [];
+    const env = { TG_FORGE: "gitlab", TG_PR: "3", TG_TOKEN: "t", CI_API_V4_URL: "https://gl.test/api/v4", CI_PROJECT_ID: "42" };
+    const r = await respond("description", repo, { config: cfg, mode: "apply", env, fetch: forge({ title: RETAG.title, description: RETAG.description }, urls), decideFetch: answers(0.93) });
+    expect(urls).toEqual(["https://gl.test/api/v4/projects/42/merge_requests/3"]);
+    expect((r.data as { flagged: boolean }).flagged).toBe(true);
+  });
+
+  it("skips the check when the forge does not answer", async () => {
+    const { repo, cfg } = repoWithConfig();
+    const env = { TG_FORGE: "github", TG_PR: "7", TG_TOKEN: "t", GITHUB_API_URL: "https://api.github.com", GITHUB_REPOSITORY: "o/r" };
+    const failing = (async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => "" }));
+    const r = await respond("description", repo, { config: cfg, mode: "apply", env, fetch: failing, decideFetch: answers(0.93) });
+    expect(r.skipped).toMatch(/no pull request title/);
+  });
+});

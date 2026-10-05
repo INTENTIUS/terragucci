@@ -196,6 +196,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     env: settings.env,
     oidc: settings.oidc,
     tokenEnv: settings.token_env,
+    ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
     ...(settings.modules?.publish ? { publish: true } : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
