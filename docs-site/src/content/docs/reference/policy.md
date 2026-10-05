@@ -34,6 +34,12 @@ deny contains msg if {
 
 `input` is the unredacted output of `show -json` for one root. A denied root fails, the job exits 1, and the report names each message under that root. conftest warnings are advice and fail nothing. A policy that cannot run also fails the root. So does an engine that is not installed, or Rego that does not compile.
 
-A denial has no override. Responses, agents and comments cannot waive it; the code changes until the policy passes, or the policy changes in a pull request your reviewers approve. The plan job reads `policy` and its directory from the pull request's own checkout, so a CODEOWNERS rule or branch rule should guard both.
+A denial has no override. Responses, agents and comments cannot waive it; the code changes until the policy passes, or the policy changes in a pull request your reviewers approve and merge.
+
+A pull request cannot edit the policy to allow itself. When a plan runs for a pull request, terragucci reads the `policy` key from `terragucci.yml` and the policy directory from the base branch, into a temporary directory, and checks the plan against that copy. The pull request's own edits to either take effect once the pull request is merged. If the base has no `policy` key, the pull request's own policy applies, since there is nothing to waive. If the base has the key but the directory is missing there, or the base cannot be read, every planned root fails. A `terragucci.ts` config is not evaluated at the base: its `policy` settings come from the checkout, and the directory still comes from the base.
+
+The base branch is the pull request's target. terragucci finds it from the environment the forge sets: `GITHUB_BASE_REF` on GitHub Actions and Forgejo Actions, and `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` on GitLab merge request pipelines, read as `origin/<branch>`. `TG_BASE` names a ref directly and wins over both. The job's checkout needs that ref fetched, as affected-root selection already does.
+
+`tf-apply` runs the same check on each wave's plans, after planning and before the gate, and refuses a wave with a denial: the wave applies nothing and records no approval to wait for. The apply job runs from the default branch, so its checkout is the policy from main. Set `TG_BASE` to read the policy from another ref.
 
 The images carry neither engine. If `conftest` is not on the path, terragucci downloads a pinned release once per job. It checks the download against a SHA-256 it ships with. A job without network access needs conftest installed beforehand, and `opa` is always installed beforehand. Drift runs and provisional Terragrunt previews skip the check.
