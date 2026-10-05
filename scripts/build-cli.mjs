@@ -21,6 +21,22 @@ mkdirSync(dist, { recursive: true });
 // directory are atomic; the last build to finish wins whole.
 const stage = mkdtempSync(join(dist, ".stage-"));
 
+// The dashboards template (src/dashboards/rendered.json, terragucci#163) goes
+// into the bundle gzipped: as a JS literal it is a fifth of the bundle, and
+// only an init with `dashboards:` reads it.
+const gzippedJson = {
+  name: "gzipped-json",
+  setup(b) {
+    b.onLoad({ filter: /[\\/]src[\\/]dashboards[\\/]rendered\.json$/ }, (args) => {
+      const packed = gzipSync(JSON.stringify(JSON.parse(readFileSync(args.path, "utf8"))), { level: 9 }).toString("base64");
+      return {
+        loader: "js",
+        contents: `import { gunzipSync } from "node:zlib";\nexport default JSON.parse(gunzipSync(Buffer.from(${JSON.stringify(packed)}, "base64")).toString("utf8"));\n`,
+      };
+    });
+  },
+};
+
 // One set of options for the shipped bundle and for the origin/main baseline.
 const options = (pkgDir) => ({
   entryPoints: [join(pkgDir, "src/cli.ts")],
@@ -39,6 +55,7 @@ const options = (pkgDir) => ({
   minifyIdentifiers: true,
   keepNames: false,
   logLevel: "warning",
+  plugins: [gzippedJson],
 });
 
 const result = await build({

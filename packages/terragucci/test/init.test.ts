@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
+import { dashboardSettings, renderDashboards } from "../src/dashboards";
 import { init } from "../src/init";
 import { MARKER } from "../src/render";
 import { git, tmp, twoRootRepo, write } from "./helpers";
@@ -121,6 +122,16 @@ describe("init", () => {
   it("a repo with no roots is an error that says what a root is", async () => {
     const dir = write(tmp(), { "README.md": "x" });
     await expect(init(dir, { forge: "github" })).rejects.toThrow(/backend or a provider block/);
+  });
+
+  it("writes the dashboards the declarations render, from the template the bundle carries (#163)", async () => {
+    const dir = write(withRemote("https://codeberg.org/acme/infra.git"), {
+      "terragucci.yml": "binary: tofu\ndashboards: true\nreports:\n  bucket: s3://terragucci-reports\n  prefix: reports\n  url: http://localhost:4580/terragucci-reports\n",
+    });
+    const r = await init(dir, { dryRun: true });
+    const written = r.files.filter((f) => f.path.includes("/observability/terragucci/")).map((f) => [f.path.slice(dir.length + 1), f.content]);
+    const want = renderDashboards(dashboardSettings(true)!, { reports: "http://localhost:4580/terragucci-reports/reports" }).map((f) => [f.path, f.content]);
+    expect(written).toEqual(want);
   });
 
   it("a control repo config is refused", async () => {
