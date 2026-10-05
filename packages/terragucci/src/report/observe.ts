@@ -291,10 +291,11 @@ export class StageObserver {
     for (const s of tel.skipped) log(`telemetry: ${s}`);
     const end = nowNanos();
     const run = report.run;
+    // The metrics carry nothing that changes from run to run, so a project's gauge is one series and the
+    // dashboards' latest value is the latest run's, not the largest of any commit's. The trace names the run.
+    const metricsResource = { ...tel.resource, "service.version": run.terragucci, "terragucci.project": run.project };
     const resource = {
-      ...tel.resource,
-      "service.version": run.terragucci,
-      "terragucci.project": run.project,
+      ...metricsResource,
       "vcs.ref.head.revision": run.commit,
       ...(run.job_url ? { "cicd.pipeline.run.url.full": run.job_url } : {}),
     };
@@ -346,7 +347,7 @@ export class StageObserver {
     // A tf-apply wave sends its trace, each root's apply time and its wave gauges. The plan's other metrics stay the plan's, since a wave's would count its roots twice.
     if (tel.metrics) {
       const gauges = this.stage === "tf-apply" ? this.applyGauges(report, end) : this.gauges(report, binaryVersion(run.binary, env), end);
-      const problem = await send(tel.metrics, metricsBody(gauges, resource, run.terragucci ?? "0.0.0", end), fetchFn);
+      const problem = await send(tel.metrics, metricsBody(gauges, metricsResource, run.terragucci ?? "0.0.0", end), fetchFn);
       if (problem) log(`telemetry: the metrics were not sent: ${problem}`);
       else sent.push(`${gauges.length} metric points`);
     }
