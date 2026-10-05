@@ -602,7 +602,7 @@ describe("respond steps", () => {
   });
 
   it.each(FORGES)("%s: a response set to off is not in the pipeline", (forge) => {
-    const text = withRespond(forge, { "apply-failed": "off", "wave-refused": "off", drift: "off", fmt: "off" });
+    const text = withRespond(forge, { "apply-failed": "off", "wave-refused": "off", drift: "off", fmt: "off", tips: "off" });
     expect(text).not.toContain("terragucci respond");
   });
 
