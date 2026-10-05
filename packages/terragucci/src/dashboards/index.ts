@@ -235,7 +235,7 @@ function pipelineHealth(s: Required<DashboardSettings>): DashboardEntity {
           datasource: ds,
           gridPos: { w: 12, h: 8 },
           targets: [new PromQuery({ expr: errorShare, legendFormat: legend })],
-          fieldConfig: { defaults: { unit: "percentunit", min: 0 } },
+          fieldConfig: { defaults: { unit: "percentunit", min: 0, max: 1 } },
         }),
       ],
     }),
