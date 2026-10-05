@@ -82,7 +82,7 @@ export interface PipelineInput {
   oidc?: { plan_role: string; apply_role: string; audience?: string };
   /** The environment variable holding the forge token, where the forge's own job token cannot post statuses (GitLab). */
   tokenEnv?: string;
-  /** The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, mapped into every job's environment. */
+  /** The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, mapped into the environment of the plan, apply and drift jobs. */
   headersSecret?: string;
   /** A bucket for plan reports, besides the job's artifact. */
   reports?: PlanReportInput["reports"];
@@ -533,7 +533,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const drift = input.drift;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError(tg ? "there are no Terragrunt units to run" : "there are no roots to run");
-  const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env, ...(headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {}) };
+  const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env };
+  // Only the jobs that run a stage send telemetry (plan, apply, drift), so only they get the headers secret; check and publish never see it.
+  const headersEnv = headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {};
   const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
@@ -560,6 +562,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const bash = (tag: string, body: string): string => `bash <<'${tag}'\n${body}\n${tag}`;
     const gitlabEnv = {
       ...jobEnv,
+      ...headersEnv,
       TG_TOKEN: `$${tokenEnv ?? "GITLAB_TOKEN"}`,
       TG_SHA: "$CI_COMMIT_SHA",
       TG_BRANCH: "$CI_DEFAULT_BRANCH",
@@ -611,7 +614,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         stage: "publish",
         image: jobImage,
         needs: [lastApply],
-        variables: { ...gitlabEnv, GIT_DEPTH: "0" },
+        variables: { ...jobEnv, TG_TOKEN: gitlabEnv.TG_TOKEN, TG_SHA: gitlabEnv.TG_SHA, TG_BRANCH: gitlabEnv.TG_BRANCH, GIT_DEPTH: "0" },
         rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
         resource_group: "terragucci-publish",
         script: script(bash("PUBLISH", publishScript(forge))),
@@ -686,6 +689,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_TOKEN: "${{ github.token }}",
       TG_SHA: "${{ github.event.pull_request.head.sha }}",
       TG_PR: "${{ github.event.pull_request.number }}",
+      ...headersEnv,
     },
     steps: [
       ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true),
@@ -719,6 +723,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_SHA: "${{ github.sha }}",
         TG_BEFORE: "${{ github.event.before }}",
         TG_BRANCH: "${{ github.event.repository.default_branch }}",
+        ...headersEnv,
       },
       steps: steps(new Step({ name: tg ? `Apply every ${what}` : `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
     } as never) as never);
@@ -754,6 +759,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       env: {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
+        ...headersEnv,
       },
       steps: [
         ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true),
