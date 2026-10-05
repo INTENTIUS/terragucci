@@ -91,6 +91,7 @@ export default defineConfig({
 						{ label: 'Report JSON schema', slug: 'reference/report-schema' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
 						{ label: 'Tips', slug: 'reference/tips' },
+						{ label: 'Policy', slug: 'reference/policy' },
 						{ label: 'Responses to pipeline events', slug: 'reference/responses' },
 						{ label: 'Traces and metrics', slug: 'reference/observability' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
