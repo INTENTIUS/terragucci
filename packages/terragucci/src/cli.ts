@@ -57,7 +57,7 @@ const USAGE = `usage:
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file>
-  terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question [--mode dry-run|apply] [flags]
+  terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump [--mode dry-run|apply] [flags]
 
 init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
 

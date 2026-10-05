@@ -16,6 +16,7 @@ Every pipeline event has a response that needs no model, and that response is th
 | module published | release notes from conventional commits | polished notes |
 | rollout wave merged | the next wave's pull requests, as `tf-rollout` opens them | not offered |
 | reviewer question | none | an answer from the report and the code |
+| module changed with no conventional commit | none; `tf-publish` proposes a patch | a suggested bump in a release pull request, from the typed-decision service |
 
 ## Choosing a response
 
@@ -40,6 +41,7 @@ respond:
 | `publish` | `notes`, `agent`, `off` | `notes` |
 | `rollout` | `next-wave`, `off` | `next-wave` |
 | `question` | `off`, `agent` | `off` |
+| `version-bump` | `suggest`, `off` | `off` |
 
 `agent` needs an integration to run in. When none is set, `terragucci config check` names the event and the missing keys.
 
@@ -65,9 +67,16 @@ terragucci respond drift --root envs/prod/orders --import aws_sqs_queue.extra=ht
 terragucci respond tips --mode apply
 terragucci respond fmt --branch my-change --mode apply
 terragucci respond publish --module modules/network
+terragucci respond version-bump --module modules/network --mode apply
 ```
 
 `--json` prints one envelope, as every other command does.
+
+### Version bump
+
+Conventional commits decide a module's bump, and a `version` file in the module overrides it. `version-bump: suggest` adds one case: when none of the commits since the module's last release carries a conventional type, the typed-decision service reads the commit messages and a summary of the module's diff, and picks major, minor or patch. This needs [`decide`](/terragucci/reference/config/) in `terragucci.yml`. A project with only conventional commits never calls the service.
+
+The suggestion goes into a release pull request that writes the module's `version` file. The pull request body shows the bump with the probability the service gave it. Merging it confirms the version, and the next `tf-publish` run publishes it. Nothing publishes before that. When the probability is below the threshold, or the service is off or unreachable, the pull request proposes a patch and says why. The last release is read from the module's git tags.
 
 ### Wave refused
 

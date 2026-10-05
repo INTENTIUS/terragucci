@@ -85,6 +85,7 @@ export const RESPONSES = {
   publish: ["notes", "agent", "off"],
   rollout: ["next-wave", "off"],
   question: ["off", "agent"],
+  "version-bump": ["off", "suggest"],
 } as const;
 export type RespondEvent = keyof typeof RESPONSES;
 export const AGENT_VIA = ["forge", "fountain"] as const;

@@ -86,7 +86,7 @@ terragucci rollout --provider <address> <version> [--from <version>] [--mode dry
 ## respond
 
 ```bash
-terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question [--mode dry-run|apply] [flags]
+terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump [--mode dry-run|apply] [flags]
 ```
 
 | Flag | Used by | Meaning |
@@ -99,6 +99,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--platform` | `tips` | lock file platforms, comma separated |
 | `--branch` | `fmt` | the branch to format; the default branch is refused |
 | `--module`, `--version` | `publish` | the module, and the release |
+| `--module` | `version-bump` | one module |
 | `--question` | `question` | the reviewer's question |
 | `--out`, `--binary`, `--config`, `--project` | all | as above |
 
