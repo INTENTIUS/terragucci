@@ -14,6 +14,7 @@
     "@intentius/chant": "0.104.4",
     "@intentius/chant-lexicon-docker": "0.104.4",
     "@intentius/chant-lexicon-github": "0.104.4",
+    "@intentius/chant-lexicon-grafana": "0.104.4",
     "@intentius/chant-lexicon-otel": "0.104.4",
     "@intentius/chant-lexicon-prometheus": "0.104.4",
     "@types/node": "^24.0.0",
