@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { init } from "../src/init";
+import type { PolicyExec } from "../src/report/policy";
 import { runStage } from "../src/report/stage";
 import {
   authProviderOutput,
@@ -393,6 +394,31 @@ describe("terragucci stage tf-plan in a Terragrunt repo", () => {
     expect(r.report.waves[1].set_digest).toBeNull();
     expect(r.failed).toBe(true);
     expect(JSON.parse(readFileSync(join(repo, "out/roots/live/dev/app/plan.json"), "utf-8")).resource_changes).toHaveLength(1);
+  });
+
+  it("runs the policy over each unit's plan JSON and fails only the unit it denies", async () => {
+    const repo = liveRepo({ "terragucci.yml": "policy:\n  path: policy\n", "policy/p.rego": "package main\n" });
+    const seen: string[] = [];
+    const exec: PolicyExec = async (_f, args) => {
+      if (args[0] === "--version") return { status: 0, stdout: "", stderr: "" };
+      const plan = JSON.parse(readFileSync(args[args.length - 1], "utf-8"));
+      const unit = plan.resource_changes[0].change.after.input as string;
+      seen.push(unit);
+      const failures = unit === "live/prod/vpc" ? [{ msg: "prod vpc is not allowed" }] : [];
+      return { status: failures.length ? 1 : 0, stdout: JSON.stringify([{ filename: "plan.json", namespace: "main", successes: 1, failures }]), stderr: "" };
+    };
+    const r = await runStage("tf-plan", repo, {
+      out: join(repo, "out"), binary: "tofu", terragrunt: true,
+      layers: [["live/dev/vpc", "live/dev/app"], ["live/prod/vpc"]],
+      terragruntExec: fakeTerragrunt(), policy: { exec }, env: {},
+    }, () => {});
+    expect([...seen].sort()).toEqual(["live/dev/app", "live/dev/vpc", "live/prod/vpc"]);
+    const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
+    expect(units["live/prod/vpc"].status).toBe("failed");
+    expect(units["live/prod/vpc"].error).toContain("prod vpc is not allowed");
+    expect(units["live/dev/vpc"].status).toBe("planned");
+    expect(units["live/dev/app"].status).toBe("planned");
+    expect(r.failed).toBe(true);
   });
 
   it("with no --layers, discovery decides the units and the canary wave", async () => {

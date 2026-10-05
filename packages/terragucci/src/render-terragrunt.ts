@@ -104,6 +104,10 @@ export function waveFilters(units: string[]): string {
   return units.map((u) => `--filter ${sh(unitPathFilter(u))}`).join(" ");
 }
 
+/** The default `-lock-timeout` of an apply, and the shell that adds it to `TF_CLI_ARGS_apply` when no setting names one. */
+export const LOCK_TIMEOUT = "5m";
+const LOCK_TIMEOUT_SH = `case "\${TF_CLI_ARGS:-} \${TF_CLI_ARGS_apply:-}" in *-lock-timeout*) ;; *) export TF_CLI_ARGS_apply="-lock-timeout=${LOCK_TIMEOUT} \${TF_CLI_ARGS_apply:-}" ;; esac`;
+
 /**
  * The apply job's body after the forge calls and credentials are set up:
  * one `run --all` per wave, waves in order, a failed wave stopping the rest.
@@ -114,6 +118,8 @@ export function terragruntApplyBody(waves: string[][], triage = false): string[]
   const run = 'terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false';
   return [
     cacheExports(),
+    // A wave waits for a state lock for five minutes unless the job set its own -lock-timeout.
+    LOCK_TIMEOUT_SH,
     ...(triage ? ['log="$(mktemp)"'] : []),
     "apply_wave() {",
     // The job's pipefail keeps the apply's exit code through tee.

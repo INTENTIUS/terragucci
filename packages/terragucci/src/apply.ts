@@ -285,6 +285,15 @@ interface PlannedRoot {
   error?: string;
 }
 
+/** How long a plan or an apply waits for a state lock unless the job set a `-lock-timeout` of its own. */
+export const DEFAULT_LOCK_TIMEOUT = "5m";
+
+/** The `-lock-timeout` flag to add: none when `TF_CLI_ARGS` or `TF_CLI_ARGS_<command>` already names one. */
+export function lockTimeoutArgs(command: "plan" | "apply", env: NodeJS.ProcessEnv = process.env): string[] {
+  const set = `${env.TF_CLI_ARGS ?? ""} ${env[`TF_CLI_ARGS_${command}`] ?? ""}`;
+  return /(^|\s)-{1,2}lock-timeout[=\s]/.test(set) ? [] : [`-lock-timeout=${DEFAULT_LOCK_TIMEOUT}`];
+}
+
 const indent = (s: string): string => s.trim().split("\n").map((l) => `    ${l}`).join("\n");
 
 async function planRoot(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver): Promise<PlannedRoot> {
@@ -304,7 +313,7 @@ async function planTimed(repo: string, binary: string, root: string, work: strin
   const base = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "" };
   const init = await timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir);
   if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
-  const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", `-out=${planFile}`], env, dir);
+  const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);
   if (plan.code !== 0) return { ...base, error: `plan failed\n${plan.out}` };
   const show = spawnSync(binary, [`-chdir=${dir}`, "show", "-json", planFile], { encoding: "utf-8", env, maxBuffer: 512 * 1024 * 1024 });
   let json: unknown;
@@ -329,7 +338,7 @@ async function applyRoot(repo: string, binary: string, p: PlannedRoot, observer:
   observer.reopen(p.timing);
   let r: Run;
   try {
-    r = await timed(observer, p.timing, binary, ["apply", "-input=false", "-no-color", p.planFile], p.env, join(repo, p.root));
+    r = await timed(observer, p.timing, binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.env, join(repo, p.root));
   } finally {
     observer.endRoot(p.timing);
   }
