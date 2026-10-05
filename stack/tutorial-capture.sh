@@ -151,12 +151,30 @@ step_wave_refused() {
   run_cmd wave-refused "just example merge module-bump" "$HERE/example.sh" merge module-bump
 }
 
+# Publish modules/service and open the first rollout wave. The scenario pins
+# the roots first, so it leaves main changed: reset afterwards so the steps
+# after this one start from the example as committed.
+step_pin() {
+  "$HERE/example.sh" reset >/dev/null 2>&1 || log "pin: reset failed"
+  run_cmd pin "just example change pin" "$HERE/example.sh" change pin
+  local pr
+  pr="$(grep -o 'pulls/[0-9]*' "$STAGE/pin.cmds" | tail -1 || true)"
+  if [ -n "$pr" ]; then
+    shot pin pull "$FORGEJO/$pr"
+    shot pin files "$FORGEJO/$pr/files"
+  else
+    log "pin: the output named no pull request"
+  fi
+  "$HERE/example.sh" reset >/dev/null 2>&1 || log "pin: reset failed"
+}
+
 # step|claims it needs
 STEPS='boot|boot
 first-pr|check
 check|check
 wave-waiting|waves sealed
-wave-refused|waves sealed refuse'
+wave-refused|waves sealed refuse
+pin|publish rollout'
 
 booted=0
 while IFS='|' read -r -u 3 step claims; do
