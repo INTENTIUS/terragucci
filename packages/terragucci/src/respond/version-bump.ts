@@ -7,7 +7,7 @@
  * module's `version` file; a person merges it to confirm. Nothing here
  * publishes.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ResolvedSettings } from "../config";
 import { decide, isConfident, summarize, type DecideOptions } from "../decide";
@@ -106,7 +106,10 @@ export async function versionBumps(
       suggestions.push({ ...base, source: "none", note: "no commits since the last release" });
       continue;
     }
-    if (existsSync(join(repo, mod.rel, "version"))) {
+    // With --since, the version file at the ref is the baseline, so it only overrides when it changed after the ref.
+    const versionFile = join(repo, mod.rel, "version");
+    const baseline = sinceRef ? tryGit(repo, ["show", `${sinceRef}:${mod.rel}/version`]) : undefined;
+    if (existsSync(versionFile) && (baseline === undefined || readFileSync(versionFile, "utf8").trim() !== baseline.trim())) {
       suggestions.push({ ...base, source: "none", note: `${mod.rel}/version sets the version, and it overrides any bump` });
       continue;
     }
