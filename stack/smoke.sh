@@ -2070,14 +2070,19 @@ JS
 }
 
 claim_steward() {
-  # Changes the example: it boots it fresh with tf-apply handed to the fountain
-  # steward (stack/steward.sh). The push to main goes green, every resource is
-  # in floci, and the steward has a `chant run tf-apply` turn it did not have
-  # before the push, which completed. The steward may already exist from an
-  # earlier boot: the apply job moves it to a fresh conversation, so the new
-  # turn is told apart by its id, not by a count. BREAK: the pipeline keeps its
-  # own wave jobs, so the forge applies and every resource still appears; only
-  # the steward's turns can tell that the steward ran nothing.
+  # Changes the example: it boots it from nothing with tf-apply handed to the
+  # fountain steward (stack/steward.sh). The push to main goes green, every
+  # resource is in floci, and the steward has a `chant run tf-apply` turn it
+  # did not have before the push, which completed. The steward may already
+  # exist from an earlier boot: the apply job moves it to a fresh conversation,
+  # so the new turn is told apart by its id, not by a count. BREAK: the
+  # pipeline keeps its own wave jobs, so the forge applies and every resource
+  # still appears; only the steward's turns can tell that the steward ran
+  # nothing.
+  # Like boot, it wipes only the example (its repo, resources and state), not
+  # all of floci, so claims on other repos and the Terragrunt example keep
+  # running meanwhile. It leaves main carrying the steward's pipeline; boot
+  # runs after it and puts the plain example back.
   log() { echo "[smoke steward] $*" >&2; }
   local handover=1 before new rc=0
   [ -n "${BREAK:-}" ] && handover=0
@@ -2085,7 +2090,14 @@ claim_steward() {
   # The tf-apply turns whose id was not there before the push, oldest first.
   new_turns() { tf_apply_turns | awk -F'\t' 'NR == FNR { seen[$1]; next } !($4 in seen)' <(printf '%s\n' "$before") -; }
   before="$(tf_apply_turns | cut -f4)"
-  TG_STEWARD_HANDOVER=$handover "$HERE/example.sh" up --fresh --fountain >&2 || rc=1
+  if (. "$HERE/lib.sh") >/dev/null 2>&1; then
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+    wipe_example || return 1
+  else
+    log "no stack yet, so nothing to wipe; example.sh up starts it"
+  fi
+  TG_STEWARD_HANDOVER=$handover "$HERE/example.sh" up --fountain >&2 || rc=1
   [ "$rc" = 0 ] && { "$HERE/example.sh" verify >&2 || rc=1; }
   new="$(new_turns)"
   if [ -z "$new" ]; then
@@ -2176,12 +2188,21 @@ TF
   }
   # A comment run is one with the issue_comment event; wait for a finished one.
   comment_runs() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq '[.workflow_runs[] | select(.event == "issue_comment" and (.status == "success" or .status == "failure"))] | length'; }
-  local runs_before wait=$(( TIMEOUT < 240 ? TIMEOUT : 240 ))
+  # Every comment run, finished or not. Forgejo records a run as soon as the
+  # comment lands, waiting or running; when none has appeared after a while,
+  # none is coming, and neither is the re-plan.
+  comment_runs_any() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq '[.workflow_runs[] | select(.event == "issue_comment")] | length'; }
+  local runs_before any_before wait=$(( TIMEOUT < 240 ? TIMEOUT : 240 ))
   runs_before="$(comment_runs)"
+  any_before="$(comment_runs_any)"
   comment "/terragucci plan app"
   for i in $(seq 1 $(( wait / 3 ))); do
     after="$(statuses "$head_sha" terragucci/plan)"
     [ "$after" -gt "$before" ] && [ "$(comment_runs)" -gt "$runs_before" ] && break
+    if [ $(( i * 3 )) -ge 90 ] && [ "$(comment_runs_any)" -le "$any_before" ]; then
+      log "no run started for the comment in 90s"
+      break
+    fi
     sleep 3
   done
   after="$(statuses "$head_sha" terragucci/plan)"
@@ -2689,6 +2710,7 @@ runnable_names() { awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS"; }
 #              apply-serial's BREAK run holds it alone, so it is never free
 #              slots, or the lack of them, that order its two applies.
 #   otel       the collector and Prometheus: traces and metrics stay apart
+#   fountain   the fountain profile and its steward, which only steward uses
 #   self       the claim's own fixed names (its repo, branch, state keys), so
 #              its plain and BREAK runs do not overlap
 #   stack      every run holds it shared; a claim with no line here holds it
@@ -2705,19 +2727,23 @@ runnable_names() { awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS"; }
 # taking that resource first.
 #
 # zero-config, tg-zero-config and respond-notes use no stack at all.
-# steward boots the example with `up --fresh`, which restarts floci and so
-# wipes every claim's state and the Terragrunt example: it runs alone, after
-# every claim that needs the Terragrunt example.
+# steward boots the example from nothing the way boot does (its own wipe, the
+# running floci), with tf-apply on the steward, so it holds the example alone
+# and shares the rest of the stack. It goes first: it leaves main carrying the
+# steward's pipeline, and boot, which runs after it, puts the plain example
+# back for every claim that reads it. tg-mock-trap goes right after tg-waves,
+# while steward and boot hold the example, so the Terragrunt plans that share
+# tg follow it instead of holding it up at the end.
 CLAIM_GROUPS='
 tg-waves        tg! runner break-first weight=1000
-boot            ex! runner break-first weight=900
+boot            ex! runner break-first after=steward weight=900
 drift           ex! after=boot weight=700
 tg-affected     tg after=tg-waves weight=500
 tg-refuse       tg tg-ledger! after=tg-waves weight=490
 tg-check        tg runner self! after=tg-waves weight=480
 tg-mock-lint    tg after=tg-waves weight=470
 tg-drift        tg! after=tg-waves weight=460
-tg-mock-trap    tg! tg-ledger! runner after=tg-waves weight=450
+tg-mock-trap    tg! tg-ledger! runner after=tg-waves weight=520
 report          ex after=boot weight=400
 respond-refused ex after=boot weight=350
 metrics         ex otel! after=boot weight=340
@@ -2744,7 +2770,7 @@ zero-config     weight=30
 tg-zero-config  weight=30
 respond-notes   weight=20
 policy          ex after=boot weight=150
-steward         stack! after=boot,drift,tg-waves,tg-affected,tg-refuse,tg-check,tg-mock-lint,tg-drift,tg-mock-trap,policy weight=10
+steward         ex! runner fountain! weight=950
 comment-plan    runner self! weight=150
 lock-wait       otel! self! weight=150
 dash-pipeline   ex otel after=boot weight=120
@@ -3028,6 +3054,13 @@ runner_prep() {
   fi
   "$HERE/bootstrap.sh" forgejo >/dev/null 2>"$SMOKE_LOG_DIR/bootstrap.log" \
     || { cat "$SMOKE_LOG_DIR/bootstrap.log" >&2; echo "[smoke] the stack did not start" >&2; return 1; }
+  # The steward claim runs alongside others, so its fountain profile starts
+  # here, before any run: the claim's own bootstrap then finds it up and
+  # starts nothing while other runs use the stack.
+  if runnable_names | grep -qx steward; then
+    "$HERE/bootstrap.sh" fountain >/dev/null 2>"$SMOKE_LOG_DIR/bootstrap-fountain.log" \
+      || { cat "$SMOKE_LOG_DIR/bootstrap-fountain.log" >&2; echo "[smoke] the fountain profile did not start" >&2; return 1; }
+  fi
   # shellcheck disable=SC1091
   . "$HERE/.state/forgejo.env"
 }
@@ -3042,9 +3075,17 @@ free_gb() {
 }
 # The job cache volume gains a provider per version and nothing prunes it.
 # `just job-cache-prune` empties it.
+# `docker system df -v` prints a "Local Volumes space usage" table (VOLUME
+# NAME, LINKS, SIZE); when that has no row for it, du inside the CI image,
+# which is already pulled, measures the volume read-only.
 job_cache_size() {
-  local size
-  size="$(docker system df -v --format '{{range .Volumes}}{{.Name}} {{.Size}}{{"\n"}}{{end}}' 2>/dev/null | awk -v v="$JOB_CACHE_VOLUME" '$1 == v { print $2 }')" || size=""
+  local size image
+  size="$(docker system df -v 2>/dev/null | awk -v v="$JOB_CACHE_VOLUME" '
+    /^VOLUME NAME/ { t = 1; next } t && NF == 0 { t = 0 } t && $1 == v { print $NF; exit }')" || size=""
+  if [ -z "$size" ] || [ "$size" = N/A ]; then
+    image="$(image_tag tofu 2>/dev/null || true)"
+    [ -n "$image" ] && size="$(docker run --rm --entrypoint du -v "$JOB_CACHE_VOLUME:/cache:ro" "$image" -sh /cache 2>/dev/null | awk '{ print $1 }')" || size=""
+  fi
   echo "smoke: the ${JOB_CACHE_VOLUME} volume holds ${size:-an unknown size}; 'just job-cache-prune' removes it" >&2
 }
 SMOKE_DISK_WARN_GB="${SMOKE_DISK_WARN_GB:-50}"
