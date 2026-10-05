@@ -43,16 +43,18 @@ terragucci also turns the binary's OTLP trace exporter on and points it at a rec
 
 ## Where the time went
 
-Every `tf-plan` and `tf-drift` report names where the run spent its time, endpoint or not. It reads what each root's plan sent to the receiver:
+Every `tf-plan` and `tf-drift` report names where the run spent its time, endpoint or not, and so does each `tf-apply` wave's. It reads what each root's plan (and a wave's apply) sent to the receiver:
 
-- the slowest roots, with each root's wall time and its plan's;
+- the slowest roots, with each root's wall time, its plan's and, in a wave, its apply's;
 - in each root, the slowest resource instances and their refresh time;
 - the slowest provider calls, and the resource each was for;
 - provider start-up and state lock waits.
 
 choudoufu times each resource instance and each provider call. On a large estate it sums them by resource type or provider method instead, once a graph walk passes its budget (`CHOUDOUFU_TRACE_DETAIL` and `CHOUDOUFU_TRACE_SPAN_BUDGET`). The report then lists those sums with a count and the slowest member per type. It also says how many instances it summed.
 
-A root whose binary reports nothing per resource says so where the lists would be. Terraform exports no traces, and OpenTofu's stop above the resource. In a Terragrunt run, Terragrunt runs the binary, so the report has no per-unit timings.
+A root whose binary reports nothing per resource says so where the lists would be. Terraform exports no traces, and OpenTofu's stop above the resource. In a Terragrunt run, Terragrunt runs the binary, so each unit's time comes from Terragrunt's run report (when the unit started and ended) and the report lists the units slowest first, with no per-resource timings.
+
+A `tf-plan` never takes the state lock, so it never waits for one. A `tf-apply` wave's plan and apply do. With choudoufu, a wait shows as a `State lock wait` span, with the number of attempts it took, and the wave's report lists it under the root's lock waits. A wave writes its report to `terragucci-report/`, and copies it to the `reports` bucket when one is set.
 
 The HTML report shows the run's timings under "Where the time went", and folds each root's own under its changes. When a binary did time its resources, the plan note gets one line naming the three slowest. `report.json` carries them as `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 

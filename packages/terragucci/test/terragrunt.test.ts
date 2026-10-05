@@ -67,6 +67,8 @@ interface FakeOptions {
   noOutputs?: Record<string, string>;
   /** What Terragrunt's git filter selects, and the files git says changed. */
   affected?: { selected: string[]; files: string[] };
+  /** Each unit's `Started` and `Ended` in the run report, as Terragrunt writes them. */
+  times?: Record<string, [string, string]>;
 }
 
 /** A stand-in for terragrunt 1.1.6 and git: version, find, render, output, a plan that writes each unit's plan and report row, and diff. */
@@ -95,7 +97,8 @@ function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
     const out = argOf(args, "--out-dir")!;
     const json = argOf(args, "--json-out-dir")!;
     const rows = units.map((u) => {
-      if (opts.fail?.includes(u)) return { Name: u, Result: "failed", Reason: "run error", Cause: "Error: boom" };
+      const at = opts.times?.[u] ? { Started: opts.times[u][0], Ended: opts.times[u][1] } : {};
+      if (opts.fail?.includes(u)) return { Name: u, Result: "failed", Reason: "run error", Cause: "Error: boom", ...at };
       for (const [dir, f, body] of [
         [out, "tfplan.tfplan", "binary"],
         [json, "tfplan.json", JSON.stringify(refresh
@@ -105,7 +108,7 @@ function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
         mkdirSync(join(dir, u), { recursive: true });
         writeFileSync(join(dir, u, f), body);
       }
-      return { Name: u, Result: "succeeded" };
+      return { Name: u, Result: "succeeded", ...at };
     });
     const report = argOf(args, "--report-file")!;
     mkdirSync(dirname(report), { recursive: true });
@@ -339,6 +342,32 @@ describe("terragucci plan in a Terragrunt repo", () => {
 });
 
 describe("terragucci stage tf-plan in a Terragrunt repo", () => {
+  it("lists each unit's time from Terragrunt's run report, the slowest first, with no per-resource timings", async () => {
+    const repo = liveRepo();
+    const r = await runStage("tf-plan", repo, {
+      out: join(repo, "out"), binary: "tofu", terragrunt: true,
+      layers: [["live/dev/vpc", "live/dev/app"], ["live/prod/vpc"]],
+      terragruntExec: fakeTerragrunt({
+        times: {
+          "live/dev/vpc": ["2026-10-05T10:00:00.000000000Z", "2026-10-05T10:00:02.500000000Z"],
+          "live/dev/app": ["2026-10-05T10:00:00.250Z", "2026-10-05T10:00:09.750Z"],
+          // Terragrunt's own offset and nanoseconds.
+          "live/prod/vpc": ["2026-10-05T12:00:10.123456789+02:00", "2026-10-05T12:00:14.623456789+02:00"],
+        },
+      }),
+      env: {},
+    }, () => {});
+    expect(r.report.timings!.roots).toEqual([
+      { root: "live/dev/app", seconds: 9.5, plan_seconds: 9.5, source: "terragrunt", detail: "none" },
+      { root: "live/prod/vpc", seconds: 4.5, plan_seconds: 4.5, source: "terragrunt", detail: "none" },
+      { root: "live/dev/vpc", seconds: 2.5, plan_seconds: 2.5, source: "terragrunt", detail: "none" },
+    ]);
+    expect(r.report.timings!.note).toBeUndefined();
+    const unit = r.report.roots.find((u) => u.path === "live/dev/app")!.timings!;
+    expect(unit).toMatchObject({ seconds: 9.5, source: "terragrunt", spans: 0, detail: "none", resources: [], lock_waits: [] });
+    expect(unit.note).toMatch(/^Terragrunt ran the binary for this unit/);
+  });
+
   it("plans each wave with one run --all and reports each unit's stack, selection, provisional flag and run result", async () => {
     const repo = liveRepo();
     const calls: string[][] = [];
@@ -352,8 +381,8 @@ describe("terragucci stage tf-plan in a Terragrunt repo", () => {
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(2);
-    // Terragrunt runs the binary for each unit, so the report times none of them, and says so.
+    expect(r.report.minor).toBe(3);
+    // A run report with no Started and Ended times no unit, and the report says so.
     expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
     expect(units["live/dev/app"].terragrunt).toEqual({ stack: "live/dev", selection: expect.stringMatching(/^every unit/), provisional: false, run_result: "succeeded" });

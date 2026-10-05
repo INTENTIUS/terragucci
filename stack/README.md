@@ -121,6 +121,10 @@ These came from choudoufu's GitLab run and hold here too.
 
 Forgejo serves Actions OIDC tokens from version 15 and Forgejo Runner from 12.5, so the pinned pair serves them with no setting: Forgejo generates its signing key under `/data` on first use and publishes it at `http://forgejo:3000/api/actions/.well-known/openid-configuration`. A job gets `ACTIONS_ID_TOKEN_REQUEST_URL` only when it sets `enable-openid-connect: true`; Forgejo does not read `permissions: id-token: write`. The `forgejo-oidc` claim in `smoke.sh` checks it end to end: floci accepts a token from an issuer it does not host without checking it, so the claim's probe verifies the signature against Forgejo's keys itself before it trades the token with floci's STS.
 
+### State lock waits
+
+The `lock-wait` claim needs choudoufu, because OpenTofu sends no span for a lock wait. It builds a Linux binary from `CHOUDOUFU_REF` (default `origin/main`) of the checkout at `CHOUDOUFU_DIR` (default `~/Documents/checkouts/intentius/choudoufu`), read with `git archive` so the checkout is left alone, and keeps it under `.state/choudoufu/<commit>-<arch>/`. The host's Go cross-compiles it when there is one, and a `golang` container otherwise. `CHOUDOUFU_BIN` names a Linux build to use instead. The claim's state lives in the `terragucci-smoke-lock` bucket on floci, with `use_lockfile = true`; a second plan holds the lock while it waits at a variable prompt, and the claimed `tf-apply` wave plans with `-lock-timeout=150s` (through `TF_CLI_ARGS_plan`) so it waits rather than fails.
+
 ## Pins
 
 | Piece | Pin |
