@@ -25,7 +25,7 @@
       "type": "timeseries",
       "id": 2,
       "title": "Drifted roots",
-      "description": "Roots each drift run found drifted, by project.",
+      "description": "Roots the latest drift run found drifted, by project.",
       "gridPos": {
         "h": 8,
         "w": 24,
@@ -43,7 +43,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "max by (project) (terragucci_drift_roots{project=~\"$project\"})",
+          "expr": "max by (project) (last_over_time(terragucci_drift_roots{project=~\"$project\"}[2d]))",
           "legendFormat": "{{project}}"
         }
       ],

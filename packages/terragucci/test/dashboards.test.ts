@@ -72,6 +72,30 @@ describe("dashboards: rendering", () => {
     expect(text(DASHBOARD_UIDS.runs)).toContain(METRIC.providerInit);
   });
 
+  it("counts a project's first runs, and graphs a run's gauges between a week's points", () => {
+    const panel = (uid: string, title: string) => panelsOf(JSON.parse(byPath.get(`${DIR}/grafana/dashboards/${uid}.json`)!)).find((p) => p.title === title)!;
+    const expr = (uid: string, title: string) => panel(uid, title).targets!.map((t) => t.expr).join("\n");
+    // A counter's first sample is a run that rate() and increase() never count.
+    for (const [uid, title] of [
+      [DASHBOARD_UIDS.pipeline, "Runs per hour"],
+      [DASHBOARD_UIDS.pipeline, "Errors"],
+      [DASHBOARD_UIDS.pipeline, "Duration p95"],
+      [DASHBOARD_UIDS.pipeline, "Runs by result"],
+      [DASHBOARD_UIDS.waves, "Wave runs by result"],
+      [DASHBOARD_UIDS.waves, "Refused and failed waves"],
+    ] as const) {
+      expect(expr(uid, title)).not.toMatch(/\b(rate|increase)\(/);
+      expect(expr(uid, title)).toContain("unless");
+    }
+    // A project with wave runs and none refused or failed shows both results at 0.
+    expect(expr(DASHBOARD_UIDS.waves, "Refused and failed waves")).toContain('label_replace(0 * sum(');
+    // A gauge is sent once and dropped five minutes later: each point reads the largest since the one before.
+    expect(expr(DASHBOARD_UIDS.changes, "Changes by action")).toContain("max_over_time(");
+    expect(expr(DASHBOARD_UIDS.runs, "Stage duration")).toContain("[$__interval]");
+    // A drift run's count holds until the next run, for as long as the drift schedule allows.
+    expect(expr(DASHBOARD_UIDS.drift, "Drifted roots")).toContain(`[${DASHBOARD_DEFAULTS.schedule}]`);
+  });
+
   it("the Runs dashboard lists the traces from Tempo", () => {
     const runs = JSON.parse(byPath.get(`${DIR}/grafana/dashboards/${DASHBOARD_UIDS.runs}.json`)!);
     const traces = panelsOf(runs).find((p) => p.title === "Runs")!;
@@ -101,6 +125,11 @@ describe("dashboards: rendering", () => {
     expect(alerts[0].expr).toMatch(/> 86400$/);
     expect(alerts[1].expr).toMatch(/> 14400$/);
     expect(alerts[4].expr).toMatch(/> 172800$/);
+    // A failed or refused wave alerts even when it is the project's first.
+    for (const a of [alerts[2], alerts[3]]) {
+      expect(a.expr).not.toContain("increase(");
+      expect(a.expr).toContain("offset 1h");
+    }
     // The plan SLO counts plans within the 600s bucket, as Prometheus 3 writes le.
     expect(rules).toContain('le=~"600(\\\\.0)?"');
     // The plan and apply SLIs count a series that appeared in the window from

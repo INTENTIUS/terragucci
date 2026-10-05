@@ -27,7 +27,7 @@ import { Row, StatPanel, TablePanel, TimeSeriesPanel, type DashboardItem } from 
 import { PromQuery, TempoQuery } from "@intentius/chant-lexicon-grafana/query";
 import { QueryVariable } from "@intentius/chant-lexicon-grafana/variables";
 import { buildGrafana } from "@intentius/chant-lexicon-grafana/build";
-import { errorRatio, quantile, selector, type Matcher } from "@intentius/chant-lexicon-grafana/composites/shared";
+import { selector, type Matcher } from "@intentius/chant-lexicon-grafana/composites/shared";
 import { SloDashboard } from "@intentius/chant-lexicon-grafana/composites/slo-dashboard";
 import { SloAlertRules } from "@intentius/chant-lexicon-grafana/composites/slo-alert-rules";
 import { Slo, type SloInstance } from "@intentius/chant-lexicon-prometheus/composites/slo";
@@ -98,12 +98,36 @@ const STAGE_L = "terragucci_stage";
 const PROJECT_L = "terragucci_project";
 const RESULT_L = "terragucci_result";
 
+/**
+ * How many events a span-metrics counter counted over `window`, summed by
+ * `by`. A project's counter can start at its first run, so that run is the
+ * series' first sample, which `rate()` and `increase()` never count: a
+ * series the window does not see at its start is counted from zero. A
+ * counter that went down (the collector restarted) counts none. Unlike a
+ * rate over `$__rate_interval`, a run stays counted for the whole window, so
+ * a graph of a week, whose points are a quarter of an hour apart, still
+ * shows a run made between two of them.
+ */
+const countedOver = (sel: string, window: string, by: string[]): string =>
+  `sum by (${by.join(", ")}) (clamp_min(${sel} - ${sel} offset ${window}, 0) or (${sel} unless ${sel} offset ${window}))`;
+
+/** The window the Pipeline health graphs and the apply alerts count runs over. */
+const RUN_WINDOW = "1h";
+
 const prom = (uid: string) => ({ type: "prometheus" as const, uid });
 const tempo = (uid: string) => ({ type: "tempo" as const, uid });
 
 /** `max by (labels) (last_over_time(metric{matchers}[range]))`: each group's latest value over the range. */
 const latest = (metric: string, matchers: Matcher[], by: string[], range = "$__range"): string =>
   `max by (${by.join(", ")}) (last_over_time(${selector(metric, matchers)}[${range}]))`;
+
+/**
+ * A run's gauge at each point of a graph: the largest value sent since the
+ * point before. A stage sends its gauges once, and the collector drops a
+ * gauge five minutes after it last changed, so a graph of a week, whose
+ * points are a quarter of an hour apart, would mostly fall between them.
+ */
+const perPoint = (sel: string): string => `max_over_time(${sel}[$__interval])`;
 
 /**
  * Things still open: what has a `since` time later than its last `settled`
@@ -197,17 +221,20 @@ function pipelineHealth(s: Required<DashboardSettings>): DashboardEntity {
   const errors = selector(CALLS, [...scope, [STATUS, "=", spans.errorStatus]]);
   const buckets = selector(DURATION_BUCKETS, scope);
   const legend = `{{${STAGE_L}}} {{${PROJECT_L}}}`;
+  const runs = countedOver(calls, RUN_WINDOW, by);
+  // A group with runs but no failed series fails 0%, not "No data"; an hour without runs has no ratio.
+  const errorShare = `(\n${countedOver(errors, RUN_WINDOW, by)}\nor\n0 * ${runs}\n)\n/\n(${runs} > 0)`;
   return dashboard(s, DASHBOARD_UIDS.pipeline, "terragucci: Pipeline health", "Runs, errors and duration per stage and project, from the stage spans.", [
     new Row({
       title: "Rate and errors",
       panels: [
-        series("Runs per hour", "Stage runs per hour, by stage and project.", ds, `sum by (${by.join(", ")}) (increase(${calls}[1h]))`, legend),
+        series("Runs per hour", "Stage runs in the hour before each point, by stage and project.", ds, runs, legend),
         new TimeSeriesPanel({
           title: "Errors",
-          description: "Share of stage runs that failed, by stage and project.",
+          description: "Share of the stage runs in the hour before each point that failed, by stage and project.",
           datasource: ds,
           gridPos: { w: 12, h: 8 },
-          targets: [new PromQuery({ expr: errorRatio(errors, calls, by), legendFormat: legend })],
+          targets: [new PromQuery({ expr: errorShare, legendFormat: legend })],
           fieldConfig: { defaults: { unit: "percentunit", min: 0 } },
         }),
       ],
@@ -215,12 +242,12 @@ function pipelineHealth(s: Required<DashboardSettings>): DashboardEntity {
     new Row({
       title: "Duration",
       panels: [0.5, 0.95].map((q) =>
-        series(`Duration p${q * 100}`, `p${q * 100} stage duration, by stage and project.`, ds, quantile(q, buckets, by), legend, "s"),
+        series(`Duration p${q * 100}`, `p${q * 100} duration of the stage runs in the hour before each point, by stage and project.`, ds, `histogram_quantile(${q}, ${countedOver(buckets, RUN_WINDOW, ["le", ...by])})`, legend, "s"),
       ),
     }),
     new Row({
       title: "Results",
-      panels: [table("Runs by result", "Stage runs over the dashboard's range, by stage and how they ended.", ds, `sum by (${STAGE_L}, ${RESULT_L}) (increase(${calls}[$__range]))`, 24)],
+      panels: [table("Runs by result", "Stage runs over the dashboard's range, by stage and how they ended.", ds, countedOver(calls, "$__range", [STAGE_L, RESULT_L]), 24)],
     }),
   ], [projectVar(ds, CALLS, PROJECT_L), stage]);
 }
@@ -240,7 +267,7 @@ function changeReview(s: Required<DashboardSettings>): DashboardEntity {
     new Row({
       title: "Changes",
       panels: [
-        series("Changes by action", "Proposed changes in each plan run, by action.", ds, `sum by (action) (${selector(METRIC.planChanges, plan)})`, "{{action}}", "short", 24),
+        series("Changes by action", "Proposed changes in each plan run, by action.", ds, `sum by (action) (${perPoint(selector(METRIC.planChanges, plan))})`, "{{action}}", "short", 24),
         stat("Creates", "Creates proposed over the range, the largest plan of each project and pull request.", ds, `sum(max by (project, pull_request) (max_over_time(${selector(METRIC.planChanges, [...plan, ["action", "=", "create"]])}[$__range])))`),
         stat("Updates", "Updates proposed over the range.", ds, `sum(max by (project, pull_request) (max_over_time(${selector(METRIC.planChanges, [...plan, ["action", "=", "update"]])}[$__range])))`),
         stat("Replaces", "Replacements proposed over the range.", ds, `sum(max by (project, pull_request) (max_over_time(${selector(METRIC.planChanges, [...plan, ["action", "=", "replace"]])}[$__range])))`),
@@ -263,6 +290,9 @@ export function driftOpen(matchers: Matcher[] = [P], range = "7d"): string {
 function rolloutsAndWaves(s: Required<DashboardSettings>): DashboardEntity {
   const ds = prom(s.prometheus);
   const apply = selector(CALLS, [[STAGE_L, "=", "tf-apply"], SP]);
+  // Refused and failed waves are rare, so each result has a line at 0 wherever the projects have wave runs at all.
+  const zero = (result: string) => `label_replace(0 * sum(${apply}), "${RESULT_L}", "${result}", "", "")`;
+  const refusedOrFailed = `${countedOver(selector(CALLS, [[STAGE_L, "=", "tf-apply"], [RESULT_L, "=~", "refused|failed"], SP]), RUN_WINDOW, [RESULT_L])}\nor\n${zero("refused")}\nor\n${zero("failed")}`;
   return dashboard(s, DASHBOARD_UIDS.waves, "terragucci: Rollouts and waves", "Waves waiting for an approval and for how long, how wave runs ended, and how far each module version has rolled out.", [
     new Row({
       title: "Waiting",
@@ -274,8 +304,8 @@ function rolloutsAndWaves(s: Required<DashboardSettings>): DashboardEntity {
     new Row({
       title: "Wave runs",
       panels: [
-        table("Wave runs by result", "tf-apply runs over the range: applied, nothing to apply, waiting for an approval, refused because the plans moved after approval, or failed.", ds, `sum by (${PROJECT_L}, ${RESULT_L}) (increase(${apply}[$__range]))`),
-        series("Refused and failed waves", "Wave runs refused or failed per hour.", ds, `sum by (${RESULT_L}) (increase(${selector(CALLS, [[STAGE_L, "=", "tf-apply"], [RESULT_L, "=~", "refused|failed"], SP])}[1h]))`, `{{${RESULT_L}}}`),
+        table("Wave runs by result", "tf-apply runs over the range: applied, nothing to apply, waiting for an approval, refused because the plans moved after approval, or failed.", ds, countedOver(apply, "$__range", [PROJECT_L, RESULT_L])),
+        series("Refused and failed waves", "Wave runs refused or failed in the hour before each point.", ds, refusedOrFailed, `{{${RESULT_L}}}`),
         table("Roots per wave", "Roots in each wave of the latest apply run, by project.", ds, latest(METRIC.waveRoots, [P], ["project", "wave"])),
       ],
     }),
@@ -291,11 +321,13 @@ function rolloutsAndWaves(s: Required<DashboardSettings>): DashboardEntity {
 function drift(s: Required<DashboardSettings>): DashboardEntity {
   const ds = prom(s.prometheus);
   const roots = selector(METRIC.driftRoots, [P]);
+  // Each drift run's count holds until the next run, or until the runs have stopped for longer than `schedule`.
+  const latestRoots = `max by (project) (last_over_time(${roots}[${s.schedule}]))`;
   return dashboard(s, DASHBOARD_UIDS.drift, "terragucci: Drift", "Drifted roots by project, how long the drift has stood, and the roots corrected.", [
     new Row({
       title: "Drift",
       panels: [
-        series("Drifted roots", "Roots each drift run found drifted, by project.", ds, `max by (project) (${roots})`, "{{project}}", "short", 24),
+        series("Drifted roots", "Roots the latest drift run found drifted, by project.", ds, latestRoots, "{{project}}", "short", 24),
         table("Drift age", "How long since each project's open drift was first found (its drift issue opened).", ds, `time() - (${driftOpen()})`),
         table("Roots corrected", "Drifted roots fewer than the day before, by project.", ds, `clamp_min(max by (project) (max_over_time(${roots}[1d] offset 1d)) - max by (project) (max_over_time(${roots}[1d])), 0)`),
       ],
@@ -361,7 +393,7 @@ function runs(s: Required<DashboardSettings>, links: DashboardLinks): DashboardE
     }),
     new Row({
       title: "Stages",
-      panels: [series("Stage duration", "How long each stage run took.", ds, `max by (project, stage) (${selector(METRIC.stageDuration, [P])})`, "{{project}} {{stage}}", "s", 24)],
+      panels: [series("Stage duration", "How long each stage run took.", ds, `max by (project, stage) (${perPoint(selector(METRIC.stageDuration, [P]))})`, "{{project}} {{stage}}", "s", 24)],
     }),
     new Row({
       title: "Traces",
@@ -382,15 +414,8 @@ function runs(s: Required<DashboardSettings>, links: DashboardLinks): DashboardE
   ], [projectVar(ds, METRIC.lastRun, "project")], undefined, links.reports ? [{ title: "Report index", url: `${links.reports}/index.html` }] : []);
 }
 
-/**
- * How many events a span-metrics counter counted over an SLI's window, per
- * project. The collector starts a project's counter at its first run, so
- * that run is the series' first sample, which `rate()` and `increase()`
- * never count: a series the window does not see at its start is counted
- * from zero. A counter that went down (the collector restarted) counts none.
- */
-const counted = (sel: string): string =>
-  `sum by (${PROJECT_L}) (clamp_min(${sel} - ${sel} offset {{window}}, 0) or (${sel} unless ${sel} offset {{window}}))`;
+/** An SLI's events over its window, per project. */
+const counted = (sel: string): string => countedOver(sel, "{{window}}", [PROJECT_L]);
 
 /**
  * An SLI's total events, only where there were some: a window with no runs
@@ -461,13 +486,13 @@ export function pipelineAlerts(s: Required<DashboardSettings>): RuleGroupEntity 
       },
       {
         alert: "TerragucciApplyFailed",
-        expr: `sum by (${PROJECT_L}) (increase(${selector(CALLS, [[STAGE_L, "=", "tf-apply"], [RESULT_L, "=", "failed"]])}[1h])) > 0`,
+        expr: `${countedOver(selector(CALLS, [[STAGE_L, "=", "tf-apply"], [RESULT_L, "=", "failed"]]), RUN_WINDOW, [PROJECT_L])} > 0`,
         labels: { severity: "page" },
         annotations: { summary: `an apply of {{ $labels.${PROJECT_L} }} failed in the last hour`, description: "The apply job's log and the triage response name the error." },
       },
       {
         alert: "TerragucciWaveRefused",
-        expr: `sum by (${PROJECT_L}) (increase(${selector(CALLS, [[STAGE_L, "=", "tf-apply"], [RESULT_L, "=", "refused"]])}[1h])) > 0`,
+        expr: `${countedOver(selector(CALLS, [[STAGE_L, "=", "tf-apply"], [RESULT_L, "=", "refused"]]), RUN_WINDOW, [PROJECT_L])} > 0`,
         labels: { severity: "ticket" },
         annotations: { summary: `a wave of {{ $labels.${PROJECT_L} }} was refused: its plans moved after approval`, description: "The wave applied nothing. Read what moved, then approve the new digest." },
       },

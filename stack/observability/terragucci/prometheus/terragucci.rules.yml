@@ -391,14 +391,14 @@ groups:
           summary: wave {{ $labels.wave }} of {{ $labels.project }} has waited for an approval longer than 4h
           description: Its apply job printed the chant approve command for its digest.
       - alert: TerragucciApplyFailed
-        expr: sum by (terragucci_project) (increase(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"}[1h])) > 0
+        expr: sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="failed"} offset 1h)) > 0
         labels:
           severity: page
         annotations:
           summary: an apply of {{ $labels.terragucci_project }} failed in the last hour
           description: The apply job's log and the triage response name the error.
       - alert: TerragucciWaveRefused
-        expr: sum by (terragucci_project) (increase(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="refused"}[1h])) > 0
+        expr: sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="refused"} - terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="refused"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="refused"} unless terragucci_spans_calls_total{terragucci_stage="tf-apply", terragucci_result="refused"} offset 1h)) > 0
         labels:
           severity: ticket
         annotations:

@@ -2468,7 +2468,7 @@ panel_points() { # uid, panel title
   local dash body
   dash="$(curl -fsS "$GRAFANA/api/dashboards/uid/$1")" || { echo 0; return 0; }
   body="$(jq -c --arg t "$2" --arg p "$DASH_PROJECT" '
-    def fill: gsub("\\$project"; $p) | gsub("\\$stage"; ".+") | gsub("\\$__range"; "1h") | gsub("\\$__rate_interval"; "1m");
+    def fill: gsub("\\$project"; $p) | gsub("\\$stage"; ".+") | gsub("\\$__range"; "1h") | gsub("\\$__rate_interval"; "1m") | gsub("\\$__interval"; "15s");
     [.dashboard.panels[] | (., (.panels // [])[]) | select(.title == $t) | (.datasource // {}) as $ds | (.targets // [])[]
       | . + {datasource: (.datasource // $ds), intervalMs: 15000, maxDataPoints: 200}
       | if .expr then .expr |= fill else . end
@@ -2511,7 +2511,7 @@ claim_dash_pipeline() {
   log() { echo "[smoke dash-pipeline] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  dash_claim terragucci-pipeline-health "Runs per hour" "Errors" "Runs by result"
+  dash_claim terragucci-pipeline-health "Runs per hour" "Errors" "Duration p95" "Runs by result"
 }
 
 claim_dash_changes() {
@@ -2525,7 +2525,7 @@ claim_dash_waves() {
   log() { echo "[smoke dash-waves] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  dash_claim terragucci-rollouts-waves "Waves waiting" "Waiting for" "Wave runs by result" "Roots per wave"
+  dash_claim terragucci-rollouts-waves "Waves waiting" "Waiting for" "Wave runs by result" "Refused and failed waves" "Roots per wave"
 }
 
 claim_dash_drift() {

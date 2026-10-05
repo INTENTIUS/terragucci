@@ -10,9 +10,13 @@
 # stages on a copy of the example in its CI image, each sending its traces and
 # metrics to the collector as a pipeline job does once OTEL_EXPORTER_OTLP_ENDPOINT
 # is set: a plan of the module-bump change for pull request 1, a drift run,
-# and wave 1 of the apply with the gate set to always, which waits for an
-# approval. The wave's ledger goes to a scratch repo, so the example on
-# Forgejo is left as it is. Needs the example booted (`just example up`).
+# and the apply's waves in order with the gate set to always, up to the first
+# one with changes, which waits for an approval (wave 1, the dev platform,
+# has nothing the bump changes; wave 2, the dev services, waits). The waves'
+# ledger goes to a scratch repo, so the example on Forgejo is left as it is.
+# Then it waits until Grafana shows the runs on the panels the tutorial's
+# screenshots take, over the last hour. Needs the example booted
+# (`just example up`).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,20 +66,65 @@ stage() { # log name, stage arguments...
     "$image" terragucci stage "$@" >"$work/$name.log" 2>&1
 }
 
-rc=0
-stage plan tf-plan || rc=$?
+stage plan tf-plan || true
 [ -f "$work/repo/terragucci-report/report.json" ] || fail "the plan wrote no report: $(tail -5 "$work/plan.log")"
 log "tf-plan: $(jq -r '"\(.roots | length) roots planned, \(.groups | length) groups"' "$work/repo/terragucci-report/report.json") (pull request 1)"
 stage drift tf-drift || true
 log "tf-drift: $(jq -r '[.roots[] | select(.status == "planned" and (.changes | length) > 0)] | length' "$work/repo/terragucci-report/report.json") roots drifted"
 layers="$(cd "$work/repo" && "$ROOT/node_modules/.bin/terragucci" init --forge forgejo --dry-run --json | jq -r '.results.layers | map(join(",")) | join(";")')"
-stage wave tf-apply --wave 1 --layers "$layers" --canary 'envs/dev/*' --binary tofu --gate always || rc=$?
-if [ "$rc" = 3 ]; then
-  log "tf-apply wave 1: waits for an approval"
-else
-  fail "wave 1 did not wait for an approval (exit $rc): $(tail -5 "$work/wave.log")"
-fi
+# The waves in order, as the pipeline runs them: a wave with nothing to change
+# has nothing to approve and passes, and the first with changes waits.
+waiting=""
+for w in $(seq 1 9); do
+  rc=0
+  stage "wave-$w" tf-apply --wave "$w" --layers "$layers" --canary 'envs/dev/*' --binary tofu --gate always || rc=$?
+  if [ "$rc" = 3 ]; then waiting="$w"; break; fi
+  [ "$rc" = 0 ] || fail "wave $w failed (exit $rc): $(tail -5 "$work/wave-$w.log")"
+  grep -q "so there is nothing to apply" "$work/wave-$w.log" && break
+  log "tf-apply wave $w: nothing to change, so nothing to approve"
+done
+[ -n "$waiting" ] || fail "no wave waited for an approval: $(tail -5 "$work/wave-$w.log")"
+log "tf-apply wave $waiting: waits for an approval"
 clean_mounted "$work/repo" "$image"
+
+# How many values a panel of a dashboard shows for the example over the last
+# hour, run through Grafana's query API as the panel runs them.
+PROJECT="forgejo:3000/$USER/example"
+panel_values() { # uid, panel title
+  local dash body
+  dash="$(curl -fsS "$GRAFANA/api/dashboards/uid/$1")" || { echo 0; return 0; }
+  body="$(jq -c --arg t "$2" --arg p "$PROJECT" '
+    def fill: gsub("\\$project"; $p) | gsub("\\$stage"; ".+") | gsub("\\$__range"; "1h") | gsub("\\$__rate_interval"; "1m") | gsub("\\$__interval"; "15s");
+    [.dashboard.panels[] | (., (.panels // [])[]) | select(.title == $t) | (.datasource // {}) as $ds | (.targets // [])[]
+      | . + {datasource: (.datasource // $ds), intervalMs: 15000, maxDataPoints: 600}
+      | if .expr then .expr |= fill else . end
+      | if .query then .query |= fill else . end]
+    | to_entries | map(.value + {refId: "q\(.key)"})
+    | {queries: ., from: "now-1h", to: "now"}' <<<"$dash")"
+  curl -fsS -H 'content-type: application/json' -X POST -d "$body" "$GRAFANA/api/ds/query" 2>/dev/null \
+    | jq '[.results[]?.frames[]?.data.values // [] | .[1:][]? | map(select(. != null)) | length] | add // 0' 2>/dev/null || echo 0
+}
+
+# The panels the tutorial's screenshots show, each with the runs in it once
+# the collector has flushed the span metrics, Prometheus has scraped them and
+# a graph's last point (15 seconds apart over an hour) is past the runs.
+SHOWN=(
+  "terragucci-pipeline-health|Runs per hour" "terragucci-pipeline-health|Errors" "terragucci-pipeline-health|Duration p50" "terragucci-pipeline-health|Duration p95"
+  "terragucci-rollouts-waves|Waves waiting" "terragucci-rollouts-waves|Waiting for" "terragucci-rollouts-waves|Wave runs by result" "terragucci-rollouts-waves|Refused and failed waves"
+  "terragucci-drift|Drifted roots" "terragucci-drift|Drift age"
+  "terragucci-runs|Slowest roots" "terragucci-runs|Slowest root applies" "terragucci-runs|Slowest resources"
+)
+missing=""
+for _ in $(seq 1 24); do   # up to two minutes
+  missing=""
+  for d in "${SHOWN[@]}"; do
+    [ "$(panel_values "${d%%|*}" "${d#*|}")" -gt 0 ] || missing="$missing, ${d#*|}"
+  done
+  [ -z "$missing" ] && break
+  sleep 5
+done
+[ -z "$missing" ] || fail "Grafana shows nothing for $PROJECT in ${missing#, }"
+log "Grafana shows the runs: $PROJECT"
 
 log ""
 log "The dashboards, in Grafana at $GRAFANA (folder terragucci):"

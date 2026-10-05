@@ -463,13 +463,17 @@ step_fountain_apply() {
 }
 
 # The dashboards (the see-your-runs page): three runs of the example sent to
-# the observability profile, and four of the dashboards that show them.
+# the observability profile, and four of the dashboards that show them, over
+# the last hour: see-runs returns once Grafana shows the runs on every panel
+# taken here over that range. Over the dashboards' own week a graph's points
+# are a quarter of an hour apart, and runs a minute old are past the last one.
 # Grafana follows the browser's light or dark preference.
 step_see_runs() {
   run_cmd see-runs "just see-runs" "$HERE/see-runs.sh"
+  [ "$(jq -s '.[-1].exit' "$STAGE/see-runs.cmds")" = 0 ] || fail "see-runs: just see-runs failed, so the dashboards would be empty: $(tail -3 "$STAGE/last.out")"
   local grafana="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}" d
   for d in pipeline-health:pipeline rollouts-waves:waves drift:drift runs:runs; do
-    shot see-runs "${d#*:}" "$grafana/d/terragucci-${d%%:*}?orgId=1&kiosk"
+    shot see-runs "${d#*:}" "$grafana/d/terragucci-${d%%:*}?orgId=1&kiosk&from=now-1h&to=now"
   done
 }
 
