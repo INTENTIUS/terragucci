@@ -201,6 +201,10 @@ example *args="up":
 example-terragrunt *args="up":
     stack/example-terragrunt.sh {{args}}
 
+[doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
+see-runs:
+    stack/see-runs.sh
+
 [doc("Run every smoke claim, or one. BREAK=1 breaks the property and the claim must print caught.")]
 smoke claim="":
     stack/smoke.sh {{claim}}

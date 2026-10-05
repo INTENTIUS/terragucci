@@ -55,7 +55,13 @@ export const prometheus = new PrometheusExporter({
 export const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
 
 // Flushed every 5s so a smoke claim sees a run's counts soon after it ends.
-export const stageSpans = new SpanMetricsConnector({ ...SPANMETRICS, metrics_flush_interval: "5s" });
+export const stageSpans = new SpanMetricsConnector({
+  namespace: SPANMETRICS.namespace,
+  dimensions: SPANMETRICS.dimensions,
+  resource_metrics_key_attributes: SPANMETRICS.resource_metrics_key_attributes,
+  histogram: SPANMETRICS.histogram,
+  metrics_flush_interval: "5s",
+});
 
 export const health = new HealthCheckExtension({ endpoint: "0.0.0.0:13133" });
 

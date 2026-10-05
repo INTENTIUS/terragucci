@@ -228,6 +228,8 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Light or dark as the browser prefers, so the tutorial's screenshots come in both.
+      GF_USERS_DEFAULT_THEME: system
     volumes:
       - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/stack.yaml:ro
       - ./observability/terragucci/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
