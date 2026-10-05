@@ -24,7 +24,7 @@ env:
 | `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | the service name (default `terragucci`) and extra resource attributes |
 | `TRACEPARENT` | the stage's trace joins this one, when your CI starts a trace of its own |
 
-terragucci sends OTLP/JSON over HTTP, so point it at the collector's HTTP port (4318), not gRPC. Keep header values that hold a key in a CI secret rather than in `env`. Name the secret in `terragucci.yml` with `telemetry: { headers_secret: OTLP_HEADERS }` and the generated GitHub and Forgejo workflows set `OTEL_EXPORTER_OTLP_HEADERS` from `${{ secrets.OTLP_HEADERS }}`. On GitLab the generated jobs set it from the CI/CD variable of that name, which GitLab hands to every job; mark the variable masked. A collector that cannot be reached never fails a stage. The job log says what was sent and what was not.
+terragucci sends OTLP/JSON over HTTP, so point it at the collector's HTTP port (4318), not gRPC. Keep header values that hold a key in a CI secret rather than in `env`. Name the secret in `terragucci.yml` with `telemetry: { headers_secret: OTLP_HEADERS }` and the generated GitHub and Forgejo workflows set `OTEL_EXPORTER_OTLP_HEADERS` from `${{ secrets.OTLP_HEADERS }}` on the plan, apply and drift jobs, the ones that run a stage and send telemetry. The check and publish jobs do not get it. The plan job reads it too, so it runs only for pull requests from the same repo; a fork's pull request gets no secrets. On GitLab the generated plan, apply and drift jobs set it from the CI/CD variable of that name, and GitLab itself hands project variables to every job, so mark the variable masked. A collector that cannot be reached never fails a stage. The job log says what was sent and what was not.
 
 ## The trace
 
