@@ -285,7 +285,7 @@ log:
   job_level: info
 runner:
   file: /data/.runner
-  capacity: 1
+  capacity: 4
   timeout: 30m
   shutdown_timeout: 0s
   fetch_interval: 2s
