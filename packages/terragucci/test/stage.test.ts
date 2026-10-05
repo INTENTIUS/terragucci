@@ -221,6 +221,8 @@ describe("roots of a layer plan at once", () => {
     // Wall times differ between any two runs.
     delete r.timings;
     for (const root of r.roots) delete root.timings;
+    // Each run gets its own stand-in binary, in its own temp dir.
+    r.run.binary = "tofu";
     return r;
   };
 

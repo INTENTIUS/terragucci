@@ -5,9 +5,17 @@ import { dirname, join } from "node:path";
 import { afterAll } from "vitest";
 
 // Every dir tmp() made in this test file, removed once the file's tests are done.
+// A browser a test started can still be writing its profile, so removal retries
+// and never fails the file.
 const made: string[] = [];
 afterAll(() => {
-  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of made.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      // left behind; the OS temp dir clears it
+    }
+  }
 });
 
 export function tmp(prefix = "terragucci-test-"): string {
