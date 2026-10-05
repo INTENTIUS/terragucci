@@ -12,9 +12,9 @@ import { readInlineReport, renderHtml } from "../src/report/html";
 import { redactPlan } from "../src/report/redact";
 import { S3Client, sign, type S3Fetch } from "../src/report/s3";
 import { REDACTED, type Report } from "../src/report/schema";
-import { preventDestroyIn, projectFromRemote } from "../src/report/stage";
-import { addToIndex, indexEntry, runPath, uploadReport, writeReportDir } from "../src/report/store";
-import { renderGitLabTerraform, renderNote, renderText } from "../src/report/views";
+import { artifactReportUrl, preventDestroyIn, projectFromRemote, reportLinks, runFacts } from "../src/report/stage";
+import { addToIndex, bucketReportUrl, copyToRun, indexEntry, renderIndexHtml, reportsBase, runPath, traceKey, uploadReport, writeReportDir } from "../src/report/store";
+import { isArtifactPage, renderGitLabTerraform, renderNote, renderText } from "../src/report/views";
 import { fixture200, plan, rc, RUN, smallFixture } from "./report-fixtures";
 import { tmp, write } from "./helpers";
 
@@ -335,5 +335,143 @@ describe("where reports go", () => {
     expect(projectFromRemote("https://github.com/acme/infra.git")).toBe("github.com/acme/infra");
     expect(projectFromRemote("git@gitlab.example:group/sub/infra.git")).toBe("gitlab.example/group/sub/infra");
     expect(projectFromRemote("http://forgejo:3000/me/example")).toBe("forgejo/me/example");
+  });
+});
+
+describe("drill down from every view (#131)", () => {
+  const TRACE = "0af7651916cd43dd8448eb211c80319c";
+  const RUN_PAGE = "https://forgejo.example/acme/infra/actions/runs/42";
+  const SERVED = { bucket: "s3://acme-reports", prefix: "reports", url: "https://reports.acme.example/" };
+  const REPORT_HTML = `https://reports.acme.example/reports/forgejo.example/acme/infra/2026/10/${RUN.commit}/tf-plan/report.html`;
+
+  /** An S3 store in a map, as the bucket tests use. */
+  function store(): { objects: Map<string, string>; s3: S3Client } {
+    const objects = new Map<string, string>();
+    const fake: S3Fetch = async (url, init) => {
+      const key = decodeURIComponent(new URL(url).pathname.replace(/^\/acme-reports\//, ""));
+      if (init.method === "PUT") objects.set(key, Buffer.from(init.body as Uint8Array).toString("utf-8"));
+      const body = objects.get(key);
+      return { ok: init.method === "PUT" || body !== undefined, status: init.method === "PUT" ? 200 : body === undefined ? 404 : 200, text: async () => body ?? "" };
+    };
+    return { objects, s3: new S3Client({ bucket: "acme-reports", endpoint: "http://minio:9000", region: "us-east-1", accessKeyId: "AK", secretAccessKey: "SK" }, fake) };
+  }
+
+  it("with reports.url, the note links the bucket's report.html with its anchors, whatever URL the pipeline passed", () => {
+    const report = small();
+    const links = reportLinks(report, { reports: SERVED, given: RUN_PAGE });
+    expect(links.run.report_url).toBe(REPORT_HTML);
+    expect(links.note).toEqual({ reportUrl: REPORT_HTML });
+    expect(bucketReportUrl(report, SERVED)).toBe(REPORT_HTML);
+    const note = renderNote(report, links.note);
+    expect(note).toContain(`[Full report](${REPORT_HTML})`);
+    for (const g of report.groups) expect(note).toContain(`(${REPORT_HTML}#group-${g.id})`);
+    expect(note).toContain(`(${REPORT_HTML}#root-envs/prod/orders) (destroy)`);
+  });
+
+  it("without reports.url, a bucket is never guessed: GitHub and Forgejo's note says the report is in the run's artifacts, with no anchors", () => {
+    const report = small();
+    const links = reportLinks(report, { reports: { bucket: "s3://acme-reports", prefix: "reports" }, given: RUN_PAGE });
+    expect(links.run.report_url).toBeUndefined();
+    expect(links.note).toEqual({ reportUrl: RUN_PAGE, artifacts: true });
+    const note = renderNote(report, links.note);
+    expect(note).toContain(`The full report is \`report.html\` in the \`terragucci-report\` artifact of [this run](${RUN_PAGE}).`);
+    expect(note).not.toContain("[Full report]");
+    expect(note).not.toContain(`${RUN_PAGE}#`);
+    for (const g of report.groups) expect(note).toContain(`[Group ${g.id}](${RUN_PAGE})`);
+    expect(reportsBase({ prefix: "reports" })).toBeUndefined();
+  });
+
+  it("GitLab's artifact file is report.html itself, so its note keeps the anchors", () => {
+    const url = "https://gitlab.example/acme/infra/-/jobs/7/artifacts/file/terragucci-report/report.html";
+    expect(isArtifactPage(url)).toBe(false);
+    expect(isArtifactPage(RUN_PAGE)).toBe(true);
+    const links = reportLinks(small(), { given: url });
+    expect(links.note).toEqual({ reportUrl: url });
+    expect(renderNote(small(), links.note)).toContain(`${url}#root-envs/prod/orders`);
+  });
+
+  it("a wave's job keeps its report as an artifact, so with no bucket address its note links that", () => {
+    expect(artifactReportUrl({ CI_JOB_URL: "https://gitlab.example/acme/infra/-/jobs/8" })).toBe("https://gitlab.example/acme/infra/-/jobs/8/artifacts/file/terragucci-report/report.html");
+    expect(artifactReportUrl({ GITHUB_SERVER_URL: "https://forgejo.example/", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" })).toBe(RUN_PAGE);
+    expect(artifactReportUrl({})).toBeUndefined();
+    const wave = { ...small(), run: { ...RUN, stage: "tf-apply" as const, wave: 2 } };
+    expect(reportLinks(wave, { given: artifactReportUrl({ GITHUB_SERVER_URL: "https://forgejo.example", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" }) }).note).toEqual({ reportUrl: RUN_PAGE, artifacts: true });
+  });
+
+  it("a wave's report, given no URL, is absolute once reports.url is set", () => {
+    const wave = { ...small(), run: { ...RUN, stage: "tf-apply" as const, wave: 2 } };
+    const links = reportLinks(wave, { reports: SERVED });
+    expect(links.note.reportUrl).toBe(`https://reports.acme.example/reports/forgejo.example/acme/infra/2026/10/${RUN.commit}/tf-apply-wave-2/report.html`);
+    expect(renderNote(wave, links.note)).toContain(`[Full report](${links.note.reportUrl})`);
+    expect(reportLinks(wave, {}).note).toEqual({});
+  });
+
+  it("report.json carries the trace id; report.html links the trace with telemetry.trace_url, and shows the id without it", () => {
+    const traced = reportLinks(small(), { traceId: TRACE, traceUrl: "https://grafana.example/explore?trace={trace_id}" });
+    expect(traced.run).toEqual({ trace_id: TRACE, trace_url: `https://grafana.example/explore?trace=${TRACE}` });
+    const html = renderHtml({ ...small(), run: { ...RUN, ...traced.run } });
+    expect(html).toContain(`<a href="https://grafana.example/explore?trace=${TRACE}" id="trace">trace</a>`);
+    const bare = reportLinks(small(), { traceId: TRACE });
+    expect(bare.run).toEqual({ trace_id: TRACE });
+    expect(renderHtml({ ...small(), run: { ...RUN, ...bare.run } })).toContain(`trace <code id="trace">${TRACE}</code>`);
+    expect(renderHtml(small())).not.toContain('id="trace"');
+    expect(validate(SCHEMA, { ...small(), run: { ...RUN, ...traced.run, report_url: REPORT_HTML, commit_url: "https://x/c", pull_request: "7", pull_request_url: "https://x/p" } })).toEqual([]);
+  });
+
+  it("the run's facts link the commit, the pull request and the job on each forge", () => {
+    const repo = tmp();
+    const gh = runFacts(repo, { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "9", GITHUB_SHA: "abc123", TG_PR: "7" });
+    expect(gh).toMatchObject({ project: "github.com/acme/infra", commit_url: "https://github.com/acme/infra/commit/abc123", pull_request: "7", pull_request_url: "https://github.com/acme/infra/pull/7", job_url: "https://github.com/acme/infra/actions/runs/9" });
+    const fj = runFacts(repo, { GITHUB_SERVER_URL: "http://forgejo:3000", GITHUB_REPOSITORY: "me/example", GITHUB_SHA: "abc123", TG_PR: "7" }, "forgejo");
+    expect(fj.pull_request_url).toBe("http://forgejo:3000/me/example/pulls/7");
+    expect(runFacts(repo, { GITHUB_SERVER_URL: "http://forgejo:3000", GITHUB_REPOSITORY: "me/example", GITHUB_SHA: "abc123", TG_PR: "7", GITEA_ACTIONS: "true" }).pull_request_url).toBe("http://forgejo:3000/me/example/pulls/7");
+    const gl = runFacts(repo, { CI_PROJECT_PATH: "acme/infra", CI_SERVER_HOST: "gitlab.example", CI_PROJECT_URL: "https://gitlab.example/acme/infra", CI_JOB_URL: "https://gitlab.example/acme/infra/-/jobs/5", CI_COMMIT_SHA: "abc123", TG_PR: "3" });
+    expect(gl).toMatchObject({ commit_url: "https://gitlab.example/acme/infra/-/commit/abc123", pull_request_url: "https://gitlab.example/acme/infra/-/merge_requests/3", job_url: "https://gitlab.example/acme/infra/-/jobs/5" });
+    // A push to main names no pull request, and a value that is not a number is never put in a URL.
+    expect(runFacts(repo, { GITHUB_REPOSITORY: "acme/infra", GITHUB_SHA: "abc123" }).pull_request).toBeUndefined();
+    expect(runFacts(repo, { GITHUB_REPOSITORY: "acme/infra", GITHUB_SHA: "abc123", TG_PR: "7/../x" }).pull_request_url).toBeUndefined();
+  });
+
+  it("index rows link the commit, the pull request, the job and the trace", () => {
+    const report = { ...small(), run: { ...RUN, commit_url: "https://forgejo.example/acme/infra/commit/4f1a", pull_request: "7", pull_request_url: "https://forgejo.example/acme/infra/pulls/7", trace_url: `https://grafana.example/t/${TRACE}` } };
+    const entry = indexEntry(report, "2026/10/x/tf-plan");
+    expect(entry).toMatchObject({ commit_url: report.run.commit_url, pull_request: "7", pull_request_url: report.run.pull_request_url, job_url: RUN.job_url, trace_url: report.run.trace_url });
+    const html = renderIndexHtml(addToIndex(undefined, entry), "Plan reports");
+    for (const u of [report.run.commit_url, report.run.pull_request_url, RUN.job_url, report.run.trace_url]) expect(html).toContain(`href="${u}"`);
+    expect(html).toContain(">#7</a>");
+    // A row without them still renders, with no empty link.
+    expect(renderIndexHtml(addToIndex(undefined, indexEntry({ ...small(), run: { ...RUN, job_url: undefined } }, "p")), "t")).not.toContain('href=""');
+  });
+
+  it("a traced run's upload writes the page a dashboard's trace row links, which leads to its report", async () => {
+    const { objects, s3 } = store();
+    const report = { ...small(), run: { ...RUN, trace_id: TRACE } };
+    const dir = tmp();
+    writeReportDir(dir, report, new Map());
+    const up = await uploadReport(s3, dir, report, "reports");
+    const page = objects.get(traceKey(TRACE, "reports"))!;
+    expect(traceKey(TRACE, "reports")).toBe(`reports/traces/${TRACE}.html`);
+    const target = /url=([^"]+)"/.exec(page)![1];
+    // Resolved against reports/traces/, the redirect lands on the run's report.html.
+    expect(new URL(target, "https://b/reports/traces/x.html").pathname).toBe(`/${up.prefix}/report.html`);
+    expect(objects.has(`${up.prefix}/report.html`)).toBe(true);
+    // An untraced run writes no trace page.
+    const plain = store();
+    await uploadReport(plain.s3, dir, small(), "reports");
+    expect([...plain.objects.keys()].some((k) => k.includes("/traces/"))).toBe(false);
+  });
+
+  it("what respond changes after the upload reaches the bucket's copy", async () => {
+    const { objects, s3 } = store();
+    const report = small();
+    const dir = tmp();
+    writeReportDir(dir, report, new Map());
+    const up = await uploadReport(s3, dir, report, "reports");
+    writeFileSync(join(dir, "note.md"), "> flagged\n" + readFileSync(join(dir, "note.md"), "utf-8"));
+    writeFileSync(join(dir, "intent.json"), "{}\n");
+    const put = await copyToRun(s3, dir, report, ["note.md", "intent.json"], "reports");
+    expect(put).toEqual([`${up.prefix}/note.md`, `${up.prefix}/intent.json`]);
+    expect(objects.get(`${up.prefix}/note.md`)!.startsWith("> flagged")).toBe(true);
+    expect(objects.get(`${up.prefix}/intent.json`)).toBe("{}\n");
   });
 });

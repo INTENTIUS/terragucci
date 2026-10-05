@@ -14,6 +14,8 @@ import { detectBinary, findRoots, globMatch } from "../detect";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import type { Report } from "../report/schema";
+import { S3Client, s3FromEnv, type S3Fetch } from "../report/s3";
+import { copyToRun } from "../report/store";
 import { forgeOf, git, propose, worktree, type Proposed } from "./change";
 import { IDENTITY } from "../reconcile";
 import { attribute, awsAuditLog, route, withoutLeft, type Attribution, type AuditLog } from "./attribute";
@@ -66,6 +68,8 @@ export interface RespondOptions {
   /** description: the pull request's title and description; by default read from the job's event. */
   title?: string;
   description?: string;
+  /** description: the S3 client's HTTP calls, for tests. */
+  s3Fetch?: S3Fetch;
   /** drift, with respond.drift set to attribute: the audit log to read (default CloudTrail through the aws CLI). */
   audit?: AuditLog;
   /** drift, with respond.drift set to attribute: how the decision client reaches its service. */
@@ -206,7 +210,18 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const pr = o.title !== undefined || o.description !== undefined ? { title: o.title ?? "", description: o.description ?? "" } : (pullRequestText(env) ?? (await pullRequestFromForge(env, o.fetch ?? (globalThis.fetch as unknown as Fetch))));
     if (!pr || (!pr.title && !pr.description)) return { event: ev, response, skipped: "no pull request title or description to read", text: "no pull request title or description to read; the note is unchanged" };
     const c = await checkDescription({ dir, ...pr, decide: settings.decide, write: mode === "apply", env, fetch: o.decideFetch });
-    r = { text: c.text, data: c.record };
+    // The stage copied the report to the bucket before this ran: copy what the check changed over it.
+    let copied = "";
+    if (c.files.length > 0 && settings.reports?.bucket) {
+      try {
+        const report = JSON.parse(readFileSync(join(dir, "report.json"), "utf-8")) as Report;
+        const put = await copyToRun(new S3Client(s3FromEnv(settings.reports, env), o.s3Fetch), dir, report, c.files, settings.reports.prefix);
+        copied = `\ncopied ${c.files.join(", ")} to the bucket under ${put[0].slice(0, put[0].lastIndexOf("/"))}`;
+      } catch (e) {
+        copied = `\nthe bucket's copy was not updated: ${(e as Error).message}`;
+      }
+    }
+    r = { text: c.text + copied, data: c.record };
   } else if (ev === "question") {
     need(o.question, "--question");
     r = { text: "an agent answers from the report and the code", data: { question: o.question } };

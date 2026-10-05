@@ -50,7 +50,7 @@ terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/pat
 terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
 terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>]
     [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--canary <globs>] [--bucket s3://<b>]
-    [--bucket-endpoint <url>] [--bucket-prefix <p>] [--terragrunt] [--base <ref>] [--parallelism <n>]
+    [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--parallelism <n>]
 ```
 
 | Flag | Meaning |
@@ -59,9 +59,9 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
 | `--project` | the project, as `<host>/<path>`, for a run from a control repo |
 | `--config` | the config file, when it is not at the repo root |
 | `--out` | where `stage` writes the report; default `terragucci-report/` |
-| `--report-url` | where the note links the HTML report, when it is not beside the note |
+| `--report-url` | where the note links the HTML report, when it is not beside the note. A URL that is not an `.html` file is read as the run's page, which holds the report in its artifacts, and the note says so |
 | `--layers`, `--binary`, `--canary`, `--bucket` | the roots in apply order (layers split by `;`), binary, canary wave and bucket the pipeline was written with; each overrides `terragucci.yml` |
-| `--bucket-endpoint`, `--bucket-prefix` | the store's endpoint and the key prefix |
+| `--bucket-endpoint`, `--bucket-prefix`, `--bucket-url` | the store's endpoint, the key prefix, and the address that serves the bucket to a browser; with an address, the note links the bucket's copy |
 | `--terragrunt` | plan Terragrunt units, one `run --all` per wave |
 | `--base` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
 | `--parallelism` | how many roots of one dependency layer plan at once (`tf-plan`, `tf-drift`), or of one wave (`tf-apply`); overrides `parallelism` in `terragucci.yml`. `--parallelism 1` plans one root at a time |

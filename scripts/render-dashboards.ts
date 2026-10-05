@@ -19,9 +19,15 @@ const datasources = [
   new Datasource({ name: "Tempo", type: "tempo", uid: "tempo", url: "http://tempo:3200" }),
 ];
 
+// Where the stack serves the reports bucket to a browser on the host: floci's
+// published port (TERRAGUCCI_FLOCI_PORT's default), the bucket and the prefix
+// the drill-down smoke claim writes under. A repo sets these as reports.url and
+// reports.prefix in terragucci.yml; init renders the same links from them.
+const STACK_REPORTS = { url: "http://localhost:4580/terragucci-reports", prefix: "reports" };
+
 const root = join(import.meta.dirname, "..");
 const files: Record<string, string> = {};
-for (const f of renderDashboards({ ...dashboardSettings(true)!, dir: "stack/observability/terragucci" })) files[f.path] = f.content;
+for (const f of renderDashboards({ ...dashboardSettings(true)!, dir: "stack/observability/terragucci" }, { reports: `${STACK_REPORTS.url}/${STACK_REPORTS.prefix}` })) files[f.path] = f.content;
 files["stack/observability/grafana-datasources.yaml"] = buildGrafana(datasources).files["provisioning/datasources/chant.yaml"];
 
 const check = process.argv.includes("--check");

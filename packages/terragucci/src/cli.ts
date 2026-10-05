@@ -169,7 +169,7 @@ export async function main(argv: string[]): Promise<number> {
           ...(str(flags, "base") ? { base: str(flags, "base") } : {}),
           ...(str(flags, "parallelism") ? { parallelism: parallelismFlag(str(flags, "parallelism")!) } : {}),
           ...(str(flags, "bucket")
-            ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } }
+            ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}), ...(str(flags, "bucket-url") ? { url: str(flags, "bucket-url") } : {}) } }
             : {}),
         }, json ? () => {} : console.error);
         const code = result.failed ? 1 : 0;
@@ -178,6 +178,8 @@ export async function main(argv: string[]): Promise<number> {
         console.log(renderText(result.report));
         console.log(`report: ${relative(cwd, files.html) || files.html}`);
         if (result.uploaded) console.log(`copied to the bucket under ${result.uploaded.prefix}; index rewritten at ${result.uploaded.indexes.join(" and ")}`);
+        if (result.report.run.report_url) console.log(`served at ${result.report.run.report_url}`);
+        if (result.report.run.trace_id) console.log(`trace: ${result.report.run.trace_url ?? result.report.run.trace_id}`);
         return code;
       }
       case "auth-provider": {
