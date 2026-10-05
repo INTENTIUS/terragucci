@@ -103,7 +103,8 @@ fresh-plan|on a fresh estate the plan job holds back a root whose upstream is un
 forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
 steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|
 policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
-comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|'
+comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
+lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2193,6 +2194,138 @@ TF
   return "$rc"
 }
 
+# ── state lock waits ──────────────────────────────────────────────────────
+# A choudoufu built for Linux, which the tofu CI image runs: OpenTofu sends no
+# span for a lock wait, choudoufu does (INTENTIUS/choudoufu#1898).
+# CHOUDOUFU_BIN names a Linux build to use as is. Otherwise it is built from
+# CHOUDOUFU_REF (default origin/main) of the checkout at CHOUDOUFU_DIR, read
+# with git archive so the checkout itself is left alone, and kept under
+# .state/choudoufu/<commit> for the next run. The host's Go cross-compiles it
+# when there is one; otherwise a golang container does.
+choudoufu_linux() {
+  if [ -n "${CHOUDOUFU_BIN:-}" ]; then echo "$CHOUDOUFU_BIN"; return 0; fi
+  local dir="${CHOUDOUFU_DIR:-$HOME/Documents/checkouts/intentius/choudoufu}" ref="${CHOUDOUFU_REF:-origin/main}" sha arch out src go
+  sha="$(git -C "$dir" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || { echo "no choudoufu checkout at $dir with $ref; set CHOUDOUFU_DIR or CHOUDOUFU_BIN" >&2; return 1; }
+  arch="$(docker version -f '{{.Server.Arch}}' 2>/dev/null)"; [ -n "$arch" ] || arch=amd64
+  out="$HERE/.state/choudoufu/$sha-$arch/choudoufu"
+  [ -x "$out" ] && { echo "$out"; return 0; }
+  mkdir -p "$(dirname "$out")"
+  src="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-choudoufu.XXXXXX")"
+  git -C "$dir" archive "$sha" | tar -x -C "$src" || { drop_work "$src"; return 1; }
+  echo "building choudoufu ${sha:0:10} for linux/$arch" >&2
+  if command -v go >/dev/null 2>&1; then
+    (cd "$src" && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -o "$out" ./cmd/choudoufu) >&2 || { drop_work "$src"; return 1; }
+  else
+    go="$(sed -n 's/^go \([0-9.]*\)$/\1/p' "$src/go.mod")"
+    docker run --rm -v "$src:/src" -v "$(dirname "$out"):/out" -v terragucci-go-cache:/root/go -w /src \
+      -e GOOS=linux -e GOARCH="$arch" -e CGO_ENABLED=0 "golang:${go:-1}" go build -o /out/choudoufu ./cmd/choudoufu >&2 || { drop_work "$src"; return 1; }
+  fi
+  drop_work "$src"
+  echo "$out"
+}
+
+claim_lock_wait() {
+  # One root on floci's S3 with use_lockfile, planned by choudoufu. A second
+  # plan of the same state takes the lock first and holds it: it waits at the
+  # prompt for a variable it was not given, which comes after the lock. While
+  # the lock object is in the bucket, the claimed run starts: a tf-apply wave
+  # (tf-plan plans with -lock=false and never waits), whose plan retries the
+  # lock until the holder lets go. The wave's report must list a lock wait of
+  # two or more attempts, and the collector must hold the `State lock wait`
+  # span with those attempts in the wave's trace.
+  # BREAK: no second plan, so the lock is free and the plan takes it at once.
+  log() { echo "[smoke lock-wait] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  collector_up || return 1
+  local work image bin bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" bucket=terragucci-smoke-lock
+  local key holder="" i d rc=0 commit report attempts=0 ms=0 trace="" spanned aws_env
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  bin="$(choudoufu_linux)" || { log "no choudoufu built for Linux"; return 1; }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  key="lock-wait/$(date +%s)-$$/terraform.tfstate"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  for d in repo holder; do
+    mkdir -p "$work/$d/lock"
+    cat >"$work/$d/lock/main.tf" <<HCL
+terraform {
+  backend "s3" {
+    bucket         = "$bucket"
+    key            = "$key"
+    region         = "us-east-1"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+# Given to the claimed run, not to the holder, whose plan waits for it at a prompt while holding the lock.
+variable "hold" {
+  type = string
+}
+
+resource "terraform_data" "x" {
+  input = "lock-wait"
+}
+HCL
+  done
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke lock-wait $(date +%s%N)"
+  commit="$(git -C "$work/repo" rev-parse HEAD)"
+  aws_env=(-e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1)
+  if [ -z "${BREAK:-}" ]; then
+    holder="terragucci-smoke-lock-holder-$$"
+    docker run -d --name "$holder" --network terragucci -v "$work/holder:/repo" -w /repo/lock -v "$bin:/usr/local/bin/choudoufu:ro" \
+      "${aws_env[@]}" "$image" \
+      sh -c 'choudoufu init -input=false -no-color >/dev/null && sleep 50 | choudoufu plan -input=true -no-color' >/dev/null || rc=1
+    # The holder holds the lock once its lock object is in the bucket.
+    for i in $(seq 1 60); do
+      [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$bucket/$key.tflock")" = 200 ] && break
+      sleep 1
+    done
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$bucket/$key.tflock")" != 200 ]; then
+      log "the second plan never took the lock ($key.tflock is not in $bucket)"; docker logs "$holder" >&2 2>&1 || true; rc=1
+    else
+      log "the second plan holds $key.tflock"
+    fi
+  fi
+  if [ $rc = 0 ]; then
+    docker run --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" -v "$bin:/usr/local/bin/choudoufu:ro" \
+      "${aws_env[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TF_VAR_hold=given \
+      -e TF_CLI_ARGS_plan=-lock-timeout=150s \
+      -e OTEL_EXPORTER_OTLP_ENDPOINT="$OTLP_ENDPOINT" \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage tf-apply --wave 1 --layers lock --binary choudoufu --gate never >&2 || { log "the wave did not apply"; rc=1; }
+  fi
+  [ -n "$holder" ] && { docker logs "$holder" 2>&1 | tail -3 | sed 's/^/[holder] /' >&2 || true; docker rm -f "$holder" >/dev/null 2>&1 || true; }
+  report="$work/repo/terragucci-report/report.json"
+  if [ $rc = 0 ]; then
+    if [ ! -f "$report" ]; then
+      log "the wave wrote no report"; rc=1
+    else
+      attempts="$(jq '[.roots[] | select(.path == "lock") | .timings.lock_waits[]? | .attempts // 0] | max // 0' "$report")"
+      ms="$(jq '[.roots[] | select(.path == "lock") | .timings.lock_waits[]? | .ms] | max // 0' "$report")"
+      [ "$attempts" -ge 2 ] || { log "the report's longest lock wait took $attempts attempt(s) and ${ms}ms: the plan never waited"; rc=1; }
+      sleep 3   # the file exporter writes on its own schedule
+      docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$work/traces.jsonl" || true
+      trace="$(jq -rs --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
+        | select(.name == "terragucci tf-apply" and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$work/traces.jsonl" 2>/dev/null)"
+      if [ -z "$trace" ]; then
+        log "no tf-apply trace for commit $commit"; rc=1
+      else
+        spanned="$(jq -s --arg t "$trace" '[.[].resourceSpans[].scopeSpans[].spans[]
+          | select(.traceId == $t and .name == "State lock wait")
+          | [.attributes[]? | select(.key == "opentofu.state.lock.attempts") | .value.intValue // .value.doubleValue | tonumber][0] // 0] | max // 0' "$work/traces.jsonl")"
+        [ "$spanned" -ge 2 ] || { log "trace $trace has no State lock wait span of two or more attempts (most: $spanned)"; rc=1; }
+      fi
+    fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] || return 1
+  log "the wave's plan waited ${ms}ms over $attempts attempts for the lock the second plan held; trace $trace carries the State lock wait span"
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -2296,6 +2429,7 @@ respond-notes   weight=20
 policy          ex after=boot weight=150
 steward         stack! after=boot,drift,tg-waves,tg-affected,tg-refuse,tg-check,tg-mock-lint,tg-drift,tg-mock-trap,policy weight=10
 comment-plan    runner self! weight=150
+lock-wait       otel! self! weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

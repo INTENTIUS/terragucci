@@ -5,7 +5,8 @@
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { applyWave } from "../src/apply";
 import { runStage } from "../src/report/stage";
 import { decodeTracesJson, decodeTracesProto, duration, rootTimings, SpanReceiver, type CollectedSpan } from "../src/report/spans";
 import { tmp, write } from "./helpers";
@@ -223,7 +224,8 @@ describe("the span receiver", () => {
 /**
  * A stand-in binary that plans from the root's plan.json and, on plan, posts
  * the root's spans.json to the trace endpoint it is given, as choudoufu's
- * exporter would. A root with no spans.json sends nothing, as Terraform.
+ * exporter would; on apply it posts apply-spans.json. A root with no such
+ * file sends nothing, as Terraform.
  */
 function spanningBinary(dir: string): string {
   const path = join(dir, "choudoufu");
@@ -231,15 +233,15 @@ function spanningBinary(dir: string): string {
 const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 const [chdir, cmd, ...rest] = process.argv.slice(2);
 const dir = chdir.replace(/^-chdir=/, "");
-async function post() {
+async function post(file = "spans.json") {
   const url = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-  if (!url || process.env.OTEL_TRACES_EXPORTER !== "otlp" || !existsSync(dir + "/spans.json")) return;
+  if (!url || process.env.OTEL_TRACES_EXPORTER !== "otlp" || !existsSync(dir + "/" + file)) return;
   const headers = { "content-type": "application/json" };
   for (const p of (process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS || "").split(",")) {
     const i = p.indexOf("=");
     if (i > 0) headers[p.slice(0, i)] = p.slice(i + 1);
   }
-  const res = await fetch(url, { method: "POST", headers, body: readFileSync(dir + "/spans.json") });
+  const res = await fetch(url, { method: "POST", headers, body: readFileSync(dir + "/" + file) });
   if (!res.ok) { process.stderr.write("spans refused: " + res.status + "\\n"); process.exit(3); }
 }
 (async () => {
@@ -251,6 +253,10 @@ async function post() {
     return;
   }
   if (cmd === "show") process.stdout.write(rest[0] === "-json" ? readFileSync(dir + "/plan.json", "utf-8") : "plan text\\n");
+  if (cmd === "apply") {
+    await post("apply-spans.json");
+    console.log("Apply complete! Resources: 1 added, 0 changed, 0 destroyed.");
+  }
 })();
 `);
   chmodSync(path, 0o755);
@@ -271,7 +277,7 @@ describe("terragucci stage tf-plan names where the time went", () => {
     const logs: string[] = [];
     const { report } = await runStage("tf-plan", repo, { binary: spanningBinary(tmp()), layers: [["envs/a", "envs/b", "envs/c"]], out, env }, (l) => logs.push(l));
     expect(logs.filter((l) => l.startsWith("timings:"))).toEqual([]);
-    expect(report.minor).toBe(2);
+    expect(report.minor).toBe(3);
 
     const root = (p: string) => report.roots.find((r) => r.path === p)!.timings!;
     expect(root("envs/a").detail).toBe("resources");
@@ -303,5 +309,57 @@ describe("terragucci stage tf-plan names where the time went", () => {
     expect(report.timings).toMatchObject({ roots: [{ root: "a", detail: "none" }], resources: [] });
     expect(readFileSync(join(out, "note.md"), "utf-8")).not.toMatch(/Slowest/);
     expect(readFileSync(join(out, "report.html"), "utf-8")).toContain("No root has per-resource timings. choudoufu sent no spans for the plan");
+  });
+});
+
+describe("terragucci stage tf-apply names where each root's time went", () => {
+  // The plan waited for a state lock another run held: choudoufu's one span
+  // over every attempt, with the attempt count.
+  const LOCKED: SpanSpec[] = [
+    { id: "0000000000000021", name: "State lock wait", from: 0, to: 7000, attrs: { "opentofu.state.backend": "*remote.State", "opentofu.state.lock.operation": "OperationTypePlan", "opentofu.state.lock.attempts": 4 } },
+    { id: "0000000000000022", name: "Plan resource instance changes", from: 7000, to: 7400, attrs: { "opentofu.resource_instance.address": "terraform_data.x", "opentofu.resource.type": "terraform_data", "opentofu.resource_instance.action": "create" } },
+  ];
+  const APPLIED: SpanSpec[] = [
+    { id: "0000000000000031", name: "State lock wait", from: 0, to: 20, attrs: { "opentofu.state.backend": "*remote.State", "opentofu.state.lock.operation": "OperationTypeApply", "opentofu.state.lock.attempts": 1 } },
+    { id: "0000000000000032", name: "Apply resource instance changes", from: 20, to: 2020, attrs: { "opentofu.resource_instance.address": "terraform_data.x", "opentofu.resource.type": "terraform_data", "opentofu.resource_instance.action": "create" } },
+  ];
+
+  it("writes the wave's report with each root's plan and apply times and the plan's lock wait", { timeout: 60_000 }, async () => {
+    const one = JSON.stringify(planJson([rc("terraform_data.x", ["create"], null, { input: "1" })]));
+    const repo = write(tmp(), {
+      "a/main.tf": "", "a/plan.json": one, "a/spans.json": JSON.stringify(otlpJson(LOCKED)), "a/apply-spans.json": JSON.stringify(otlpJson(APPLIED)),
+      "b/main.tf": "", "b/plan.json": one,
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+    try {
+      expect(await applyWave(repo, { wave: 1, layers: [["a", "b"]], binary: spanningBinary(tmp()), gate: "never", env: { PATH: process.env.PATH } })).toBe(0);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(lines.filter((l) => l.startsWith("timings:") || l.includes("report was not"))).toEqual([]);
+    const report = JSON.parse(readFileSync(join(repo, "terragucci-report", "report.json"), "utf-8"));
+    expect(report.run).toMatchObject({ stage: "tf-apply", wave: 1 });
+    expect(report.waves).toEqual([expect.objectContaining({ number: 1, roots: ["a", "b"] })]);
+
+    const a = report.roots.find((r: { path: string }) => r.path === "a").timings;
+    expect(a.plan_seconds).toBeGreaterThan(0);
+    expect(a.apply_seconds).toBeGreaterThan(0);
+    expect(a.seconds).toBeGreaterThanOrEqual(a.plan_seconds);
+    expect(a.source).toBeUndefined();
+    expect(a.spans).toBe(4);
+    expect(a.lock_waits).toEqual([
+      { backend: "*remote.State", operation: "OperationTypePlan", attempts: 4, ms: 7000 },
+      { backend: "*remote.State", operation: "OperationTypeApply", attempts: 1, ms: 20 },
+    ]);
+    expect(a.resources.map((r: { action: string; ms: number }) => [r.action, r.ms])).toEqual([["create", 2000], ["create", 400]]);
+
+    const b = report.roots.find((r: { path: string }) => r.path === "b").timings;
+    expect(b).toMatchObject({ detail: "none", spans: 0, note: expect.stringMatching(/^choudoufu sent no spans for the plan and apply/) });
+    expect(b.apply_seconds).toBeGreaterThan(0);
+
+    expect(report.timings.roots.map((r: { root: string }) => r.root).sort()).toEqual(["a", "b"]);
+    expect(report.timings.roots.every((r: { apply_seconds?: number }) => r.apply_seconds !== undefined)).toBe(true);
+    expect(readFileSync(join(repo, "terragucci-report", "roots", "a", "plan.json"), "utf-8")).toContain("terraform_data.x");
   });
 });

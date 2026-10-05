@@ -27,6 +27,11 @@
  *
  * Nothing here records an approval. A person does, with `chant approve`.
  *
+ * Once its roots planned, the wave writes its report to `terragucci-report/`
+ * (and copies it to the config's `reports` bucket when one is named): the
+ * wave's plans, and each root's timings, the plan's and the apply's, from the
+ * binary's spans as `stage tf-plan` reads them.
+ *
  * Exit codes: 0 applied (or nothing to apply); 1 a root failed; 3 the wave
  * waits for an approval; 4 the wave's plans changed after approval.
  */
@@ -39,8 +44,14 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Gate } from "./config";
 import { globMatch } from "./detect";
-import { buildReport } from "./report/build";
+import { buildReport, planFiles } from "./report/build";
+import { StageObserver } from "./report/observe";
+import { redactPlan } from "./report/redact";
+import { S3Client, s3FromEnv } from "./report/s3";
 import { eachLimited, rootsParallelism, runFacts } from "./report/stage";
+import { uploadReport, writeReportDir } from "./report/store";
+import { telemetryFromEnv } from "./telemetry";
+import { version as VERSION } from "../package.json";
 import { sealRefusal, sealRule } from "./seal";
 
 /** The op every wave gate is recorded under. */
@@ -250,8 +261,18 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<Run> 
   });
 }
 
+type RootTiming = ReturnType<StageObserver["root"]>;
+
+/** `run` as the stage observer times it: a span of its own, and the binary's spans collected for the root. */
+function timed(observer: StageObserver, t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, dir: string): Promise<Run> {
+  return observer
+    .commandAsync(t, binary, args, env, (e) => run(binary, [`-chdir=${dir}`, ...args], e).then((r) => ({ ...r, status: r.code })))
+    .then(({ code, out }) => ({ code, out }));
+}
+
 interface PlannedRoot {
   root: string;
+  timing: RootTiming;
   planFile: string;
   env: NodeJS.ProcessEnv;
   member?: WaveMember;
@@ -264,15 +285,24 @@ interface PlannedRoot {
 
 const indent = (s: string): string => s.trim().split("\n").map((l) => `    ${l}`).join("\n");
 
-async function planRoot(repo: string, binary: string, root: string, work: string, i: number): Promise<PlannedRoot> {
+async function planRoot(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver): Promise<PlannedRoot> {
+  const timing = observer.root(root);
+  try {
+    return await planTimed(repo, binary, root, work, i, observer, timing);
+  } finally {
+    observer.endRoot(timing);
+  }
+}
+
+async function planTimed(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming): Promise<PlannedRoot> {
   const dir = join(repo, root);
   // Each root gets its own provider cache: a cache shared by roots that init together is not safe.
   const env = { ...process.env, TF_PLUGIN_CACHE_DIR: mkdtempSync(join(work, "cache-")) };
   const planFile = join(work, `${i}.tfplan`);
-  const base = { root, planFile, env, changes: 0, destroys: 0, summary: "" };
-  const init = await run(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], env);
+  const base = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "" };
+  const init = await timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir);
   if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
-  const plan = await run(binary, [`-chdir=${dir}`, "plan", "-input=false", "-no-color", `-out=${planFile}`], env);
+  const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", `-out=${planFile}`], env, dir);
   if (plan.code !== 0) return { ...base, error: `plan failed\n${plan.out}` };
   const show = spawnSync(binary, [`-chdir=${dir}`, "show", "-json", planFile], { encoding: "utf-8", env, maxBuffer: 512 * 1024 * 1024 });
   let json: unknown;
@@ -293,8 +323,14 @@ async function planRoot(repo: string, binary: string, root: string, work: string
   };
 }
 
-async function applyRoot(repo: string, binary: string, p: PlannedRoot): Promise<boolean> {
-  const r = await run(binary, [`-chdir=${join(repo, p.root)}`, "apply", "-input=false", "-no-color", p.planFile], p.env);
+async function applyRoot(repo: string, binary: string, p: PlannedRoot, observer: StageObserver): Promise<boolean> {
+  observer.reopen(p.timing);
+  let r: Run;
+  try {
+    r = await timed(observer, p.timing, binary, ["apply", "-input=false", "-no-color", p.planFile], p.env, join(repo, p.root));
+  } finally {
+    observer.endRoot(p.timing);
+  }
   if (r.code === 0) {
     console.log(`applied ${p.root}: ${[...r.out.matchAll(/Resources: .*destroyed/g)].pop()?.[0] ?? "done"}`);
     return true;
@@ -321,14 +357,69 @@ export interface ApplyWaveOptions {
 /** Run one wave. Returns the exit code; what happened is printed. */
 export async function applyWave(repo: string, options: ApplyWaveOptions): Promise<number> {
   const work = mkdtempSync(join(tmpdir(), "terragucci-apply-"));
+  const env = options.env ?? process.env;
+  const observer = new StageObserver(telemetryFromEnv(env), APPLY_OP, env);
+  const wave: WaveRun = { observer };
   try {
-    return await runWave(repo, options, work);
+    return await runWave(repo, options, work, wave);
   } finally {
+    // The report is written once the wave's roots planned, whatever came of the gate and the apply.
+    if (wave.planned) await writeWaveReport(repo, options, wave as Required<WaveRun>, env).catch((e) => console.log(`wave ${options.wave}: the report was not written: ${(e as Error).message}`));
     rmSync(work, { recursive: true, force: true });
   }
 }
 
-async function runWave(repo: string, options: ApplyWaveOptions, work: string): Promise<number> {
+/** What a wave run leaves for its report. */
+interface WaveRun {
+  observer: StageObserver;
+  planned?: PlannedRoot[];
+  roots?: string[];
+  started?: string;
+}
+
+/**
+ * The wave's report: its roots' plans (redacted), the wave, and each root's
+ * timings, plan and apply. Written to `terragucci-report/` beside anything a
+ * refused wave put there, and copied to the `reports` bucket when the config
+ * names one. A copy that fails is logged; it never fails the wave.
+ */
+async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Required<WaveRun>, env: NodeJS.ProcessEnv): Promise<void> {
+  const { wave, binary } = options;
+  const configPath = options.config ?? findConfig(repo);
+  const settings = resolveRepo(configPath ? await loadConfig(configPath) : {});
+  const plans = new Map<string, { json?: string }>();
+  let redacted = 0;
+  for (const p of w.planned) {
+    if (p.plan === undefined) continue;
+    const safe = redactPlan(p.plan);
+    redacted += safe.values;
+    plans.set(p.root, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
+  }
+  const report = buildReport({
+    run: { ...runFacts(repo, env), stage: APPLY_OP, wave, binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
+    roots: w.planned.map((p) => (p.error
+      ? { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0] }
+      : { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json } })),
+    waves: [{ number: wave, roots: w.roots }],
+    redacted,
+  });
+  w.observer.addTimings(report, ["plan", "apply"]);
+  const dir = join(repo, "terragucci-report");
+  writeReportDir(dir, report, plans);
+  const slowest = report.timings?.roots[0];
+  if (slowest) console.log(`wave ${wave}: report in terragucci-report/, slowest root ${slowest.root} (${slowest.seconds}s)`);
+  if (settings.reports?.bucket) {
+    try {
+      const up = await uploadReport(new S3Client(s3FromEnv(settings.reports, env)), dir, report, settings.reports.prefix);
+      console.log(`wave ${wave}: report copied to ${up.prefix}`);
+    } catch (e) {
+      console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
+    }
+  }
+  await w.observer.finish(report, env, (l) => console.log(l));
+}
+
+async function runWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun): Promise<number> {
   const { wave, binary, gate } = options;
   if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
   const waves = applyWaves(options.layers, options.canary);
@@ -349,9 +440,13 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string): P
   }
   if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   const planned: PlannedRoot[] = new Array(roots.length);
+  w.started = new Date().toISOString();
+  await w.observer.collectSpans((l) => console.log(l));
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binary, r, work, i);
+    planned[i] = await planRoot(repo, binary, r, work, i, w.observer);
   });
+  w.planned = planned;
+  w.roots = roots;
   const failed = planned.filter((p) => p.error);
   for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.summary}`);
   if (failed.length > 0) {
@@ -435,7 +530,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string): P
   }
 
   // The roots of a wave do not read each other, so they apply together.
-  const ok = await Promise.all(planned.map((p) => applyRoot(repo, binary, p)));
+  const ok = await Promise.all(planned.map((p) => applyRoot(repo, binary, p, w.observer)));
   if (ok.includes(false)) {
     console.log(`${label}: an apply failed`);
     return EXIT.failed;

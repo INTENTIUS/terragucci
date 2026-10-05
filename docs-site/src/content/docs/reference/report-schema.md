@@ -25,8 +25,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
-| `timings` | the run's roots, slowest first, and its slowest resource instances across roots |
-| `roots[].timings` | the root's wall time and its plan's, the slowest resources, provider calls, provider start-up and lock waits from the binary's spans, the summed spans of a large estate, and a `note` when the binary sent nothing per resource |
+| `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
+| `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; the summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
 The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. A minor version of `terragucci.report/v1` only adds fields, so a reader that ignores fields it does not know keeps working.
 
@@ -40,5 +40,6 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | why a root is shown open | `roots[].why` |
 | the full plan of a root | `roots[].plan` |
 | the slowest resources of a run | `timings.resources`, then `roots[].timings.resources` |
+| how long a root waited for its state lock | `roots[].timings.lock_waits`, with the attempts it took |
 
 Approvals stay on your repo's `chant/lifecycle` branch. The report links to each record and never copies it, so the branch is the one record of who approved what.

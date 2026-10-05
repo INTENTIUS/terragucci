@@ -20,6 +20,8 @@ interface RootTiming {
   span?: Span;
   /** Each run of the binary in the root, in seconds. */
   commands: { command: string; seconds: number }[];
+  /** Time between `endRoot` and `reopen`, which the root's seconds leave out. */
+  idle: bigint;
 }
 
 const seconds = (from: bigint, to: bigint): number => Number(to - from) / 1e9;
@@ -41,6 +43,8 @@ export class StageObserver {
   private readonly start = nowNanos();
   private readonly roots: RootTiming[] = [];
   private receiver?: SpanReceiver;
+  /** Terragrunt units' times from its run report, by unit, in seconds. */
+  private readonly units = new Map<string, number>();
 
   constructor(readonly telemetry: Telemetry | undefined, readonly stage: string, env: NodeJS.ProcessEnv) {
     if (telemetry?.traces) {
@@ -62,7 +66,7 @@ export class StageObserver {
 
   /** Start timing a root; end it with `endRoot`. */
   root(path: string): RootTiming {
-    const t: RootTiming = { path, start: nowNanos(), commands: [] };
+    const t: RootTiming = { path, start: nowNanos(), commands: [], idle: 0n };
     if (this.trace) t.span = this.trace.start(`root ${path}`, this.stageSpan, { "terragucci.root": path });
     this.roots.push(t);
     return t;
@@ -71,6 +75,21 @@ export class StageObserver {
   endRoot(t: RootTiming): void {
     t.end = nowNanos();
     if (t.span) t.span.end = t.end;
+  }
+
+  /**
+   * Time a root again after `endRoot`: a tf-apply wave plans every root,
+   * decides its gate, then applies. The gap is left out of the root's seconds.
+   */
+  reopen(t: RootTiming): void {
+    if (t.end === undefined) return;
+    t.idle += nowNanos() - t.end;
+    t.end = undefined;
+  }
+
+  /** A Terragrunt unit's time, from Terragrunt's run report: Terragrunt runs the binary, not terragucci. */
+  unitTimed(path: string, secs: number): void {
+    if (Number.isFinite(secs) && secs >= 0) this.units.set(path, secs);
   }
 
   /** Run the binary inside a root, as a span of its own when tracing. */
@@ -100,23 +119,32 @@ export class StageObserver {
 
   /**
    * Put each root's timings, and the run's slowest roots and resources, on
-   * the report. A root this observer did not time (a Terragrunt unit, which
-   * Terragrunt runs the binary for) gets none, and the run says why.
+   * the report. `commands` names the runs of the binary whose spans count:
+   * the plan, and on a tf-apply wave the apply too. A Terragrunt unit gets
+   * its time from Terragrunt's run report, with no per-resource timings; a
+   * unit the report does not time gets none, and the run says why.
    */
-  addTimings(report: Report): void {
+  addTimings(report: Report, commands: readonly string[] = ["plan"]): void {
     const binary = report.run.binary.split("/").pop() || report.run.binary;
     for (const r of report.roots) {
       const t = this.roots.find((x) => x.path === r.path);
-      if (!t || t.end === undefined) continue;
-      const plan = t.commands.find((c) => c.command === "plan");
-      r.timings = rootTimings(this.receiver?.spansOf(t.path, "plan") ?? [], {
+      if (!t || t.end === undefined) {
+        const unit = this.units.get(r.path);
+        if (unit !== undefined) r.timings = rootTimings([], { binary, seconds: unit, planSeconds: unit, source: "terragrunt" });
+        continue;
+      }
+      const ran = (c: string) => t.commands.filter((x) => x.command === c).reduce<number | undefined>((n, x) => (n ?? 0) + x.seconds, undefined);
+      const plan = ran("plan");
+      const apply = commands.includes("apply") ? ran("apply") : undefined;
+      r.timings = rootTimings(commands.flatMap((c) => this.receiver?.spansOf(t.path, c) ?? []), {
         binary,
-        seconds: seconds(t.start, t.end),
-        ...(plan ? { planSeconds: plan.seconds } : {}),
+        seconds: seconds(t.start, t.end) - Number(t.idle) / 1e9,
+        ...(plan !== undefined ? { planSeconds: plan } : {}),
+        ...(apply !== undefined ? { applySeconds: apply } : {}),
       });
     }
     const untimed = report.roots.length > 0 && report.roots.every((r) => r.timings === undefined);
-    report.timings = runTimings(report.roots, untimed ? "Terragrunt ran the binary for these units, so the report has no per-unit timings" : undefined);
+    report.timings = runTimings(report.roots, untimed ? "Terragrunt ran the binary for these units and its run report gave no times, so the report has no per-unit timings" : undefined);
   }
 
   /** The metrics a finished report gives. */
@@ -198,7 +226,8 @@ export class StageObserver {
       else sent.push(`trace ${this.trace.traceId} (${this.trace.spans.length} spans)`);
     }
 
-    if (tel.metrics) {
+    // A tf-apply wave sends its trace only: the metrics are the plan's, and a wave's would count its roots twice.
+    if (tel.metrics && this.stage !== "tf-apply") {
       const gauges = this.gauges(report, binaryVersion(run.binary, env), end);
       const problem = await send(tel.metrics, metricsBody(gauges, resource, run.terragucci ?? "0.0.0", end), fetchFn);
       if (problem) log(`telemetry: the metrics were not sent: ${problem}`);

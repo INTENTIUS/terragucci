@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 2;
+export const REPORT_MINOR = 3;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -175,11 +175,19 @@ export interface ReportAggregate {
 
 /** Where a root's plan spent its time (minor 2). */
 export interface ReportRootTimings {
-  /** The root's wall time: init, plan and show. */
+  /** The root's wall time: init, plan and show, and on a tf-apply wave the apply. */
   seconds: number;
   /** The binary's plan run alone. Absent when the root never reached it. */
   plan_seconds?: number;
-  /** How many spans the binary sent for the plan. */
+  /** On a tf-apply wave, the binary's apply run alone. Absent when the root was not applied (minor 3). */
+  apply_seconds?: number;
+  /**
+   * Where the times come from (minor 3): `binary`, terragucci timed each run
+   * of the binary itself; `terragrunt`, Terragrunt ran the binary and its run
+   * report gives the unit's start and end. Absent means `binary`.
+   */
+  source?: "binary" | "terragrunt";
+  /** How many spans the binary sent for the plan (and, on a tf-apply wave, the apply). */
   spans: number;
   /** `resources`: a span per resource instance; `aggregate`: summed by type only; `none`: nothing per resource. */
   detail: "resources" | "aggregate" | "none";
@@ -198,7 +206,7 @@ export interface ReportRootTimings {
 /** The run's slowest roots and resources (minor 2). */
 export interface ReportTimings {
   /** Every timed root, slowest first. */
-  roots: { root: string; seconds: number; plan_seconds?: number; detail: ReportRootTimings["detail"] }[];
+  roots: { root: string; seconds: number; plan_seconds?: number; apply_seconds?: number; source?: ReportRootTimings["source"]; detail: ReportRootTimings["detail"] }[];
   /** The slowest resource instances across the run. */
   resources: { root: string; address: string; type?: string; ms: number }[];
   /** Why the run has no per-root timings, when it has none. */

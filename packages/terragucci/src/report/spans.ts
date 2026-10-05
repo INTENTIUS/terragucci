@@ -327,6 +327,10 @@ export interface RootFacts {
   seconds: number;
   /** The binary's plan run. Absent when the root never reached it. */
   planSeconds?: number;
+  /** A tf-apply wave's apply run. Absent when the root was not applied. */
+  applySeconds?: number;
+  /** `terragrunt`: Terragrunt ran the binary, so the times are its run report's and no span is the unit's own. */
+  source?: "binary" | "terragrunt";
 }
 
 /** A root's timings from the spans its plan sent. */
@@ -395,16 +399,20 @@ export function rootTimings(spans: CollectedSpan[], facts: RootFacts): ReportRoo
 
   const summed = aggregates.filter((a) => a.kind !== "provider_call").reduce((n, a) => n + Math.max(0, a.count - a.detailed), 0);
   const detail: ReportRootTimings["detail"] = resources.length > 0 ? "resources" : aggregates.length > 0 ? "aggregate" : "none";
+  const what = facts.applySeconds !== undefined ? "plan and apply" : "plan";
   let note: string | undefined;
-  if (facts.planSeconds === undefined) note = "the root did not reach a plan, so no spans were read";
-  else if (spans.length === 0) note = `${facts.binary} sent no spans for the plan, so this root has no per-resource timings. A binary that exports per-resource OpenTelemetry spans, such as choudoufu, gives them`;
-  else if (detail === "none") note = `${facts.binary} sent ${spans.length} span${spans.length === 1 ? "" : "s"} for the plan, none of them per resource, so this root has no per-resource timings`;
+  if (facts.source === "terragrunt") note = "Terragrunt ran the binary for this unit, so its time is from Terragrunt's run report and it has no per-resource timings";
+  else if (facts.planSeconds === undefined) note = "the root did not reach a plan, so no spans were read";
+  else if (spans.length === 0) note = `${facts.binary} sent no spans for the ${what}, so this root has no per-resource timings. A binary that exports per-resource OpenTelemetry spans, such as choudoufu, gives them`;
+  else if (detail === "none") note = `${facts.binary} sent ${spans.length} span${spans.length === 1 ? "" : "s"} for the ${what}, none of them per resource, so this root has no per-resource timings`;
   else if (detail === "aggregate") note = `${facts.binary} summed its resources by type instead of a span each, so the slowest are listed by type`;
   else if (summed > 0) note = `past the span budget, ${summed} resource instance${summed === 1 ? " is" : "s are"} summed by type instead of listed`;
 
   return {
     seconds: Math.round(facts.seconds * 100) / 100,
     ...(facts.planSeconds !== undefined ? { plan_seconds: Math.round(facts.planSeconds * 100) / 100 } : {}),
+    ...(facts.applySeconds !== undefined ? { apply_seconds: Math.round(facts.applySeconds * 100) / 100 } : {}),
+    ...(facts.source === "terragrunt" ? { source: "terragrunt" as const } : {}),
     spans: spans.length,
     detail,
     ...(note ? { note } : {}),
@@ -422,7 +430,14 @@ export function runTimings(roots: { path: string; timings?: ReportRootTimings }[
   return {
     roots: [...timed]
       .sort((a, b) => b.timings.seconds - a.timings.seconds)
-      .map((r) => ({ root: r.path, seconds: r.timings.seconds, ...(r.timings.plan_seconds !== undefined ? { plan_seconds: r.timings.plan_seconds } : {}), detail: r.timings.detail })),
+      .map((r) => ({
+        root: r.path,
+        seconds: r.timings.seconds,
+        ...(r.timings.plan_seconds !== undefined ? { plan_seconds: r.timings.plan_seconds } : {}),
+        ...(r.timings.apply_seconds !== undefined ? { apply_seconds: r.timings.apply_seconds } : {}),
+        ...(r.timings.source ? { source: r.timings.source } : {}),
+        detail: r.timings.detail,
+      })),
     resources: slowest(timed.flatMap((r) => r.timings.resources.map((x) => ({ root: r.path, address: x.address, ...(x.type ? { type: x.type } : {}), ms: x.ms })))),
     ...(note ? { note } : {}),
   };
