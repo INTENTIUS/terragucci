@@ -4,7 +4,6 @@ description: Remove the example, then set terragucci up on a repository of your 
 sidebar:
   order: 9
 claims: [zero-config]
-draft: true
 ---
 
 :::note[Where the example stands]
@@ -15,6 +14,8 @@ Booted with `just example up`. `just example reset` gets you back to that from a
 just example down
 ```
 
-In your own repository, most of what you did here needs no config at all. [Get your first plan note](/terragucci/getting-started/) takes you from `npm i -D @intentius/terragucci` to a plan note on a pull request.
+In your own repository, most of what you did here needs no config. `terragucci init` finds the roots, the binary and the forge itself. The pipeline it writes checks every root and posts one note for the plans a pull request reaches. Applies go out in gated waves. The example's `terragucci.yml` is four lines, and a file of your own can be as short or absent.
+
+[Get your first plan note](/terragucci/getting-started/) takes you from `npm i -D @intentius/terragucci` to a plan note on a pull request. Before the first merge, [set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) so a person can approve the waves that wait.
 
 [terragucci.yml keys](/terragucci/reference/config/) covers the config, and [Set up with a coding agent](/terragucci/getting-started/agents/) has a prompt that lets an agent do it for you.
