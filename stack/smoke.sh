@@ -2556,6 +2556,8 @@ claim_dash_slos() {
   log() { echo "[smoke dash-slos] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
+  # Prometheus and Grafana may not be up yet on a fresh stack.
+  dash_up || { log "the observability profile did not start"; return 1; }
   docker exec terragucci-prometheus promtool check rules /etc/prometheus/rules/terragucci.rules.yml >&2 \
     || { log "promtool does not accept the rules file"; return 1; }
   local slo
