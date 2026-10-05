@@ -266,7 +266,7 @@ describe("init in a Terragrunt repo", () => {
     expect(check).toContain("terragrunt hcl validate --inputs --no-color --filter '!./catalog/**'");
     const plan = doc.jobs.plan.steps.at(-2).run as string;
     expect(plan).toMatch(/terragucci stage tf-plan .*--layers 'live\/dev\/app,live\/dev\/vpc;live\/prod\/app,live\/prod\/vpc' .*--terragrunt/);
-    const apply = doc.jobs.apply.steps.at(-1).run as string;
+    const apply = doc.jobs.apply.steps.find((s: { run?: string }) => s.run?.includes("apply_wave")).run as string;
     expect(apply.match(/^apply_wave /gm)).toHaveLength(2);
     expect(apply).toContain("apply_wave --filter '{./live/dev/app}' --filter '{./live/dev/vpc}' || failed");
     expect(apply).toContain("--no-filters-file");
@@ -285,7 +285,7 @@ describe("init in a Terragrunt repo", () => {
       const doc = body((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
       const plan = forge === "github" ? doc.jobs.plan : doc.plan;
       const apply = forge === "github" ? doc.jobs.apply : doc.apply;
-      const script = (job: Record<string, any>): string => (forge === "github" ? job.steps.at(forge === "github" && job === plan ? -2 : -1).run : job.script.join("\n"));
+      const script = (job: Record<string, any>): string => (forge === "github" ? (job === plan ? job.steps.at(-2) : job.steps.find((s: { run?: string }) => s.run?.includes("TERRAGUCCI_PHASE=apply"))).run : job.script.join("\n"));
       if (forge === "github") {
         expect(plan.permissions["id-token"]).toBe("write");
         expect(apply.permissions["id-token"]).toBe("write");
