@@ -442,12 +442,14 @@ const PLANNED_JS = 'console.log(JSON.parse(require("fs").readFileSync(process.ar
  * note is posted as the one plan note, and its counts are the one
  * terragucci/plan status.
  */
-export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
+export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, replan = false): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
     "--report-url", reportUrl(forge),
+    // A re-plan names its root, when the comment did; TG_BASE (set by replanPrelude) is the range it reads.
+    ...(replan ? ['${TG_ROOT:+--root "$TG_ROOT"}'] : []),
     ...(report.canary?.length ? ["--canary", sh(report.canary.join(","))] : []),
     ...(report.terragrunt ? ["--terragrunt"] : []),
     ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
@@ -457,6 +459,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
   return [
     "set -uo pipefail",
     forgeApi(forge),
+    ...(replan ? [replanPrelude(layers)] : []),
     ...(oidc ? [oidcScript(forge, oidc.plan_role, "terragucci-plan", oidc.audience)] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     'tg status terragucci/plan pending "planning"',
@@ -475,6 +478,31 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     "fi",
     'if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi',
     'tg status terragucci/plan success "$counts"',
+  ].join("\n");
+}
+
+/** Reads the decision file `terragucci comment` wrote. */
+const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")';
+
+/**
+ * The re-plan job's first lines, before any credential is asked for. The
+ * comment is read by `terragucci comment`, which writes a decision file; the
+ * shell only reads four values from it (a number, a sha, a branch and a root,
+ * each already checked against a pattern with no shell syntax), never the
+ * comment. The job then checks out the pull request's head.
+ */
+function replanPrelude(layers: string[][]): string {
+  return [
+    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))} --out terragucci-comment.json || exit 1`,
+    `read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF`,
+    `$(node -e '${DECISION_JS}' terragucci-comment.json)`,
+    "EOF",
+    '[ -n "$TG_PR" ] || exit 0',
+    '[ "$TG_ROOT" = "-" ] && TG_ROOT=""',
+    'export TG_PR TG_SHA TG_ROOT TG_BASE="origin/$TG_BASE"',
+    'git fetch --quiet origin "refs/pull/$TG_PR/head" || { echo "terragucci: could not fetch the pull request head" >&2; exit 1; }',
+    'if [ "$(git rev-parse FETCH_HEAD)" != "$TG_SHA" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi',
+    'git checkout --quiet --detach "$TG_SHA"',
   ].join("\n");
 }
 
@@ -689,6 +717,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     on: {
       push: { branches: ["**"] },
       pull_request: {},
+      // `/terragucci plan [root]` in a pull request comment re-plans it; see comment.ts.
+      issue_comment: { types: ["created"] },
       ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
     },
     env: jobEnv,
@@ -696,7 +726,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // Forgejo cancels the runs of an earlier push to a branch, even one that is
     // applying, unless the workflow names a concurrency group. A group that does
     // not cancel makes a later run wait instead.
-    ...(forge === "forgejo" ? { concurrency: { group: "terragucci-${{ github.ref }}", "cancel-in-progress": false } } : {}),
+    ...(forge === "forgejo" ? { concurrency: { group: "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false } } : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
   const steps = (main: InstanceType<typeof Step>, cached = false, history = false): InstanceType<typeof Step>[] => [
@@ -709,7 +739,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const check = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `github.event_name == 'push' || ${isFork}`,
+    if: `github.event_name == 'push' || (github.event_name == 'pull_request' && ${isFork})`,
     ...(fmtOn ? { permissions: { contents: "write" }, env: { TG_TOKEN: "${{ github.token }}" } } : {}),
     steps: [
       ...steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody })),
@@ -749,10 +779,31 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       }),
     ],
   } as never);
+  // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
+  // never an expression in the script: the command reads it from the event file (comment.ts).
+  const replan = new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    if: "github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')",
+    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+    ...openid(needsToken),
+    concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+    steps: [
+      ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report, true) }), true, true),
+      new Step({
+        name: "Keep the plan report",
+        if: "always()",
+        uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
+        with: { name: `${REPORT_DIR}-replan`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
+      }),
+    ],
+  } as never);
   const entities = new Map<string, never>([
     ["workflow", workflow as never],
     ["check", check as never],
     ["plan", plan as never],
+    ["replan", replan as never],
   ]);
   for (const [i, job] of applyJobs.entries()) {
     entities.set(job.name, new Job({

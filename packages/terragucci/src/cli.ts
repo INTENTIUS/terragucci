@@ -13,6 +13,7 @@
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
+ *   terragucci comment --layers <a,b;c> --out <file>   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -25,6 +26,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { decideComment, writeDecision } from "./comment";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -54,6 +56,7 @@ const USAGE = `usage:
   terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
+  terragucci comment --layers <a,b;c> --out <file>
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question [--mode dry-run|apply] [flags]
 
 init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
@@ -213,6 +216,15 @@ export async function main(argv: string[]): Promise<number> {
         });
         if (json) return emit(envelope("respond", 0, result));
         console.log(result.text + (result.agent_input ? `\nagent input: ${relative(cwd, result.agent_input)}` : ""));
+        return 0;
+      }
+      case "comment": {
+        const layers = str(flags, "layers");
+        const out = str(flags, "out");
+        if (!layers || !out) throw new ConfigError("comment needs --layers <a,b;c> and --out <file>");
+        const decision = await decideComment({ layers: parseLayers(layers) });
+        writeDecision(resolve(cwd, out), decision);
+        console.log(`terragucci comment: ${decision.go ? "" : "no re-plan: "}${decision.reason}`);
         return 0;
       }
       case "rollout": {

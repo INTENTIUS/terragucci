@@ -102,7 +102,8 @@ respond-notes|release notes come from the conventional commits that touched the 
 fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
 forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
 steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|
-policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|'
+policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
+comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2084,6 +2085,114 @@ claim_steward() {
   log "the steward's tf-apply turn completed, and every root's resources are in floci"
 }
 
+claim_comment_plan() {
+  # A scratch repo with two roots, the pipeline init writes for it, a push to
+  # main (which applies), and a pull request that changes one root (which
+  # plans). Then comments, each by the repo's admin: `/terragucci plan app`
+  # must start a run for the comment that posts a new terragucci/plan status
+  # on the pull request's head; `/terragucci apply`, a root that is not one of
+  # the repo's, and a root written as a shell command must each be answered
+  # with a refusal and start no plan, and main must gain no terragucci/apply
+  # status from any of them.
+  # BREAK: the issue_comment trigger is cut from the pushed pipeline, so a
+  # comment starts no run and the re-plan never comes.
+  log() { echo "[smoke comment-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/comment" main_sha head_sha pr i rc=0 wf before after replies
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo comment || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  mkdir -p "$work/tree/app" "$work/tree/net"
+  echo 1 > "$work/tree/app/rev.txt"
+  echo 1 > "$work/tree/net/rev.txt"
+  local root
+  for root in app net; do
+    cat > "$work/tree/$root/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+resource "terraform_data" "rev" {
+  input = file("${path.module}/rev.txt")
+}
+TF
+  done
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\n' > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  issue_comment:' "$wf" || { log "the pipeline has no issue_comment trigger"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^  issue_comment:/ { skip = 2; next } skip > 0 { skip--; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  main_sha="$(push_tree "$work/tree" "$repo" main "comment: first")" || return 1
+  wait_run "$repo" "$main_sha" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the push to main did not go green"; return 1; }
+  echo 2 > "$work/tree/app/rev.txt"
+  head_sha="$(push_tree "$work/tree" "$repo" comment-change "comment: change")" || return 1
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"comment-change","base":"main","title":"comment: plan"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  log "pull request $pr for ${head_sha:0:8}"
+  statuses() { # sha, context -> how many statuses carry it
+    api "$URL/api/v1/repos/$repo/commits/$1/statuses?limit=100" | jq --arg c "$2" '[.[] | select(.context == $c)] | length'
+  }
+  # The pull request's own plan runs first; the comment's must come after it.
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(statuses "$head_sha" terragucci/plan)" -ge 2 ] && break
+    sleep 3
+  done
+  before="$(statuses "$head_sha" terragucci/plan)"
+  [ "$before" -ge 2 ] || { log "the pull request's own plan never finished"; return 1; }
+  local applied_before
+  applied_before="$(statuses "$main_sha" terragucci/apply)"
+  comment() { # text -> posts it as the repo's admin
+    api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$1" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$pr/comments"
+  }
+  # A comment run is one with the issue_comment event; wait for a finished one.
+  comment_runs() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq '[.workflow_runs[] | select(.event == "issue_comment" and (.status == "success" or .status == "failure"))] | length'; }
+  local runs_before wait=$(( TIMEOUT < 240 ? TIMEOUT : 240 ))
+  runs_before="$(comment_runs)"
+  comment "/terragucci plan app"
+  for i in $(seq 1 $(( wait / 3 ))); do
+    after="$(statuses "$head_sha" terragucci/plan)"
+    [ "$after" -gt "$before" ] && [ "$(comment_runs)" -gt "$runs_before" ] && break
+    sleep 3
+  done
+  after="$(statuses "$head_sha" terragucci/plan)"
+  if [ "$after" -le "$before" ]; then
+    log "the comment posted no new plan status on the pull request's head ($before before, $after after)"
+    return 1
+  fi
+  log "the comment re-planned: terragucci/plan statuses on the head went from $before to $after"
+  # Refusals: each is answered, and none starts a plan or an apply.
+  before="$after"
+  comment "/terragucci apply"
+  comment "/terragucci plan envs/nope"
+  comment '/terragucci plan $(id)'
+  for i in $(seq 1 $(( wait / 3 ))); do
+    replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | map(.body) | join("\n")')"
+    [ "$(grep -c '^terragucci: ' <<<"$replies")" -ge 3 ] && break
+    sleep 3
+  done
+  grep -q 'never runs `apply`' <<<"$replies" || { log "a comment that applies was not refused by name"; rc=1; }
+  grep -q 'envs/nope is not a root' <<<"$replies" || { log "a root outside the configured ones was not refused"; rc=1; }
+  grep -q 'the root is a path' <<<"$replies" || { log "a root written as a shell command was not refused"; rc=1; }
+  after="$(statuses "$head_sha" terragucci/plan)"
+  [ "$after" = "$before" ] || { log "a refused comment still planned ($before before, $after after)"; rc=1; }
+  [ "$(statuses "$main_sha" terragucci/apply)" = "$applied_before" ] || { log "main gained an apply status from a comment"; rc=1; }
+  [ "$(api "$URL/api/v1/repos/$repo/branches/main" | jq -r .commit.id)" = "$main_sha" ] || { log "main moved"; rc=1; }
+  drop_work "$work" 2>/dev/null || true
+  [ "$rc" = 0 ] && log "plan re-planned the pull request; apply, an unknown root and a shell-shaped root were each refused and planned nothing"
+  return "$rc"
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -2186,6 +2295,7 @@ tg-zero-config  weight=30
 respond-notes   weight=20
 policy          ex after=boot weight=150
 steward         stack! after=boot,drift,tg-waves,tg-affected,tg-refuse,tg-check,tg-mock-lint,tg-drift,tg-mock-trap,policy weight=10
+comment-plan    runner self! weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
