@@ -34,7 +34,19 @@ terragucci recognises codeberg.org and hostnames that start with `forgejo.` or `
 
 Forgejo cancels the earlier runs of a branch when a push arrives, even one that is applying, unless the workflow names a group. The generated workflow names one that does not cancel, so a second push waits for the first apply. [The generated pipeline](/terragucci/reference/pipeline/#one-apply-at-a-time) explains the lock behind it.
 
-### 3. Commit and open a pull request
+### 3. Give the jobs cloud access
+
+The plan job runs `plan`, so it needs to read your state and providers. On Forgejo 15 or later, with Forgejo Runner 12.5 or later, set `oidc` in `terragucci.yml` and run `init` again. The plan and apply jobs then set `enable-openid-connect: true` and exchange Forgejo's identity token for roles.
+
+```yaml
+oidc:
+  plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+  apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+```
+
+The token's issuer is your Forgejo URL followed by `/api/actions`, and the role's trust policy must accept it and your repo. On an older Forgejo or runner, leave `oidc` unset and give the runner static credentials instead. [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) has the details.
+
+### 4. Commit and open a pull request
 
 ```bash
 git switch -c add-terragucci
@@ -45,7 +57,7 @@ git push -u origin add-terragucci
 
 Change a line in one root and open a pull request. The check job runs, then the plan job posts its note. The report is the run's `terragucci-report` artifact, and the note links to the run.
 
-### 4. Require the status
+### 5. Require the status
 
 In the repo's branch protection, require the `terragucci/plan` status context.
 
