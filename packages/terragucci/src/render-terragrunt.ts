@@ -107,15 +107,19 @@ export function waveFilters(units: string[]): string {
 /**
  * The apply job's body after the forge calls and credentials are set up:
  * one `run --all` per wave, waves in order, a failed wave stopping the rest.
+ * With `triage`, the output is kept and a failed wave gets `respond apply-failed`.
  */
-export function terragruntApplyBody(waves: string[][]): string[] {
+export function terragruntApplyBody(waves: string[][], triage = false): string[] {
   const total = waves.flat().length;
+  const run = 'terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false';
   return [
     cacheExports(),
+    ...(triage ? ['log="$(mktemp)"'] : []),
     "apply_wave() {",
-    "  terragrunt run --all --no-color --no-filters-file \"$@\" -- apply -auto-approve -input=false",
+    // The job's pipefail keeps the apply's exit code through tee.
+    `  ${run}${triage ? ' 2>&1 | tee -a "$log"' : ""}`,
     "}",
-    'failed() { tg status terragucci/apply failure "an apply failed"; exit 1; }',
+    `failed() { tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}exit 1; }`,
     ...waves.map((w, i) => `echo "wave ${i + 1}: ${w.length} unit${w.length === 1 ? "" : "s"}"\napply_wave ${waveFilters(w)} || failed`),
     `tg status terragucci/apply success "${total} units in ${waves.length} wave${waves.length === 1 ? "" : "s"} applied"`,
     'echo "all units applied"',

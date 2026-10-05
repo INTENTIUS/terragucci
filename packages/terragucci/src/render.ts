@@ -129,6 +129,14 @@ export function fmtScript(binary: Binary, forge: ForgeName, tokenEnv?: string): 
   ].join("\n");
 }
 
+/** The tips response: one small pull request per tip, from the default branch after the apply. A response that fails never fails the job. */
+export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string): string {
+  return ["set -u", ...respondSetup(forge, tokenEnv), `terragucci respond tips --mode apply --binary ${binary} || true`].join("\n");
+}
+
+/** Where `terragucci respond` writes an agent's input, kept with the job when a response is `agent`. */
+const RESPOND_DIR = "terragucci-respond";
+
 const sh = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** The step that puts a pinned version the image does not carry on the path. */
@@ -366,6 +374,7 @@ export function terragruntApplyScript(
   forge: ForgeName = "github",
   oidc?: PipelineInput["oidc"],
   credentials?: Record<string, RolePair>,
+  respond?: PipelineInput["respond"],
 ): string {
   return [
     "set -uo pipefail",
@@ -377,7 +386,7 @@ export function terragruntApplyScript(
     'tg stale "$moved" "${TG_BRANCH:-}"',
     ...(forge === "forgejo" ? [forgejoLock()] : []),
     'tg status terragucci/apply pending "applying"',
-    ...terragruntApplyBody(waves),
+    ...terragruntApplyBody(waves, responds(respond, "apply-failed")),
   ].join("\n");
 }
 
@@ -546,7 +555,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const waveCount = tg ? 1 : applyWaves(layers, input.canary).length;
   const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
     name: tg ? "apply" : `apply-wave-${i + 1}`,
-    body: tg ? terragruntApplyScript(layers, forge, oidc, credentials) : applyScript(binary, layers, forge, oidc, { wave: i + 1, canary: input.canary, gate, respond: input.respond }),
+    body: tg ? terragruntApplyScript(layers, forge, oidc, credentials, input.respond) : applyScript(binary, layers, forge, oidc, { wave: i + 1, canary: input.canary, gate, respond: input.respond }),
   }));
   const lastApply = applyJobs[applyJobs.length - 1].name;
   // A wave that waits records its plan on the chant/lifecycle branch.
@@ -555,6 +564,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
   const fmtOn = !tg && responds(input.respond, "fmt");
   const driftPr = !tg && responds(input.respond, "drift") ? { tokenEnv } : undefined;
+  // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
+  const tipsOn = responds(input.respond, "tips");
+  // An agent response writes its input file; the job keeps it as an artifact.
+  const agentApply = responseTo({ respond: input.respond }, "apply-failed") === "agent";
+  const agentDrift = !tg && responseTo({ respond: input.respond }, "drift") === "agent";
 
   if (forge === "gitlab") {
     const jobImage = new Image({ name: image });
@@ -605,6 +619,19 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: script(bash("APPLY", job.body)),
+        ...(agentApply ? { artifacts: { name: `${RESPOND_DIR}-${job.name}`, when: "on_failure", paths: [`${RESPOND_DIR}/`] } } : {}),
+      } as never) as never);
+    }
+    if (tipsOn) {
+      // Runs after the last apply, so a wave that waits or fails holds the tips back too.
+      jobs.set("tips", new GitLabJob({
+        stage: "tips",
+        image: jobImage,
+        needs: [lastApply],
+        variables: { ...gitlabEnv, GIT_DEPTH: "0" },
+        rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        resource_group: "terragucci-tips",
+        script: script(bash("TIPS", tipsScript(binary, forge, tokenEnv))),
       } as never) as never);
     }
     if (input.publish) {
@@ -629,7 +656,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: script(bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))),
-        artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`] },
+        artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs));
@@ -725,7 +752,29 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_BRANCH: "${{ github.event.repository.default_branch }}",
         ...headersEnv,
       },
-      steps: steps(new Step({ name: tg ? `Apply every ${what}` : `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
+      steps: [
+        ...steps(new Step({ name: tg ? `Apply every ${what}` : `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
+        ...(agentApply
+          ? [new Step({ name: "Keep the agent input", if: "failure()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${RESPOND_DIR}-${job.name}`, path: `${RESPOND_DIR}/`, "if-no-files-found": "ignore" } })]
+          : []),
+      ],
+    } as never) as never);
+  }
+  if (tipsOn) {
+    // One small pull request per tip, from the default branch once every wave has applied.
+    entities.set("tips", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      needs: lastApply,
+      if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
+      permissions: { contents: "write", "pull-requests": "write" },
+      concurrency: { group: "terragucci-tips-${{ github.repository }}", "cancel-in-progress": false },
+      env: { TG_TOKEN: "${{ github.token }}" },
+      steps: [
+        new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
+        ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
+        new Step({ name: "Open a pull request for each tip", shell: "bash", run: tipsScript(binary, forge, tokenEnv) }),
+      ],
     } as never) as never);
   }
   if (input.publish) {
@@ -769,6 +818,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
           uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
           with: { name: `${REPORT_DIR}-drift`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
         }),
+        ...(agentDrift
+          ? [new Step({ name: "Keep the agent input", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${RESPOND_DIR}-drift`, path: `${RESPOND_DIR}/`, "if-no-files-found": "ignore" } })]
+          : []),
       ],
     } as never) as never);
   }
