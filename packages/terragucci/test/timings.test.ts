@@ -160,7 +160,7 @@ describe("a root's timings", () => {
   });
 
   it("says how many instances went past the budget when detail and summaries mix", () => {
-    const mixed = [...DETAILED, { ...AGGREGATED[0], attrs: { ...AGGREGATED[0].attrs, "choudoufu.aggregate.count": 2002, "choudoufu.aggregate.detailed_count": 2 } }];
+    const mixed = [...DETAILED, { ...AGGREGATED[1], attrs: { ...AGGREGATED[1].attrs, "choudoufu.aggregate.count": 2002, "choudoufu.aggregate.detailed_count": 2 } }];
     const t = rootTimings(decodeTracesJson(otlpJson(mixed)), facts);
     expect(t.detail).toBe("resources");
     expect(t.note).toBe("past the span budget, 2000 resource instances are summed by type instead of listed");
