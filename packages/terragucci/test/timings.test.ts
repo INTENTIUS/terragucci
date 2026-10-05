@@ -300,7 +300,7 @@ describe("terragucci stage tf-plan names where the time went", () => {
     const logs: string[] = [];
     const { report } = await runStage("tf-plan", repo, { binary: spanningBinary(tmp()), layers: [["envs/a", "envs/b", "envs/c"]], out, env }, (l) => logs.push(l));
     expect(logs.filter((l) => l.startsWith("timings:"))).toEqual([]);
-    expect(report.minor).toBe(3);
+    expect(report.minor).toBe(4);
 
     const root = (p: string) => report.roots.find((r) => r.path === p)!.timings!;
     expect(root("envs/a").detail).toBe("resources");
