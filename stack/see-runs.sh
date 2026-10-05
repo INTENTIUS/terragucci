@@ -111,18 +111,20 @@ panel_values() { # uid, panel title
 
 # The panels the tutorial's screenshots show, each with the runs in it once
 # the collector has flushed the span metrics, Prometheus has scraped them and
-# a graph's last point (15 seconds apart over an hour) is past the runs.
+# a graph's points (15 seconds apart over an hour) are past the runs: a graph
+# waits for three points per line, so it draws a line rather than a lone dot.
 SHOWN=(
-  "terragucci-pipeline-health|Runs per hour" "terragucci-pipeline-health|Errors" "terragucci-pipeline-health|Duration p50" "terragucci-pipeline-health|Duration p95"
-  "terragucci-rollouts-waves|Waves waiting" "terragucci-rollouts-waves|Waiting for" "terragucci-rollouts-waves|Wave runs by result" "terragucci-rollouts-waves|Refused and failed waves"
-  "terragucci-drift|Drifted roots" "terragucci-drift|Drift age"
-  "terragucci-runs|Slowest roots" "terragucci-runs|Slowest root applies" "terragucci-runs|Slowest resources"
+  "terragucci-pipeline-health|Runs per hour|9" "terragucci-pipeline-health|Errors|9" "terragucci-pipeline-health|Duration p50|9" "terragucci-pipeline-health|Duration p95|9"
+  "terragucci-rollouts-waves|Waves waiting|1" "terragucci-rollouts-waves|Waiting for|1" "terragucci-rollouts-waves|Wave runs by result|1" "terragucci-rollouts-waves|Refused and failed waves|6"
+  "terragucci-drift|Drifted roots|3" "terragucci-drift|Drift age|1"
+  "terragucci-runs|Slowest roots|1" "terragucci-runs|Slowest root applies|1" "terragucci-runs|Slowest resources|1"
 )
 missing=""
 for _ in $(seq 1 24); do   # up to two minutes
   missing=""
   for d in "${SHOWN[@]}"; do
-    [ "$(panel_values "${d%%|*}" "${d#*|}")" -gt 0 ] || missing="$missing, ${d#*|}"
+    IFS='|' read -r uid title least <<<"$d"
+    [ "$(panel_values "$uid" "$title")" -ge "$least" ] || missing="$missing, $title"
   done
   [ -z "$missing" ] && break
   sleep 5

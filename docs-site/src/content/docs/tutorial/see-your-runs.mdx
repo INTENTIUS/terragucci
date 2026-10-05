@@ -44,7 +44,7 @@ Wave 2 waits for an approval of its digest, and the table counts how long it has
 
 <Shot step="see-runs" view="drift" alt="The Drift dashboard: the example's drifted roots, and how long its drift has stood" />
 
-The drift run finds the deleted queue, so staging orders shows as drifted until a later run no longer finds it. The age counts from the drift issue's opening; with no issue to read, as here, from the run. Once that age passes `drift_age` (a day), `TerragucciDriftOld` fires.
+The drift run finds the deleted queue in staging orders. floci keeps no tags, so after a fresh boot it also finds the tags of every root drifted, as the Drift page explains. The age counts from the drift issue's opening; with no issue to read, as here, from the run. Once that age passes `drift_age` (a day), `TerragucciDriftOld` fires.
 
 ## Runs
 
