@@ -42,9 +42,9 @@ The scenario opens it as a second pull request. This time the check fails, and `
 
 <Captured step="check" />
 
-In Forgejo the failed step is `tofu fmt -check`. Open it to see the same lines:
+In Forgejo the failed step is "Format check and validate, every root", stopped by `tofu fmt -check`. Open it to see the same lines:
 
-<Shot step="check" view="log" alt="The failed check job in Forgejo, with the tofu fmt -check step marked failed and validate skipped" />
+<Shot step="check" view="log" alt="The failed check job in Forgejo, its format step open on the diff tofu fmt -check printed for envs/dev/orders/locals.tf" />
 
 Run `tofu fmt -recursive` in your own repo and the check goes green again.
 

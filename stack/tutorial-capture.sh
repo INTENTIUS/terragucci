@@ -96,7 +96,9 @@ mkdir -p "$DATA" "$SHOTS"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-capture.XXXXXX")"
 # shellcheck source=mounted.sh
 . "$HERE/mounted.sh"
-trap 'drop_work "$STAGE"' EXIT
+# The step running now: a capture that stops early says which step stopped it.
+STEP=""
+trap 'rc=$?; [ "$rc" = 0 ] || [ -z "$STEP" ] || log "FAIL: the $STEP step stopped the capture (exit $rc)"; drop_work "$STAGE"' EXIT
 
 # The example's hash: every file under example/, path and content. A capture
 # older than the example it came from fails `just tutorial-check`.
@@ -134,18 +136,32 @@ run_cmd() { # step, shown command, real command...
   log "$shown -> exit $rc"
 }
 
-shot() { # step, view, url, [height]
-  local step="$1" view="$2" url="$3" height="${4:-860}" theme scheme
+# Forgejo's yellow "Workflow warnings" box: the permissions fields of the
+# example's workflow, which Forgejo ignores. A job page's picture hides it.
+FORGEJO_HIDE='.ui.warning.message.pre-execution-error'
+
+shot() { # step, view, url, [height], [job step to open], [log line to scroll to, a regex]
+  local step="$1" view="$2" url="$3" height="${4:-860}" open="${5:-}" focus="${6:-}" theme scheme png hooks
   [ -z "$REPLAY" ] || return 0
   for theme in light dark; do
-    scheme=1; [ "$theme" = dark ] && scheme=0
-    # The virtual time budget lets the page's scripts finish, so a job log
-    # has loaded before the picture is taken. A URL with a #fragment opens
-    # scrolled to that element, the way a reader's link does.
-    "$CHROME" --headless=new --disable-gpu --hide-scrollbars --window-size="1280,$height" \
-      --blink-settings=preferredColorScheme=$scheme --virtual-time-budget=8000 \
-      --screenshot="$STAGE/$step-$view-$theme.png" "$url" >/dev/null 2>&1 || true
-    [ -s "$STAGE/$step-$view-$theme.png" ] || fail "no screenshot of $url"
+    png="$STAGE/$step-$view-$theme.png"
+    if [[ "$url" == */actions/runs/* ]]; then
+      # A job page is prepared first (stack/shot.mjs): the warnings hidden,
+      # the step that matters opened and scrolled to its key line.
+      hooks=(--hide "$FORGEJO_HIDE")
+      [ -z "$open" ] || hooks+=(--expand "$open")
+      [ -z "$focus" ] || hooks+=(--focus "$focus")
+      node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$png" \
+        --width 1280 --height "$height" --scheme "$theme" "${hooks[@]}" || true
+    else
+      scheme=1; [ "$theme" = dark ] && scheme=0
+      # The virtual time budget lets the page's scripts finish. A URL with a
+      # #fragment opens scrolled to that element, the way a reader's link does.
+      "$CHROME" --headless=new --disable-gpu --hide-scrollbars --window-size="1280,$height" \
+        --blink-settings=preferredColorScheme=$scheme --virtual-time-budget=8000 \
+        --screenshot="$png" "$url" >/dev/null 2>&1 || true
+    fi
+    [ -s "$png" ] || fail "$step: no screenshot of $url"
   done
   log "screenshot $step-$view ($url)"
 }
@@ -193,6 +209,9 @@ forge() {
   . "$HERE/.state/forgejo.env"
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
+  # lib.sh's api, made to say which step's request failed and its URL.
+  eval "lib_api() $(declare -f api | tail -n +2)"
+  api() { lib_api "$@" || { local rc=$?; log "${STEP:-capture}: ${*: -1} failed (curl exit $rc)"; return "$rc"; }; }
   REPO="$USER/example"
   FORGEJO="$URL/$REPO"
 }
@@ -200,11 +219,34 @@ forge() {
 # Forgejo builds links from its in-network address; a browser opens this one.
 browser_url() { sed "s#^http://forgejo:3000#$URL#"; }
 
+# A GET outside Forgejo (floci's S3 endpoint) that names the step and the URL
+# when it fails.
+fetch() { # url
+  curl -fsS "$1" || { local rc=$?; log "${STEP:-capture}: GET $1 failed (curl exit $rc)"; return "$rc"; }
+}
+
 # The newest run on a branch's head commit, as the runs API gives it.
 run_on() { # branch
   local sha
   sha="$(api "$URL/api/v1/repos/$REPO/branches/${1//\//%2F}" | jq -r '.commit.id')"
   api "$URL/api/v1/repos/$REPO/actions/runs?head_sha=$sha" | jq -c '.workflow_runs[0] // empty'
+}
+
+# The push run on a commit (a prefix of its sha will do), once it has
+# finished. A pull request's branch has a pull_request run on the same commit;
+# only the push run checks the format.
+push_run() { # commit
+  local deadline=$(( $(date +%s) + ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} )) run
+  [ -n "$1" ] || return 0
+  while :; do
+    run="$(api "$URL/api/v1/repos/$REPO/actions/runs?event=push&limit=50" \
+      | jq -c --arg s "$1" '[.workflow_runs[] | select(.event == "push" and (.commit_sha | startswith($s)))][0] // empty')"
+    case "$(jq -r '.status // empty' <<<"${run:-null}")" in
+      success|failure|cancelled|skipped) echo "$run"; return 0 ;;
+    esac
+    if [ "$(date +%s)" -ge "$deadline" ]; then log "${STEP:-capture}: no finished push run on $1"; return 0; fi
+    sleep 3
+  done
 }
 
 # The page of the first job in a run that matches a jq condition. Forgejo
@@ -237,8 +279,8 @@ step_boot() {
   forge
   shot boot repo "$FORGEJO"
   # Forgejo redirects a run to its first job at its in-network address, so
-  # ask for the job page directly.
-  shot boot run "$FORGEJO/actions/runs/1/jobs/1/attempt/1"
+  # ask for the job page directly; jobs count from 0, and 0 is check.
+  shot boot run "$FORGEJO/actions/runs/1/jobs/0/attempt/1"
 }
 
 step_first_pr() {
@@ -251,13 +293,20 @@ step_first_pr() {
 
 step_check() {
   run_cmd check "just example change unformatted" "$HERE/example.sh" change unformatted
-  local pr; pr="$(pr_in_output)"
+  local pr sha page; pr="$(pr_in_output)"
+  sha="$(sed -n 's#.*pushed change/unformatted at \([0-9a-f]*\).*#\1#p' "$STAGE/last.out" | head -1)"
   run_cmd check "just example logs" "$HERE/example.sh" logs
   if [ -n "$pr" ]; then shot check pull "$FORGEJO/pulls/$pr"; fi
-  # The run on the unformatted branch's head, opened at its failed job.
-  local page
-  page="$(job_page "$(run_on change/unformatted)" '.status == "failure"')"
-  if [ -n "$page" ]; then shot check log "$page" 1400; else log "check: no failed job on change/unformatted"; fi
+  # The check job fails on the commit the scenario pushed, and its "Commit the
+  # formatting" step then pushes tofu fmt's fix to the branch. So the branch's
+  # head is that later commit, whose check passes: look up the push run on the
+  # commit the scenario pushed, and open its failed job at the format step.
+  page="$(job_page "$(push_run "$sha")" '.status == "failure"')"
+  if [ -n "$page" ]; then
+    shot check log "$page" 1400 "Format check"
+  else
+    log "check: no failed job in the push run on ${sha:-the pushed commit}"
+  fi
 }
 
 # The module bump on the example as booted: one note for twelve roots. The
@@ -284,7 +333,7 @@ step_wave_waiting() {
   run_cmd wave-waiting "just example merge destroy" "$HERE/example.sh" merge destroy
   # The run on main's new head: wave 4's job stopped with exit 3.
   page="$(job_page "$(run_on main)" '.status == "failure"')"
-  if [ -n "$page" ]; then shot wave-waiting log "$page" 1600; else log "wave-waiting: no stopped job on main's head"; fi
+  if [ -n "$page" ]; then shot wave-waiting log "$page" 1600 "Apply wave" "waits for an approval of digest"; else log "wave-waiting: no stopped job on main's head"; fi
 }
 
 # Approve that wave, then merge a change that moves its plans: it refuses.
@@ -294,7 +343,7 @@ step_wave_refused() {
   run_cmd wave-refused "just example merge module-bump" "$HERE/example.sh" merge module-bump
   local page
   page="$(job_page "$(run_on main)" '.status == "failure"')"
-  if [ -n "$page" ]; then shot wave-refused log "$page" 1600; else log "wave-refused: no refused job on main's head"; fi
+  if [ -n "$page" ]; then shot wave-refused log "$page" 1600 "Apply wave" "changed after it was approved|planned differently since"; else log "wave-refused: no refused job on main's head"; fi
 }
 
 # Publish modules/service and open the first rollout wave. The scenario pins
@@ -358,14 +407,16 @@ step_report() {
   # index's times differ on every run.
   local top index project path at root plan
   top="$FLOCI/$REPORT_BUCKET/$prefix"
-  index="$(curl -fsS "$top/index.json" || true)"
+  index="$(fetch "$top/index.json" || true)"
   [ -n "$index" ] || index='{}'
   project="$(jq -r '.reports[0].project // empty' <<<"$index")"
   path="$(jq -r '.reports[0].path // empty' <<<"$index")"
   if [ -z "$project" ] || [ -z "$path" ]; then log "report: the index at $top lists no run"; return 0; fi
-  at="$top/$project/$path"
+  # The top index's path starts at the project already
+  # (<project>/<yyyy>/<mm>/<commit>/<stage>); the project's own index's does not.
+  at="$top/$path"
   root=envs/prod/payments
-  plan="$(curl -fsS "$at/report.json" | jq -r --arg r "$root" '.roots[] | select(.path == $r) | .plan.text // empty')"
+  plan="$(fetch "$at/report.json" | jq -r --arg r "$root" '.roots[] | select(.path == $r) | .plan.text // empty')"
   shot report top "$at/report.html" 1600
   shot report root "$at/report.html#root-$root" 1200
   if [ -n "$plan" ]; then shot report plan "$at/$plan" 1400; fi
@@ -450,7 +501,7 @@ while IFS='|' read -r -u 3 step needs claims _; do
   elif [ $i -lt $LAST_CHAIN ] && { [ "$needs" = fresh ] || [ "$needs" = chain ]; } && [ "$step" != fountain-apply ]; then
     log "$step: replayed, unrecorded"
     rm -f "$STAGE/$step.cmds"
-    REPLAY=1; "$fn"; REPLAY=""; READY=1
+    STEP="$step"; REPLAY=1; "$fn"; REPLAY=""; READY=1
     i=$((i + 1)); continue
   else
     i=$((i + 1)); continue
@@ -461,6 +512,7 @@ while IFS='|' read -r -u 3 step needs claims _; do
     SKIPPED="$SKIPPED $step"
     i=$((i + 1)); continue
   fi
+  STEP="$step"
   # A full capture reaches a booted step with the example as committed (pin
   # and drift reset after themselves). Steps named alone reset it first.
   if [ "$needs" = booted ] && [ -z "$REUSE" ] && { [ -z "$READY" ] || [ -z "$ALL" ]; }; then
@@ -479,6 +531,7 @@ while IFS='|' read -r -u 3 step needs claims _; do
   commit_step "$step"
   i=$((i + 1))
 done 3<<<"$STEPS"
+STEP=""
 
 if [ "$CHANGED" = 1 ] || [ ! -f "$DATA/manifest.json" ]; then
   # shellcheck disable=SC1091
