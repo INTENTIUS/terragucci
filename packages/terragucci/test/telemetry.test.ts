@@ -156,7 +156,10 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan with telemetry", () => {
       expect(attr(byName.terragucci_stage_duration_seconds[0], "result")).toBe("success");
       expect(attr(byName.terragucci_binary_version[0], "binary")).toBe("tofu");
       const resource = metrics.resourceMetrics[0].resource.attributes as any[];
-      expect(resource.find((a) => a.key === "vcs.ref.head.revision")).toBeDefined();
+      // One series per project from run to run: the commit and the job are the trace's, not the metrics'.
+      expect(resource.find((a) => a.key === "terragucci.project")).toBeDefined();
+      expect(resource.find((a) => a.key === "vcs.ref.head.revision")).toBeUndefined();
+      expect(resource.find((a) => a.key === "cicd.pipeline.run.url.full")).toBeUndefined();
     } finally {
       rx.close();
     }

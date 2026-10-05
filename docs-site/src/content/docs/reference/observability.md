@@ -85,7 +85,7 @@ A stage pushes its metrics once, when it ends, so a short CI job needs no scrape
 
 A plan run for a pull request labels its metrics with `pull_request`. The stage span's `terragucci.result` attribute says how the run ended. A plan or drift run ends in `success` or `failure`, and a wave in one of `applied`, `nothing`, `waiting`, `refused` and `failed`.
 
-The resource carries `terragucci.project`, `vcs.ref.head.revision` (the commit) and `cicd.pipeline.run.url.full` (the CI job). A collector set to copy resource attributes onto series can then find one run's numbers by its commit.
+The metrics' resource carries `terragucci.project` and nothing that changes from run to run, so each of a project's gauges stays one series and a dashboard reads the latest run's value. The trace's resource also carries `vcs.ref.head.revision` (the commit) and `cicd.pipeline.run.url.full` (the CI job), which is how one run's numbers are found: its trace, and the report it links.
 
 ## From a trace to its report
 

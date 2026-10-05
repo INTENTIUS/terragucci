@@ -472,8 +472,10 @@ step_see_runs() {
   run_cmd see-runs "just see-runs" "$HERE/see-runs.sh"
   [ "$(jq -s '.[-1].exit' "$STAGE/see-runs.cmds")" = 0 ] || fail "see-runs: just see-runs failed, so the dashboards would be empty: $(tail -3 "$STAGE/last.out")"
   local grafana="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}" d
+  # The example only: the stack's Prometheus also holds the smoke claims' projects.
+  forge
   for d in pipeline-health:pipeline rollouts-waves:waves drift:drift runs:runs; do
-    shot see-runs "${d#*:}" "$grafana/d/terragucci-${d%%:*}?orgId=1&kiosk&from=now-1h&to=now"
+    shot see-runs "${d#*:}" "$grafana/d/terragucci-${d%%:*}?orgId=1&kiosk&from=now-1h&to=now&var-project=forgejo:3000/$REPO"
   done
 }
 
