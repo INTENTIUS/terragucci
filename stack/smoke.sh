@@ -2380,7 +2380,7 @@ dash_rendered() { # work, uid
   cp -R "$EXAMPLE/." "$dir/"
   rm -rf "$dir/.git"
   printf '\ndashboards: true\n' >> "$dir/terragucci.yml"
-  (cd "$dir" && "$TERRAGUCCI" init --forge forgejo --dry-run --json) | jq -r --arg f "$f" '.results.files[] | select(.path == $f) | .content' > "$1/rendered.json"
+  (cd "$dir" && "$TERRAGUCCI" init --forge forgejo --dry-run --json) | jq -j --arg f "$f" '.results.files[] | select(.path == $f) | .content' > "$1/rendered.json"
   [ -s "$1/rendered.json" ] || { log "init wrote no $f"; return 1; }
   cmp -s "$1/rendered.json" "$HERE/observability/terragucci/grafana/dashboards/$2.json" \
     || { log "init renders $f differently from what Grafana is provisioned with; run 'just ci'"; return 1; }
