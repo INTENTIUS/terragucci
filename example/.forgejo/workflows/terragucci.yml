@@ -228,7 +228,7 @@ jobs:
             console.log("terragucci: " + cmd + " failed: " + err.message);
             if (cmd === "oidc") process.exit(1);
           }' -- "$@"; }
-          terragucci comment --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --out terragucci-comment.json || exit 1
+          terragucci comment --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
           read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
           $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
           EOF
