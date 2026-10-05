@@ -239,3 +239,60 @@ describe("a wave behind its gate", () => {
     expect(git(origin, "branch", "--list", "chant/lifecycle").trim()).toBe("");
   });
 });
+
+describe("planning a wave's roots", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** A fake tofu whose plan counts the plans running together in $RUN and appends each count to $RUN/counts. */
+  const COUNTING = `#!/usr/bin/env bash
+dir="\${1#-chdir=}"; root="$(basename "$dir")"
+case "$2" in
+  plan)
+    for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done
+    touch "$RUN/running.$root"
+    ls "$RUN" | grep -c '^running\\.' >> "$RUN/counts"
+    sleep 0.3
+    rm -f "$RUN/running.$root"
+    echo "Plan: 1 to add" ;;
+  show) echo '{"resource_changes":[]}' ;;
+  apply) echo "Apply complete! Resources: 0 added, 0 changed, 0 destroyed." ;;
+esac
+exit 0
+`;
+
+  function wave(roots: string[]): { work: string; bin: string; run: string } {
+    const dir = tmp("tg-bound-");
+    const work = join(dir, "work");
+    for (const r of roots) mkdirSync(join(work, r), { recursive: true });
+    const run = join(dir, "run");
+    mkdirSync(run);
+    const bin = join(dir, "tofu");
+    writeFileSync(bin, COUNTING);
+    chmodSync(bin, 0o755);
+    vi.stubEnv("RUN", run);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    return { work, bin, run };
+  }
+  const most = (run: string): number => Math.max(...readFileSync(join(run, "counts"), "utf-8").split("\n").filter(Boolean).map(Number));
+  const roots = ["r1", "r2", "r3", "r4", "r5", "r6"];
+
+  it("never plans more roots at once than --parallelism", async () => {
+    const { work, bin, run } = wave(roots);
+    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 2 })).toBe(0);
+    expect(most(run)).toBeLessThanOrEqual(2);
+    expect(most(run)).toBe(2);
+  });
+
+  it("plans one root at a time with a bound of 1", async () => {
+    const { work, bin, run } = wave(roots);
+    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 1 })).toBe(0);
+    expect(most(run)).toBe(1);
+  });
+
+  it("takes the bound from the config's parallelism key", async () => {
+    const { work, bin, run } = wave(roots);
+    writeFileSync(join(work, "terragucci.yml"), "parallelism: 3\n");
+    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env })).toBe(0);
+    expect(most(run)).toBe(3);
+  });
+});

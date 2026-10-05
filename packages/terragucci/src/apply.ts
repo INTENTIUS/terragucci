@@ -37,10 +37,10 @@ import { join } from "node:path";
 import { describeChangedWave, waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
-import { ConfigError, GATES, type Gate } from "./config";
+import { ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Gate } from "./config";
 import { globMatch } from "./detect";
 import { buildReport } from "./report/build";
-import { runFacts } from "./report/stage";
+import { eachLimited, rootsParallelism, runFacts } from "./report/stage";
 import { sealRefusal, sealRule } from "./seal";
 
 /** The op every wave gate is recorded under. */
@@ -312,6 +312,10 @@ export interface ApplyWaveOptions {
   gate: Gate;
   env?: NodeJS.ProcessEnv;
   now?: string;
+  /** How many roots of the wave plan at once. Default: the config's `parallelism`, then from the state backend. */
+  parallelism?: number;
+  /** The config file; default: the one found from the repo. */
+  config?: string;
 }
 
 /** Run one wave. Returns the exit code; what happened is printed. */
@@ -336,7 +340,18 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string): P
   }
   const label = `wave ${wave} of ${waves.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
-  const planned = await Promise.all(roots.map((r, i) => planRoot(repo, binary, r, work, i)));
+  let limit: { value: number; reason: string };
+  if (options.parallelism !== undefined) {
+    limit = { value: options.parallelism, reason: "--parallelism" };
+  } else {
+    const configPath = options.config ?? findConfig(repo);
+    limit = rootsParallelism(repo, roots, resolveRepo(configPath ? await loadConfig(configPath) : {}), options.env ?? process.env);
+  }
+  if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
+  const planned: PlannedRoot[] = new Array(roots.length);
+  await eachLimited(roots, limit.value, async (r, i) => {
+    planned[i] = await planRoot(repo, binary, r, work, i);
+  });
   const failed = planned.filter((p) => p.error);
   for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.summary}`);
   if (failed.length > 0) {

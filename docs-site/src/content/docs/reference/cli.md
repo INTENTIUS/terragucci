@@ -63,7 +63,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
 | `--bucket-endpoint`, `--bucket-prefix` | the store's endpoint and the key prefix |
 | `--terragrunt` | plan Terragrunt units, one `run --all` per wave |
 | `--base` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
-| `--parallelism` | how many roots of one dependency layer plan at once; overrides `parallelism` in `terragucci.yml`. `--parallelism 1` plans one root at a time |
+| `--parallelism` | how many roots of one dependency layer plan at once (`tf-plan`, `tf-drift`), or of one wave (`tf-apply`); overrides `parallelism` in `terragucci.yml`. `--parallelism 1` plans one root at a time |
 
 `stage` exits 1 when a root refuses to plan, and still writes the report. [The plan report](/terragucci/reference/report/) lists the files.
 
