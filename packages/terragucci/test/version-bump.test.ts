@@ -130,7 +130,7 @@ describe("respond version-bump", () => {
     expect(r.text).toContain("modules/net 1.2.0 -> 1.3.0");
     expect(r.text).toContain("minor (0.85, threshold 0.70");
     expect(r.proposals).toEqual([{ branch: "terragucci/release/modules-net", title: "Release modules/net 1.3.0", files: ["modules/net/version"], state: "would-open" }]);
-    expect(git(dir, "tag", "--list", "modules/net/*")).toBe("modules/net/v1.2.0");
+    expect(git(dir, "tag", "--list", "modules/net/*").trim()).toBe("modules/net/v1.2.0");
   });
 
   it("does not call the service for conventional commits", async () => {
