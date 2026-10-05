@@ -50,6 +50,7 @@ export default defineConfig({
 								{ label: 'Fix a refused wave', slug: 'guides/fix-a-refused-wave' },
 								{ label: 'Roll out a new module version', slug: 'guides/roll-out-a-module-version' },
 								{ label: 'Publish your modules', slug: 'guides/publish-modules' },
+								{ label: 'Re-plan from a comment', slug: 'guides/re-plan-from-a-comment' },
 							],
 						},
 						{

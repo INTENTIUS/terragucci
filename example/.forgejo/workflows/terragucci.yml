@@ -10,6 +10,9 @@ on:
     branches:
       - '**'
   pull_request: {}
+  issue_comment:
+    types:
+      - created
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch: {}
@@ -22,7 +25,7 @@ env:
   TF_INPUT: '0'
 
 concurrency:
-  group: terragucci-${{ github.ref }}
+  group: terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +33,7 @@ jobs:
     runs-on: docker
     container:
       image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     permissions:
       contents: write
     env:
@@ -148,6 +151,114 @@ jobs:
         uses: https://code.forgejo.org/actions/upload-artifact@v3
         with:
           name: terragucci-report
+          path: terragucci-report/
+          if-no-files-found: ignore
+  replan:
+    runs-on: docker
+    container:
+      image: ghcr.io/intentius/terragucci-tofu:0.2.0-tofu1.13.1
+    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: write
+    concurrency:
+      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    env:
+      TG_TOKEN: '${{ github.token }}'
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Re-plan the pull request on request and write the plan report
+        shell: bash
+        run: |
+          set -uo pipefail
+          export TG_FORGE=forgejo
+          tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          const MARK = "<!-- terragucci:plan";
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const call = async (m, p, b) => {
+                const r = await fetch(api + "/" + p, { method: m, headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) }, body: b ? JSON.stringify(b) : undefined });
+                if (!r.ok) throw new Error(m + " " + p + " answered " + r.status);
+                return r.status === 204 ? null : r.json();
+              };
+              const notes = (n) => gl ? repo + "/merge_requests/" + n + "/notes" : repo + "/issues/" + n + "/comments";
+              const find = async (n) => (await call("GET", notes(n) + "?per_page=100")).find((c) => c.body.startsWith(MARK));
+              const edit = (n, id, body) => gl ? call("PUT", notes(n) + "/" + id, { body }) : call("PATCH", repo + "/issues/comments/" + id, { body });
+              if (cmd === "status") {
+                const [context, state, description] = a;
+                const url = gl ? e.CI_PIPELINE_URL : e.GITHUB_SERVER_URL + "/" + e.GITHUB_REPOSITORY + "/actions/runs/" + e.GITHUB_RUN_ID;
+                const sha = e.TG_SHA;
+                if (gl) await call("POST", repo + "/statuses/" + sha, { name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });
+                else await call("POST", repo + "/statuses/" + sha, { context, state, description, target_url: url });
+              } else if (cmd === "note") {
+                const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
+                if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "alive") {
+                const run = await call("GET", repo + "/actions/runs/" + a[0]);
+                console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+              } else if (cmd === "stale") {
+                const moved = a[0].split(",");
+                const open = gl ? await call("GET", repo + "/merge_requests?state=opened&target_branch=" + a[1] + "&per_page=100") : await call("GET", repo + "/pulls?state=open&base=" + a[1] + "&per_page=100");
+                for (const pr of open) {
+                  const n = gl ? pr.iid : pr.number, note = await find(n);
+                  if (!note || note.body.includes("<!-- terragucci:stale -->")) continue;
+                  const hit = (note.body.match(/roots=(\S*) -->/)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
+                  if (!hit.length) continue;
+                  const lines = note.body.split("\n");
+                  lines.splice(1, 0, "> This plan is stale: " + a[1] + " moved under " + hit.join(", ") + ". Push to this pull request to plan again. <!-- terragucci:stale -->");
+                  await edit(n, note.id, lines.join("\n"));
+                }
+              }
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@"; }
+          terragucci comment --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --out terragucci-comment.json || exit 1
+          read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
+          $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
+          EOF
+          [ -n "$TG_PR" ] || exit 0
+          [ "$TG_ROOT" = "-" ] && TG_ROOT=""
+          export TG_PR TG_SHA TG_ROOT TG_BASE="origin/$TG_BASE"
+          git fetch --quiet origin "refs/pull/$TG_PR/head" || { echo "terragucci: could not fetch the pull request head" >&2; exit 1; }
+          if [ "$(git rev-parse FETCH_HEAD)" != "$TG_SHA" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
+          git checkout --quiet --detach "$TG_SHA"
+          tg status terragucci/plan pending "planning"
+          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"}
+          rc=$?
+          if [ ! -f terragucci-report/report.json ]; then
+            tg status terragucci/plan failure "the plan report was not written"
+            exit 1
+          fi
+          counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
+          if [ -n "${TG_PR:-}" ]; then
+            note="$(mktemp)"
+            # The first line says which roots the note covers, so an apply can mark it stale.
+            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >"$note"
+            tg note "$note"
+          fi
+          if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi
+          tg status terragucci/plan success "$counts"
+      - name: Keep the plan report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-report-replan
           path: terragucci-report/
           if-no-files-found: ignore
   apply-wave-1:
