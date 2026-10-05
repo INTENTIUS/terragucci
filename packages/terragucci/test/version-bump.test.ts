@@ -142,3 +142,52 @@ describe("respond version-bump", () => {
     expect(r.text).toContain("modules/net 1.2.0 -> 1.2.1");
   });
 });
+
+describe("version-bump --since", () => {
+  /** A repo with no release tag: `base` is the commit to count from. */
+  function untagged(messages: string[], versionAtBase?: string): { dir: string; base: string } {
+    const dir = write(tmp(), { "modules/net/main.tf": 'variable "cidr" {}\n', ...(versionAtBase ? { "modules/net/version": `${versionAtBase}\n` } : {}) });
+    const commit = (m: string) => git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qam", m);
+    git(dir, "init", "-q", "-b", "main");
+    git(dir, "add", "-A");
+    commit("first");
+    const base = git(dir, "rev-parse", "HEAD").trim();
+    messages.forEach((m, i) => {
+      writeFileSync(join(dir, "modules/net/main.tf"), `variable "cidr" {}\nvariable "extra${i}" {}\n`);
+      commit(m);
+    });
+    return { dir, base };
+  }
+
+  it("without it, a module with no tag is the first release", async () => {
+    const { dir } = untagged(["feat: a"]);
+    const out = await versionBumps(dir, { decide: SETTINGS }, {});
+    expect(out.suggestions[0]).toMatchObject({ last: "none", source: "none" });
+  });
+
+  it("counts commits from the ref and bumps the version file there", async () => {
+    const { dir, base } = untagged(["feat: an IPv6 block"], "1.2.0");
+    const out = await versionBumps(dir, { decide: SETTINGS }, { since: base });
+    expect(out.suggestions[0]).toMatchObject({ module: "modules/net", last: "1.2.0", source: "conventional", version: "1.3.0" });
+  });
+
+  it("asks the model when the commits are not conventional", async () => {
+    const { dir, base } = untagged(["rework the subnets"], "1.2.0");
+    const { fetch, calls } = service({ major: 0.05, minor: 0.9, patch: 0.05 });
+    const out = await versionBumps(dir, { decide: SETTINGS }, { since: base, fetch });
+    expect(calls).toHaveLength(1);
+    expect(out.suggestions[0]).toMatchObject({ source: "suggested", bump: "minor", version: "1.3.0" });
+  });
+
+  it("starts from 0.0.0 when the module had no version file at the ref", async () => {
+    const { dir, base } = untagged(["fix: a"]);
+    expect((await versionBumps(dir, { decide: SETTINGS }, { since: base })).suggestions[0]).toMatchObject({ last: "0.0.0", version: "0.0.1" });
+  });
+
+  it("says so for a ref that does not exist, and the module's own tags win over it", async () => {
+    const { dir } = untagged(["feat: a"]);
+    expect((await versionBumps(dir, { decide: SETTINGS }, { since: "nope" })).suggestions[0]!.note).toMatch(/not a ref/);
+    const tagged = repoWith(["fix: a"]);
+    expect((await versionBumps(tagged, { decide: SETTINGS }, { since: "HEAD" })).suggestions[0]).toMatchObject({ last: "1.2.0", version: "1.2.1" });
+  });
+});

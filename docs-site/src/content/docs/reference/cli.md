@@ -99,7 +99,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--platform` | `tips` | lock file platforms, comma separated |
 | `--branch` | `fmt` | the branch to format; the default branch is refused |
 | `--module`, `--version` | `publish` | the module, and the release |
-| `--module` | `version-bump` | one module |
+| `--module`, `--since` | `version-bump` | one module, and a ref (a tag, branch or commit) to count changes from for a module with no release tag |
 | `--question` | `question` | the reviewer's question |
 | `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |
 | `--out`, `--binary`, `--config`, `--project` | all | as above |

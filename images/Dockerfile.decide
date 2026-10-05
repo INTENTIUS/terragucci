@@ -2,8 +2,7 @@ FROM python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf2583
 ENV PIP_NO_CACHE_DIR=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv --upgrade-deps /opt/venv
-RUN /opt/venv/bin/pip install "torch==2.14.0" --index-url https://download.pytorch.org/whl/cpu
-RUN /opt/venv/bin/pip install "laya[serve]==0.3.28" && /opt/venv/bin/pip check
+RUN --mount=type=bind,source=images/decide/requirements.txt,target=/tmp/requirements.txt /opt/venv/bin/pip install --require-hashes --no-deps --only-binary=:all: --extra-index-url https://download.pytorch.org/whl/cpu -r /tmp/requirements.txt && /opt/venv/bin/pip check
 RUN HF_HOME=/opt/hf /opt/venv/bin/python -c 'from huggingface_hub import snapshot_download; snapshot_download("convaiinnovations/laya", revision="55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851", allow_patterns=["rl_agent_config.json", "model.safetensors", "tokenizer/*", "encoder/*"])' && echo "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c  /opt/hf/hub/models--convaiinnovations--laya/snapshots/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/model.safetensors" | sha256sum -c -
 FROM python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
 ENV PATH="/opt/venv/bin:$PATH"

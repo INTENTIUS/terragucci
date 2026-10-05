@@ -652,3 +652,23 @@ describe("respond steps", () => {
     expect(script).toMatch(/3\) tg status terragucci\/apply pending "\$\(cat "\$outcome"\)"; exit 3 ;;/);
   });
 });
+
+describe("decide token on the plan jobs", () => {
+  const withDecide = (forge: ForgeName, respond?: Record<string, string>): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, decideTokenEnv: "JEV_API_KEY", ...(respond ? { respond } : {}) }).content;
+
+  it.each(["github", "forgejo"] as const)("%s: the plan and re-plan jobs map the secret when the description check is on", (forge) => {
+    const doc = body(withDecide(forge, { description: "check" }));
+    expect(doc.jobs.plan.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
+    expect(doc.jobs.replan.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
+    for (const job of ["check", "apply-wave-1"]) expect(doc.jobs[job].env?.JEV_API_KEY).toBeUndefined();
+  });
+
+  it.each(FORGES)("%s: nothing is mapped while the description check is off", (forge) => {
+    expect(withDecide(forge)).not.toContain("JEV_API_KEY");
+  });
+
+  it("gitlab: the CI/CD variable is already in every job, so nothing is mapped", () => {
+    expect(withDecide("gitlab", { description: "check" })).not.toContain("JEV_API_KEY");
+  });
+});

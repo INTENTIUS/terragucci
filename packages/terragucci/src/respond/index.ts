@@ -58,6 +58,8 @@ export interface RespondOptions {
   /** publish: one module's path, and a version of it. */
   module?: string;
   version?: string;
+  /** version-bump: the ref to count changes from when a module has no release tag. */
+  since?: string;
   question?: string;
   /** version-bump and description: the decision service's HTTP client, for tests. */
   decideFetch?: DecideFetch;
@@ -105,6 +107,31 @@ function pullRequestText(env: NodeJS.ProcessEnv): { title: string; description: 
   }
 }
 
+/**
+ * The pull request's title and description from the forge's API, for a job the
+ * event file does not describe: a re-plan started by a comment, whose event is
+ * the comment. The job's TG_PR, TG_FORGE and TG_TOKEN name the request and
+ * carry the token; a failed call says nothing, so the check is skipped.
+ */
+async function pullRequestFromForge(env: NodeJS.ProcessEnv, fetchFn: Fetch): Promise<{ title: string; description: string } | undefined> {
+  const number = env.TG_PR;
+  const token = env.TG_TOKEN;
+  if (!number || !/^\d+$/.test(number) || !token) return undefined;
+  const gitlab = env.TG_FORGE === "gitlab";
+  const api = gitlab ? env.CI_API_V4_URL : env.GITHUB_API_URL || (env.GITHUB_SERVER_URL ? `${env.GITHUB_SERVER_URL}/api/v1` : undefined);
+  const project = gitlab ? (env.CI_PROJECT_ID ? `projects/${env.CI_PROJECT_ID}` : undefined) : env.GITHUB_REPOSITORY ? `repos/${env.GITHUB_REPOSITORY}` : undefined;
+  if (!api || !project) return undefined;
+  const url = `${api.replace(/\/+$/, "")}/${project}/${gitlab ? "merge_requests" : "pulls"}/${number}`;
+  try {
+    const res = await fetchFn(url, { method: "GET", headers: { accept: "application/json", ...(gitlab ? { "private-token": token } : { authorization: `token ${token}` }) } });
+    if (!res.ok) return undefined;
+    const pr = (await res.json()) as { title?: string | null; body?: string | null; description?: string | null };
+    return { title: pr.title ?? "", description: (gitlab ? pr.description : pr.body) ?? "" };
+  } catch {
+    return undefined;
+  }
+}
+
 const tail = (s: string): string => s.trim().split("\n").slice(-20).join("\n");
 
 const said = (p: Proposed): string => `${p.title}: ${p.state}${p.pullRequest ? ` ${p.pullRequest}` : ""} (${p.branch}: ${p.files.join(", ") || "no files"})`;
@@ -142,7 +169,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const t = triage(o.log!);
     r = { text: describeTriage(t, agent), data: t };
   } else if (ev === "drift") {
-    const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog(), decide: settings.decide, options: o.decideOptions } : undefined;
+    const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions } : undefined;
     const d = await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
     const body = [
       ...d.routed,
@@ -169,14 +196,14 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     }
     r = { text: text || "no published module", data: notes };
   } else if (ev === "version-bump") {
-    const { suggestions, proposals } = await versionBumps(repo, settings, { module: o.module, env, fetch: o.decideFetch });
+    const { suggestions, proposals } = await versionBumps(repo, settings, { module: o.module, since: o.since, env, fetch: o.decideFetch });
     const proposed = await propose(repo, settings, proposals, { mode, env, fetch: o.fetch });
     const lines = suggestions.map((s) => `${s.module} ${s.last}${s.version ? ` -> ${s.version}` : ""}: ${s.note}`);
     r = { text: [...lines, ...proposed.map(said)].join("\n") || "no module", data: suggestions, proposals: proposed };
   } else if (ev === "description") {
     const dir = resolve(repo, o.report ?? "terragucci-report");
     need(existsSync(join(dir, "report.json")), "--report, the directory terragucci stage tf-plan wrote");
-    const pr = o.title !== undefined || o.description !== undefined ? { title: o.title ?? "", description: o.description ?? "" } : pullRequestText(env);
+    const pr = o.title !== undefined || o.description !== undefined ? { title: o.title ?? "", description: o.description ?? "" } : (pullRequestText(env) ?? (await pullRequestFromForge(env, o.fetch ?? (globalThis.fetch as unknown as Fetch))));
     if (!pr || (!pr.title && !pr.description)) return { event: ev, response, skipped: "no pull request title or description to read", text: "no pull request title or description to read; the note is unchanged" };
     const c = await checkDescription({ dir, ...pr, decide: settings.decide, write: mode === "apply", env, fetch: o.decideFetch });
     r = { text: c.text, data: c.record };
