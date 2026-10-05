@@ -167,7 +167,7 @@ export const decide = new Dockerfile({
       copy: [
         "--from=build /opt/venv /opt/venv",
         "--from=build --chown=10001:10001 /opt/hf /opt/hf",
-        "--chmod=0644 images/decide/server.py /opt/decide/server.py",
+        "--chmod=0755 images/decide/server.py /opt/decide/server.py",
       ],
       expose: [`${DECIDE_IMAGE.port}`],
       label: [
