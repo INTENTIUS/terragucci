@@ -86,13 +86,13 @@ terragucci rollout --provider <address> <version> [--from <version>] [--mode dry
 ## respond
 
 ```bash
-terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump [--mode dry-run|apply] [flags]
+terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump|description [--mode dry-run|apply] [flags]
 ```
 
 | Flag | Used by | Meaning |
 |---|---|---|
 | `--mode` | all | `dry-run` (the default) or `apply`, which opens the pull request or pushes the commit |
-| `--report` | `plan` | the report directory |
+| `--report` | `plan`, `description` | the report directory |
 | `--approved`, `--current`, `--wave` | `wave-refused` | the approved report, the current report directory and the wave number |
 | `--log` | `apply-failed` | the apply log; `-` reads standard input |
 | `--root`, `--import` | `drift` | one root, and `<address>=<id>` for a resource the state does not hold |
@@ -101,6 +101,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--module`, `--version` | `publish` | the module, and the release |
 | `--module` | `version-bump` | one module |
 | `--question` | `question` | the reviewer's question |
+| `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |
 | `--out`, `--binary`, `--config`, `--project` | all | as above |
 
 [Responses to pipeline events](/terragucci/reference/responses/) explains each event.

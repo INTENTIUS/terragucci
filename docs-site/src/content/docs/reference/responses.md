@@ -17,6 +17,7 @@ Every pipeline event has a response that needs no model, and that response is th
 | rollout wave merged | the next wave's pull requests, as `tf-rollout` opens them | not offered |
 | reviewer question | none | an answer from the report and the code |
 | module changed with no conventional commit | none; `tf-publish` proposes a patch | a suggested bump in a release pull request, from the typed-decision service |
+| pull request opened or updated | none | not offered; with `respond.description: check`, a typed decision flags a description that leaves out what the plan destroys or replaces |
 
 ## Choosing a response
 
@@ -42,6 +43,7 @@ respond:
 | `rollout` | `next-wave`, `off` | `next-wave` |
 | `question` | `off`, `agent` | `off` |
 | `version-bump` | `suggest`, `off` | `off` |
+| `description` | `off`, `check` | `off` |
 
 `agent` needs an integration to run in. When none is set, `terragucci config check` names the event and the missing keys.
 
@@ -112,6 +114,16 @@ Some changes are only reported, each with its reason:
 | on a resource deleted outside Terraform | the next apply makes it again |
 
 For a resource the state does not hold, pass `--import <address>=<id>`. terragucci writes the import block, and `plan -generate-config-out` writes its config. On Terraform 1.14 and later, a root with a `.tfquery.hcl` file gets both from `terraform query`.
+
+### Description check
+
+With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the decision service one yes-or-no question before it posts the note: does the pull request's title and description describe what the plan does? The service reads the title, the description and the redacted report's summary (counts by action, the named destroys and replacements, the groups). When it answers yes with a probability at or above the threshold, the note starts with a line asking the author to check the description and naming the destroys and replacements the text does not mention. The same line sits at the top of `report.html`, and `intent.json` in the report directory records the decision, its probability and the model.
+
+Below the threshold, with no `decide` block, or with a service that does not answer, the note is the one it would be without the check, and `intent.json` says why. The flag never blocks a merge and changes no gate, digest or group. The title and description come from the job's event, so a re-plan started by a comment is not checked.
+
+```bash
+terragucci respond description --report terragucci-report --title "retag email" --description "Tags only." --mode apply
+```
 
 ### Tips, fmt and release notes
 

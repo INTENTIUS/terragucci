@@ -414,6 +414,8 @@ export interface PlanReportInput {
   canary?: string[];
   /** A Terragrunt repo: the stage runs Terragrunt, after this shell (credentials, caches). */
   terragrunt?: { prelude: string };
+  /** respond.description is on: before the note is posted, flag a pull request whose description does not match its plan. */
+  description?: boolean;
 }
 
 /** The plan report's directory in the job's workspace. */
@@ -471,6 +473,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     "fi",
     `counts="$(node -e '${COUNTS_JS}' ${REPORT_DIR}/report.json)"`,
     'if [ -n "${TG_PR:-}" ]; then',
+    ...(report.description ? [`  terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
     '  note="$(mktemp)"',
     "  # The first line says which roots the note covers, so an apply can mark it stale.",
     `  { echo "<!-- terragucci:plan roots=$(node -e '${PLANNED_JS}' ${REPORT_DIR}/report.json) -->"; cat ${REPORT_DIR}/note.md; } >"$note"`,
@@ -581,6 +584,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // with no config file gets the same pipeline as one whose config only sets waves.
   const report: PlanReportInput = {
     ...(input.reports ? { reports: input.reports } : {}),
+    ...(responds(input.respond, "description") ? { description: true } : {}),
     ...(tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n") } } : {}),
   };
   const drift = input.drift;

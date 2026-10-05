@@ -86,6 +86,8 @@ export const RESPONSES = {
   rollout: ["next-wave", "off"],
   question: ["off", "agent"],
   "version-bump": ["off", "suggest"],
+  /** terragucci#30: a typed decision flags a pull request whose description leaves out what its plan destroys or replaces. Needs `decide:`. */
+  description: ["off", "check"],
 } as const;
 export type RespondEvent = keyof typeof RESPONSES;
 export const AGENT_VIA = ["forge", "fountain"] as const;
