@@ -190,6 +190,8 @@ export interface ProjectSettings {
   agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string };
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
   decide?: DecideSettings;
+  /** The AWS region whose CloudTrail drift attribution reads. Default: the region the aws CLI already uses. */
+  audit_region?: string;
   /** Dashboards and alert rules written next to the pipeline. Off unless set. */
   dashboards?: boolean | DashboardSettings;
 }
@@ -253,7 +255,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "dashboards",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -289,6 +291,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
   for (const k of ["version", "url", "token_env"] as const) {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
+  }
+  if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
+    problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
   }
   if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
     problems.push(`${where}.drift must be a cron schedule or false`);

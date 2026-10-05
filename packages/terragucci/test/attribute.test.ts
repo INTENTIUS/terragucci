@@ -2,6 +2,7 @@
 // table and the audit log answer first and are tested first, and the model
 // is asked only about drift neither answers, on a fixture with one of each.
 import { describe, expect, it } from "vitest";
+import { validateConfig } from "../src/config";
 import type { DecideFetch, DecideSettings } from "../src/decide";
 import { attribute, awsAuditLog, classifyEvent, knownWrite, newestActor, onlyServiceTags, route, shown, withoutLeft, type AuditLog, type AuditQuery } from "../src/respond/attribute";
 import { driftOf } from "../src/respond/drift";
@@ -192,5 +193,19 @@ describe("route", () => {
   it("keeps a deleted object, which has no attributes", () => {
     const gone = driftOf({ resource_drift: [{ address: "aws_sqs_queue.g", mode: "managed", type: "aws_sqs_queue", name: "g", change: { actions: ["delete"], before: { name: "g" }, after: null } }] });
     expect(withoutLeft(gone, new Map([["aws_sqs_queue.g", new Set(["x"])]]))).toHaveLength(1);
+  });
+});
+
+describe("audit_region", () => {
+  it("is passed to the aws CLI as --region", async () => {
+    const calls: string[][] = [];
+    const log = awsAuditLog({ region: "eu-west-2", run: (a) => (calls.push(a), { status: 0, stdout: "{}", stderr: "" }) });
+    await log.lookup({ type: "aws_sqs_queue", address: "aws_sqs_queue.jobs", ref: "jobs" });
+    expect(calls[0]).toEqual(expect.arrayContaining(["--region", "eu-west-2"]));
+  });
+
+  it("is validated as a region", () => {
+    expect(validateConfig({ audit_region: "eu-west-2" }, "t").audit_region).toBe("eu-west-2");
+    expect(() => validateConfig({ audit_region: "europe" }, "t")).toThrow(/audit_region/);
   });
 });

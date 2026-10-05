@@ -46,6 +46,12 @@ function diffSummary(repo: string, tag: string, rel: string): { files: string; d
   return { files: files.slice(0, 2000), declarations };
 }
 
+/** The version a module had at `ref`: its version file there, or 0.0.0 when it had none. */
+function baseVersion(repo: string, rel: string, ref: string): Semver {
+  const file = tryGit(repo, ["show", `${ref}:${rel}/version`]);
+  return (file && parseSemver(file.trim().replace(/^v/, ""))) || { major: 0, minor: 0, patch: 0 };
+}
+
 function latestTag(repo: string, rel: string): { tag: string; v: Semver } | undefined {
   const tags = (tryGit(repo, ["tag", "--list", `${rel}/v*`]) ?? "").split("\n").filter(Boolean);
   let best: { tag: string; v: Semver } | undefined;
@@ -59,6 +65,13 @@ function latestTag(repo: string, rel: string): { tag: string; v: Semver } | unde
 export interface BumpOptions extends DecideOptions {
   /** One module's path. */
   module?: string;
+  /**
+   * A ref (a tag, a branch or a commit) to count changes from for a module with
+   * no release tag, as with OCI-only publishing. The module's `version` file at
+   * that ref is the last release (0.0.0 when it had none). A module that has
+   * release tags ignores it.
+   */
+  since?: string;
 }
 
 /**
@@ -74,7 +87,13 @@ export async function versionBumps(
   const proposals: Proposal[] = [];
   const modules = findModules(repo, settings.modules?.path ?? "modules/*").filter((m) => !options.module || m.rel === options.module.replace(/\/+$/, ""));
   for (const mod of modules) {
-    const last = latestTag(repo, mod.rel);
+    const tagged = latestTag(repo, mod.rel);
+    const sinceRef = !tagged && options.since ? options.since : undefined;
+    if (sinceRef && tryGit(repo, ["rev-parse", "--verify", "--quiet", `${sinceRef}^{commit}`]) === undefined) {
+      suggestions.push({ module: mod.rel, last: "none", source: "none", note: `--since ${sinceRef} is not a ref in this repository` });
+      continue;
+    }
+    const last = tagged ?? (sinceRef ? { tag: sinceRef, v: baseVersion(repo, mod.rel, sinceRef) } : undefined);
     if (!last) {
       suggestions.push({ module: mod.rel, last: "none", source: "none", note: "no release tag yet, so the first release is 0.1.0" });
       continue;

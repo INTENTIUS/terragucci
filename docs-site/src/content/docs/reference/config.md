@@ -78,6 +78,7 @@ projects:
 | `respond` | a response per event, none of them an agent | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge` or `fountain`), `token_env` and an optional read-only `role`: where an event set to `agent` runs |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
+| `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | off | `true`, or a map of `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait` and `schedule`: `init` and `reconcile` write the dashboards and alert rules next to the pipeline; see [Dashboards and alerts](/terragucci/reference/observability/#dashboards-and-alerts) |
 
 The file can also be `terragucci.ts`, typed with `TerragucciConfig`. terragucci folds it to plain data without running it, so a value that reads the environment is refused with its line number.
@@ -120,7 +121,7 @@ decide:
 | `backend` | required | `laya` (terragucci's `terragucci-decide` image), `von`, `decider` or `jev` (TypeSafe's API); each answers the same request shape |
 | `url` | required, except `jev` | the service's base URL; `jev` defaults to `https://api.typesafe.ai` |
 | `model` | required, except `laya` | the pinned model version, such as `jev-1.13.0`; a moving alias such as `jev-latest` is refused, and an answer from any other version is not used |
-| `token_env` | none, required for `jev` | the environment variable holding the service's bearer token |
+| `token_env` | none, required for `jev` | the environment variable holding the service's bearer token; on GitHub and Forgejo the plan and re-plan jobs get the secret of that name when `respond.description` is `check` |
 | `thresholds` | `noul` 0.8, `choice` 0.7, `score` 0.7 | the probability an answer needs before a response acts on it |
 
 An answer below its threshold, a service that does not answer, or an answer from another model leaves the response as it would be with no `decide` block. A decision raises a flag, picks a route or suggests a value for a person to confirm. It never approves, applies or resolves a gate. The model reads the redacted report, never a secret or a raw plan value.
