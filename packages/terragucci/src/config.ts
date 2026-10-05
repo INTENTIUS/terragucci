@@ -73,13 +73,15 @@ export interface TerragruntSettings {
 /**
  * Pipeline events and the responses each takes. The first mode is the
  * default and needs no model; `agent` adds an agent's comment or proposal on
- * top of the deterministic response, and is never the default.
+ * top of the deterministic response, and is never the default. `drift:
+ * attribute` also names who changed each drifted attribute (a known-writes
+ * table, then the audit log, then a typed decision when `decide:` is set).
  */
 export const RESPONSES = {
   plan: ["summary", "agent"],
   "wave-refused": ["diff", "off"],
   "apply-failed": ["triage", "agent", "off"],
-  drift: ["pull-request", "agent", "off"],
+  drift: ["pull-request", "attribute", "agent", "off"],
   tips: ["pull-request", "off"],
   fmt: ["commit", "off"],
   publish: ["notes", "agent", "off"],

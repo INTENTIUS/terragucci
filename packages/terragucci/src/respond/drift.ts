@@ -18,7 +18,9 @@ export interface Drifted {
   /** What changed outside: `update` or `delete`. */
   action: string;
   /** Top-level attributes whose live value differs from the state's, with both values. */
-  attributes: { path: string; before: unknown; live: unknown }[];
+  attributes: { path: string; before: unknown; live: unknown; /** The plan marks the value sensitive; it never leaves the run. */ sensitive?: boolean }[];
+  /** The object's real name or id, as the cloud knows it (the audit log is searched by it). */
+  ref?: string;
   module?: string;
   index?: string | number;
   type: string;
@@ -48,7 +50,7 @@ interface DriftEntry {
   type: string;
   name: string;
   index?: string | number;
-  change: { actions: string[]; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null };
+  change: { actions: string[]; before?: Record<string, unknown> | null; after?: Record<string, unknown> | null; before_sensitive?: unknown; after_sensitive?: unknown };
 }
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -60,11 +62,19 @@ export function driftOf(plan: unknown): Drifted[] {
     const before = e.change.before ?? {};
     const after = e.change.after ?? {};
     const action = e.change.actions.includes("delete") ? "delete" : "update";
+    const marked = (k: string): boolean => {
+      const m = (e.change.before_sensitive as Record<string, unknown> | undefined)?.[k] ?? (e.change.after_sensitive as Record<string, unknown> | undefined)?.[k];
+      return m !== undefined && m !== false && !(typeof m === "object" && m !== null && Object.keys(m).length === 0);
+    };
     const attributes =
       action === "delete"
         ? []
-        : [...new Set([...Object.keys(before), ...Object.keys(after)])].sort().filter((k) => !same(before[k], after[k])).map((path) => ({ path, before: before[path], live: after[path] }));
-    return { address: e.address, action, attributes, type: e.type, name: e.name, ...(e.module_address ? { module: e.module_address } : {}), ...(e.index !== undefined ? { index: e.index } : {}) };
+        : [...new Set([...Object.keys(before), ...Object.keys(after)])]
+            .sort()
+            .filter((k) => !same(before[k], after[k]))
+            .map((path) => ({ path, before: before[path], live: after[path], ...(marked(path) ? { sensitive: true } : {}) }));
+    const ref = ["name", "id", "function_name", "bucket"].map((k) => after[k] ?? before[k]).find((v) => typeof v === "string" && v !== "") as string | undefined;
+    return { address: e.address, action, attributes, type: e.type, name: e.name, ...(ref ? { ref } : {}), ...(e.module_address ? { module: e.module_address } : {}), ...(e.index !== undefined ? { index: e.index } : {}) };
   });
 }
 
