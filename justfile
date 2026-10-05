@@ -51,10 +51,11 @@ ci:
     just render-observability
     just render-images
 
-[doc("Render the stack's collector and Prometheus configs from observability/ into stack/observability/.")]
+[doc("Render the stack's collector and Prometheus configs from observability/, and the dashboards, rules and Grafana datasources, into stack/observability/.")]
 render-observability:
     npx chant build observability -o stack/observability/collector.yaml --format yaml
     npx tsx scripts/render-prometheus.ts > stack/observability/prometheus.yml
+    npx tsx scripts/render-dashboards.ts
     @echo "  ✓ stack/observability/ rendered"
 
 [doc("Render the CI images' Dockerfiles from images/images.ts into images/.")]
@@ -114,6 +115,8 @@ ci-check:
       echo "  stack/observability/prometheus.yml is not what observability/prometheus.ts renders. Run 'just ci' and commit the result."
       rc=1
     fi
+    # The dashboards, rules and Grafana datasources the stack's Grafana and Prometheus read.
+    npx tsx scripts/render-dashboards.ts --check || rc=1
     exit $rc
 
 # ── the published site ─────────────────────────────────────────────────────

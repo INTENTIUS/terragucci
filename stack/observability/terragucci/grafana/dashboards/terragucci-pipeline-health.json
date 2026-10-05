@@ -1,0 +1,274 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Runs, errors and duration per stage and project, from the stage spans.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Rate and errors",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "Runs per hour",
+      "description": "Stage runs per hour, by stage and project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (terragucci_stage, terragucci_project) (increase(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"}[1h]))",
+          "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 3,
+      "title": "Errors",
+      "description": "Share of stage runs that failed, by stage and project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "(\nsum by (terragucci_stage, terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))\nor\nsum by (terragucci_stage, terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"}[$__rate_interval])) * 0\n)\n/\nsum by (terragucci_stage, terragucci_project) (rate(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"}[$__rate_interval]))",
+          "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Duration",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 4,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 5,
+      "title": "Duration p50",
+      "description": "p50 stage duration, by stage and project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, terragucci_stage, terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"}[$__rate_interval])))",
+          "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Duration p95",
+      "description": "p95 stage duration, by stage and project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, terragucci_stage, terragucci_project) (rate(terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"}[$__rate_interval])))",
+          "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Results",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 7,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 8,
+      "title": "Runs by result",
+      "description": "Stage runs over the dashboard's range, by stage and how they ended.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (terragucci_stage, terragucci_result) (increase(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"}[$__range]))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "terragucci"
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "project",
+        "label": "Project",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(terragucci_spans_calls_total, terragucci_project)",
+        "definition": "label_values(terragucci_spans_calls_total, terragucci_project)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "options": []
+      },
+      {
+        "type": "query",
+        "name": "stage",
+        "label": "Stage",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(terragucci_spans_calls_total, terragucci_stage)",
+        "definition": "label_values(terragucci_spans_calls_total, terragucci_stage)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "terragucci: Pipeline health",
+  "uid": "terragucci-pipeline-health",
+  "weekStart": ""
+}

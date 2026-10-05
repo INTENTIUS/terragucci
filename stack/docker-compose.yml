@@ -28,7 +28,7 @@
 #   gitlab    floci + GitLab CE + gitlab-runner
 #   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
-#   observability  an OpenTelemetry collector and Prometheus   used by the traces and metrics smoke claims
+#   observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana   used by the traces, metrics and dashboard smoke claims
 #   decide    terragucci-decide, Laya on CPU behind the Jev shape   opt-in; stack/decide.sh starts it
 name: terragucci
 
@@ -190,11 +190,54 @@ services:
     profiles: [observability]
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # The SLO recording rules and pipeline alerts terragucci's dashboards come with.
+      - ./observability/terragucci/prometheus:/etc/prometheus/rules:ro
     ports:
       - "${TERRAGUCCI_PROMETHEUS_PORT:-9190}:9090"
     networks:
       default:
         aliases: [prometheus]
+
+  # Where the collector sends the stage traces; Grafana's Runs dashboard lists
+  # them. Monolithic, local storage inside the container: a stack restart
+  # starts it empty. Root, so it can write /var/tempo.
+  tempo:
+    image: grafana/tempo:2.9.5@sha256:785fd6c81d7f26ff0973208cd7093ac6030e13946c288612ff32f02416941d3a
+    container_name: terragucci-tempo
+    profiles: [observability]
+    user: "0:0"
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    ports:
+      - "${TERRAGUCCI_TEMPO_PORT:-3210}:3200"
+    networks:
+      default:
+        aliases: [tempo]
+
+  # terragucci's dashboards, provisioned from the files `dashboards: true`
+  # writes into a repo (rendered here by scripts/render-dashboards.ts), over
+  # the stack's Prometheus and Tempo. Anonymous admin: it is a local harness.
+  grafana:
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    container_name: terragucci-grafana
+    profiles: [observability]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/stack.yaml:ro
+      - ./observability/terragucci/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/terragucci/grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
+      - ./observability/terragucci/grafana/dashboards:/var/lib/grafana/dashboards/terragucci:ro
+    ports:
+      - "${TERRAGUCCI_GRAFANA_PORT:-3310}:3000"
+    networks:
+      default:
+        aliases: [grafana]
 
   # ── github ───────────────────────────────────────────────────────────────
   # GitHub has no self-hostable edition. The runner is `act` on the host (see
