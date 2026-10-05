@@ -17,6 +17,7 @@ import type { Report } from "../report/schema";
 import { forgeOf, git, propose, worktree, type Proposed } from "./change";
 import { IDENTITY } from "../reconcile";
 import { codify, driftOf, hasQuery, importBlocks, type Codified, type Left } from "./drift";
+import { checkDescription } from "./intent";
 import { moduleNotes } from "./notes";
 import { describeRefused, refusedDiff } from "./refused";
 import { tipProposals } from "./tips";
@@ -56,8 +57,11 @@ export interface RespondOptions {
   module?: string;
   version?: string;
   question?: string;
-  /** version-bump: the decision service's HTTP client, for tests. */
+  /** version-bump and description: the decision service's HTTP client, for tests. */
   decideFetch?: DecideFetch;
+  /** description: the pull request's title and description; by default read from the job's event. */
+  title?: string;
+  description?: string;
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
 }
@@ -78,6 +82,21 @@ function readReport(path: string): Report {
   const file = existsSync(path) && statSync(path).isDirectory() ? join(path, "report.json") : path;
   if (!existsSync(file)) throw new ConfigError(`no report at ${file}`);
   return JSON.parse(readFileSync(file, "utf-8")) as Report;
+}
+
+/** The pull request's title and description from the job's event: GitHub and Forgejo's event file, or GitLab's merge request variables. */
+function pullRequestText(env: NodeJS.ProcessEnv): { title: string; description: string } | undefined {
+  if (env.CI_MERGE_REQUEST_TITLE !== undefined || env.CI_MERGE_REQUEST_DESCRIPTION !== undefined) {
+    return { title: env.CI_MERGE_REQUEST_TITLE ?? "", description: env.CI_MERGE_REQUEST_DESCRIPTION ?? "" };
+  }
+  const file = env.GITHUB_EVENT_PATH;
+  if (!file || !existsSync(file)) return undefined;
+  try {
+    const pr = (JSON.parse(readFileSync(file, "utf-8")) as { pull_request?: { title?: string | null; body?: string | null } }).pull_request;
+    return pr ? { title: pr.title ?? "", description: pr.body ?? "" } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const tail = (s: string): string => s.trim().split("\n").slice(-20).join("\n");
@@ -145,6 +164,13 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const proposed = await propose(repo, settings, proposals, { mode, env, fetch: o.fetch });
     const lines = suggestions.map((s) => `${s.module} ${s.last}${s.version ? ` -> ${s.version}` : ""}: ${s.note}`);
     r = { text: [...lines, ...proposed.map(said)].join("\n") || "no module", data: suggestions, proposals: proposed };
+  } else if (ev === "description") {
+    const dir = resolve(repo, o.report ?? "terragucci-report");
+    need(existsSync(join(dir, "report.json")), "--report, the directory terragucci stage tf-plan wrote");
+    const pr = o.title !== undefined || o.description !== undefined ? { title: o.title ?? "", description: o.description ?? "" } : pullRequestText(env);
+    if (!pr || (!pr.title && !pr.description)) return { event: ev, response, skipped: "no pull request title or description to read", text: "no pull request title or description to read; the note is unchanged" };
+    const c = await checkDescription({ dir, ...pr, decide: settings.decide, write: mode === "apply", env, fetch: o.decideFetch });
+    r = { text: c.text, data: c.record };
   } else if (ev === "question") {
     need(o.question, "--question");
     r = { text: "an agent answers from the report and the code", data: { question: o.question } };
