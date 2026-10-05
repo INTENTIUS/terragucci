@@ -1,6 +1,6 @@
 {
   "schema": "terragucci.report/v1",
-  "minor": 1,
+  "minor": 2,
   "run": {
     "project": "forgejo.example/acme/infra",
     "commit": "4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d",

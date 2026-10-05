@@ -218,6 +218,9 @@ describe("roots of a layer plan at once", () => {
   const normal = (raw: string) => {
     const r = JSON.parse(raw);
     r.run.started = r.run.finished = "t";
+    // Wall times differ between any two runs.
+    delete r.timings;
+    for (const root of r.roots) delete root.timings;
     return r;
   };
 

@@ -136,7 +136,8 @@
             }
           },
           "fold": { "$ref": "#/$defs/fold" },
-          "why": { "type": "array", "items": { "type": "string" } }
+          "why": { "type": "array", "items": { "type": "string" } },
+          "timings": { "$ref": "#/$defs/rootTimings" }
         }
       }
     },
@@ -236,9 +237,131 @@
           "url": { "type": "string" }
         }
       }
+    },
+    "timings": {
+      "description": "Where the run spent its time, from the binary's spans (minor 2).",
+      "type": "object",
+      "required": ["roots", "resources"],
+      "properties": {
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "seconds", "detail"],
+            "properties": {
+              "root": { "type": "string" },
+              "seconds": { "type": "number" },
+              "plan_seconds": { "type": "number" },
+              "detail": { "$ref": "#/$defs/timingDetail" }
+            }
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "address", "ms"],
+            "properties": {
+              "root": { "type": "string" },
+              "address": { "type": "string" },
+              "type": { "type": "string" },
+              "ms": { "type": "number" }
+            }
+          }
+        },
+        "note": { "type": "string" }
+      }
     }
   },
   "$defs": {
+    "timingDetail": { "enum": ["resources", "aggregate", "none"] },
+    "rootTimings": {
+      "description": "Where a root's plan spent its time, from the binary's spans (minor 2).",
+      "type": "object",
+      "required": ["seconds", "spans", "detail", "resources", "provider_calls", "provider_init", "lock_waits", "aggregates"],
+      "properties": {
+        "seconds": { "type": "number" },
+        "plan_seconds": { "type": "number" },
+        "spans": { "type": "integer" },
+        "detail": { "$ref": "#/$defs/timingDetail" },
+        "note": { "type": "string" },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["address", "ms"],
+            "properties": {
+              "address": { "type": "string" },
+              "type": { "type": "string" },
+              "action": { "type": "string" },
+              "provider": { "type": "string" },
+              "ms": { "type": "number" },
+              "refresh_ms": { "type": "number" }
+            }
+          }
+        },
+        "provider_calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["method", "ms"],
+            "properties": {
+              "method": { "type": "string" },
+              "provider": { "type": "string" },
+              "type": { "type": "string" },
+              "address": { "type": "string" },
+              "ms": { "type": "number" }
+            }
+          }
+        },
+        "provider_init": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["provider", "count", "ms", "max_ms"],
+            "properties": {
+              "provider": { "type": "string" },
+              "count": { "type": "integer" },
+              "ms": { "type": "number" },
+              "max_ms": { "type": "number" }
+            }
+          }
+        },
+        "lock_waits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ms"],
+            "properties": {
+              "backend": { "type": "string" },
+              "operation": { "type": "string" },
+              "attempts": { "type": "integer" },
+              "ms": { "type": "number" }
+            }
+          }
+        },
+        "aggregates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["of", "count", "detailed", "ms", "max_ms"],
+            "properties": {
+              "of": { "type": "string" },
+              "kind": { "type": "string" },
+              "type": { "type": "string" },
+              "provider": { "type": "string" },
+              "method": { "type": "string" },
+              "count": { "type": "integer" },
+              "detailed": { "type": "integer" },
+              "ms": { "type": "number" },
+              "max_ms": { "type": "number" },
+              "slowest": { "type": "string" },
+              "groups": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
     "action": { "enum": ["create", "update", "replace", "delete", "read", "no-op", "forget"] },
     "fold": { "enum": ["open", "folded"] },
     "summaryChange": {
