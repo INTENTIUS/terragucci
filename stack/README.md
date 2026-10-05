@@ -35,6 +35,7 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 | `just smoke [claim]` | one line per claim: `SMOKE claim=… verdict=pass\|caught\|fail\|pending`; `BREAK=1` must print `caught` |
 | `just smoke-record` | every claim plain and under `BREAK=1`, written to `docs-site/src/data/smoke.json` for the status page. Claims run several at a time (`SMOKE_JOBS`, default 6; `SMOKE_SERIAL=1` for one at a time), each holding the resources its line in `CLAIM_GROUPS` in `smoke.sh` names; each run's log is under `stack/.state/smoke-logs/` |
 | `just tutorial-capture` | the tutorial's output and screenshots, for steps whose claims pass |
+| `just capture <step>…` | one or more of those steps alone; `--list` names them, `--reuse` captures on the running example (CONTRIBUTING.md) |
 | `just example-patches` | rebuilds `example/changes/*.patch` after an edit under `example/` |
 | `just stack-for <config>` | starts only the profiles a terragucci config needs: floci, the forges it names, and fountain when a project runs there |
 

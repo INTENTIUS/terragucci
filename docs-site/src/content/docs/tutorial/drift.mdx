@@ -6,15 +6,16 @@ sidebar:
 claims: [drift]
 ---
 
+import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
+
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
 Someone deletes a queue in the console. This scenario does the same through the API.
 
-```bash
-just example change drift
-```
+<Captured step="drift" optional />
 
 The example's `terragucci.yml` schedules drift for six every morning. The pipeline's `drift` job runs then, and you can start it by hand from the Actions tab. It plans every root with `-refresh-only`: each root's state is compared with what exists in floci, and the code is ignored. The report lists the deleted queue under deletes, in root `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
 
@@ -23,6 +24,8 @@ floci, the local AWS stand-in, does not keep tags. On it, tags show as drifted o
 :::
 
 The job opens one issue, `terragucci: drift found`. It names `envs/staging/orders` and the queue `shop-staging-orders-jobs`. Run the job again and the same issue is updated, not duplicated.
+
+<Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
 
 A change waiting on main is not drift. Merge a pull request from the earlier steps without applying it, and the next drift run reports the same drift as before, because a refresh-only plan never reads the code.
 

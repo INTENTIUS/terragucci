@@ -3,6 +3,8 @@ title: Keep reports in S3
 description: Copy every plan report to a bucket, so they outlive your CI's artifact retention and share one index.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 ## What you end up with
 
 Every run's report in a bucket under one path per run, and an `index.html` that lists every plan you have run.
@@ -58,6 +60,8 @@ reports/github.com/acme/infra/2026/10/4f1a9c0/tf-apply-wave-2/report.json
 ### 5. Serve the index
 
 Every upload rewrites `index.html` and `index.json` twice. One pair sits at the project's path and covers that project. The other sits at the top of the prefix and covers every project. Each run gets a row with its counts and destroys, linked to its report. Serve the bucket as a static site and the index is the home page for every plan you have run.
+
+<Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
 
 Retention is your bucket's lifecycle rule.
 
