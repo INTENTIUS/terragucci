@@ -5,7 +5,7 @@
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
- *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab]
+ *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never]
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
@@ -47,7 +47,7 @@ const USAGE = `usage:
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
-  terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab]
+  terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
@@ -59,6 +59,13 @@ const USAGE = `usage:
 init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
+
+/** `--parallelism`: a whole number of 1 or more. */
+function parallelismFlag(v: string): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) throw new ConfigError(`--parallelism is ${JSON.stringify(v)}; use a whole number of 1 or more`);
+  return n;
+}
 
 function parse(argv: string[]): { cmd: string; flags: Record<string, string | true>; args: string[] } {
   const [cmd = "", ...rest] = argv;
@@ -155,6 +162,7 @@ export async function main(argv: string[]): Promise<number> {
           ...(str(flags, "canary") ? { canary: str(flags, "canary")!.split(",").filter(Boolean) } : {}),
           ...(flags.terragrunt === true ? { terragrunt: true } : {}),
           ...(str(flags, "base") ? { base: str(flags, "base") } : {}),
+          ...(str(flags, "parallelism") ? { parallelism: parallelismFlag(str(flags, "parallelism")!) } : {}),
           ...(str(flags, "bucket")
             ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } }
             : {}),

@@ -86,6 +86,8 @@ describe("validation", () => {
     [{ terragrunt: { credentials: { "live/**": { plan: "arn:p", apply: "arn:a", role: "x" } } } }, /\.role is not a setting \(settings: plan, apply\)/],
     [{ terragrunt: { credentials: { "live/**": { plan: "arn:x", apply: "arn:x" } } } }, /uses one role for plan and apply/],
     [{ defaults: { terragrunt: { parallelism: -1 } }, projects: { "github.com/a/b": {} } }, /defaults\.terragrunt\.parallelism/],
+    [{ parallelism: 0 }, /config\.parallelism must be a whole number of 1 or more/],
+    [{ parallelism: "8" }, /config\.parallelism must be a whole number of 1 or more/],
   ])("%j is refused", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(message);
   });
@@ -94,6 +96,7 @@ describe("validation", () => {
     [{ terragrunt: {} }],
     [{ terragrunt: { version: "1.1.6", exclude: ["catalog/**", "live/sandbox/**"], parallelism: 3, dependents: "follow" } }],
     [{ terragrunt: { version: "1.2.0-rc1", dependents: "plan" } }],
+    [{ parallelism: 4 }],
     [{ binary: "tofu", terragrunt: { credentials: { "live/prod/**": { plan: "arn:aws:iam::111:role/plan", apply: "arn:aws:iam::111:role/apply" } } } }],
   ])("%j is accepted as written", (raw) => {
     expect(validateConfig(raw, "t")).toEqual(raw);

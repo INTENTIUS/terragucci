@@ -11,6 +11,8 @@ A waiting push applies after the one ahead of it. Pull requests take no locks, s
 
 Roots that apply together each get a provider cache directory of their own.
 
+`tf-plan` and `tf-drift` plan the roots of one dependency layer at once, up to `parallelism` at a time: 3 for GitLab-managed state, which limits concurrent inits, and 16 for other backends. A layer waits for the layers whose state it reads. The report, the note and the job log list the roots in the same order however they finish, so a run's report matches one made a root at a time. When the job shares one provider cache through `TF_PLUGIN_CACHE_DIR`, the roots' inits take turns and their plans still run at once.
+
 ## Statuses and stale plans
 
 Each stage posts one commit status for the whole run. `terragucci/plan` carries the counts of roots, groups and destroys. `terragucci/apply` appears on the default branch. Require either in branch protection.

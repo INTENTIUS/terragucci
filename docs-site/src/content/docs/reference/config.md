@@ -69,6 +69,7 @@ projects:
 | `telemetry` | none | `headers_secret`: the name of the CI secret or variable holding `OTEL_EXPORTER_OTLP_HEADERS`; the generated plan, apply and drift jobs map it into the environment |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN` | the environment variable holding the forge token |
 | `oidc` | none | `plan_role`, `apply_role` and an optional `audience`: the cloud roles the jobs assume over OIDC; see [Credentials](/terragucci/reference/pipeline/#credentials) |
+| `parallelism` | 3 for GitLab-managed state, else 16 | how many roots of one dependency layer `tf-plan` and `tf-drift` plan at once; a Terragrunt repo uses `terragrunt.parallelism` |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
 | `modules.path` | none | where your modules live, such as `modules/*` |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
