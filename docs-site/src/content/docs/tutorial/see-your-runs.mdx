@@ -22,21 +22,21 @@ just see-runs
 
 <Captured step="see-runs" />
 
-It starts the profile, then runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set, as a pipeline job would have it. The first plans the module-bump change for pull request 1. The second is a drift run. The third is wave 1 of the apply with the gate set to `always`, so it plans the dev roots and waits for an approval. Its approval ledger goes to a scratch repo, so the example on Forgejo stays as it was.
+It starts the profile, then runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set, as a pipeline job would have it. The first plans the module-bump change for pull request 1. The second is a drift run. The third runs the apply's waves in order with the gate set to `always`, as the pipeline would. The bump changes nothing in wave 1 (the dev platform), so that wave has nothing to approve and passes. Wave 2 plans the dev services and waits for an approval. The approval ledger goes to a scratch repo, so the example on Forgejo stays as it was. The command returns once Grafana shows the runs.
 
-Open Grafana at [localhost:3310](http://localhost:3310). The dashboards are in the `terragucci` folder.
+Open Grafana at [localhost:3310](http://localhost:3310) and look in the `terragucci` folder for the dashboards. They open on the last seven days, where a graph's points are a quarter of an hour apart. The pictures below show the last hour instead, so that runs made a minute ago are on the graphs.
 
 ## Pipeline health
 
 <Shot step="see-runs" view="pipeline" alt="The Pipeline health dashboard: runs per hour, errors and duration for the tf-plan, tf-drift and tf-apply stages of the example" />
 
-Each stage run is one span. The collector counts the spans by stage and by how each run ended, so the plan and the drift run show as successes and the wave as `waiting`, which is not an error.
+Each stage run is one span. The collector counts the spans by stage and by how each run ended, so the plan and the drift run show as successes and the waves as `nothing` and `waiting`, neither of them an error. Each point of a graph counts the runs in the hour before it, so a run shows up within a minute and stays on the graph for an hour.
 
 ## Rollouts and waves
 
-<Shot step="see-runs" view="waves" alt="The Rollouts and waves dashboard, with wave 1 of the example waiting for its approval" />
+<Shot step="see-runs" view="waves" alt="The Rollouts and waves dashboard, with wave 2 of the example waiting for its approval" />
 
-Wave 1 waits for an approval of its digest, and the table counts how long it has waited. Approve it with the command the run printed and run the wave again, and it leaves the table. A wave that waits longer than `wave_wait` (four hours by default) fires `TerragucciWaveWaiting`.
+Wave 2 waits for an approval of its digest, and the table counts how long it has waited. No wave was refused or failed, so both lines of that graph stay at 0. Approve it with the command the run printed and run the wave again, and it leaves the table. A wave that waits longer than `wave_wait` (four hours by default) fires `TerragucciWaveWaiting`.
 
 ## Drift
 

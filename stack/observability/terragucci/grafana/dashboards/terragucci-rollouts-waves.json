@@ -133,7 +133,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "sum by (terragucci_project, terragucci_result) (increase(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"}[$__range]))",
+          "expr": "sum by (terragucci_project, terragucci_result) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} offset $__range, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} offset $__range))",
           "instant": true,
           "range": false,
           "format": "table"
@@ -149,7 +149,7 @@
       "type": "timeseries",
       "id": 6,
       "title": "Refused and failed waves",
-      "description": "Wave runs refused or failed per hour.",
+      "description": "Wave runs refused or failed in the hour before each point.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -167,7 +167,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "sum by (terragucci_result) (increase(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"}[1h]))",
+          "expr": "sum by (terragucci_result) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} offset 1h))\nor\nlabel_replace(0 * sum(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"}), \"terragucci_result\", \"refused\", \"\", \"\")\nor\nlabel_replace(0 * sum(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"}), \"terragucci_result\", \"failed\", \"\", \"\")",
           "legendFormat": "{{terragucci_result}}"
         }
       ],
