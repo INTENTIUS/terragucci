@@ -16,6 +16,8 @@ import { findModules } from "../publish";
 import type { Report } from "../report/schema";
 import { forgeOf, git, propose, worktree, type Proposed } from "./change";
 import { IDENTITY } from "../reconcile";
+import { attribute, awsAuditLog, route, withoutLeft, type Attribution, type AuditLog } from "./attribute";
+import type { DecideOptions } from "../decide";
 import { codify, driftOf, hasQuery, importBlocks, type Codified, type Left } from "./drift";
 import { checkDescription } from "./intent";
 import { moduleNotes } from "./notes";
@@ -62,6 +64,10 @@ export interface RespondOptions {
   /** description: the pull request's title and description; by default read from the job's event. */
   title?: string;
   description?: string;
+  /** drift, with respond.drift set to attribute: the audit log to read (default CloudTrail through the aws CLI). */
+  audit?: AuditLog;
+  /** drift, with respond.drift set to attribute: how the decision client reaches its service. */
+  decideOptions?: DecideOptions;
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
 }
@@ -136,14 +142,17 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const t = triage(o.log!);
     r = { text: describeTriage(t, agent), data: t };
   } else if (ev === "drift") {
-    const d = drift(repo, roots(), binary(), o.imports ?? [], env);
+    const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog(), decide: settings.decide, options: o.decideOptions } : undefined;
+    const d = await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
     const body = [
+      ...d.routed,
+      ...d.notes.map((n) => `- ${n}`),
       ...d.codified.map((c) => `- \`${c.file}\`: \`${c.address}\` \`${c.path}\` ${c.from} -> ${c.to}`),
       ...d.imports.map((i) => `- import ${i}`),
       ...d.left.map((l) => `- not codified${agent ? " (an agent may propose it)" : ""}: \`${l.address}\`${l.path ? ` \`${l.path}\`` : ""}: ${l.reason}`),
     ].join("\n");
     const proposed = await propose(repo, settings, d.files.size ? [{ branch: "terragucci/drift", title: "Codify drift", body: `A refresh-only plan found drift. Merging this accepts the change made outside Terraform.\n\n${body}`, files: d.files }] : [], { mode, env, fetch: o.fetch });
-    r = { text: [body || "no drift", ...proposed.map(said)].join("\n"), data: { codified: d.codified, imports: d.imports, left: d.left }, proposals: proposed };
+    r = { text: [body || "no drift", ...proposed.map(said)].join("\n"), data: { codified: d.codified, imports: d.imports, left: d.left, ...(attributing ? { attributions: d.attributions, notes: d.notes } : {}) }, proposals: proposed };
   } else if (ev === "tips") {
     const proposed = await propose(repo, settings, tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms }), { mode, env, fetch: o.fetch });
     r = { text: proposed.map(said).join("\n") || "no tip to fix", proposals: proposed };
@@ -192,10 +201,10 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
 const IMPORTS = "terragucci_imports.tf";
 const GENERATED = "terragucci_generated.tf";
 
-function drift(repo: string, roots: string[], binary: string, imports: { address: string; id: string }[], env: NodeJS.ProcessEnv) {
+async function drift(repo: string, roots: string[], binary: string, imports: { address: string; id: string }[], env: NodeJS.ProcessEnv, attributing?: { audit: AuditLog; decide?: ResolvedSettings["decide"]; options?: DecideOptions }) {
   if (roots.length === 0) throw new ConfigError("no root matches");
   if (imports.length && roots.length !== 1) throw new ConfigError(`--import needs --root to name one root; ${roots.length} match`);
-  const d = { codified: [] as Codified[], left: [] as Left[], files: new Map<string, string>(), imports: [] as string[] };
+  const d = { codified: [] as Codified[], left: [] as Left[], files: new Map<string, string>(), imports: [] as string[], attributions: [] as Attribution[], routed: [] as string[], notes: [] as string[] };
   for (const root of roots) {
     const dir = join(repo, root);
     const run = (...args: string[]) => {
@@ -207,7 +216,16 @@ function drift(repo: string, roots: string[], binary: string, imports: { address
     try {
       run("init", "-input=false");
       run("plan", "-refresh-only", "-input=false", "-lock=false", `-out=${planFile}`);
-      const c = codify(root, dir, driftOf(JSON.parse(run("show", "-json", planFile).stdout)));
+      let found = driftOf(JSON.parse(run("show", "-json", planFile).stdout));
+      if (attributing) {
+        const at = await attribute(root, found, attributing);
+        const routed = route(at.attributions);
+        found = withoutLeft(found, routed.leave);
+        d.attributions.push(...at.attributions);
+        d.routed.push(...routed.lines.map((l) => `${root}: ${l.slice(2)}`).map((l) => `- ${l}`));
+        d.notes.push(...at.notes.filter((n) => !d.notes.includes(n)));
+      }
+      const c = codify(root, dir, found);
       d.codified.push(...c.codified);
       d.left.push(...c.left);
       for (const [f, text] of c.files) d.files.set(posix.join(root, f), text);
