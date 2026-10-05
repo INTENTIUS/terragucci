@@ -30,6 +30,6 @@ The roots are plain AWS code. Everything that points them at floci instead of AW
 | `destroy` | staging email drops its records table |
 | `float` | dev search lets the AWS provider version float |
 | `drift` | staging orders' jobs queue is deleted outside Terraform |
-| `pin` | `modules/service` is published as 1.1.0 and rolled out a wave at a time |
+| `pin` | `modules/service` is published as 1.1.0 and the first rollout wave's pull request opens |
 
 From the terragucci repo, `just example change <scenario>` opens a pull request with one of them.

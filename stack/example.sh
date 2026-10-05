@@ -7,7 +7,8 @@
 #                                     floci first, so every resource is new.
 #   stack/example.sh verify           every resource the 15 roots declare is in floci
 #   stack/example.sh change <name>    open a pull request with one scenario from
-#                                     example/changes (drift and pin act directly)
+#                                     example/changes (drift and pin act directly;
+#                                     pin publishes modules/service and opens a rollout wave)
 #   stack/example.sh merge <name>     merge that scenario's pull request into main,
 #                                     as the reader would, and show which wave waits
 #                                     or refuses. The first merge lists the reader's
@@ -297,6 +298,10 @@ OUT
     done
     for b in $(api "$URL/api/v1/repos/$REPO/branches?limit=50" | jq -r '.[].name | select(. != "main")'); do
       api -o /dev/null -X DELETE "$URL/api/v1/repos/$REPO/branches/${b//\//%2F}" || true
+    done
+    # The pin scenario's release tags are part of what reset undoes.
+    for t in $(api "$URL/api/v1/repos/$REPO/tags?limit=50" | jq -r '.[].name | select(startswith("modules/service/v"))'); do
+      api -o /dev/null -X DELETE "$URL/api/v1/repos/$REPO/tags/${t//\//%2F}" || true
     done
     clone_main "$WORK/tree"
     find "$WORK/tree" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
