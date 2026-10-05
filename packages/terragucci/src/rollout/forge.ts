@@ -135,13 +135,19 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
 
 /**
  * Whether a root has applied on a merge commit. A per-root check named
- * `apply/<root>` decides when there is one. Otherwise the pipeline
- * terragucci writes applies every root in one job named `apply`, which
- * GitHub and GitLab report as `apply` and Forgejo as `<workflow> / apply (push)`.
+ * `apply/<root>` decides when there is one. Otherwise the `terragucci/apply`
+ * status the apply jobs write decides: it turns success only once the last
+ * wave has applied. Without it, every apply job counts: one per wave, named
+ * `apply-wave-<n>` (or `apply` before waves), which GitHub and GitLab report
+ * by that name and Forgejo as `<workflow> / apply-wave-<n> (push)`.
  */
 export function appliedState(checks: CommitCheck[], root: string): CommitCheck["state"] {
   const own = checks.find((c) => c.name === `apply/${root}`);
   if (own) return own.state;
-  const job = checks.find((c) => c.name === "apply" || /(^|\/ )apply( \(|$)/.test(c.name));
-  return job?.state ?? "pending";
+  const status = checks.find((c) => c.name === "terragucci/apply");
+  if (status) return status.state;
+  const jobs = checks.filter((c) => /(^|\/ )apply(-wave-\d+)?( \(|$)/.test(c.name));
+  if (jobs.some((j) => j.state === "failure")) return "failure";
+  if (jobs.length === 0 || jobs.some((j) => j.state === "pending")) return "pending";
+  return "success";
 }
