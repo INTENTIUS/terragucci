@@ -1238,7 +1238,7 @@ claim_respond_tips() {
   log() { echo "[smoke respond-tips] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/respond-tips" tree out pr branch want rc=0
+  local work repo="$USER/respond-tips" tree out pr branch want i rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-tips || return 1
   respond_tree "$work" "$repo" ""
@@ -1254,6 +1254,12 @@ claim_respond_tips() {
     printf 'waves:\n  canary: ["envs/dev/*"]\n' >> "$tree/terragucci.yml"
   fi
   push_tree "$tree" "$repo" main "two roots" >/dev/null || return 1
+  # Forgejo takes in a push a moment after it lands, and until then the repo
+  # counts as empty and its pull requests answer 404.
+  for i in $(seq 1 30); do
+    [ "$(api "$URL/api/v1/repos/$repo" | jq -r .empty)" = false ] && break
+    sleep 1
+  done
   out="$(in_image "$tree" terragucci respond tips --mode apply --platform linux_amd64,linux_arm64 2>&1)" || { echo "$out" >&2; rm -rf "$work" 2>/dev/null; return 1; }
   echo "$out" >&2
   rm -rf "$work" 2>/dev/null || true
@@ -1683,7 +1689,7 @@ claim_forgejo_oidc() {
   log() { echo "[smoke forgejo-oidc] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/oidc" sha pr i mark plan_mark apply_mark rc=0 role trust
+  local work repo="$USER/oidc" sha pr i mark plan_mark apply_mark rc=0 role trust subrepo
   local plan_role=terragucci-oidc-plan apply_role=terragucci-oidc-apply marks=shop-terraform-state/oidc-marks
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo oidc || return 1
@@ -1711,6 +1717,9 @@ terraform {
     }
   }
 }
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
 
 data "external" "oidc" {
   program = ["node", "${path.module}/probe.mjs"]
@@ -1775,7 +1784,9 @@ JS
     log "the apply job did not take the apply role over OIDC"
     return 1
   fi
-  checked terragucci-apply "repo:$repo:ref:refs/heads/main" "$apply_role" <<<"$apply_mark" || { log "the apply mark is not a verified token for main traded for $apply_role"; rc=1; }
+  # Forgejo 16 names a repo in the subject as owner-<id>/repo-<id>.
+  subrepo="$(api "$URL/api/v1/repos/$repo" | jq -r '"\(.owner.login)-\(.owner.id)/\(.name)-\(.id)"')"
+  checked terragucci-apply "repo:$subrepo:ref:refs/heads/main" "$apply_role" <<<"$apply_mark" || { log "the apply mark is not a verified token for main traded for $apply_role"; rc=1; }
   echo 2 > "$work/tree/app/rev.txt"
   sha="$(push_tree "$work/tree" "$repo" oidc-change "oidc: change")"
   pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"oidc-change","base":"main","title":"oidc: plan"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
@@ -1787,7 +1798,7 @@ JS
   done
   log "plan job: mark ${plan_mark:-none}"
   [ -n "$plan_mark" ] || { log "the plan job wrote no mark"; return 1; }
-  checked terragucci-plan "repo:$repo:pull_request" "$plan_role" <<<"$plan_mark" || { log "the plan mark is not a verified pull_request token traded for $plan_role"; rc=1; }
+  checked terragucci-plan "repo:$subrepo:pull_request" "$plan_role" <<<"$plan_mark" || { log "the plan mark is not a verified pull_request token traded for $plan_role"; rc=1; }
   [ $rc = 0 ] && log "plan and apply jobs each got a token Forgejo signed and took their own role"
   return $rc
 }
