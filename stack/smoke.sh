@@ -19,6 +19,24 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
 
+# Every claim's temp work dir is recorded here and removed on every exit path:
+# when the claim returns (run_claim), and on exit, interrupt or termination.
+SMOKE_WORKS=()
+track_work() { SMOKE_WORKS+=("$1"); }
+cleanup_works() {
+  local d
+  for d in ${SMOKE_WORKS[@]+"${SMOKE_WORKS[@]}"}; do [ -n "$d" ] && rm -rf "$d"; done
+  SMOKE_WORKS=()
+}
+trap cleanup_works EXIT
+trap 'cleanup_works; exit 130' INT
+trap 'cleanup_works; exit 143' TERM
+
+# The provider and binary cache the forge's job containers mount at /cache
+# (container.options in bootstrap.sh). The local report runs mount it too, so
+# a provider downloads once per stack pass, not once per root per run.
+JOB_CACHE_VOLUME=terragucci-job-cache
+
 # name|what the site says|issue that builds it (empty: implemented here)
 CLAIMS='boot|the example boots and deploys locally|
 check|tf-check fails an unformatted root and names the file|
@@ -77,7 +95,7 @@ claim_check() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local repo="$USER/example" work sha logs
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
     || { log "no example repo; run 'just example up' first"; rm -rf "$work"; return 1; }
   local unformatted='locals {
@@ -106,7 +124,7 @@ claim_zero_config() {
   # thing a repo cannot show: init must write exactly the pipeline the example
   # commits, finding everything else from the repo alone.
   local work rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   cp -R "$EXAMPLE/." "$work/"
   # The canary wave stays: it is a choice, like the schedule, and it sets the apply jobs.
   printf 'drift: "0 6 * * *"\nwaves:\n  canary: ["envs/dev/*"]\n' > "$work/terragucci.yml"
@@ -127,11 +145,13 @@ claim_apply_serial() {
   # let run until its apply has started, then a second push lands. The marks
   # must read start end start end: the second apply waited for the first.
   # BREAK: the lock is cut out of the committed pipeline, so the applies overlap.
+  # The runner has capacity 4, so a free slot never forces the order: only the
+  # concurrency group and the state lock do.
   log() { echo "[smoke apply-serial] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/serial" sha1 sha2 i listing marks bucket=shop-terraform-state mark
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local n; for n in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
@@ -263,7 +283,7 @@ claim_waves() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/waves" sha applied rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo waves || { rm -rf "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
@@ -324,7 +344,7 @@ claim_sealed() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/sealed" sha applied logs rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo sealed || { rm -rf "$work"; return 1; }
   [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
   ssh-keygen -q -t ed25519 -N "" -C agent -f "$work/agent" || rc=1
@@ -371,7 +391,7 @@ claim_refuse() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/refuse" sha applied logs rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo refuse || { rm -rf "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
     sed -i.bak 's#--gate always#--gate never#' "$work/tree/.forgejo/workflows/terragucci.yml"
@@ -412,7 +432,7 @@ claim_reconcile() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/two-roots" mode=apply out pr sha
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   local name
   # Forgejo settles a deleted or new repo a moment after answering; wait for it,
   # or the next call can meet the old repo or a 404.
@@ -535,6 +555,7 @@ report_run() {
   [ -n "$base" ] && extra+=(-e "TG_BASE=$base")
   docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     ${extra[@]+"${extra[@]}"} \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -551,7 +572,7 @@ claim_report() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 dir root f n i index path commits=() prefix cfg=""
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   prefix="smoke-$(date +%s)"   # a fresh index for each claim run
   # BREAK: no bucket named, so nothing reaches the index.
   [ -z "${BREAK:-}" ] && cfg="$(printf 'reports:\n  bucket: s3://%s\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix")"
@@ -602,7 +623,7 @@ claim_affected() {
   . "$HERE/lib.sh"
   local work rc=0 r got want base=1
   want="envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/platform,envs/dev/search"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   [ -n "${BREAK:-}" ] && base=""
   REPORT_BASE="$base" REPORT_EDIT='printf "\n# smoke affected: a change to this root alone\n" >> envs/dev/platform/main.tf' report_run "$work" || true
   r="$work/terragucci-report/report.json"
@@ -625,7 +646,7 @@ claim_grouped() {
   . "$HERE/lib.sh"
   local repo="$USER/example" branch=smoke/grouped work sha pr rc=0 deadline state notes body roots want root groups
   want="$(for e in dev prod staging; do for s in email orders payments search; do echo "envs/$e/$s"; done; done | sort | paste -sd, -)"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
     || { log "no example repo; run 'just example up' first"; rm -rf "$work"; return 1; }
   # The pipeline this tree renders, so the pull request runs it whatever main carries.
@@ -698,7 +719,7 @@ claim_traces() {
   . "$HERE/lib.sh"
   collector_up || return 1
   local work rc=0 commit trace roots spans binary env="OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   # BREAK: traces off, for terragucci and the binary alike.
   [ -n "${BREAK:-}" ] && env="$env OTEL_TRACES_EXPORTER=none"
   mkdir -p "$work/run"
@@ -733,7 +754,7 @@ claim_metrics() {
   . "$HERE/lib.sh"
   collector_up || return 1
   local work rc=1 commit report i q want got action env="OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   # BREAK: metrics off, so nothing reaches Prometheus.
   [ -n "${BREAK:-}" ] && env="$env OTEL_METRICS_EXPORTER=none"
   mkdir -p "$work/run"
@@ -768,7 +789,7 @@ claim_highlight() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 dir patches=(module-bump replace destroy) del rep big
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   [ -n "${BREAK:-}" ] && patches=(module-bump replace)   # BREAK: no destroy to name
   report_run "$work" "${patches[@]}" || true
   dir="$work/terragucci-report"
@@ -809,7 +830,7 @@ claim_drift() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 dir issues n body root="envs/staging/orders" queue="shop-staging-orders-jobs"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   open_issues() { api "$URL/api/v1/repos/$USER/example/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
   drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
     mkdir -p "$1"
@@ -871,7 +892,7 @@ claim_tips() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 on off cfg=""
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/on" "$work/off"
   [ -n "${BREAK:-}" ] && cfg="tips: false"
   REPORT_CONFIG="$cfg" report_run "$work/on" float || true
@@ -908,7 +929,7 @@ claim_publish() {
   # A fresh repo and registry repository per run: the registry keeps releases
   # between runs, and a release cut from an earlier run's commit would stop this one.
   local repo="$USER/$name"
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
   mkdir -p "$work/certs" "$work/tree/modules/service" "$work/tree/modules/queue" "$work/tree/envs/dev"
@@ -991,7 +1012,7 @@ claim_rollout() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/rollout" mode=apply out rc pr sha n files
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
@@ -1132,7 +1153,7 @@ claim_respond_refused() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work out patches=(replace)
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   [ -n "${BREAK:-}" ] && patches=()
   mkdir -p "$work/approved" "$work/current"
   report_run "$work/approved" || true
@@ -1153,7 +1174,7 @@ claim_respond_triage() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work key="respond/triage-$STAMP.tfstate" out
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/app"
   respond_root "$key" 'resource "terraform_data" "mark" {}' > "$work/app/main.tf"
   cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$work/app/"
@@ -1181,7 +1202,7 @@ claim_respond_drift() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/respond-drift" queue="tg-drift-$STAMP" extra="tg-drift-$STAMP-extra" url xurl out pr files args=()
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-drift || return 1
   respond_tree "$work" "$repo" "$(respond_root "respond/drift-$STAMP.tfstate" "resource \"aws_sqs_queue\" \"jobs\" {
   name                       = \"$queue\"
@@ -1216,7 +1237,7 @@ claim_respond_tips() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/respond-tips" tree out pr branch want rc=0
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-tips || return 1
   respond_tree "$work" "$repo" ""
   tree="$work/tree"
@@ -1252,7 +1273,7 @@ claim_respond_fmt() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/respond-fmt" main_sha head subject mode=apply out
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-fmt || return 1
   respond_tree "$work" "$repo" "$(respond_root "respond/fmt.tfstate" "")"
   main_sha="$(push_tree "$work/tree" "$repo" main "formatted")" || return 1
@@ -1278,7 +1299,7 @@ claim_respond_notes() {
   local work out c=(git -c user.name=t -c user.email=t@t -c commit.gpgsign=false) feat="feat(net)!: rename the queue output" fix="fix(net): tag the queue"
   [ -n "${BREAK:-}" ] && { feat="rename the queue output"; fix="tag the queue"; }
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || return 1
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/modules/net"
   ( cd "$work" && git init -q -b main && echo '# net' > modules/net/main.tf && git add -A && "${c[@]}" commit -qm "feat: the net module" \
     && git tag modules/net/v0.1.0 && echo '# tags' >> modules/net/main.tf && "${c[@]}" commit -qam "$fix" \
@@ -1322,6 +1343,7 @@ tg_report_run() { # work, patches...
   [ -n "${TG_EDIT:-}" ] && (cd "$work" && eval "$TG_EDIT")
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke $(date +%s%N)"
   docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
     -e TG_BASE="${TG_BASE_OVERRIDE-$base}" \
@@ -1343,7 +1365,7 @@ claim_tg_zero_config() {
   # root.hcl and the 15 units, with no roots setting, and write exactly the
   # committed pipeline. BREAK: an exclude drops prod, so the units differ.
   local work rc=0 out
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   cp -R "$TG_EXAMPLE/." "$work/"
   rm -f "$work/.forgejo/workflows/terragucci.yml"
   [ -n "${BREAK:-}" ] && printf 'terragrunt:\n  exclude: ["live/prod/**"]\n' >> "$work/terragucci.yml"
@@ -1366,7 +1388,7 @@ claim_tg_waves() {
   log() { echo "[smoke tg-waves] $*" >&2; }
   local work="" rc=0 logs first_other last_dev
   if [ -n "${BREAK:-}" ]; then
-    work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+    work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
     cp -R "$TG_EXAMPLE/." "$work/"
     printf 'binary: tofu\n' > "$work/terragucci.yml"
     (cd "$work" && "$TERRAGUCCI" init >/dev/null) || { rm -rf "$work"; return 1; }
@@ -1399,7 +1421,7 @@ claim_tg_check() {
     team   = "orders"
   owner = "shop"
 }'
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
     || { log "no example repo; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
   [ -n "${BREAK:-}" ] && echo "$bad" > "$work/tree/live/dev/orders/owner.hcl"
@@ -1426,7 +1448,7 @@ claim_tg_affected() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 r n
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then TG_BASE_OVERRIDE="" tg_report_run "$work" module-bump || true; else tg_report_run "$work" module-bump || true; fi
   r="$work/terragucci-report/report.json"
   [ -f "$r" ] || { log "no report"; rm -rf "$work"; return 1; }
@@ -1447,7 +1469,7 @@ claim_tg_mock_lint() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 edit=""
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   [ -n "${BREAK:-}" ] && edit="sed -i.bak 's|^  mock_outputs = {|  mock_outputs_allowed_terraform_commands = [\"validate\", \"plan\"]\n  mock_outputs = {|' live/prod/email/terragrunt.hcl && rm live/prod/email/terragrunt.hcl.bak"
   TG_EDIT="$edit" tg_report_run "$work" one-unit || true
   jq -e '.tips[] | select(.rule == "TF041" and .root == "live/prod/email" and (.url | startswith("https://")))' "$work/terragucci-report/report.json" >/dev/null 2>&1 \
@@ -1467,7 +1489,7 @@ claim_tg_refuse() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 r tree
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
     tree="$work/ledger"; cp -R "$TG_EXAMPLE/." "$tree/"; git -C "$tree" init -q; git -C "$tree" apply "$TG_EXAMPLE/changes/new-service.patch"
     TG_TREE="$tree" "$HERE/example-terragrunt.sh" tg run --working-dir live/dev/ledger -- apply -auto-approve >&2 || true
@@ -1500,7 +1522,7 @@ claim_tg_mock_trap() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local repo="$USER/$TG_REPO_NAME" work sha rc=0 state
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
     || { log "no example repo; run 'just example-terragrunt up' first"; rm -rf "$work"; return 1; }
   git -C "$work/tree" apply "$TG_EXAMPLE/changes/new-service.patch" || { rm -rf "$work"; return 1; }
@@ -1534,7 +1556,7 @@ claim_tg_drift() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 n issues body r unit="live/staging/orders" queue="shop-tg-staging-orders-jobs" repo="$USER/$TG_REPO_NAME" deletes extra
-  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
   drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
     local TG_STAGE=tf-drift
@@ -1583,7 +1605,10 @@ run_claim() { # name -> prints the SMOKE line, returns 1 on fail
     return 0
   fi
   started=$(date +%s)
+  trap 'cleanup_works; exit 130' INT
+  trap 'cleanup_works; exit 143' TERM
   if "claim_${name//-/_}"; then held=1; else held=0; fi
+  cleanup_works
   secs=$(( $(date +%s) - started ))
   if [ -z "${BREAK:-}" ]; then
     if [ $held = 1 ]; then say "$name" pass "seconds=$secs"; else say "$name" fail "seconds=$secs"; return 1; fi
