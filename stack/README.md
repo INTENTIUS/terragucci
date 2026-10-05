@@ -118,6 +118,10 @@ These came from choudoufu's GitLab run and hold here too.
 
 `forgejo-runner register` and `create-runner-file` are both marked deprecated in forgejo-runner 13. `bootstrap.sh` creates the runner on the server with `POST /api/v1/admin/actions/runners`, which returns a uuid and a token, and writes them into the runner's config under `server.connections`. The runner container waits for that config before starting its daemon. The config also mounts the `terragucci-job-cache` volume at `/cache` in every job container, which holds the OpenTofu binary and the provider plugin cache, so the AWS provider downloads once per stack rather than once per job.
 
+### OIDC tokens
+
+Forgejo serves Actions OIDC tokens from version 15 and Forgejo Runner from 12.5, so the pinned pair serves them with no setting: Forgejo generates its signing key under `/data` on first use and publishes it at `http://forgejo:3000/api/actions/.well-known/openid-configuration`. A job gets `ACTIONS_ID_TOKEN_REQUEST_URL` only when it sets `enable-openid-connect: true`; Forgejo does not read `permissions: id-token: write`. The `forgejo-oidc` claim in `smoke.sh` checks it end to end: floci accepts a token from an issuer it does not host without checking it, so the claim's probe verifies the signature against Forgejo's keys itself before it trades the token with floci's STS.
+
 ## Pins
 
 | Piece | Pin |

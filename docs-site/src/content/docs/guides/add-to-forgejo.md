@@ -36,7 +36,7 @@ Forgejo cancels the earlier runs of a branch when a push arrives, even one that 
 
 ### 3. Give the jobs cloud access
 
-The plan job runs `plan`, so it needs to read your state and providers. On Forgejo 15 or later, with Forgejo Runner 12.5 or later, set `oidc` in `terragucci.yml` and run `init` again. The plan and apply jobs then set `enable-openid-connect: true` and exchange Forgejo's identity token for roles.
+The plan job runs `plan` and needs to read your state and providers. Forgejo 15 and Forgejo Runner 12.5 serve identity tokens to jobs. On those versions or later, set `oidc` in `terragucci.yml` and run `init` again. The plan and apply jobs then set `enable-openid-connect: true` and exchange Forgejo's identity token for roles.
 
 ```yaml
 oidc:
@@ -44,7 +44,7 @@ oidc:
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
 ```
 
-The token's issuer is your Forgejo URL followed by `/api/actions`, and the role's trust policy must accept it and your repo. On an older Forgejo or runner, leave `oidc` unset and give the runner static credentials instead. [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) has the details.
+The token's issuer is your Forgejo URL followed by `/api/actions`, and the role's trust policy must accept it and your repo. An older Forgejo or runner serves no token. There, leave `oidc` unset and give the runner static credentials instead. [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) has the details.
 
 ### 4. Commit and open a pull request
 
