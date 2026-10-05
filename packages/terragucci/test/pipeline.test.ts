@@ -34,7 +34,7 @@ describe("apply concurrency", () => {
   });
 
   it("forgejo names a workflow-level group that does not cancel, or a later push cancels a run that is applying", () => {
-    expect(body(render("forgejo")).concurrency).toEqual({ group: "terragucci-${{ github.ref }}", "cancel-in-progress": false });
+    expect(body(render("forgejo")).concurrency).toEqual({ group: "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false });
     expect(body(render("github")).concurrency).toBeUndefined();
   });
 
@@ -42,6 +42,47 @@ describe("apply concurrency", () => {
     expect(render("forgejo")).toContain("refs/tags/terragucci-apply-lock");
     expect(render("github")).not.toContain("terragucci-apply-lock");
     expect(render("gitlab")).not.toContain("terragucci-apply-lock");
+  });
+});
+
+describe("the comment trigger", () => {
+  it.each(["github", "forgejo"] as const)("%s: issue_comment starts a re-plan job and nothing that applies", (forge) => {
+    const doc = body(render(forge, OIDC));
+    expect(doc.on.issue_comment).toEqual({ types: ["created"] });
+    expect(doc.jobs.replan.if).toContain("github.event_name == 'issue_comment'");
+    expect(doc.jobs.replan.if).toContain("startsWith(github.event.comment.body, '/terragucci')");
+    // The comment-triggered run takes the plan job's read-only role, never the apply role.
+    expect(JSON.stringify(doc.jobs.replan)).toContain(OIDC.plan_role);
+    expect(JSON.stringify(doc.jobs.replan)).not.toContain(OIDC.apply_role);
+    expect(doc.jobs.replan.permissions.contents).toBe("read");
+    // The check job does not run for a comment (its fork test alone would be true for one), and the apply chain hangs off check.
+    expect(doc.jobs.check.if).toContain("github.event_name == 'pull_request'");
+    expect(doc.jobs["apply-wave-1"].needs).toBe("check");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the comment never reaches a shell as an expression", (forge) => {
+    const text = render(forge);
+    const run = JSON.stringify(body(text).jobs.replan.steps);
+    expect(run).not.toContain("github.event.comment");
+    expect(run).toContain("terragucci comment --layers");
+    expect(run).not.toContain("eval ");
+    // The only mention of the comment body outside the script is the job's startsWith filter.
+    expect(text.match(/github\.event\.comment/g)).toHaveLength(1);
+  });
+
+  it("the re-plan script checks the comment before it asks for credentials, then plans the pull request's head", () => {
+    const script = planScript("tofu", layers, "github", OIDC, {}, true);
+    const at = (s: string): number => script.indexOf(s);
+    expect(at("terragucci comment")).toBeGreaterThan(-1);
+    expect(at("terragucci comment")).toBeLessThan(at("tg oidc"));
+    expect(at("git checkout --quiet --detach")).toBeLessThan(at("terragucci stage tf-plan"));
+    expect(script).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
+    expect(planScript("tofu", layers, "github", OIDC)).not.toContain("terragucci comment");
+  });
+
+  it("gitlab: no comment trigger", () => {
+    expect(render("gitlab")).not.toContain("issue_comment");
+    expect(body(render("gitlab")).replan).toBeUndefined();
   });
 });
 

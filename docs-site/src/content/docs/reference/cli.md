@@ -14,6 +14,7 @@ description: Every terragucci command, its flags and its exit codes.
 | `publish` | publishes each changed module at a new version |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
+| `comment` | reads a `/terragucci plan [root]` pull request comment; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem |
 | `install` | fetches a release of OpenTofu, Terraform or Terragrunt, verified against its checksums |
 | `profiles` | prints the stack profiles a config needs, for the local validation stack |
@@ -102,6 +103,14 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--out`, `--binary`, `--config`, `--project` | all | as above |
 
 [Responses to pipeline events](/terragucci/reference/responses/) explains each event.
+
+## comment
+
+```text
+terragucci comment --layers <a,b;c> --out <file>
+```
+
+Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`. The generated `replan` job runs it before it asks for any credential. See [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). The decision is to plan, or to stop with a reason; a refused command is answered on the pull request. The only command is `plan`.
 
 ## config check
 
