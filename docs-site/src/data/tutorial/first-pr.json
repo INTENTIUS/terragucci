@@ -1,11 +1,17 @@
 {
   "step": "first-pr",
-  "source_hash": "1ee86c0a461fb69e",
+  "source_hash": "53d2ce1a38f1fe7f",
   "commands": [
     {
       "cmd": "just example change one-root",
-      "output": "[example] pushed change/one-root at 6f68593f\n[example] run 3 for 6f68593f: success (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (success)",
+      "output": "[example] pushed change/one-root at 76e06393\n[example] run 3 for 76e06393: success (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (success)",
       "exit": 0
     }
-  ]
+  ],
+  "shots": {
+    "pull-light": "ff8f50b255ec0d4e",
+    "pull-dark": "687567f89bd999f4",
+    "files-light": "41c35f769e9490ec",
+    "files-dark": "bbdaaff528a4f5ba"
+  }
 }
