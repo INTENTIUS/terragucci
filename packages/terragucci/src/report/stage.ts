@@ -17,6 +17,7 @@ import { basename, join, resolve } from "node:path";
 import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
 import { defaultTerragruntExec, planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { parseTerragruntReport } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
 // Path rules only: no HCL parser, no compiler.
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
@@ -318,7 +319,7 @@ async function planUnits(
   waves: string[][],
   binary: string,
   work: string,
-  options: StageOptions & { dependents?: "follow" | "plan"; selection: (unit: string) => string; preview: string[]; drift?: boolean },
+  options: StageOptions & { dependents?: "follow" | "plan"; selection: (unit: string) => string; preview: string[]; drift?: boolean; observer?: StageObserver },
   log: (line: string) => void,
 ): Promise<{ inputs: RootInput[]; plans: Map<string, { text?: string; json?: string }>; redacted: number; mockReads: ReportMockRead[]; waiting: string[]; names: Map<string, Map<string, string>> }> {
   const drift = options.drift === true;
@@ -334,6 +335,7 @@ async function planUnits(
 
   const read = (workDir: string, wave: TerragruntWavePlan, provisional: boolean): void => {
     if (wave.code !== 0 && wave.code !== 2) log(tail(wave.log));
+    if (options.observer) for (const [unit, secs] of unitSeconds(join(workDir, "plan-report.json"))) options.observer.unitTimed(unit, secs);
     const results = new Map(wave.results.map((r) => [r.unit, r]));
     for (const part of wave.parts) {
       const path = part.member.member;
@@ -404,6 +406,32 @@ async function planUnits(
     }
   }
   return { inputs, plans, redacted, mockReads, waiting: allWaiting, names };
+}
+
+/** `2026-10-05T10:00:01.123456789Z` as epoch milliseconds; the fraction past milliseconds is dropped. */
+export function isoMillis(text: string): number {
+  return Date.parse(text.replace(/(\.\d{3})\d+/, "$1"));
+}
+
+/**
+ * Each unit's time in a wave, from Terragrunt's run report (`Started` and
+ * `Ended`), in seconds. Empty when the report is missing or unreadable, and a
+ * row without both times is left out.
+ */
+export function unitSeconds(reportFile: string): Map<string, number> {
+  const out = new Map<string, number>();
+  let rows: ReturnType<typeof parseTerragruntReport>;
+  try {
+    rows = parseTerragruntReport(readFileSync(reportFile, "utf-8"));
+  } catch {
+    return out;
+  }
+  for (const [unit, row] of rows) {
+    if (!row.started || !row.ended) continue;
+    const ms = isoMillis(row.ended) - isoMillis(row.started);
+    if (Number.isFinite(ms) && ms >= 0) out.set(unit, ms / 1000);
+  }
+  return out;
 }
 
 /**
@@ -638,7 +666,7 @@ async function runTerragruntStage(
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
   try {
     const planned = await planUnits(repo, waves, binary, work, {
-      ...options, env, drift, dependents: drift ? "follow" : settings.terragrunt?.dependents, preview,
+      ...options, env, drift, dependents: drift ? "follow" : settings.terragrunt?.dependents, preview, observer,
       selection: (u) => reasons.get(u) ?? everyUnit,
     }, log);
     const { inputs, plans, redacted, mockReads } = planned;

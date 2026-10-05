@@ -252,6 +252,8 @@
               "root": { "type": "string" },
               "seconds": { "type": "number" },
               "plan_seconds": { "type": "number" },
+              "apply_seconds": { "type": "number" },
+              "source": { "$ref": "#/$defs/timingSource" },
               "detail": { "$ref": "#/$defs/timingDetail" }
             }
           }
@@ -275,6 +277,7 @@
   },
   "$defs": {
     "timingDetail": { "enum": ["resources", "aggregate", "none"] },
+    "timingSource": { "description": "binary: terragucci timed each run of the binary; terragrunt: from Terragrunt's run report (minor 3).", "enum": ["binary", "terragrunt"] },
     "rootTimings": {
       "description": "Where a root's plan spent its time, from the binary's spans (minor 2).",
       "type": "object",
@@ -282,6 +285,8 @@
       "properties": {
         "seconds": { "type": "number" },
         "plan_seconds": { "type": "number" },
+        "apply_seconds": { "description": "On a tf-apply wave, the binary's apply run alone (minor 3).", "type": "number" },
+        "source": { "$ref": "#/$defs/timingSource" },
         "spans": { "type": "integer" },
         "detail": { "$ref": "#/$defs/timingDetail" },
         "note": { "type": "string" },
