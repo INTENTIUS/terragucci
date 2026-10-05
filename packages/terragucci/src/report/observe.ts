@@ -239,7 +239,19 @@ export class StageObserver {
       if (seconds === undefined) continue;
       out.push(g(METRIC.rootApply, "s", "How long one root took to apply", seconds, { ...wave, root: r.path }));
     }
+    out.push(...this.initAndLockGauges(report, g));
     if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, Number(end / 1_000_000n) / 1000, g));
+    return out;
+  }
+
+  /** Provider start-up and state lock waits per root, which a plan stage and a tf-apply wave both send. */
+  private initAndLockGauges(report: Report, g: (name: string, unit: string, description: string, value: number, attributes: Record<string, string>) => Gauge): Gauge[] {
+    const out: Gauge[] = [];
+    for (const r of report.roots) {
+      for (const p of r.timings?.provider_init ?? []) out.push(g(METRIC.providerInit, "s", "Time spent starting a provider in a root", p.ms / 1000, { root: r.path, provider: p.provider }));
+      const wait = (r.timings?.lock_waits ?? []).reduce((n, w) => n + w.ms, 0);
+      if (r.timings?.lock_waits?.length) out.push(g(METRIC.lockWait, "s", "Time spent waiting for a state lock in a root", wait / 1000, { root: r.path }));
+    }
     return out;
   }
 
@@ -256,11 +268,7 @@ export class StageObserver {
       for (const [rule, n] of byRule) out.push(g(METRIC.tips, "{tip}", "Tips the run gave, by rule", n, { rule }));
     }
     for (const p of this.pins) out.push(g(METRIC.modulePin, "", "A module call's pin in a root", 1, { root: p.root, module: p.module, version: p.version }));
-    for (const r of report.roots) {
-      for (const p of r.timings?.provider_init ?? []) out.push(g(METRIC.providerInit, "s", "Time spent starting a provider in a root", p.ms / 1000, { root: r.path, provider: p.provider }));
-      const wait = (r.timings?.lock_waits ?? []).reduce((n, w) => n + w.ms, 0);
-      if (r.timings?.lock_waits?.length) out.push(g(METRIC.lockWait, "s", "Time spent waiting for a state lock in a root", wait / 1000, { root: r.path }));
-    }
+    out.push(...this.initAndLockGauges(report, g));
     for (const x of report.timings?.resources ?? []) out.push(g(METRIC.resource, "s", "How long one of the run's slowest resources took", x.ms / 1000, { root: x.root, address: x.address }));
     if (report.run.stage === "tf-drift") {
       const d = drifted(report);
