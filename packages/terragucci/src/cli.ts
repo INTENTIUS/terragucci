@@ -286,5 +286,9 @@ function isEntry(): boolean {
 }
 
 if (isEntry()) {
-  main(process.argv.slice(2)).then((code) => process.exit(code));
+  // Exit once stdout and stderr have flushed: on a pipe, writes are queued, and
+  // exiting straight away cuts the output off at 64 KB.
+  main(process.argv.slice(2)).then((code) => {
+    process.stdout.write("", () => process.stderr.write("", () => process.exit(code)));
+  });
 }
