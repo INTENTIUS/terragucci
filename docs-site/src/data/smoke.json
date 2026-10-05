@@ -1,6 +1,6 @@
 {
   "recorded": "2026-10-05",
-  "commit": "4638c80",
+  "commit": "342fafb",
   "forge": "forgejo",
   "claims": [
     {
@@ -244,6 +244,83 @@
     {
       "claim": "steward",
       "says": "tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "policy",
+      "says": "an opt-in policy denies a plan, fails the root in tf-plan, and names the violation",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "comment-plan",
+      "says": "a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "lock-wait",
+      "says": "a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "dash-pipeline",
+      "says": "the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "dash-changes",
+      "says": "the Change review dashboard init writes shows the roots, groups and changes by action of a pull request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "dash-waves",
+      "says": "the Rollouts and waves dashboard init writes shows a wave waiting for its approval, how long, and wave runs by result",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "dash-drift",
+      "says": "the Drift dashboard init writes shows the roots a drift run found drifted and how old the drift is",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "dash-estate",
+      "says": "the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "dash-runs",
+      "says": "the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "dash-slos",
+      "says": "the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "drill-down",
+      "says": "the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
