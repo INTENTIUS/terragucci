@@ -15,6 +15,8 @@
 //   PATCH  /api/v3/repos/:o/:r/pulls/:n           state=closed|open
 //   PUT    /api/v3/repos/:o/:r/pulls/:n/merge     a merge commit on the base branch
 //   GET|POST /api/v3/repos/:o/:r/issues/:n/comments, PATCH .../issues/comments/:id
+//   POST   /api/v3/repos/:o/:r/statuses/:sha        a commit status
+//   GET    /api/v3/repos/:o/:r/commits/:sha/statuses newest first
 //   GET|POST /:o/:r.git/...                       git; a push needs the token
 //
 // Auth: `Authorization: Bearer <token>` or `token <token>` on the API, and
@@ -157,6 +159,15 @@ createServer(async (req, res) => {
       const name = rest.slice(1).join("/");
       const s = sha(repoDir(o, r), name);
       return s ? json(res, 200, { name, commit: { sha: s } }) : notFound(res);
+    }
+    if (rest[0] === "statuses" && rest.length === 2 && req.method === "POST") {
+      st.statuses ??= [];
+      const s = { id: st.statuses.length + 1, sha: rest[1], state: data.state, context: data.context ?? "default", description: data.description ?? null, target_url: data.target_url ?? null };
+      st.statuses.push(s);
+      return json(res, 201, s);
+    }
+    if (rest[0] === "commits" && rest[2] === "statuses" && rest.length === 3 && req.method === "GET") {
+      return json(res, 200, (st.statuses ?? []).filter((s) => s.sha === rest[1]).reverse());
     }
     if (rest[0] === "pulls" && rest.length === 1) {
       if (req.method === "GET") {
