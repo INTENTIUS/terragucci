@@ -1,7 +1,8 @@
-// Holds @intentius/terragucci to its shape (terragucci#18, #87): no runtime
+// Holds @intentius/terragucci to its shape (terragucci#18, #87, #163): no runtime
 // dependencies, no imports but Node's own modules and the two optional packages,
-// no input from a path that would drag lint rules, codegen or the TypeScript
-// compiler into the bundle, and a 1 MB accident ceiling on its size.
+// no input from a path that would drag lint rules, codegen, the TypeScript
+// compiler or the dashboards' renderers into the bundle, and a 1 MB accident
+// ceiling on its size.
 //   node scripts/bundle-check.mjs     (after `just build-cli`)
 import { readFileSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
@@ -22,6 +23,13 @@ const DENIED = [
   [/^@intentius\/chant-lexicon-[^/]+\/src\/(index|plugin)\.ts$/, "a lexicon entry point"],
   [/^@intentius\/chant-lexicon-[^/]+\/src\/lint\/rules\//, "lexicon lint rules"],
   [/^@intentius\/chant-lexicon-[^/]+\/src\/codegen\//, "lexicon codegen"],
+  // The dashboards and rules are rendered when the bundle is built; init fills
+  // the result (src/dashboards/template.ts). Their lexicons, the YAML dumper
+  // and the PromQL parser stay out of the bundle (terragucci#163).
+  [/^@intentius\/chant-lexicon-(grafana|prometheus|otel)\//, "a dashboards lexicon"],
+  [/^js-yaml\//, "js-yaml"],
+  [/^@lezer\/|^@prometheus-io\//, "the PromQL parser"],
+  [/(^|\/)packages\/terragucci\/src\/dashboards\/index\.ts$/, "the dashboards' declarations"],
 ];
 
 const root = join(import.meta.dirname, "..");

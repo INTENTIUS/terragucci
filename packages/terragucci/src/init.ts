@@ -21,7 +21,8 @@ import {
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
-import { dashboardSettings, renderDashboards, writtenByTerragucci } from "./dashboards";
+import { dashboardFiles } from "./dashboards/files";
+import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
 import { MARKER, RenderError, renderPipeline, type PipelineInput } from "./render";
 import { terragruntInstalls } from "./render-terragrunt";
@@ -215,7 +216,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // Dashboards and alert rules, next to the pipeline, when terragucci.yml asks for them.
   const dashboards = dashboardSettings(settings.dashboards);
   if (dashboards) {
-    for (const f of renderDashboards(dashboards, { ...(reportsBase(settings.reports) ? { reports: reportsBase(settings.reports) } : {}) })) {
+    for (const f of dashboardFiles(dashboards, { ...(reportsBase(settings.reports) ? { reports: reportsBase(settings.reports) } : {}) })) {
       const path = join(repo, f.path);
       if (existsSync(path) && !options.force && !writtenByTerragucci(f.path, readFileSync(path, "utf-8"))) {
         throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside, set dashboards.dir, or pass --force`);

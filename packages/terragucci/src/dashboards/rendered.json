@@ -1,0 +1,4988 @@
+{
+  "note": "Rendered by scripts/render-dashboards.ts from src/dashboards/index.ts. Do not edit; run 'just ci'.",
+  "files": [
+    {
+      "path": "grafana/dashboards/slo-terragucci-apply-success.json",
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "99% over 28d: SLI, error budget and burn rates for the terragucci-apply-success SLO.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Objective",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "stat",
+            "id": 2,
+            "title": "SLI over 28d",
+            "description": "Share of good events over the last 28d. Green at or above the 99% objective.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-apply-success\"}",
+                "legendFormat": "SLI"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0.99,
+                      "color": "green"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 3,
+            "title": "Objective",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 6,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:objective:ratio{slo=\"terragucci-apply-success\"}",
+                "legendFormat": "objective"
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 4,
+            "title": "Error budget remaining",
+            "description": "Share of the 28d error budget (1% of events) not yet spent. Below 0 the objective is missed.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:error_budget:remaining{slo=\"terragucci-apply-success\"}",
+                "legendFormat": "remaining"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 1,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0,
+                      "color": "orange"
+                    },
+                    {
+                      "value": 0.25,
+                      "color": "green"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 5,
+            "title": "Burn-rate alerts firing",
+            "description": "ErrorBudgetBurn alerts for this SLO, any tier.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 18,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum(ALERTS{alertname=\"ErrorBudgetBurn\", slo=\"terragucci-apply-success\", alertstate=\"firing\"}) or vector(0)",
+                "legendFormat": "firing"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "decimals": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 1,
+                      "color": "red"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 6,
+            "title": "SLI over 28d",
+            "description": "The dashed line is the 99% objective.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 6
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-apply-success\"}",
+                "legendFormat": "SLI"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0.99,
+                      "color": "green"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 7,
+            "title": "Error budget remaining",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 6
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:error_budget:remaining{slo=\"terragucci-apply-success\"}",
+                "legendFormat": "remaining"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 1,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0,
+                      "color": "green"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Burn rate by alert window",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 14
+            },
+            "id": 8,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 9,
+            "title": "Burn rate 1h / 5m (page)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity page while both windows are above 13.44, which spends the budget in 2d2h.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 15
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate1h{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "1h"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate5m{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "5m"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 13.44,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 10,
+            "title": "Burn rate 6h / 30m (page)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity page while both windows are above 5.6, which spends the budget in 5d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 15
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "6h"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate30m{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "30m"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 5.6,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 11,
+            "title": "Burn rate 1d / 2h (ticket)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 2.8, which spends the budget in 1w3d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 23
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate1d{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "1d"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate2h{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "2h"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 2.8,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 12,
+            "title": "Burn rate 3d / 6h (ticket)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 0.933333, which spends the budget in 4w2d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 23
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate3d{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "3d"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-apply-success\"} / 0.01",
+                "legendFormat": "6h"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 0.933333,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci",
+          "slo"
+        ],
+        "templating": {
+          "list": []
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "SLO: terragucci-apply-success",
+        "uid": "slo-terragucci-apply-success",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/slo-terragucci-drift-corrected.json",
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "90% over 28d: SLI, error budget and burn rates for the terragucci-drift-corrected SLO.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Objective",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "stat",
+            "id": 2,
+            "title": "SLI over 28d",
+            "description": "Share of good events over the last 28d. Green at or above the 90% objective.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\"}",
+                "legendFormat": "SLI"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0.9,
+                      "color": "green"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 3,
+            "title": "Objective",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 6,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:objective:ratio{slo=\"terragucci-drift-corrected\"}",
+                "legendFormat": "objective"
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 4,
+            "title": "Error budget remaining",
+            "description": "Share of the 28d error budget (10% of events) not yet spent. Below 0 the objective is missed.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:error_budget:remaining{slo=\"terragucci-drift-corrected\"}",
+                "legendFormat": "remaining"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 1,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0,
+                      "color": "orange"
+                    },
+                    {
+                      "value": 0.25,
+                      "color": "green"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 5,
+            "title": "Burn-rate alerts firing",
+            "description": "ErrorBudgetBurn alerts for this SLO, any tier.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 18,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum(ALERTS{alertname=\"ErrorBudgetBurn\", slo=\"terragucci-drift-corrected\", alertstate=\"firing\"}) or vector(0)",
+                "legendFormat": "firing"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "decimals": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 1,
+                      "color": "red"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 6,
+            "title": "SLI over 28d",
+            "description": "The dashed line is the 90% objective.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 6
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\"}",
+                "legendFormat": "SLI"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0.9,
+                      "color": "green"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 7,
+            "title": "Error budget remaining",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 6
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:error_budget:remaining{slo=\"terragucci-drift-corrected\"}",
+                "legendFormat": "remaining"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 1,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0,
+                      "color": "green"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Burn rate by alert window",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 14
+            },
+            "id": 8,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 9,
+            "title": "Burn rate 1d / 2h (ticket)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 2.8, which spends the budget in 1w3d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 15
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate1d{slo=\"terragucci-drift-corrected\"} / 0.1",
+                "legendFormat": "1d"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate2h{slo=\"terragucci-drift-corrected\"} / 0.1",
+                "legendFormat": "2h"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 2.8,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 10,
+            "title": "Burn rate 3d / 6h (ticket)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 0.933333, which spends the budget in 4w2d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 15
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate3d{slo=\"terragucci-drift-corrected\"} / 0.1",
+                "legendFormat": "3d"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-drift-corrected\"} / 0.1",
+                "legendFormat": "6h"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 0.933333,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci",
+          "slo"
+        ],
+        "templating": {
+          "list": []
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "SLO: terragucci-drift-corrected",
+        "uid": "slo-terragucci-drift-corrected",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/slo-terragucci-plan-time.json",
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "95% over 28d: SLI, error budget and burn rates for the terragucci-plan-time SLO.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Objective",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "stat",
+            "id": 2,
+            "title": "SLI over 28d",
+            "description": "Share of good events over the last 28d. Green at or above the 95% objective.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\"}",
+                "legendFormat": "SLI"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0.95,
+                      "color": "green"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 3,
+            "title": "Objective",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 6,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:objective:ratio{slo=\"terragucci-plan-time\"}",
+                "legendFormat": "objective"
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 4,
+            "title": "Error budget remaining",
+            "description": "Share of the 28d error budget (5% of events) not yet spent. Below 0 the objective is missed.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:error_budget:remaining{slo=\"terragucci-plan-time\"}",
+                "legendFormat": "remaining"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "area",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 1,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0,
+                      "color": "orange"
+                    },
+                    {
+                      "value": 0.25,
+                      "color": "green"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 5,
+            "title": "Burn-rate alerts firing",
+            "description": "ErrorBudgetBurn alerts for this SLO, any tier.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 18,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum(ALERTS{alertname=\"ErrorBudgetBurn\", slo=\"terragucci-plan-time\", alertstate=\"firing\"}) or vector(0)",
+                "legendFormat": "firing"
+              }
+            ],
+            "options": {
+              "colorMode": "background",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "none",
+                "decimals": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 1,
+                      "color": "red"
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 6,
+            "title": "SLI over 28d",
+            "description": "The dashed line is the 95% objective.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 6
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\"}",
+                "legendFormat": "SLI"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 3,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0.95,
+                      "color": "green"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 7,
+            "title": "Error budget remaining",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 6
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:error_budget:remaining{slo=\"terragucci-plan-time\"}",
+                "legendFormat": "remaining"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "decimals": 1,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "red"
+                    },
+                    {
+                      "value": 0,
+                      "color": "green"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Burn rate by alert window",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 14
+            },
+            "id": 8,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 9,
+            "title": "Burn rate 1h / 5m (page)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity page while both windows are above 13.44, which spends the budget in 2d2h.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 15
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate1h{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "1h"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "5m"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 13.44,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 10,
+            "title": "Burn rate 6h / 30m (page)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity page while both windows are above 5.6, which spends the budget in 5d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 15
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "6h"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate30m{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "30m"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 5.6,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 11,
+            "title": "Burn rate 1d / 2h (ticket)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 2.8, which spends the budget in 1w3d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 23
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate1d{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "1d"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate2h{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "2h"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 2.8,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 12,
+            "title": "Burn rate 3d / 6h (ticket)",
+            "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 0.933333, which spends the budget in 4w2d.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 23
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "slo:sli_error:ratio_rate3d{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "3d"
+              },
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "B",
+                "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"} / 0.05",
+                "legendFormat": "6h"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "suffix:x",
+                "decimals": 2,
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 0.933333,
+                      "color": "red"
+                    }
+                  ]
+                },
+                "custom": {
+                  "thresholdsStyle": {
+                    "mode": "dashed"
+                  }
+                }
+              },
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci",
+          "slo"
+        ],
+        "templating": {
+          "list": []
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "SLO: terragucci-plan-time",
+        "uid": "slo-terragucci-plan-time",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-change-review.json",
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "What each pull request's plan reaches, and the creates, replaces and destroys proposed over time.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Pull requests",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 2,
+            "title": "Roots changed per pull request",
+            "description": "Roots whose plan changes something, by project and pull request, from the latest plan of each.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project, pull_request) (last_over_time(terragucci_roots_changed{stage=\"tf-plan\", project=~\"$project\"}[$__range]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 3,
+            "title": "Groups per pull request",
+            "description": "Groups the plans fold into, by project and pull request.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project, pull_request) (last_over_time(terragucci_plan_groups{stage=\"tf-plan\", project=~\"$project\"}[$__range]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Changes",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 9
+            },
+            "id": 4,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 5,
+            "title": "Changes by action",
+            "description": "Proposed changes in each plan run, by action.",
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum by (action) (max_over_time(terragucci_plan_changes{stage=\"tf-plan\", project=~\"$project\"}[$__interval]))",
+                "legendFormat": "{{action}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 6,
+            "title": "Creates",
+            "description": "Creates proposed over the range, the largest plan of each project and pull request.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 0,
+              "y": 18
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum(max by (project, pull_request) (max_over_time(terragucci_plan_changes{stage=\"tf-plan\", project=~\"$project\", action=\"create\"}[$__range])))",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 7,
+            "title": "Updates",
+            "description": "Updates proposed over the range.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 6,
+              "y": 18
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum(max by (project, pull_request) (max_over_time(terragucci_plan_changes{stage=\"tf-plan\", project=~\"$project\", action=\"update\"}[$__range])))",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 8,
+            "title": "Replaces",
+            "description": "Replacements proposed over the range.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 12,
+              "y": 18
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum(max by (project, pull_request) (max_over_time(terragucci_plan_changes{stage=\"tf-plan\", project=~\"$project\", action=\"replace\"}[$__range])))",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "stat",
+            "id": 9,
+            "title": "Destroys",
+            "description": "Destroys proposed over the range.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 18,
+              "y": 18
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum(max by (project, pull_request) (max_over_time(terragucci_plan_changes{stage=\"tf-plan\", project=~\"$project\", action=\"delete\"}[$__range])))",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_last_run_seconds, project)",
+              "definition": "label_values(terragucci_last_run_seconds, project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Change review",
+        "uid": "terragucci-change-review",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-drift.json",
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "Drifted roots by project, how long the drift has stood, and the roots corrected.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Drift",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 2,
+            "title": "Drifted roots",
+            "description": "Roots the latest drift run found drifted, by project.",
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project) (last_over_time(terragucci_drift_roots{project=~\"$project\"}[7919003s]))",
+                "legendFormat": "{{project}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 3,
+            "title": "Drift age",
+            "description": "How long since each project's open drift was first found (its drift issue opened).",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 9
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "time() - ((\n(max by (project) (last_over_time(terragucci_drift_since_seconds{project=~\"$project\"}[7d]))) unless on (project) (max by (project) (last_over_time(terragucci_drift_clear_seconds{project=~\"$project\"}[7d])))\n)\nor\n(\n(max by (project) (last_over_time(terragucci_drift_since_seconds{project=~\"$project\"}[7d]))) > on (project) (max by (project) (last_over_time(terragucci_drift_clear_seconds{project=~\"$project\"}[7d])))\n))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 4,
+            "title": "Roots corrected",
+            "description": "Drifted roots fewer than the day before, by project.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 9
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "clamp_min(max by (project) (max_over_time(terragucci_drift_roots{project=~\"$project\"}[1d] offset 1d)) - max by (project) (max_over_time(terragucci_drift_roots{project=~\"$project\"}[1d])), 0)",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_last_run_seconds, project)",
+              "definition": "label_values(terragucci_last_run_seconds, project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Drift",
+        "uid": "terragucci-drift",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-estate.json",
+      "links": true,
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "Roots per project, the binary and terragucci versions they run, module pins across repos and tips by rule.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [
+          {
+            "title": "Report index",
+            "type": "link",
+            "url": "https://tgph0.invalid/TGPH0REPORTS/index.html",
+            "icon": "doc",
+            "tooltip": "",
+            "tags": [],
+            "asDropdown": false,
+            "targetBlank": true,
+            "includeVars": false,
+            "keepTime": false
+          }
+        ],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Projects",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 2,
+            "title": "Roots per project",
+            "description": "Roots in each project's latest plan or drift run. Each project links to its report index.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project) (last_over_time(terragucci_roots_planned{stage=~\"tf-plan|tf-drift\", project=~\"$project\"}[7d]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "project"
+                  },
+                  "properties": [
+                    {
+                      "id": "links",
+                      "value": [
+                        {
+                          "title": "Report index",
+                          "url": "https://tgph0.invalid/TGPH0REPORTS/${__value.raw}/index.html",
+                          "targetBlank": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "type": "table",
+            "id": 3,
+            "title": "Versions",
+            "description": "The binary, its version and the terragucci release each project's latest run used.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "count by (project, binary, version, service_version) (last_over_time(terragucci_binary_version{project=~\"$project\"}[7d]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Modules and tips",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 9
+            },
+            "id": 4,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 5,
+            "title": "Module pins",
+            "description": "Each module call's pin, by project and root.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project, root, module, version) (last_over_time(terragucci_module_pin{project=~\"$project\"}[7d]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 6,
+            "title": "Tips by rule",
+            "description": "Tips the latest run of each project gave, by rule.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum by (rule) (max by (project, rule) (last_over_time(terragucci_tips{project=~\"$project\"}[7d])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_last_run_seconds, project)",
+              "definition": "label_values(terragucci_last_run_seconds, project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Estate",
+        "uid": "terragucci-estate",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-estate.json",
+      "links": false,
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "Roots per project, the binary and terragucci versions they run, module pins across repos and tips by rule.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Projects",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 2,
+            "title": "Roots per project",
+            "description": "Roots in each project's latest plan or drift run.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project) (last_over_time(terragucci_roots_planned{stage=~\"tf-plan|tf-drift\", project=~\"$project\"}[7d]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 3,
+            "title": "Versions",
+            "description": "The binary, its version and the terragucci release each project's latest run used.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "count by (project, binary, version, service_version) (last_over_time(terragucci_binary_version{project=~\"$project\"}[7d]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Modules and tips",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 9
+            },
+            "id": 4,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 5,
+            "title": "Module pins",
+            "description": "Each module call's pin, by project and root.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project, root, module, version) (last_over_time(terragucci_module_pin{project=~\"$project\"}[7d]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 6,
+            "title": "Tips by rule",
+            "description": "Tips the latest run of each project gave, by rule.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum by (rule) (max by (project, rule) (last_over_time(terragucci_tips{project=~\"$project\"}[7d])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_last_run_seconds, project)",
+              "definition": "label_values(terragucci_last_run_seconds, project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Estate",
+        "uid": "terragucci-estate",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-pipeline-health.json",
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "Runs, errors and duration per stage and project, from the stage spans.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Rate and errors",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 2,
+            "title": "Runs per hour",
+            "description": "Stage runs in the hour before each point, by stage and project.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum by (terragucci_stage, terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h))",
+                "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 3,
+            "title": "Errors",
+            "description": "Share of the stage runs in the hour before each point that failed, by stage and project.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "(\nsum by (terragucci_stage, terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\", status_code=\"STATUS_CODE_ERROR\"} - terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\", status_code=\"STATUS_CODE_ERROR\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\", status_code=\"STATUS_CODE_ERROR\"} unless terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\", status_code=\"STATUS_CODE_ERROR\"} offset 1h))\nor\n0 * sum by (terragucci_stage, terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h))\n)\n/\n(sum by (terragucci_stage, terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h)) > 0)",
+                "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percentunit",
+                "min": 0,
+                "max": 1
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Duration",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 9
+            },
+            "id": 4,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 5,
+            "title": "Duration p50",
+            "description": "p50 duration of the stage runs in the hour before each point, by stage and project.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "histogram_quantile(0.5, sum by (le, terragucci_stage, terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h)))",
+                "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 6,
+            "title": "Duration p95",
+            "description": "p95 duration of the stage runs in the hour before each point, by stage and project.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "histogram_quantile(0.95, sum by (le, terragucci_stage, terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset 1h)))",
+                "legendFormat": "{{terragucci_stage}} {{terragucci_project}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Results",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 18
+            },
+            "id": 7,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 8,
+            "title": "Runs by result",
+            "description": "Stage runs over the dashboard's range, by stage and how they ended.",
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 19
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum by (terragucci_stage, terragucci_result) (clamp_min(terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset $__range, 0) or (terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=~\"$stage\", terragucci_project=~\"$project\"} offset $__range))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_spans_calls_total, terragucci_project)",
+              "definition": "label_values(terragucci_spans_calls_total, terragucci_project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            },
+            {
+              "type": "query",
+              "name": "stage",
+              "label": "Stage",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_spans_calls_total, terragucci_stage)",
+              "definition": "label_values(terragucci_spans_calls_total, terragucci_stage)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Pipeline health",
+        "uid": "terragucci-pipeline-health",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-rollouts-waves.json",
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "Waves waiting for an approval and for how long, how wave runs ended, and how far each module version has rolled out.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Waiting",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "stat",
+            "id": 2,
+            "title": "Waves waiting",
+            "description": "Waves whose latest run waits for an approval of its digest.",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "count((\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) unless on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n)\nor\n(\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) > on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n))",
+                "instant": true,
+                "range": false
+              }
+            ],
+            "options": {
+              "colorMode": "none",
+              "graphMode": "none",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ]
+              }
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 3,
+            "title": "Waiting for",
+            "description": "Each waiting wave, and how long since it first asked for an approval.",
+            "gridPos": {
+              "h": 8,
+              "w": 18,
+              "x": 6,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "time() - ((\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) unless on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n)\nor\n(\n(max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds{project=~\"$project\"}[7d]))) > on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds{project=~\"$project\"}[7d])))\n))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Wave runs",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 9
+            },
+            "id": 4,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 5,
+            "title": "Wave runs by result",
+            "description": "tf-apply runs over the range: applied, nothing to apply, waiting for an approval, refused because the plans moved after approval, or failed.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum by (terragucci_project, terragucci_result) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} offset $__range, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"} offset $__range))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "timeseries",
+            "id": 6,
+            "title": "Refused and failed waves",
+            "description": "Wave runs refused or failed in the hour before each point.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 10
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "sum by (terragucci_result) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"refused|failed\", terragucci_project=~\"$project\"} offset 1h))\nor\nlabel_replace(0 * sum(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"}), \"terragucci_result\", \"refused\", \"\", \"\")\nor\nlabel_replace(0 * sum(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_project=~\"$project\"}), \"terragucci_result\", \"failed\", \"\", \"\")",
+                "legendFormat": "{{terragucci_result}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 7,
+            "title": "Roots per wave",
+            "description": "Roots in each wave of the latest apply run, by project.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 18
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project, wave) (last_over_time(terragucci_wave_roots{project=~\"$project\"}[$__range]))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Rollouts",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 26
+            },
+            "id": 8,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 9,
+            "title": "Roots per module version",
+            "description": "How many roots pin each module version, across the projects: a rollout's progress.",
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 27
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "count by (module, version) (max by (project, root, module, version) (last_over_time(terragucci_module_pin{project=~\"$project\"}[7d])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_last_run_seconds, project)",
+              "definition": "label_values(terragucci_last_run_seconds, project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Rollouts and waves",
+        "uid": "terragucci-rollouts-waves",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-runs.json",
+      "links": true,
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "Where the runs spend their time: the slowest roots and resources, provider init, lock waits, and the trace of any run.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [
+          {
+            "title": "Report index",
+            "type": "link",
+            "url": "https://tgph0.invalid/TGPH0REPORTS/index.html",
+            "icon": "doc",
+            "tooltip": "",
+            "tags": [],
+            "asDropdown": false,
+            "targetBlank": true,
+            "includeVars": false,
+            "keepTime": false
+          }
+        ],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Slowest",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 2,
+            "title": "Slowest roots",
+            "description": "The ten slowest root plans over the range, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root) (max_over_time(terragucci_root_plan_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 3,
+            "title": "Slowest root applies",
+            "description": "The ten slowest root applies over the range, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root) (max_over_time(terragucci_root_apply_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 4,
+            "title": "Slowest resources",
+            "description": "The ten slowest resources over the range, from the binary's spans, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 9
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root, address) (max_over_time(terragucci_resource_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 5,
+            "title": "Provider init",
+            "description": "Time spent starting each provider, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 9
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, provider) (max_over_time(terragucci_provider_init_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 6,
+            "title": "Lock waits",
+            "description": "Time spent waiting for a state lock, by root, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 17
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root) (max_over_time(terragucci_lock_wait_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Stages",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 25
+            },
+            "id": 7,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 8,
+            "title": "Stage duration",
+            "description": "How long each stage run took.",
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 26
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project, stage) (max_over_time(terragucci_stage_duration_seconds{project=~\"$project\"}[$__interval]))",
+                "legendFormat": "{{project}} {{stage}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Traces",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 34
+            },
+            "id": 9,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 10,
+            "title": "Runs",
+            "description": "The trace of each stage run. Open one to see its waves, roots and the binary's own spans; a run's name links to its report.",
+            "gridPos": {
+              "h": 10,
+              "w": 24,
+              "x": 0,
+              "y": 35
+            },
+            "datasource": {
+              "type": "tempo",
+              "uid": "TGPH0TEMPO"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "tempo",
+                  "uid": "TGPH0TEMPO"
+                },
+                "refId": "A",
+                "filters": [],
+                "queryType": "traceql",
+                "query": "{ resource.service.name = \"terragucci\" && name =~ \"terragucci .*\" && span.terragucci.project =~ \"$project\" }",
+                "limit": 50,
+                "tableType": "traces"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "traceName"
+                  },
+                  "properties": [
+                    {
+                      "id": "links",
+                      "value": [
+                        {
+                          "title": "Report",
+                          "url": "https://tgph0.invalid/TGPH0REPORTS/traces/${__data.fields.traceID}.html",
+                          "targetBlank": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "links": [
+              {
+                "title": "Report index",
+                "type": "link",
+                "url": "https://tgph0.invalid/TGPH0REPORTS/index.html",
+                "icon": "external link",
+                "tooltip": "",
+                "tags": [],
+                "asDropdown": false,
+                "targetBlank": true,
+                "includeVars": false,
+                "keepTime": false
+              }
+            ]
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_last_run_seconds, project)",
+              "definition": "label_values(terragucci_last_run_seconds, project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Runs",
+        "uid": "terragucci-runs",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/dashboards/terragucci-runs.json",
+      "links": false,
+      "json": {
+        "annotations": {
+          "list": []
+        },
+        "description": "Where the runs spend their time: the slowest roots and resources, provider init, lock waits, and the trace of any run.",
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 1,
+        "links": [],
+        "panels": [
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Slowest",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 2,
+            "title": "Slowest roots",
+            "description": "The ten slowest root plans over the range, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root) (max_over_time(terragucci_root_plan_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 3,
+            "title": "Slowest root applies",
+            "description": "The ten slowest root applies over the range, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 1
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root) (max_over_time(terragucci_root_apply_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 4,
+            "title": "Slowest resources",
+            "description": "The ten slowest resources over the range, from the binary's spans, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 9
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root, address) (max_over_time(terragucci_resource_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 5,
+            "title": "Provider init",
+            "description": "Time spent starting each provider, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 9
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, provider) (max_over_time(terragucci_provider_init_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "table",
+            "id": 6,
+            "title": "Lock waits",
+            "description": "Time spent waiting for a state lock, by root, in seconds.",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 17
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "topk(10, max by (project, root) (max_over_time(terragucci_lock_wait_seconds{project=~\"$project\"}[$__range])))",
+                "instant": true,
+                "range": false,
+                "format": "table"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Stages",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 25
+            },
+            "id": 7,
+            "panels": []
+          },
+          {
+            "type": "timeseries",
+            "id": 8,
+            "title": "Stage duration",
+            "description": "How long each stage run took.",
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 26
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "TGPH0PROMETHEUS"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "TGPH0PROMETHEUS"
+                },
+                "refId": "A",
+                "expr": "max by (project, stage) (max_over_time(terragucci_stage_duration_seconds{project=~\"$project\"}[$__interval]))",
+                "legendFormat": "{{project}} {{stage}}"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s"
+              },
+              "overrides": []
+            }
+          },
+          {
+            "type": "row",
+            "collapsed": false,
+            "title": "Traces",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 34
+            },
+            "id": 9,
+            "panels": []
+          },
+          {
+            "type": "table",
+            "id": 10,
+            "title": "Runs",
+            "description": "The trace of each stage run. Open one to see its waves, roots and the binary's own spans.",
+            "gridPos": {
+              "h": 10,
+              "w": 24,
+              "x": 0,
+              "y": 35
+            },
+            "datasource": {
+              "type": "tempo",
+              "uid": "TGPH0TEMPO"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "tempo",
+                  "uid": "TGPH0TEMPO"
+                },
+                "refId": "A",
+                "filters": [],
+                "queryType": "traceql",
+                "query": "{ resource.service.name = \"terragucci\" && name =~ \"terragucci .*\" && span.terragucci.project =~ \"$project\" }",
+                "limit": 50,
+                "tableType": "traces"
+              }
+            ],
+            "options": {},
+            "fieldConfig": {
+              "defaults": {},
+              "overrides": []
+            }
+          }
+        ],
+        "refresh": "1m",
+        "schemaVersion": 42,
+        "tags": [
+          "terragucci"
+        ],
+        "templating": {
+          "list": [
+            {
+              "type": "query",
+              "name": "project",
+              "label": "Project",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "TGPH0PROMETHEUS"
+              },
+              "query": "label_values(terragucci_last_run_seconds, project)",
+              "definition": "label_values(terragucci_last_run_seconds, project)",
+              "refresh": 2,
+              "sort": 1,
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".+",
+              "options": []
+            }
+          ]
+        },
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "terragucci: Runs",
+        "uid": "terragucci-runs",
+        "weekStart": ""
+      },
+      "suffix": "\n"
+    },
+    {
+      "path": "grafana/provisioning/alerting/terragucci.yaml",
+      "yaml": [
+        "# Generated by terragucci from terragucci.yml (dashboards). Edit terragucci.yml, then run terragucci init.",
+        "# Grafana alerting provisioning, generated by chant.",
+        "apiVersion: 1",
+        "groups:",
+        "  - name: slo-terragucci-apply-success-grafana",
+        "    folder: TGPH0FOLDER",
+        "    interval: 1m",
+        "    rules:",
+        "      - uid: slo-terragucci-apply-success-1h-5m",
+        "        title: SLO terragucci-apply-success error budget burn 1h/5m (page)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate1h{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate5m{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.1344 && $B > 0.1344",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 13.44x too fast (1h and 5m windows)",
+        "          description: The error ratio over both the last 1h and the last 5m is above 0.1344 (13.44 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 2d2h.",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: page",
+        "          long_window: 1h",
+        "          short_window: 5m",
+        "      - uid: slo-terragucci-apply-success-6h-30m",
+        "        title: SLO terragucci-apply-success error budget burn 6h/30m (page)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate6h{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate30m{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.056 && $B > 0.056",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 5.6x too fast (6h and 30m windows)",
+        "          description: The error ratio over both the last 6h and the last 30m is above 0.056 (5.6 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 5d.",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: page",
+        "          long_window: 6h",
+        "          short_window: 30m",
+        "      - uid: slo-terragucci-apply-success-1d-2h",
+        "        title: SLO terragucci-apply-success error budget burn 1d/2h (ticket)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate1d{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate2h{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.028 && $B > 0.028",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 2.8x too fast (1d and 2h windows)",
+        "          description: The error ratio over both the last 1d and the last 2h is above 0.028 (2.8 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 1w3d.",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: ticket",
+        "          long_window: 1d",
+        "          short_window: 2h",
+        "      - uid: slo-terragucci-apply-success-3d-6h",
+        "        title: SLO terragucci-apply-success error budget burn 3d/6h (ticket)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate3d{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate6h{slo=\"terragucci-apply-success\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.00933333 && $B > 0.00933333",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 0.933333x too fast (3d and 6h windows)",
+        "          description: The error ratio over both the last 3d and the last 6h is above 0.00933333 (0.933333 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 4w2d.",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: ticket",
+        "          long_window: 3d",
+        "          short_window: 6h",
+        "  - name: slo-terragucci-drift-corrected-grafana",
+        "    folder: TGPH0FOLDER",
+        "    interval: 1m",
+        "    rules:",
+        "      - uid: slo-terragucci-drift-corrected-1d-2h",
+        "        title: SLO terragucci-drift-corrected error budget burn 1d/2h (ticket)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate1d{slo=\"terragucci-drift-corrected\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate2h{slo=\"terragucci-drift-corrected\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.28 && $B > 0.28",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-drift-corrected is burning its error budget more than 2.8x too fast (1d and 2h windows)",
+        "          description: The error ratio over both the last 1d and the last 2h is above 0.28 (2.8 times the 0.1 budget of a 0.9 objective). At that rate the 28d error budget is gone in 1w3d.",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "          severity: ticket",
+        "          long_window: 1d",
+        "          short_window: 2h",
+        "      - uid: slo-terragucci-drift-corrected-3d-6h",
+        "        title: SLO terragucci-drift-corrected error budget burn 3d/6h (ticket)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate3d{slo=\"terragucci-drift-corrected\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate6h{slo=\"terragucci-drift-corrected\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.0933333 && $B > 0.0933333",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-drift-corrected is burning its error budget more than 0.933333x too fast (3d and 6h windows)",
+        "          description: The error ratio over both the last 3d and the last 6h is above 0.0933333 (0.933333 times the 0.1 budget of a 0.9 objective). At that rate the 28d error budget is gone in 4w2d.",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "          severity: ticket",
+        "          long_window: 3d",
+        "          short_window: 6h",
+        "  - name: slo-terragucci-plan-time-grafana",
+        "    folder: TGPH0FOLDER",
+        "    interval: 1m",
+        "    rules:",
+        "      - uid: slo-terragucci-plan-time-1h-5m",
+        "        title: SLO terragucci-plan-time error budget burn 1h/5m (page)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate1h{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.672 && $B > 0.672",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 13.44x too fast (1h and 5m windows)",
+        "          description: The error ratio over both the last 1h and the last 5m is above 0.672 (13.44 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 2d2h.",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: page",
+        "          long_window: 1h",
+        "          short_window: 5m",
+        "      - uid: slo-terragucci-plan-time-6h-30m",
+        "        title: SLO terragucci-plan-time error budget burn 6h/30m (page)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate30m{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.28 && $B > 0.28",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 5.6x too fast (6h and 30m windows)",
+        "          description: The error ratio over both the last 6h and the last 30m is above 0.28 (5.6 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 5d.",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: page",
+        "          long_window: 6h",
+        "          short_window: 30m",
+        "      - uid: slo-terragucci-plan-time-1d-2h",
+        "        title: SLO terragucci-plan-time error budget burn 1d/2h (ticket)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate1d{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate2h{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.14 && $B > 0.14",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 2.8x too fast (1d and 2h windows)",
+        "          description: The error ratio over both the last 1d and the last 2h is above 0.14 (2.8 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 1w3d.",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: ticket",
+        "          long_window: 1d",
+        "          short_window: 2h",
+        "      - uid: slo-terragucci-plan-time-3d-6h",
+        "        title: SLO terragucci-plan-time error budget burn 3d/6h (ticket)",
+        "        condition: C",
+        "        data:",
+        "          - refId: A",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: A",
+        "              expr: slo:sli_error:ratio_rate3d{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: B",
+        "            relativeTimeRange:",
+        "              from: 600",
+        "              to: 0",
+        "            datasourceUid: TGPH0PROMETHEUS",
+        "            model:",
+        "              datasource:",
+        "                type: prometheus",
+        "                uid: TGPH0PROMETHEUS",
+        "              refId: B",
+        "              expr: slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"}",
+        "              instant: true",
+        "              range: false",
+        "          - refId: C",
+        "            datasourceUid: __expr__",
+        "            model:",
+        "              datasource:",
+        "                type: __expr__",
+        "                uid: __expr__",
+        "              refId: C",
+        "              type: math",
+        "              expression: $A > 0.04666665 && $B > 0.04666665",
+        "        noDataState: OK",
+        "        execErrState: Error",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 0.933333x too fast (3d and 6h windows)",
+        "          description: The error ratio over both the last 3d and the last 6h is above 0.04666665 (0.933333 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 4w2d.",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: ticket",
+        "          long_window: 3d",
+        "          short_window: 6h",
+        ""
+      ]
+    },
+    {
+      "path": "grafana/provisioning/dashboards/terragucci.yaml",
+      "yaml": [
+        "# Generated by terragucci from terragucci.yml (dashboards). Edit terragucci.yml, then run terragucci init.",
+        "# Grafana dashboard provisioning, generated by chant.",
+        "apiVersion: 1",
+        "providers:",
+        "  - name: terragucci",
+        "    orgId: 1",
+        "    folder: TGPH0FOLDER",
+        "    type: file",
+        "    disableDeletion: false",
+        "    allowUiUpdates: false",
+        "    updateIntervalSeconds: 30",
+        "    options:",
+        "      path: TGPH0PATH",
+        "      foldersFromFilesStructure: false",
+        ""
+      ]
+    },
+    {
+      "path": "prometheus/terragucci.rules.yml",
+      "yaml": [
+        "# Generated by terragucci from terragucci.yml (dashboards). Edit terragucci.yml, then run terragucci init.",
+        "groups:",
+        "  - name: slo-terragucci-apply-success",
+        "    rules:",
+        "      - record: slo:sli_error:ratio_rate5m",
+        "        expr: |-",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 5m, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 5m)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 5m, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 5m)))",
+        "          /",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 5m, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 5m)) > 0)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:sli_error:ratio_rate30m",
+        "        expr: |-",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 30m, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 30m)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 30m, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 30m)))",
+        "          /",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 30m, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 30m)) > 0)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:sli_error:ratio_rate1h",
+        "        expr: |-",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1h)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1h)))",
+        "          /",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1h)) > 0)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:sli_error:ratio_rate2h",
+        "        expr: |-",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 2h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 2h)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 2h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 2h)))",
+        "          /",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 2h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 2h)) > 0)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:sli_error:ratio_rate6h",
+        "        expr: |-",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 6h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 6h)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 6h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 6h)))",
+        "          /",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 6h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 6h)) > 0)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:sli_error:ratio_rate1d",
+        "        expr: |-",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1d, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1d)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1d, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1d)))",
+        "          /",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1d, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 1d)) > 0)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:sli_error:ratio_rate3d",
+        "        expr: |-",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 3d, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 3d)) or 0 * sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 3d, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 3d)))",
+        "          /",
+        "          (sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 3d, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=~\"applied|failed\"} offset 3d)) > 0)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:sli_error:ratio_rate28d",
+        "        expr: avg_over_time(slo:sli_error:ratio_rate5m{slo=\"terragucci-apply-success\"}[28d])",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:objective:ratio",
+        "        expr: vector(0.99)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - record: slo:error_budget:remaining",
+        "        expr: 1 - (slo:sli_error:ratio_rate28d{slo=\"terragucci-apply-success\"} / 0.01)",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate1h{slo=\"terragucci-apply-success\"} > (13.44 * 0.01)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate5m{slo=\"terragucci-apply-success\"} > (13.44 * 0.01)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: page",
+        "          long_window: 1h",
+        "          short_window: 5m",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 13.44x too fast (1h and 5m windows)",
+        "          description: Wave applies succeed. The error ratio over both the last 1h and the last 5m is above 0.1344 (13.44 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 2d2h.",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate6h{slo=\"terragucci-apply-success\"} > (5.6 * 0.01)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate30m{slo=\"terragucci-apply-success\"} > (5.6 * 0.01)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: page",
+        "          long_window: 6h",
+        "          short_window: 30m",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 5.6x too fast (6h and 30m windows)",
+        "          description: Wave applies succeed. The error ratio over both the last 6h and the last 30m is above 0.056 (5.6 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 5d.",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate1d{slo=\"terragucci-apply-success\"} > (2.8 * 0.01)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate2h{slo=\"terragucci-apply-success\"} > (2.8 * 0.01)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: ticket",
+        "          long_window: 1d",
+        "          short_window: 2h",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 2.8x too fast (1d and 2h windows)",
+        "          description: Wave applies succeed. The error ratio over both the last 1d and the last 2h is above 0.028 (2.8 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 1w3d.",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate3d{slo=\"terragucci-apply-success\"} > (0.933333 * 0.01)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate6h{slo=\"terragucci-apply-success\"} > (0.933333 * 0.01)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-apply-success",
+        "          severity: ticket",
+        "          long_window: 3d",
+        "          short_window: 6h",
+        "        annotations:",
+        "          summary: SLO terragucci-apply-success is burning its error budget more than 0.933333x too fast (3d and 6h windows)",
+        "          description: Wave applies succeed. The error ratio over both the last 3d and the last 6h is above 0.00933333 (0.933333 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 4w2d.",
+        "  - name: slo-terragucci-drift-corrected",
+        "    rules:",
+        "      - record: slo:sli_error:ratio_rate2h",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[2h:5m])))",
+        "            /",
+        "            (sum by (project) (count_over_time(terragucci_drift_roots[2h:5m])))",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "      - record: slo:sli_error:ratio_rate6h",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[6h:5m])))",
+        "            /",
+        "            (sum by (project) (count_over_time(terragucci_drift_roots[6h:5m])))",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "      - record: slo:sli_error:ratio_rate1d",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[1d:5m])))",
+        "            /",
+        "            (sum by (project) (count_over_time(terragucci_drift_roots[1d:5m])))",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "      - record: slo:sli_error:ratio_rate3d",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[3d:5m])))",
+        "            /",
+        "            (sum by (project) (count_over_time(terragucci_drift_roots[3d:5m])))",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "      - record: slo:sli_error:ratio_rate28d",
+        "        expr: avg_over_time(slo:sli_error:ratio_rate2h{slo=\"terragucci-drift-corrected\"}[28d])",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "      - record: slo:objective:ratio",
+        "        expr: vector(0.9)",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "      - record: slo:error_budget:remaining",
+        "        expr: 1 - (slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\"} / 0.1)",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate1d{slo=\"terragucci-drift-corrected\"} > (2.8 * 0.1)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate2h{slo=\"terragucci-drift-corrected\"} > (2.8 * 0.1)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "          severity: ticket",
+        "          long_window: 1d",
+        "          short_window: 2h",
+        "        annotations:",
+        "          summary: SLO terragucci-drift-corrected is burning its error budget more than 2.8x too fast (1d and 2h windows)",
+        "          description: Drift is corrected within a day. The error ratio over both the last 1d and the last 2h is above 0.28 (2.8 times the 0.1 budget of a 0.9 objective). At that rate the 28d error budget is gone in 1w3d.",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate3d{slo=\"terragucci-drift-corrected\"} > (0.933333 * 0.1)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate6h{slo=\"terragucci-drift-corrected\"} > (0.933333 * 0.1)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-drift-corrected",
+        "          severity: ticket",
+        "          long_window: 3d",
+        "          short_window: 6h",
+        "        annotations:",
+        "          summary: SLO terragucci-drift-corrected is burning its error budget more than 0.933333x too fast (3d and 6h windows)",
+        "          description: Drift is corrected within a day. The error ratio over both the last 3d and the last 6h is above 0.0933333 (0.933333 times the 0.1 budget of a 0.9 objective). At that rate the 28d error budget is gone in 4w2d.",
+        "  - name: slo-terragucci-plan-time",
+        "    rules:",
+        "      - record: slo:sli_error:ratio_rate5m",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 5m, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 5m)))",
+        "            /",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} - terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 5m, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} unless terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 5m)) > 0)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:sli_error:ratio_rate30m",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 30m, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 30m)))",
+        "            /",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} - terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 30m, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} unless terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 30m)) > 0)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:sli_error:ratio_rate1h",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 1h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 1h)))",
+        "            /",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} - terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 1h, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} unless terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 1h)) > 0)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:sli_error:ratio_rate2h",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 2h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 2h)))",
+        "            /",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} - terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 2h, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} unless terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 2h)) > 0)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:sli_error:ratio_rate6h",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 6h, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 6h)))",
+        "            /",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} - terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 6h, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} unless terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 6h)) > 0)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:sli_error:ratio_rate1d",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 1d, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 1d)))",
+        "            /",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} - terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 1d, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} unless terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 1d)) > 0)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:sli_error:ratio_rate3d",
+        "        expr: |-",
+        "          1 - (",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} - terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 3d, 0) or (terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} unless terragucci_spans_duration_seconds_bucket{terragucci_stage=\"tf-plan\", le=~\"600(\\\\.0)?\"} offset 3d)))",
+        "            /",
+        "            (sum by (terragucci_project) (clamp_min(terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} - terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 3d, 0) or (terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} unless terragucci_spans_duration_seconds_count{terragucci_stage=\"tf-plan\"} offset 3d)) > 0)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:sli_error:ratio_rate28d",
+        "        expr: avg_over_time(slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\"}[28d])",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:objective:ratio",
+        "        expr: vector(0.95)",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - record: slo:error_budget:remaining",
+        "        expr: 1 - (slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\"} / 0.05)",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate1h{slo=\"terragucci-plan-time\"} > (13.44 * 0.05)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\"} > (13.44 * 0.05)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: page",
+        "          long_window: 1h",
+        "          short_window: 5m",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 13.44x too fast (1h and 5m windows)",
+        "          description: Plans finish within 10 minutes. The error ratio over both the last 1h and the last 5m is above 0.672 (13.44 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 2d2h.",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"} > (5.6 * 0.05)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate30m{slo=\"terragucci-plan-time\"} > (5.6 * 0.05)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: page",
+        "          long_window: 6h",
+        "          short_window: 30m",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 5.6x too fast (6h and 30m windows)",
+        "          description: Plans finish within 10 minutes. The error ratio over both the last 6h and the last 30m is above 0.28 (5.6 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 5d.",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate1d{slo=\"terragucci-plan-time\"} > (2.8 * 0.05)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate2h{slo=\"terragucci-plan-time\"} > (2.8 * 0.05)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: ticket",
+        "          long_window: 1d",
+        "          short_window: 2h",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 2.8x too fast (1d and 2h windows)",
+        "          description: Plans finish within 10 minutes. The error ratio over both the last 1d and the last 2h is above 0.14 (2.8 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 1w3d.",
+        "      - alert: ErrorBudgetBurn",
+        "        expr: |-",
+        "          (",
+        "            slo:sli_error:ratio_rate3d{slo=\"terragucci-plan-time\"} > (0.933333 * 0.05)",
+        "          )",
+        "          and",
+        "          (",
+        "            slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"} > (0.933333 * 0.05)",
+        "          )",
+        "        labels:",
+        "          slo: terragucci-plan-time",
+        "          severity: ticket",
+        "          long_window: 3d",
+        "          short_window: 6h",
+        "        annotations:",
+        "          summary: SLO terragucci-plan-time is burning its error budget more than 0.933333x too fast (3d and 6h windows)",
+        "          description: Plans finish within 10 minutes. The error ratio over both the last 3d and the last 6h is above 0.04666665 (0.933333 times the 0.05 budget of a 0.95 objective). At that rate the 28d error budget is gone in 4w2d.",
+        "  - name: terragucci",
+        "    rules:",
+        "      - alert: TerragucciDriftOld",
+        "        expr: |-",
+        "          time() - ((",
+        "          (max by (project) (last_over_time(terragucci_drift_since_seconds[7d]))) unless on (project) (max by (project) (last_over_time(terragucci_drift_clear_seconds[7d])))",
+        "          )",
+        "          or",
+        "          (",
+        "          (max by (project) (last_over_time(terragucci_drift_since_seconds[7d]))) > on (project) (max by (project) (last_over_time(terragucci_drift_clear_seconds[7d])))",
+        "          )) > 7919001",
+        "        labels:",
+        "          severity: ticket",
+        "        annotations:",
+        "          summary: \"{{ $labels.project }} has drift older than 7919001s\"",
+        "          description: Its drift issue names the roots. Correct the drift with a pull request, or apply the code as it is.",
+        "      - alert: TerragucciWaveWaiting",
+        "        expr: |-",
+        "          time() - ((",
+        "          (max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds[7d]))) unless on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds[7d])))",
+        "          )",
+        "          or",
+        "          (",
+        "          (max by (project, wave) (last_over_time(terragucci_wave_waiting_since_seconds[7d]))) > on (project, wave) (max by (project, wave) (last_over_time(terragucci_wave_settled_seconds[7d])))",
+        "          )) > 7919002",
+        "        labels:",
+        "          severity: ticket",
+        "        annotations:",
+        "          summary: wave {{ $labels.wave }} of {{ $labels.project }} has waited for an approval longer than 7919002s",
+        "          description: Its apply job printed the chant approve command for its digest.",
+        "      - alert: TerragucciApplyFailed",
+        "        expr: sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"failed\"} offset 1h)) > 0",
+        "        labels:",
+        "          severity: page",
+        "        annotations:",
+        "          summary: an apply of {{ $labels.terragucci_project }} failed in the last hour",
+        "          description: The apply job's log and the triage response name the error.",
+        "      - alert: TerragucciWaveRefused",
+        "        expr: sum by (terragucci_project) (clamp_min(terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"refused\"} - terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"refused\"} offset 1h, 0) or (terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"refused\"} unless terragucci_spans_calls_total{terragucci_stage=\"tf-apply\", terragucci_result=\"refused\"} offset 1h)) > 0",
+        "        labels:",
+        "          severity: ticket",
+        "        annotations:",
+        "          summary: \"a wave of {{ $labels.terragucci_project }} was refused: its plans moved after approval\"",
+        "          description: The wave applied nothing. Read what moved, then approve the new digest.",
+        "      - alert: TerragucciDriftStopped",
+        "        expr: time() - max by (project) (last_over_time(terragucci_last_run_seconds{stage=\"tf-drift\"}[30d])) > 7919003",
+        "        labels:",
+        "          severity: ticket",
+        "        annotations:",
+        "          summary: \"{{ $labels.project }}'s drift run has not run for 7919003s\"",
+        "          description: Its schedule stopped, or every run failed before it could report.",
+        ""
+      ]
+    }
+  ]
+}

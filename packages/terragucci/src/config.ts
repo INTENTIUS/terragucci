@@ -463,6 +463,7 @@ function checkDashboards(d: unknown, where: string, problems: string[]): void {
     const v = d[k];
     if (v === undefined) continue;
     if (typeof v !== "string" || v === "") problems.push(`${where}.${k} must be a string`);
+    else if (/[\r\n]/.test(v)) problems.push(`${where}.${k} must be one line`);
     else if ((DASHBOARD_DURATION_KEYS as readonly string[]).includes(k) && !DURATION.test(v)) problems.push(`${where}.${k} is ${JSON.stringify(v)}; use a duration such as 4h or 1d`);
   }
   if (typeof d.dir === "string" && (d.dir.startsWith("/") || d.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a path inside the repo`);

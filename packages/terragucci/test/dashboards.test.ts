@@ -14,6 +14,10 @@ import {
   YAML_MARKER,
 } from "../src/dashboards";
 import { METRIC } from "../src/dashboards/names";
+import { dashboardFiles } from "../src/dashboards/files";
+import { buildTemplate, durationSeconds, fillTemplate, PLACEHOLDERS, yamlScalar } from "../src/dashboards/template";
+import { emitYaml } from "@intentius/chant-lexicon-prometheus/build";
+import { durationMs } from "@intentius/chant-lexicon-prometheus/duration";
 import { init } from "../src/init";
 import { buildReport } from "../src/report/build";
 import { modulePins, StageObserver } from "../src/report/observe";
@@ -188,6 +192,7 @@ describe("dashboards: config", () => {
     [{ dashboards: { wave_wait: "soon" } }, /dashboards.wave_wait is "soon"; use a duration/],
     [{ dashboards: { dir: "../elsewhere" } }, /dashboards.dir must be a path inside the repo/],
     [{ dashboards: { prometheus: 3 } }, /dashboards.prometheus must be a string/],
+    [{ dashboards: { folder: "a\nb" } }, /dashboards.folder must be one line/],
   ])("refuses %j", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(ConfigError);
     expect(() => validateConfig(raw, "t")).toThrow(message);
@@ -340,5 +345,50 @@ describe("dashboards: links down to the reports (#131)", () => {
     const plain = unserved.files.find((f) => f.path.endsWith(`/${DASHBOARD_UIDS.runs}.json`))!;
     expect(plain.content).not.toContain("acme-reports");
     expect(plain.content).not.toContain("/traces/");
+  });
+});
+
+describe("dashboards: the template the bundle carries (#163)", () => {
+  const template = buildTemplate(renderDashboards, "t");
+  const committed = JSON.parse(readFileSync(join(import.meta.dirname, "../src/dashboards/rendered.json"), "utf-8")) as { files: unknown };
+
+  it("rendered.json is what the declarations render", () => {
+    expect(committed.files).toEqual(template.files);
+  });
+
+  it.each([
+    ["the defaults", {}, {}],
+    ["a reports address", { dir: "stack/observability/terragucci" }, { reports: "http://localhost:4580/terragucci-reports/reports" }],
+    ["every setting", { dir: "ops/dash/", prometheus: "prom-main", tempo: "tempo-eu", folder: "Platform team", path: "/etc/grafana/dash", drift_age: "1d12h", wave_wait: "90m", schedule: "3d" }, { reports: "https://reports.example.com/a/b" }],
+    ["values YAML quotes", { prometheus: 'a:b "q" #c', tempo: "true", folder: "123", path: "-x: {y}", drift_age: "30m1h" }, { reports: 'https://r.example.com/a\\c"d{x}' }],
+  ])("filled with %s, it is byte for byte what the declarations render", (_name, given, links) => {
+    const settings = dashboardSettings(given)!;
+    expect(fillTemplate(template, settings, links)).toEqual(renderDashboards(settings, links));
+    expect(dashboardFiles(settings, links)).toEqual(renderDashboards(settings, links));
+  });
+
+  it("keeps a placeholder for each setting, and both reports variants of the Runs and Estate dashboards only", () => {
+    const text = JSON.stringify(template);
+    for (const k of ["prometheus", "tempo", "folder", "path", "drift_age", "wave_wait", "schedule"] as const) expect(text).toContain(PLACEHOLDERS[k]);
+    expect(template.files.filter((f) => f.links !== undefined).map((f) => f.path).sort()).toEqual(
+      [DASHBOARD_UIDS.estate, DASHBOARD_UIDS.estate, DASHBOARD_UIDS.runs, DASHBOARD_UIDS.runs].map((uid) => `grafana/dashboards/${uid}.json`),
+    );
+  });
+
+  it("reads a duration as the prometheus lexicon does", () => {
+    for (const d of ["1d", "4h", "90m", "1d12h", "1y2w3d4h5m6s7ms", "1500ms", "0", "30m1h", "soon"]) expect(durationSeconds(d)).toBe(Math.round((durationMs(d) ?? 0) / 1000));
+  });
+
+  it("writes a value as js-yaml does", () => {
+    for (const v of ["prometheus", "Platform team", "/var/lib/grafana", "", "123", "0x1F", "1.5", ".inf", "true", "NULL", "~", "<<", "yes", "1:20", "2024-01-31", "2024 team", "a: b", "a:b", "a #b", "a#b", "#a", "-a", "a:", "a ", "{a}", "a{b}", "'a'", 'a"b', "a\\b", "a\tb", "café", "\u0007"]) {
+      expect(`k: ${yamlScalar(v)}\n`).toBe(emitYaml({ k: v }));
+    }
+  });
+
+  it("init writes the filled template", async () => {
+    const r = await init(repo("binary: tofu\ndashboards:\n  folder: Platform team\n  drift_age: 12h\n"), { dryRun: true });
+    const written = r.files.filter((f) => f.path.includes("/observability/terragucci/"));
+    const want = renderDashboards(dashboardSettings({ folder: "Platform team", drift_age: "12h" })!);
+    expect(written.map((f) => f.content)).toEqual(want.map((f) => f.content));
   });
 });
