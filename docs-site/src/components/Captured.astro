@@ -9,12 +9,14 @@ interface Props {
 	step: string;
 	/** Show only the command whose text starts with this. */
 	cmd?: string;
+	/** Render nothing until the step has been captured. `just tutorial-check` still fails on the page until it is. */
+	optional?: boolean;
 }
-const { step, cmd } = Astro.props;
+const { step, cmd, optional } = Astro.props;
 const capture = captures[`../data/tutorial/${step}.json`];
-if (!capture) throw new Error(`no capture for tutorial step "${step}"; run just tutorial-capture`);
-const commands = cmd ? capture.commands.filter((c) => c.cmd.startsWith(cmd)) : capture.commands;
-if (commands.length === 0) throw new Error(`tutorial step "${step}" has no command starting "${cmd}"`);
+if (!capture && !optional) throw new Error(`no capture for tutorial step "${step}"; run just tutorial-capture`);
+const commands = !capture ? [] : cmd ? capture.commands.filter((c) => c.cmd.startsWith(cmd)) : capture.commands;
+if (capture && commands.length === 0) throw new Error(`tutorial step "${step}" has no command starting "${cmd}"`);
 ---
 {commands.map((c) => (
 	<figure class="tg-captured not-content">

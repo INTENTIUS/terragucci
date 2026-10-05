@@ -3,6 +3,8 @@ title: Fix a refused wave
 description: A wave that applied nothing because a plan changed after its approval. Read the diff, then approve again or stop.
 ---
 
+import Captured from '../../../components/Captured.astro';
+
 ## What you end up with
 
 A decision on a refused wave: either the new plan approved and applied, or the change that moved it removed.
@@ -17,6 +19,10 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 ### 1. Understand why it refused
 
 An approval binds a wave's set digest. If any root's plan changes after the approval, the digest changes and the wave applies nothing. The usual causes are another merge to the default branch that touched a root in the wave, or a data source that read a different value.
+
+In the example, approve the waiting wave, then merge the module bump. That wave now plans differently. Its job stops and names the roots that moved:
+
+<Captured step="wave-refused" cmd="just example merge" optional />
 
 ### 2. Get the two reports
 

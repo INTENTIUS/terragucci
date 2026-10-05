@@ -3,6 +3,8 @@ title: Approve a waiting wave
 description: Read what a wave will do, record your approval, and let the apply carry on.
 ---
 
+import Captured from '../../../components/Captured.astro';
+
 ## What you end up with
 
 One wave applied, with an approval recorded in your repo that names the exact plans you read.
@@ -26,6 +28,10 @@ After a merge, each wave runs in its own job. A wave that has to wait for you st
 approve wave 2 with chant approve tf-apply wave-2 --sign
 ```
 
+In the example, merging the pull request that stops keeping records for staging email shows it. The wave that holds the destroy waits, and the run prints the command:
+
+<Captured step="wave-waiting" cmd="just example merge" optional />
+
 Open the wave's roots in the report linked from the run. It lists the wave's set digest and whether each wave is waiting or cleared.
 
 ### 2. Read what the wave will do
@@ -39,6 +45,8 @@ npx chant approve tf-apply wave-2 --actor github:alice --sign ~/.ssh/id_ed25519
 ```
 
 `--actor` is you, named as the signers file names you. `--sign` seals the approval with your key. With no key file, it uses git's `user.signingkey` when `gpg.format` is `ssh`.
+
+<Captured step="wave-refused" cmd="just example approve" optional />
 
 The command writes a record that names the wave's set digest, a hash over the plan digest of every root in it. Your sign-off covers those plans and no others, and the seal covers the record, so an edited record no longer verifies.
 
