@@ -108,6 +108,8 @@ export interface ProjectSettings {
   oidc?: { plan_role: string; apply_role: string; audience?: string };
   /** Whether removing the project from a control repo removes its generated files. */
   owned?: boolean;
+  /** How many roots of one dependency layer plan at once. Default: from the state backend. */
+  parallelism?: number;
   /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
   terragrunt?: TerragruntSettings;
   /** The response to each pipeline event; see RESPONSES. */
@@ -178,7 +180,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "terragrunt", "respond", "agent",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "respond", "agent",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -258,6 +260,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
         problems.push(`${where}.oidc.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
       }
     }
+  }
+  if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
+    problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
   if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
   if (s.respond !== undefined) {

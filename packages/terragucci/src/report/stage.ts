@@ -10,7 +10,7 @@
  * on main. It then opens, updates or closes the project's one drift issue.
  * It applies nothing.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -77,6 +77,8 @@ export interface StageOptions {
   base?: string;
   /** tf-drift: the forge's API. Default the global fetch. */
   forgeFetch?: Fetch;
+  /** How many roots of a layer plan at once. Default: the config's `parallelism`, then from the state backend. */
+  parallelism?: number;
 }
 
 /** `a,b;c` as layers: commas inside a layer, semicolons between. */
@@ -176,6 +178,108 @@ export function stateIsEmpty(binary: string, dir: string, env: NodeJS.ProcessEnv
   const pull = spawnSync(binary, [`-chdir=${dir}`, "state", "pull"], opts);
   if (pull.status !== 0) return undefined;
   return emptyStateText(pull.stdout);
+}
+
+/** `stateIsEmpty` without blocking, its init taking its turn with the roots' inits. */
+export async function stateIsEmptyAsync(binary: string, dir: string, env: NodeJS.ProcessEnv, initTurn: Turn = (fn) => fn()): Promise<boolean | undefined> {
+  const init = await initTurn(() => spawnAsync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], env));
+  if (init.status !== 0) return undefined;
+  const pull = await spawnAsync(binary, [`-chdir=${dir}`, "state", "pull"], env);
+  if (pull.status !== 0) return undefined;
+  return emptyStateText(pull.stdout);
+}
+
+/** What one run of the binary printed and how it exited, read without blocking the other roots. */
+export interface Spawned {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
+}
+
+export function spawnAsync(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<Spawned> {
+  return new Promise((done) => {
+    const child = spawn(file, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    let error: Error | undefined;
+    child.stdout.on("data", (d: Buffer) => out.push(d));
+    child.stderr.on("data", (d: Buffer) => err.push(d));
+    child.on("error", (e) => (error = e));
+    child.on("close", (code) => done({ status: error ? null : code, stdout: Buffer.concat(out).toString("utf-8"), stderr: Buffer.concat(err).toString("utf-8"), ...(error ? { error } : {}) }));
+  });
+}
+
+/** Runs a piece of work after the one before it finished. */
+type Turn = <T>(fn: () => Promise<T>) => Promise<T>;
+
+export function oneAtATime(): Turn {
+  let last: Promise<unknown> = Promise.resolve();
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    const r = last.then(fn);
+    last = r.catch(() => undefined);
+    return r;
+  };
+}
+
+/**
+ * Run `fn` over `items`, at most `limit` at once, taking them in order. A
+ * throw stops new items from starting, waits for the running ones, and is
+ * rethrown, so nothing is left running when the caller cleans up.
+ */
+export async function eachLimited<T>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  let failure: { e: unknown } | undefined;
+  const worker = async (): Promise<void> => {
+    while (!failure && next < items.length) {
+      const i = next++;
+      try {
+        await fn(items[i], i);
+      } catch (e) {
+        failure ??= { e };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  if (failure) throw failure.e;
+}
+
+/** One root's plan, or why it was held back, before it joins the report. */
+interface RootOutcome {
+  root: string;
+  lines: string[];
+  input?: RootInput;
+  plan?: { text?: string; json?: string };
+  names?: Map<string, string>;
+  redacted?: number;
+  deferred?: ReportDeferred;
+}
+
+const GITLAB_STATE = /\/api\/v4\/projects\/[^"\s]*\/terraform\/state\//;
+
+/**
+ * How many roots of a layer plan at once: the config's `parallelism`, else
+ * from the roots' state backend, as Terragrunt mode sets it. GitLab-managed
+ * state rate-limits concurrent inits, so it gets 3; every other backend 16.
+ * GitLab state is an `http` backend whose address, in the root or in
+ * `TF_HTTP_ADDRESS`, is a GitLab project's state API.
+ */
+export function rootsParallelism(repo: string, roots: readonly string[], settings: { parallelism?: number }, env: NodeJS.ProcessEnv = {}): { value: number; reason: string } {
+  if (settings.parallelism !== undefined) return { value: settings.parallelism, reason: "terragucci.yml" };
+  const backends = new Set<string>();
+  let gitlab = false;
+  for (const root of roots) {
+    for (const f of tfFiles(join(repo, root))) {
+      const text = readFileSync(f, "utf-8").replace(/(^|[^:"])(#|\/\/).*$/gm, "$1");
+      for (const m of text.matchAll(/\bbackend\s+"([^"]+)"\s*\{([^}]*)\}/g)) {
+        backends.add(m[1]);
+        if (m[1] === "http" && (GITLAB_STATE.test(m[2]) || GITLAB_STATE.test(env.TF_HTTP_ADDRESS ?? ""))) gitlab = true;
+      }
+    }
+  }
+  if (gitlab) return { value: 3, reason: "GitLab-managed state rate-limits concurrent inits" };
+  const named = [...backends].sort();
+  return { value: 16, reason: named.length === 1 ? `the ${named[0]} backend` : named.length > 1 ? `the ${named.join(", ")} backends` : "the default" };
 }
 
 /** `state pull` output with no resources and no outputs, or no output at all. */
@@ -340,6 +444,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), stage, env);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
+  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
+  if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
+  // Terraform's plugin cache is not safe for inits that run together, so with a shared one they take turns. Plans still run at once.
+  const initTurn = env.TF_PLUGIN_CACHE_DIR ? oneAtATime() : <T>(fn: () => Promise<T>) => fn();
 
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
@@ -349,58 +457,84 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const upstreamState = new Map<string, boolean | undefined>();
   const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
   let redacted = 0;
-  try {
-    for (const root of roots) {
-      const dir = join(repo, root);
-      // A root that reads the state of a root nothing has applied cannot plan: hold it back.
-      const waitsFor = [...(readsOf.get(root) ?? [])].filter((up) => {
-        if (!upstreamState.has(up)) upstreamState.set(up, stateIsEmpty(binary, join(repo, up), env));
-        return upstreamState.get(up) === true;
-      }).sort();
-      if (waitsFor.length > 0) {
-        deferred.push({ unit: root, after: waitsFor, why: `reads the state of ${waitsFor.join(", ")}, which nothing has applied yet, so it cannot plan until then`, previewed: false });
-        held.add(root);
-        log(`${root}: held back, ${waitsFor.join(", ")} has no state yet`);
-        continue;
-      }
-      const planFile = join(work, `${inputs.length}.tfplan`);
-      const timing = observer.root(root);
-      const run = (...args: string[]) =>
-        observer.command(timing, binary, args, env, (e) => spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", maxBuffer: 512 * 1024 * 1024, env: e }));
+
+  /** One root planned, its outcome kept apart so the report and the log take roots in order, not in the order they finish. */
+  const planRoot = async (root: string, index: number): Promise<RootOutcome> => {
+    const lines: string[] = [];
+    const dir = join(repo, root);
+    // A root that reads the state of a root nothing has applied cannot plan: hold it back.
+    const waitsFor = [...(readsOf.get(root) ?? [])].filter((up) => upstreamState.get(up) === true).sort();
+    if (waitsFor.length > 0) {
+      lines.push(`${root}: held back, ${waitsFor.join(", ")} has no state yet`);
+      return { root, lines, deferred: { unit: root, after: waitsFor, why: `reads the state of ${waitsFor.join(", ")}, which nothing has applied yet, so it cannot plan until then`, previewed: false } };
+    }
+    const planFile = join(work, `${index}.tfplan`);
+    const timing = observer.root(root);
+    const run = (...args: string[]) =>
+      observer.commandAsync(timing, binary, args, env, (e) => spawnAsync(binary, [`-chdir=${dir}`, ...args], e));
+    const failed = (error: string, line: string): RootOutcome => {
+      lines.push(line);
+      return { root, lines, input: { path: root, planner, error, preventDestroy: new Set() } };
+    };
+    try {
+      const init = await initTurn(() => run("init", "-input=false", "-no-color"));
+      if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      // A plan never writes state, so it takes no lock and never blocks an apply.
+      // A refresh-only plan compares the state with the real objects and ignores the code.
+      const p = await run("plan", ...(drift ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
+      if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
+      const json = await run("show", "-json", planFile);
+      const text = await run("show", "-no-color", planFile);
+      let plan: unknown;
       try {
-        const init = run("init", "-input=false", "-no-color");
-        if (init.status !== 0) {
-          inputs.push({ path: root, planner, error: `init failed:\n${tail(init.stderr || init.stdout)}`, preventDestroy: new Set() });
-          log(`${root}: init failed`);
-          continue;
-        }
-        // A plan never writes state, so it takes no lock and never blocks an apply.
-        // A refresh-only plan compares the state with the real objects and ignores the code.
-        const p = run("plan", ...(drift ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
-        if (p.status !== 0 || !existsSync(planFile)) {
-          inputs.push({ path: root, planner, error: `plan failed:\n${tail(p.stderr || p.stdout)}`, preventDestroy: new Set() });
-          log(`${root}: plan failed`);
-          continue;
-        }
-        const json = run("show", "-json", planFile);
-        const text = run("show", "-no-color", planFile);
-        let plan: unknown;
-        try {
-          plan = JSON.parse(json.stdout);
-        } catch {
-          inputs.push({ path: root, planner, error: `show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, preventDestroy: new Set() });
-          log(`${root}: show -json failed`);
-          continue;
-        }
-        const safe = redactPlan(plan);
-        redacted += safe.values;
-        plans.set(root, { text: text.stdout, json: JSON.stringify(safe.plan, null, 2) + "\n" });
-        if (drift) names.set(root, driftNames(plan));
-        inputs.push({ path: root, plan: drift ? driftPlan(plan) : plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) });
-        log(drift ? `${root}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
-      } finally {
-        observer.endRoot(timing);
+        plan = JSON.parse(json.stdout);
+      } catch {
+        return failed(`show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, `${root}: show -json failed`);
       }
+      const safe = redactPlan(plan);
+      lines.push(drift ? `${root}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
+      return {
+        root, lines, redacted: safe.values,
+        plan: { text: text.stdout, json: JSON.stringify(safe.plan, null, 2) + "\n" },
+        ...(drift ? { names: driftNames(plan) } : {}),
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) },
+      };
+    } finally {
+      observer.endRoot(timing);
+    }
+  };
+
+  /** Take an outcome into the run, in root order. */
+  const take = (o: RootOutcome): void => {
+    o.lines.forEach((l) => log(l));
+    if (o.deferred) {
+      deferred.push(o.deferred);
+      held.add(o.root);
+    }
+    if (o.input) inputs.push(o.input);
+    if (o.plan) plans.set(o.root, o.plan);
+    if (o.names) names.set(o.root, o.names);
+    redacted += o.redacted ?? 0;
+  };
+
+  try {
+    let index = 0;
+    // Roots in one layer read none of each other's state, so they plan at once. A later layer waits for the layers it reads.
+    for (const layer of planLayers) {
+      // The upstreams this layer reads, each read once, before any root of the layer plans.
+      const ups = [...new Set(layer.flatMap((r) => [...(readsOf.get(r) ?? [])]))].filter((up) => !upstreamState.has(up)).sort();
+      await eachLimited(ups, limit.value, async (up) => {
+        upstreamState.set(up, await stateIsEmptyAsync(binary, join(repo, up), env, initTurn));
+      });
+      const first = index;
+      index += layer.length;
+      const done: (RootOutcome | undefined)[] = new Array(layer.length);
+      let next = 0;
+      await eachLimited(layer, limit.value, async (root, j) => {
+        done[j] = await planRoot(root, first + j);
+        // Flush every finished root at the front, so the log reads in root order while the rest still plan.
+        for (; next < layer.length && done[next]; next++) take(done[next]!);
+      });
     }
   } finally {
     rmSync(work, { recursive: true, force: true });

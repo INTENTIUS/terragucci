@@ -63,6 +63,15 @@ export class StageObserver {
     return r;
   }
 
+  /** `command` for a run that does not block, so roots can plan at once. */
+  async commandAsync<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => Promise<R>): Promise<R> {
+    if (!this.trace || !t.span) return spawn(env);
+    const span = this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, 3);
+    const r = await spawn(binaryEnv(env, this.trace, span, t.path));
+    this.trace.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
+    return r;
+  }
+
   /** The metrics a finished report gives. */
   gauges(report: Report, version: string | undefined, end: bigint): Gauge[] {
     const project = report.run.project;
