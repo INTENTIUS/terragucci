@@ -74,7 +74,7 @@ With `agent.comment` set, `/terragucci agent <ask>` on a pull request starts two
 | Job | Token | Does |
 |---|---|---|
 | `agent` | the job's own, read and comment | reads the comment with the re-plan's checks, checks out the pull request's head without keeping credentials, and runs the agent command with the prompt on stdin and the model's key in that step alone; keeps what changed as a patch |
-| `agent-push` | the secret `agent.token_env` names | in a fresh container, applies the patch to the same head, refuses a change to `.github/`, `.forgejo/`, `.gitea/`, `.gitlab-ci.yml`, `terragucci.yml`, `.chant/` or the policy directory, and otherwise commits it and pushes it to the head branch without force; replies with the commit, or with why nothing was pushed |
+| `agent-push` | the secret `agent.token_env` names | in a fresh container, applies the patch to the same head, refuses a change to `.github/`, `.forgejo/`, `.gitea/`, `.gitlab-ci.yml`, `terragucci.yml`, `.chant/`, the policy directory, `CODEOWNERS` (at the root, in `.github/` or in `docs/`), `.claude/`, `.cursor/`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.cursorrules`, `.gitattributes` or `.gitmodules`, and otherwise commits it and pushes it to the head branch without force; replies with the commit, or with why nothing was pushed |
 
 The push starts the pull request's plan job, which plans the change with its read-only role. The `replan` job leaves `/terragucci agent` comments to these jobs.
 
