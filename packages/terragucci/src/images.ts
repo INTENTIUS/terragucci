@@ -17,6 +17,8 @@ export const TOOL_VERSIONS = {
   tofu: "1.13.1",
   terraform: "1.14.0",
   terragrunt: "1.1.6",
+  /** A choudoufu release (INTENTIUS/choudoufu), not the OpenTofu version it is forked from. */
+  choudoufu: "0.21.0",
 } as const;
 
 export interface ImageRef {
@@ -26,14 +28,14 @@ export interface ImageRef {
   digest?: string;
 }
 
-export function imageTag(tool: "tofu" | "terraform" | "terragrunt", version = VERSION): string {
+export function imageTag(tool: keyof typeof TOOL_VERSIONS, version = VERSION): string {
   if (tool === "terragrunt") return `${version}-tg${TOOL_VERSIONS.terragrunt}-tofu${TOOL_VERSIONS.tofu}`;
-  return `${version}-${tool === "tofu" ? "tofu" : "tf"}${TOOL_VERSIONS[tool]}`;
+  return `${version}-${tool === "terraform" ? "tf" : tool}${TOOL_VERSIONS[tool]}`;
 }
 
 /** The image a pipeline for `binary` runs in, or undefined when terragucci publishes none for it. */
 export function imageFor(binary: Binary, table: Record<string, string> = digests): ImageRef | undefined {
-  if (binary !== "tofu" && binary !== "terraform") return undefined;
+  if (binary !== "tofu" && binary !== "terraform" && binary !== "choudoufu") return undefined;
   const repository = `${REGISTRY}/terragucci-${binary}`;
   const tag = imageTag(binary);
   return { repository, tag, digest: table[`${repository}:${tag}`] };

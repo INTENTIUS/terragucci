@@ -1,9 +1,9 @@
 // The CI images (terragucci#19): build them, prove each one works, and hold
 // each to its size budget.
 //   npx tsx scripts/images.ts tags                 print each image's name and reference
-//   npx tsx scripts/images.ts build [--platform p]  build all three for one platform, into the local daemon
+//   npx tsx scripts/images.ts build [--platform p]  build all four for one platform, into the local daemon
 //   npx tsx scripts/images.ts check [--platform p]  run each image's tools, and compare sizes with images/budget.json
-//   npx tsx scripts/images.ts build-decide [--platform p]  build the opt-in terragucci-decide image (not one of the three)
+//   npx tsx scripts/images.ts build-decide [--platform p]  build the opt-in terragucci-decide image (not one of the four)
 // Tags and tool versions come from packages/terragucci, the same source `init` reads.
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { REGISTRY, TOOL_VERSIONS, decideImage, imageTag } from "../packages/terragucci/src/images";
 
 const root = join(import.meta.dirname, "..");
-const NAMES = ["tofu", "terraform", "terragrunt"] as const;
+const NAMES = ["tofu", "terraform", "terragrunt", "choudoufu"] as const;
 type Name = (typeof NAMES)[number];
 
 const ref = (name: Name): string => `${REGISTRY}/terragucci-${name}:${imageTag(name)}`;
@@ -24,6 +24,7 @@ const PROBES: Record<Name, Array<[string[], string]>> = {
     [["terragrunt", "--version"], TOOL_VERSIONS.terragrunt],
     [["tofu", "version"], TOOL_VERSIONS.tofu],
   ],
+  choudoufu: [[["choudoufu", "version"], TOOL_VERSIONS.choudoufu]],
 };
 
 const args = process.argv.slice(2);
