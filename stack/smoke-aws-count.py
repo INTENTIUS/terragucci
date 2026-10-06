@@ -6,11 +6,15 @@ research used (terragucci#116).
     stack/smoke-aws-count.py LOG...      or - for stdin
     stack/smoke-aws.sh count [LOG]       the last measured run's log, from the job cache volume
 
-Every request the AWS SDK sends is one "HTTP Request Sent" line, from the
-provider and from the S3 backend alike, retries included. The service and
-operation come from the line's aws.service / rpc.service and aws.operation /
-rpc.method fields; aws-sdk-go v1's "DEBUG: Request <service>/<operation>"
-lines count too. Nothing else in the log is read or printed, so no header or
+Every request the AWS SDK sends is one "HTTP Request Sent" entry, from the
+provider and from the S3 backend alike, retries included. An entry spans
+several lines (the provider puts the request body in the middle), so the log
+is read entry by entry. The service and operation come from rpc.method
+("S3/HeadObject"), or aws.service / aws.operation; failing those, from the
+x-amz-target header, the signing scope or the SDK's user-agent token.
+aws-sdk-go v1's "DEBUG: Request <service>/<operation>" lines count too. An
+entry that carries none of these is listed as "unattributed unattributed",
+never priced. Nothing else in the log is read or printed, so no header or
 key reaches the output.
 """
 import re
@@ -18,27 +22,71 @@ import sys
 from collections import Counter
 
 FIELD = r'(?:^|\s){name}=("(?:[^"\\]|\\.)*"|\S+)'
+STAMP = re.compile(r"^\d{4}-\d\d-\d\dT")
+V1 = re.compile(r"DEBUG: (?:Retrying )?Request ([\w-]+)/(\w+)")
+SERVICES = {"s3": "S3", "sqs": "SQS", "dynamodb": "DynamoDB", "sts": "STS", "iam": "IAM"}
 
 
-def field(line, *names):
+def field(text, *names):
     for name in names:
-        m = re.search(FIELD.format(name=re.escape(name)), line)
+        m = re.search(FIELD.format(name=re.escape(name)), text)
         if m:
             return m.group(1).strip('"')
     return None
 
 
-V1 = re.compile(r"DEBUG: (?:Retrying )?Request ([\w-]+)/(\w+)")
+def records(stream):
+    """Yield each log entry as one string. The provider writes a request as a
+    timestamped line followed by indented continuation lines (the body, then
+    the remaining fields), so the fields that name the operation are often not
+    on the "HTTP Request Sent" line. Body lines ("  | ...") are dropped: they
+    hold payloads, never the fields read here."""
+    cur = []
+    for line in stream:
+        if STAMP.match(line):
+            if cur:
+                yield " ".join(cur)
+            cur = [line.rstrip("\n")]
+        elif cur and not line.lstrip().startswith("|"):
+            cur.append(line.strip())
+    if cur:
+        yield " ".join(cur)
 
 
-def request(line):
-    if "HTTP Request Sent" in line:
-        service = field(line, "aws.service", "rpc.service") or "?"
-        op = field(line, "aws.operation", "rpc.method") or "?"
-        return service, op.split(".")[-1]
-    m = V1.search(line)
+def service_of(text):
+    """The service when no rpc.service / aws.service field names it: the
+    method's prefix, the x-amz-target header, the signing scope or the SDK's
+    api/<service> user-agent token."""
+    for pattern in (
+        r"\brpc\.method=\"?([\w-]+)/",
+        r"x_amz_target=\"?(\w+?)(?:_\d+)?\.",
+        r"Credential=[^/\s]+/\d+/[\w-]+/([\w-]+)/aws4_request",
+        r"\bapi/([a-z0-9-]+)#",
+    ):
+        m = re.search(pattern, text)
+        if m:
+            return SERVICES.get(m.group(1).lower(), m.group(1))
+    return None
+
+
+def operation_of(text):
+    m = re.search(r"x_amz_target=\"?\w+?(?:_\d+)?\.(\w+)", text)
+    return m.group(1) if m else None
+
+
+def request(text):
+    if "HTTP Request Sent" in text:
+        service = field(text, "aws.service", "rpc.service")
+        op = field(text, "aws.operation", "rpc.method")
+        if op and "/" in op:
+            prefix, op = op.rsplit("/", 1)
+            service = service or SERVICES.get(prefix.lower(), prefix)
+        service = service or service_of(text) or "unattributed"
+        op = op or operation_of(text) or "unattributed"
+        return SERVICES.get(service.lower(), service), op.split(".")[-1]
+    m = V1.search(text)
     if m:
-        return m.group(1), m.group(2)
+        return SERVICES.get(m.group(1).lower(), m.group(1)), m.group(2)
     return None
 
 
@@ -52,6 +100,8 @@ def price(service, op):
         if re.match(r"(Put|Copy|Post|List|Create|Complete|UploadPart|Restore)", op):
             return 0.005 / 1000, "S3 PUT, COPY, POST, LIST"
         return 0.0004 / 1000, "S3 GET and other"
+    if s == "s3control":
+        return 0.0004 / 1000, "S3 Control, priced as S3 GET and other"
     if s == "sqs":
         return 0.40 / 1_000_000, "SQS request"
     if s == "dynamodb":
@@ -69,8 +119,8 @@ def main(paths):
     counts = Counter()
     for path in paths or ["-"]:
         stream = sys.stdin if path == "-" else open(path, errors="replace")
-        for line in stream:
-            r = request(line)
+        for text in records(stream):
+            r = request(text)
             if r:
                 counts[r] += 1
     if not counts:
