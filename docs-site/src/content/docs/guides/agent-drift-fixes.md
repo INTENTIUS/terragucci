@@ -1,6 +1,7 @@
 ---
 title: Have an agent propose drift fixes
 description: Hand drift the default response cannot fix to an agent, which opens a pull request for a person to review.
+claims: []
 ---
 
 ## What you end up with

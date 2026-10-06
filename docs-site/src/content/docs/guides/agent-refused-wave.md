@@ -1,6 +1,7 @@
 ---
 title: Have an agent summarize a refused wave
 description: Give an agent the diff between an approved plan and the current one, and read a short summary of what moved.
+claims: []
 ---
 
 ## What you end up with
