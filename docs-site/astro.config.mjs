@@ -2,6 +2,31 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
+// expressive-code renders each code line as its own block element with no
+// newline between them, so text extracted from the page (an agent, a reader
+// mode, a copy of the selection) runs lines together. A newline text node at the
+// end of each line fixes that. The line is a grid, which drops a whitespace-only
+// text node, so nothing changes on screen.
+const newlinesBetweenLines = {
+	name: 'newlines-between-lines',
+	hooks: {
+		postprocessRenderedBlock: ({ renderData }) => {
+			const visit = (node) => {
+				if (!node.children) return;
+				const lines = node.children.filter((c) => c.type === 'element' && (c.properties?.className ?? []).includes('ec-line'));
+				for (const line of lines.slice(0, -1)) {
+					// A blank line already carries its own newline.
+					const code = line.children.find((c) => c.type === 'element');
+					if (code && !code.children.some((c) => c.type === 'element')) continue;
+					node.children.splice(node.children.indexOf(line) + 1, 0, { type: 'text', value: '\n' });
+				}
+				node.children.forEach(visit);
+			};
+			visit(renderData.blockAst);
+		},
+	},
+};
+
 // Published under the org domain at /terragucci, the same shape fountain-ops
 // and loomster use. `base` has to match or every internal link 404s on Pages.
 export default defineConfig({
@@ -16,6 +41,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'terragucci',
+			expressiveCode: { plugins: [newlinesBetweenLines] },
 			customCss: ['./src/styles/terragucci.css'],
 			description: 'A lifecycle kit for Terraform, OpenTofu and Terragrunt: plan, approve, apply and watch for drift, on your CI or a fountain steward.',
 			social: [
