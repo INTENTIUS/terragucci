@@ -1,6 +1,7 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse]
 ---
 
 ## What you end up with

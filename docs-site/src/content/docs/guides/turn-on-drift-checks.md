@@ -1,6 +1,7 @@
 ---
 title: Turn on drift checks
 description: Plan every root on a schedule and get a grouped report of what changed outside Terraform.
+claims: [drift]
 ---
 
 ## What you end up with

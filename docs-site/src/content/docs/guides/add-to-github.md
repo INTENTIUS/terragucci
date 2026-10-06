@@ -1,6 +1,7 @@
 ---
 title: Add terragucci to a GitHub repo
 description: Write the GitHub Actions workflow, require its status in branch protection, and get a plan note on the next pull request.
+claims: []
 ---
 
 ## What you end up with

@@ -9,5 +9,5 @@ The [status page](https://intentius.io/terragucci/status/) is authoritative over
 - Docs live in `docs-site/src/content/docs/`. `just lint-docs` must pass, and `just site` must build.
 - The docs describe the target product, in the present tense. `docs-site/src/content/docs/status.md` is the only place that records what is built, and nothing else links to it except the sidebar. Design: terragucci#2, debut: terragucci#3.
 - The example lives in `example/`. An edit there needs `just example-patches` and then `just tutorial-capture`, which needs Docker. Without them `just tutorial-check` fails on stale captures.
-- A tutorial page leaves `draft: true` only when every claim in its `claims:` passes in `docs-site/src/data/smoke.json`.
+- A tutorial page or a guide leaves `draft: true` only when every claim in its `claims:` passes in `docs-site/src/data/smoke.json`. A guide carries a `claims:` line; `claims: []` says no recorded claim backs it.
 - Commits carry no AI attribution lines.

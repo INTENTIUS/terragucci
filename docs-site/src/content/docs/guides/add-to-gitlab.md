@@ -1,6 +1,7 @@
 ---
 title: Add terragucci to a GitLab repo
 description: Write .gitlab-ci.yml, add the token variable, and get a plan note on the next merge request.
+claims: []
 ---
 
 ## What you end up with
