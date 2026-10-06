@@ -71,7 +71,7 @@ You need none of this to use terragucci with Terraform or OpenTofu. The choudouf
 
 | choudoufu stage | What it does |
 |---|---|
-| `choudoufu-live-check` | checks the root against choudoufu's rules, with no cloud calls |
+| `choudoufu-live-check` | checks the root against choudoufu's rules, with no cloud calls; `tf-check` runs it after `validate` and fails on a refusal |
 | `choudoufu-discover` | lists live resources nobody owns yet, on a schedule |
 | `choudoufu-adopt` | claims discovered resources by writing their owner tags, after an approval |
 

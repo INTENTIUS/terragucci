@@ -7,12 +7,30 @@ Every stage takes the root directories and the binary.
 
 | Stage | What it does | Forge permissions | Outputs |
 |---|---|---|---|
-| `tf-check` | format and validate | read the repository | pass or fail |
+| `tf-check` | format, `validate`, and for a `choudoufu` repo `live-check`; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the diagnostics in the log, and the check report |
 | `tf-plan` | plans only the roots a change affects, in one run, and posts the grouped summary on the pull request; with [`policy`](/terragucci/reference/policy/) set, fails a root the policy denies | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
 | `tf-apply` | applies wave by wave, one job per wave, each wave behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a wave whose plans the policy denies | read the repository, write the `chant/lifecycle` branch | per wave, whether it waited and the command that approves it |
 | `tf-drift` | plans every root on a schedule with `-refresh-only` and reports what changed outside Terraform, grouped | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
+
+## Check
+
+`tf-check` runs on every push, and on a fork's pull request. `fmt -check` runs first, and a formatting difference stops the job. Each root then gets `init -backend=false` and `validate -json`, and every diagnostic prints with its file and range:
+
+```text
+error: envs/dev/orders/main.tf:12:3-12:8: Unsupported argument
+    An argument named "bogus" is not expected here.
+FAILED envs/dev/orders: validate found 1 error(s)
+```
+
+Warnings print and fail nothing. A failing root does not stop the next, so one run shows every diagnostic.
+
+With `binary: choudoufu`, `choudoufu live-check -json` runs after `validate`. Each refused resource prints with its rule and reason, and a non-zero exit fails the check.
+
+With [`policy`](/terragucci/reference/policy/) set, the last step runs the policy's own tests: `conftest verify` for the `conftest` engine, `opa test` for `opa`. A failing test fails the check and its output is in the log. A policy directory with no `*_test.rego` file is skipped with a note. The tests come from the default branch, or from the pull request's target, so a change cannot edit its own tests away.
+
+The log is also written to `terragucci-check/report.md`. The job keeps that file as an artifact, and GitHub and Forgejo show it in the run summary. A Terragrunt repo runs `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs` in place of the per-root steps.
 
 ## Drift
 
