@@ -33,6 +33,59 @@ copied_source() { # path
   return 1
 }
 
+# The uid:gid a created container runs as: its --user, or its image's USER,
+# with a name looked up in the container's /etc/passwd. Fails when it can't
+# tell.
+container_owner() { # container id
+  local spec u g line
+  spec="$(docker inspect -f '{{.Config.User}}' "$1")" || return 1
+  u="${spec%%:*}"; g=""
+  [ "$spec" = "$u" ] || g="${spec#*:}"
+  [ -n "$u" ] || u=0
+  case "$u" in
+    *[!0-9]*)
+      line="$(docker cp "$1:/etc/passwd" - 2>/dev/null | tar -xOf - passwd 2>/dev/null \
+        | awk -F: -v n="$u" '$1 == n { print $3 ":" $4; exit }')" || true
+      [ -n "$line" ] || return 1
+      u="${line%%:*}"; [ -n "$g" ] || g="${line#*:}" ;;
+  esac
+  case "$g" in ''|*[!0-9]*) g=0 ;; esac
+  echo "$u:$g"
+}
+
+# Copy a host dir's contents (or a file) to DST in a created container, owned
+# by OWNER (uid:gid, from container_owner) as a bind mount's files would be.
+# A plain `docker cp` keeps the host uid, and git in the container then
+# refuses a repository there ("dubious ownership"). safe.directory does not
+# help with a repository used as a remote: git drops GIT_CONFIG_COUNT and
+# GIT_CONFIG_PARAMETERS from the upload-pack and receive-pack it starts for a
+# local path, and those check ownership again. The copy is a tar stream, with
+# its owner and its path set, unpacked at /. With no OWNER, a plain docker cp.
+copy_in() { # container id, host path, container path, owner
+  local cid="$1" src="$2" dst="$3" rel="${3#/}" uid gid
+  local s=""
+  local -a own=() name=()
+  if [ -z "$4" ]; then
+    if [ -d "$src" ]; then docker cp -q "$src/." "$cid:$dst" >/dev/null
+    else docker cp -q "$src" "$cid:$dst" >/dev/null; fi
+    return
+  fi
+  uid="${4%%:*}"; gid="${4#*:}"
+  # bsdtar (macOS) and GNU tar spell the owner and the rename differently;
+  # S keeps a symlink's target as it is.
+  if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+    own=(--owner="$uid" --group="$gid" --numeric-owner); name=(--transform); s=s
+  else
+    own=(--uid "$uid" --gid "$gid"); name=(-s)
+  fi
+  if [ -d "$src" ]; then
+    tar -C "$src" -cf - "${own[@]}" "${name[@]}" "$s,^\\.,$rel,S" . | docker cp -q - "$cid:/" >/dev/null
+  else
+    tar -C "$(dirname "$src")" -cf - "${own[@]}" "${name[@]}" "$s,^.*\$,$rel,S" "$(basename "$src")" \
+      | docker cp -q - "$cid:/" >/dev/null
+  fi
+}
+
 # `docker run` without bind-mounting host temp paths: the container is created,
 # each copied source goes in with `docker cp`, the container runs attached
 # (its exit code is returned), each writable one comes back out over the
@@ -42,7 +95,7 @@ copied_source() { # path
 # first argument that is not an option is the image, and the rest the command.
 run_copied() { # docker run arguments...
   local -a opts=() srcs=() dsts=() ros=() attach=()
-  local a spec src rest dst mode cid rc=0 i detach=0
+  local a spec src rest dst mode cid owner rc=0 i detach=0
   while [ $# -gt 0 ]; do
     a="$1"; shift
     case "$a" in
@@ -65,19 +118,13 @@ run_copied() { # docker run arguments...
       *) set -- "$a" "$@"; break ;;
     esac
   done
-  # docker cp leaves the copies owned by another uid than the one git runs as
-  # inside, and git then refuses a repository there ("dubious ownership").
-  # Trust every path in the container, through the environment, so no git
-  # config is written into the copied trees.
-  [ ${#srcs[@]} -gt 0 ] && opts+=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e "GIT_CONFIG_VALUE_0=*")
   cid="$(docker create ${opts[@]+"${opts[@]}"} "$@")" || return 1
-  for i in ${srcs[@]+"${!srcs[@]}"}; do
-    if [ -d "${srcs[$i]}" ]; then
-      docker cp -q "${srcs[$i]}/." "$cid:${dsts[$i]}" >/dev/null || rc=1
-    else
-      docker cp -q "${srcs[$i]}" "$cid:${dsts[$i]}" >/dev/null || rc=1
-    fi
-  done
+  if [ ${#srcs[@]} -gt 0 ]; then
+    owner="$(container_owner "$cid")" || owner=""
+    for i in "${!srcs[@]}"; do
+      copy_in "$cid" "${srcs[$i]}" "${dsts[$i]}" "$owner" || rc=1
+    done
+  fi
   if [ $rc != 0 ]; then
     echo "run_copied: could not copy the work dir into the container" >&2
     docker rm -f "$cid" >/dev/null 2>&1 || true
