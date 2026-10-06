@@ -26,7 +26,7 @@ The comment is the command and nothing else: one line. The one optional word aft
 
 ### 2. Read the note
 
-The generated `replan` job checks the pull request out at its head and runs the plan stage that the pull request's own plan job runs. It uses the same read-only role, writes the same note and sets the same status. It plans the roots the change reaches, and a root you name narrows that set. If the change does not reach the root you name, nothing is planned.
+The generated `replan` job checks the pull request out at its head and runs the plan stage that the pull request's own plan job runs. It uses the same read-only role, writes the same note and sets the same status. It plans the roots the change reaches, and a root you name narrows that set. If the change does not reach the root you name, the job replies on the pull request that the root is not affected and names it, and leaves the plan note and the status as they were. There is no form that plans a root the change does not reach.
 
 ## What the command can and cannot do
 
@@ -42,6 +42,8 @@ The job also requires that:
 - the comment is new. Editing it does not run it again.
 
 An answer that refuses a command is a reply from the job's token that starts with `terragucci:`.
+
+A comment that asks for nothing ends the job with no error. If the job cannot tell whether to plan because the forge answered 403 or failed, or because the event file is unreadable, it fails and the log gives the cause.
 
 ## Next
 

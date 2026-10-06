@@ -80,6 +80,14 @@ describe("the comment trigger", () => {
     expect(planScript("tofu", layers, "github", OIDC)).not.toContain("terragucci comment");
   });
 
+  it("a re-plan of a root the change does not reach replies that it is not affected, and leaves the note and status", () => {
+    const script = planScript("tofu", layers, "github", OIDC, {}, true);
+    expect(script).toContain('tg reply "$TG_ROOT is not affected by this pull request, so nothing was planned."');
+    expect(script.indexOf("tg reply")).toBeLessThan(script.indexOf("tg note"));
+    expect(script).toContain('[ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending');
+    expect(planScript("tofu", layers, "github", OIDC)).not.toContain("tg reply");
+  });
+
   it("forgejo: the re-plan reads the commenter's permission from the event, and checks out the pull request's head by number", () => {
     const script = planScript("tofu", layers, "forgejo", OIDC, {}, true);
     expect(script).toMatch(/terragucci comment --layers [^\n]* --forge forgejo --out /);
