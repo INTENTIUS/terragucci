@@ -1,5 +1,5 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 25eb904..3abc730 100644
+index 83f26d5..32b9aa1 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
 @@ -132,7 +132,7 @@ jobs:
@@ -35,7 +35,7 @@ index 25eb904..3abc730 100644
            moved=""
 -          for dir in 'live/dev/email' 'live/dev/orders' 'live/dev/payments' 'live/dev/platform' 'live/dev/search' 'live/prod/email' 'live/prod/orders' 'live/prod/payments' 'live/prod/platform' 'live/prod/search' 'live/staging/email' 'live/staging/orders' 'live/staging/payments' 'live/staging/platform' 'live/staging/search'; do
 +          for dir in 'live/dev/billing' 'live/dev/email' 'live/dev/ledger' 'live/dev/orders' 'live/dev/payments' 'live/dev/platform' 'live/dev/search' 'live/prod/email' 'live/prod/orders' 'live/prod/payments' 'live/prod/platform' 'live/prod/search' 'live/staging/email' 'live/staging/orders' 'live/staging/payments' 'live/staging/platform' 'live/staging/search'; do
-             if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -q "^$dir/"; then moved="${moved:+$moved,}$dir"; fi
+             if [ -z "$changed" ] || printf '%s\n' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these units: plan notes that cover them are stale.
 @@ -395,11 +395,11 @@ jobs:

@@ -7,7 +7,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, planScript, READS_EXIT, renderPipeline, terragruntApplyScript } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, movedRoots, planScript, READS_EXIT, renderPipeline, terragruntApplyScript } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -1006,6 +1006,36 @@ describe("the drift stage", () => {
       const calls = readFileSync(log, "utf-8").trim().split("\n");
       expect(calls[0]).toMatch(/^stage tf-drift /);
       expect(calls.some((c) => c.startsWith("respond drift"))).toBe(code === 0);
+    });
+  });
+
+  describe("movedRoots in the step's own shell", () => {
+    const moved = async (roots: string[], changed: string[], before = true) => {
+      const dir = tmp();
+      const repo = join(dir, "repo");
+      mkdirSync(repo);
+      git(repo, "init", "-q", "-b", "main");
+      writeFileSync(join(repo, "f"), "x");
+      git(repo, "add", "-A");
+      git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one");
+      const base = git(repo, "rev-parse", "HEAD").trim();
+      git(repo, "remote", "add", "origin", repo);
+      for (const f of changed) { mkdirSync(join(repo, f, ".."), { recursive: true }); writeFileSync(join(repo, f), "y"); }
+      git(repo, "add", "-A");
+      git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "two");
+      const r = await runStep(`cd ${repo}\n${movedRoots(roots)}\necho "moved=$moved"`, { TG_BEFORE: before ? base : "" });
+      return r.out.trim().split("\n").pop();
+    };
+
+    it("names the roots with a changed file, and every root when the push cannot be diffed", async () => {
+      expect(await moved(["a", "b", "c"], ["b/x.tf"])).toBe("moved=b");
+      expect(await moved(["a", "b"], ["b/x.tf"], false)).toBe("moved=a,b");
+    });
+
+    it("still matches the last root when thousands of files changed before it", async () => {
+      // A long list is what made printf take SIGPIPE when grep -q quit at the first match.
+      const many = Array.from({ length: 6000 }, (_, i) => `a/dir${i}/some-long-file-name-${i}.tf`);
+      expect(await moved(["a", "z"], [...many, "z/last.tf"])).toBe("moved=a,z");
     });
   });
 

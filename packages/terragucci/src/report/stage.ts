@@ -1011,7 +1011,9 @@ async function finish(
     const issueOptions = { ...(names ? { names } : {}), ...(attributions ? { attributions } : {}), ...links.note };
     writeFileSync(join(dir, "issue.md"), renderDriftIssue(report, issueOptions));
     // `respond drift` in the same job reads who changed what from here, so the audit log is read once.
+    // A reused report directory can hold the file from an earlier run, so a run that made none removes it.
     if (attributions) writeFileSync(join(dir, ATTRIBUTIONS_FILE), JSON.stringify(Object.fromEntries(attributions), null, 2) + "\n");
+    else rmSync(join(dir, ATTRIBUTIONS_FILE), { force: true });
     const token = options.token ?? env.TG_TOKEN;
     const target = targetFromEnv(options.forge, env, token);
     if (!target) {
