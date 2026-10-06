@@ -1262,6 +1262,30 @@ describe("GCP and Azure credentials", () => {
     expect(r.out).not.toContain("planned");
   });
 
+  it("a regional token URL and a sovereign audience reach the credential file and the token request", () => {
+    const oidc = { gcp: { ...GCP, token_url: "https://sts.europe-west3.rep.googleapis.com/v1/token" }, azure: { ...AZURE, audience: "api://AzureADTokenExchangeUSGov" } };
+    const run = cloudScripts("github", oidc, "plan", "terragucci-plan").join("\n");
+    expect(run).toContain('"https://sts.europe-west3.rep.googleapis.com/v1/token"');
+    expect(run).not.toContain("https://sts.googleapis.com/v1/token");
+    expect(run).toContain(`tg oidc "$ARM_OIDC_TOKEN_FILE_PATH" 'api://AzureADTokenExchangeUSGov' || exit 1`);
+    expect(run).not.toContain("'api://AzureADTokenExchange'");
+    expect(cloudScripts("github", CLOUDS, "plan", "terragucci-plan").join("\n")).toContain('"https://sts.googleapis.com/v1/token"');
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the no-token check runs once per script however many clouds are set", (forge) => {
+    const count = (s: string): number => s.split("ACTIONS_ID_TOKEN_REQUEST_URL:-").length - 1;
+    expect(count(cloudScripts(forge, { ...OIDC, ...CLOUDS }, "plan", "terragucci-plan").join("\n"))).toBe(1);
+    expect(count(cloudScripts(forge, CLOUDS, "apply", "terragucci-apply").join("\n"))).toBe(1);
+    expect(count(cloudScripts(forge, OIDC, "plan", "terragucci-plan").join("\n"))).toBe(1);
+  });
+
+  it("the config takes a token_url and an audience, and refuses empty or non-https ones", () => {
+    const oidc = { gcp: { ...GCP, token_url: "https://sts.europe-west3.rep.googleapis.com/v1/token" }, azure: { ...AZURE, audience: "api://AzureADTokenExchangeChina" } };
+    expect(validateConfig({ oidc }, "t").oidc).toEqual(oidc);
+    expect(() => validateConfig({ oidc: { gcp: { ...GCP, token_url: "http://sts.example/v1/token" } } }, "t")).toThrow(/token_url must be an https URL/);
+    expect(() => validateConfig({ oidc: { azure: { ...AZURE, audience: "" } } }, "t")).toThrow(/azure.audience must be a non-empty string/);
+  });
+
   it("the config takes gcp and azure beside or instead of AWS, and refuses one identity for both stages", () => {
     expect(validateConfig({ oidc: CLOUDS }, "t").oidc).toEqual(CLOUDS);
     expect(validateConfig({ oidc: { ...OIDC, ...CLOUDS } }, "t").oidc).toEqual({ ...OIDC, ...CLOUDS });
