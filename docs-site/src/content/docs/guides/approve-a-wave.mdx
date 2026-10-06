@@ -55,7 +55,13 @@ The command writes a record that names the wave's set digest, a hash over the pl
 
 ### 4. Run the stage again
 
-Re-run the wave's job on your forge, or push to the default branch again. The stage finds your record and the wave goes out. It starts where it stopped and never touches a root twice. A later wave that also has to wait stops at exit code 3 with its own command.
+Comment `/terragucci apply` on the merged pull request, on GitHub or Forgejo. The `apply-comment` job runs `tf-apply` at the merge commit and replies with a link to the run. Add `wave-2` to stop after that wave. You need write access.
+
+The comment approves nothing. A wave with no sealed approval of the plans it makes now stays put, and the reply gives its set digest and the `chant approve ... --sign` command. A wave whose plans changed since you approved is refused.
+
+Re-running the wave's job, or pushing to the default branch again, does the same; on GitLab, retry the job. The stage finds your approval and the wave goes out. It starts where it stopped and never touches a root twice. A later wave that also has to wait stops at exit code 3 with its own command.
+
+Tools that apply before the merge run the pull request's code with the apply role, and the comment is the approval. Here only merged code applies, and the approval is your signature over the plans' digests, so the comment can only re-run a wave you already approved. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) lists what it refuses.
 
 The report now links each cleared wave to its record.
 

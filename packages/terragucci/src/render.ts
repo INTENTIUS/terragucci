@@ -18,6 +18,9 @@
  *        after it. One apply per project at a time; posts one
  *        terragucci/apply status and marks plan notes the push made stale.
  *        A Terragrunt repo applies every wave in one job.
+ * apply-comment  `/terragucci apply [wave-<n>]` on a merged pull request
+ *        (GitHub and Forgejo, plain roots): the same stage at its merge commit,
+ *        under the same lock, approving nothing.
  *
  * drift  only when `drift:` names a schedule: `terragucci stage tf-drift` plans
  *        every root with -refresh-only, keeps the same report, and opens,
@@ -388,9 +391,12 @@ export function movedRoots(roots: string[]): string {
  * A runner that kills a job never runs its exit trap, so a waiter takes the
  * lock over, atomically, when the holder's run is no longer running or the
  * lease is older than TG_LOCK_STALE seconds. A run that finds a newer push on
- * the branch stands down, since that push applies the whole tree.
+ * the branch stands down, since that push applies the whole tree. An apply a
+ * comment started does not: it applies a merge commit that is not the tip by
+ * design, and `terragucci comment-apply`, run again once it holds the lock,
+ * decides whether a later apply superseded it.
  */
-export function forgejoLock(): string {
+export function forgejoLock(standDown = true): string {
   const id = '${GITHUB_RUN_ID:-$$}';
   return [
     'lock_ref="refs/tags/terragucci-apply-lock"',
@@ -411,12 +417,16 @@ export function forgejoLock(): string {
     '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
     "done",
     "trap 'git push -q --force-with-lease=\"$lock_ref:$mine\" origin \":$lock_ref\" || true' EXIT",
-    'tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"',
-    'if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then',
-    '  echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"',
-    '  tg status terragucci/apply success "superseded by a newer push"',
-    "  exit 0",
-    "fi",
+    ...(standDown
+      ? [
+          'tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"',
+          'if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then',
+          '  echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"',
+          '  tg status terragucci/apply success "superseded by a newer push"',
+          "  exit 0",
+          "fi",
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -486,6 +496,90 @@ export function applyScript(
     ...(last
       ? [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
       : [`echo "wave ${input.wave} of ${count} applied"`]),
+  ].join("\n");
+}
+
+/** Reads the decision file `terragucci comment-apply` wrote: the pull request, the merge commit and the last wave ("-" for every wave). */
+const APPLY_DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")';
+
+/**
+ * The apply a comment starts, `/terragucci apply [wave-<n>]` on a merged pull
+ * request. The workflow and this script are the default branch's (the comment
+ * event's); `terragucci comment-apply` decides from the event file and the
+ * forge, before any credential is asked for, whether the comment may apply,
+ * and the job then checks out the pull request's merge commit, never its
+ * head. It holds the lock a push's apply holds (on Forgejo the lock tag, and
+ * the decision is made again once it is held; on GitHub the apply concurrency
+ * group), and runs `stage tf-apply` wave by wave from wave 1, as a re-run
+ * does: a wave already applied plans no change, a gated wave counts only the
+ * sealed approval of the plans it makes now, and the first wave that does not
+ * apply stops the run. The reply says what happened and links the run.
+ */
+export function commentApplyScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: { canary?: string[]; gate?: Gate } = {}): string {
+  const total = layers.flat().length;
+  const count = applyWaves(layers, input.canary).length;
+  const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
+  const canaryArg = input.canary?.length ? ` --canary ${sh(input.canary.join(","))}` : "";
+  const decide = `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-comment.json || exit 1`;
+  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy"];
+  return [
+    "set -uo pipefail",
+    forgeApi(forge),
+    // Before any credential: the comment, the commenter, the pull request and the merge commit.
+    decide,
+    "read -r TG_PR TG_SHA TG_WAVE <<EOF",
+    `$(node -e '${APPLY_DECISION_JS}' terragucci-comment.json)`,
+    "EOF",
+    '[ -n "$TG_PR" ] || exit 0',
+    'export TG_PR TG_SHA',
+    `last=${count}`,
+    '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
+    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
+    ...(forge === "forgejo"
+      ? [
+          forgejoLock(false),
+          // A push may have applied while this run waited for the lock: decide again, now that nothing else applies.
+          decide,
+          "read -r again _ _ <<EOF",
+          `$(node -e '${APPLY_DECISION_JS}' terragucci-comment.json)`,
+          "EOF",
+          '[ -n "$again" ] || exit 0',
+        ]
+      : []),
+    'git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the merge commit ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }',
+    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
+    'tg status terragucci/apply pending "applying on a comment"',
+    'outcome="$(mktemp)"',
+    'done_waves=""',
+    'for wave in $(seq 1 "$last"); do',
+    '  : >"$outcome"',
+    `  TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" ${args.join(" ")}`,
+    "  rc=$?",
+    '  case "$rc" in',
+    '    0) done_waves="${done_waves:+$done_waves, }$wave" ;;',
+    "    3)",
+    '      tg status terragucci/apply pending "$(cat "$outcome")"',
+    `      digest="$(sed -n 's/.*--plan \\([^ ]*\\).*/\\1/p' "$outcome")"`,
+    `      cmd="$(sed -n 's/^wave [0-9]* waits: //p' "$outcome")"`,
+    '      tg reply "wave $wave waits for an approval of its set digest $digest, so nothing in it was applied${done_waves:+ (applied: wave $done_waves)}. A comment approves nothing: approve the plans with \\\`$cmd\\\` and comment \\\`/terragucci apply\\\` again. $run_url"',
+    "      exit 3 ;;",
+    "    4)",
+    '      tg status terragucci/apply failure "$(cat "$outcome")"',
+    '      tg reply "wave $wave was refused: its plans changed since it was approved, so nothing in it was applied (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). $run_url"',
+    "      exit 4 ;;",
+    "    *)",
+    '      tg status terragucci/apply failure "an apply failed"',
+    '      why="$(cat "$outcome")"',
+    '      tg reply "wave $wave did not apply${why:+ ($why)}${done_waves:+; applied: wave $done_waves}. The run has the log: $run_url"',
+    "      exit 1 ;;",
+    "  esac",
+    "done",
+    `if [ "$last" = ${count} ]; then`,
+    `  tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
+    "else",
+    `  tg status terragucci/apply pending "wave $last of ${count} applied"`,
+    "fi",
+    'tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"',
   ].join("\n");
 }
 
@@ -888,7 +982,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     on: {
       push: { branches: ["**"] },
       pull_request: {},
-      // `/terragucci plan [root]` in a pull request comment re-plans it; see comment.ts.
+      // `/terragucci plan [root]` in a pull request comment re-plans it (comment.ts); `/terragucci apply` on a merged one re-runs its apply (comment-apply.ts).
       issue_comment: { types: ["created"] },
       ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
     },
@@ -961,12 +1055,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       }),
     ],
   } as never);
+  // `/terragucci apply` goes to its own job, which a Terragrunt repo, applying in one job with no gates, does not get.
+  const applyOnComment = !tg;
+  const APPLY_COMMENT = "startsWith(github.event.comment.body, '/terragucci apply')";
   // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
   // never an expression in the script: the command reads it from the event file (comment.ts).
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: "github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')",
+    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')${applyOnComment ? ` && !${APPLY_COMMENT}` : ""}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
@@ -987,6 +1084,24 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ["plan", plan as never],
     ["replan", replan as never],
   ]);
+  if (applyOnComment) {
+    // `/terragucci apply` on a merged pull request re-runs its apply from the merge commit, with the
+    // apply role, under the lock a push's apply holds. The workflow is the default branch's, as for
+    // every comment; commentApplyScript decides before it asks for any credential.
+    entities.set("apply-comment", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
+      permissions: { contents: writesLedger ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+      ...openid(needsToken),
+      concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
+      env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+      steps: [
+        ...steps(new Step({ name: "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, { canary: input.canary, gate }) }), true, true),
+        new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
+      ],
+    } as never) as never);
+  }
   for (const [i, job] of applyJobs.entries()) {
     entities.set(job.name, new Job({
       "runs-on": "ubuntu-latest",

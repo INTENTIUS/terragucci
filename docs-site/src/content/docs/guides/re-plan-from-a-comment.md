@@ -1,6 +1,6 @@
 ---
 title: Re-plan a pull request from a comment
-description: Ask for a read-only re-plan of a pull request by writing /terragucci plan, on GitHub and Forgejo.
+description: Ask for a read-only re-plan of a pull request by writing /terragucci plan, and re-run an approved apply with /terragucci apply, on GitHub and Forgejo.
 claims: [comment-plan]
 ---
 
@@ -30,11 +30,11 @@ The generated `replan` job checks the pull request out at its head and runs the 
 
 ## What the command can and cannot do
 
-The only command is `plan`. Nothing here applies, approves or unlocks. A re-plan changes nothing an approval covers, since an approval binds the digests of the plans it was given for.
+There are two commands, `plan` and `apply`. `plan` changes nothing. A re-plan changes nothing an approval covers, since an approval binds the digests of the plans it was given for. No comment approves or unlocks.
 
-The text is untrusted. The job never puts it in a script: `terragucci comment` reads it from the event file and accepts one grammar, `/terragucci plan` or `/terragucci plan <root>`. The root must be exactly one of the roots the pipeline was written with. Anything else is answered with the reason and plans nothing. Refused cases include `/terragucci apply`, `/terragucci approve` and `/terragucci unlock`, a root with a glob, a path trick or shell syntax in it, and text on a second line.
+The text is untrusted. The job never puts it in a script: `terragucci comment` reads it from the event file and accepts one grammar, `/terragucci plan`, `/terragucci plan <root>`, `/terragucci apply` or `/terragucci apply wave-<n>`. The root must be exactly one of the roots the pipeline was written with. Anything else is answered with the reason and plans nothing. Refused cases include `/terragucci approve` and `/terragucci unlock`, a root with a glob, a path trick or shell syntax in it, and text on a second line.
 
-The job also requires that:
+A re-plan also requires that:
 
 - the author has write access to the repo. Anyone else gets no answer and no plan;
 - the pull request is open;
@@ -44,6 +44,22 @@ The job also requires that:
 An answer that refuses a command is a reply from the job's token that starts with `terragucci:`.
 
 A comment that asks for nothing ends the job with no error. If the job cannot tell whether to plan because the forge answered 403 or failed, or because the event file is unreadable, it fails and the log gives the cause.
+
+## Apply a merged pull request
+
+`/terragucci apply` on a merged pull request re-runs `tf-apply` for waves you approved with `chant approve --sign`, as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes. The `apply-comment` job reads the comment with `terragucci comment-apply` before any credential is asked for. Its workflow comes from the default branch, and its checkout is the merge commit, never the head. The job holds the apply lock a push holds, and assumes `oidc.apply_role` once the checks pass. Waves run in order from wave 1: one already applied plans no change, and the first that does not apply ends the run. With `wave-<n>` the run stops after wave n.
+
+Nothing applies, and the reply says why, when:
+
+- the commenter cannot push to the repo;
+- the pull request is open or was closed unmerged;
+- its head is in a fork;
+- its base is not the default branch;
+- the default branch no longer has the merge commit;
+- a later commit on the default branch has an apply of its own, which the reply links, since going back would undo that newer tree;
+- the named wave does not exist.
+
+Waiting and refused waves behave as on a push. GitLab has no comment trigger, so retry the job there. A Terragrunt pipeline has no `apply-comment` job, and its reply says so.
 
 ## Next
 

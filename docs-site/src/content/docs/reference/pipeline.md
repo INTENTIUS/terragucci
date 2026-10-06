@@ -9,6 +9,10 @@ A project applies one push at a time. GitHub holds the apply job in a concurrenc
 
 A waiting push applies after the one ahead of it. Pull requests take no locks, so there is nothing to release by hand.
 
+## Apply from a comment
+
+On GitHub and Forgejo, the `apply-comment` job runs when someone writes `/terragucci apply` on a merged pull request. It runs the default branch's workflow, checks out the pull request's merge commit and runs `tf-apply` wave by wave with the apply role, under the same lock as a push's apply. The Forgejo job does not stand down for a newer tip. Instead it checks again, once it holds the lock, that no later apply has superseded the merge commit. The comment approves nothing; a gated wave still needs its sealed record. A Terragrunt repo's pipeline has no such job. [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) has the rules.
+
 Roots that apply together each get a provider cache directory of their own.
 
 `tf-plan` and `tf-drift` plan the roots of one dependency layer at once, up to `parallelism` at a time: 3 for GitLab-managed state, which limits concurrent inits, and 16 for other backends. `tf-apply` plans the roots of its wave under the same bound. A layer waits for the layers whose state it reads. The report, the note and the job log list the roots in the same order however they finish, so a run's report matches one made a root at a time. When the job shares one provider cache through `TF_PLUGIN_CACHE_DIR`, the roots' inits take turns and their plans still run at once.
@@ -41,7 +45,7 @@ oidc:
     apply_client_id: 00000000-0000-0000-0000-000000000004
 ```
 
-Plan runs the pull request's code, so it gets the read-only identity on every cloud. The config rejects the same identity for both stages. Apply gets the write identity and runs only on the default branch. Forks get no plan job, so nothing reaches their pull requests. The drift job takes the plan identities.
+Plan runs the pull request's code, so it gets the read-only identity on every cloud. The config rejects the same identity for both stages. Apply gets the write identity and runs only on the default branch, for a push or for a comment on a merged pull request, at its merge commit. Forks get no plan job, so nothing reaches their pull requests. The drift job takes the plan identities.
 
 The job asks the forge for one token per cloud, with the audience that cloud expects:
 

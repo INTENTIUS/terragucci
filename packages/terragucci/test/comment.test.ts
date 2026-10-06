@@ -18,8 +18,8 @@ describe("parseComment", () => {
     for (const c of ["looks good", "please /terragucci plan", "/terragucci-plan", "/terraguccix plan", 5, undefined, null]) expect(parseComment(c)).toBeUndefined();
   });
 
-  it("refuses apply, approve and unlock by name, and anything else with the usage", () => {
-    for (const v of ["apply", "approve", "unlock", "force-unlock"]) {
+  it("refuses approve and unlock by name, and anything else with the usage", () => {
+    for (const v of ["approve", "unlock", "force-unlock"]) {
       const r = parseComment(`/terragucci ${v} envs/dev/app`);
       expect(r).toMatchObject({ kind: "refused" });
       expect((r as { reason: string }).reason).toContain("never runs");
@@ -95,10 +95,10 @@ describe("decideComment", () => {
     expect(s.sent.some((x) => x.method === "POST")).toBe(false);
   });
 
-  it("apply by comment is refused and answered, and nothing runs", async () => {
+  it("apply by comment is not the re-plan job's: it is answered, and nothing runs", async () => {
     const s = setup({ comment: "/terragucci apply" });
     expect((await decideComment({ layers, env: s.env, fetch: s.fetch })).go).toBe(false);
-    expect(s.sent.filter((x) => x.method === "POST")[0].body.body).toContain("never runs `apply`");
+    expect(s.sent.filter((x) => x.method === "POST")[0].body.body).toContain("does not apply on a comment");
   });
 
   it("a root outside the configured roots is refused, whatever it looks like", async () => {
@@ -199,10 +199,10 @@ describe("decideComment on Forgejo", () => {
     expect([...other.sent, ...sender.sent]).toEqual([]);
   });
 
-  it("the untrusted-input guards still hold: apply is refused by name, an unknown root is refused, a fork is not planned", async () => {
+  it("the untrusted-input guards still hold: apply is not re-planned, an unknown root is refused, a fork is not planned", async () => {
     const apply = setup({ comment: "/terragucci apply", event: { repository: { full_name: "acme/infra", permissions: { push: true } }, sender: { login: "dev" } } });
     expect((await decideComment({ layers, env: apply.env, fetch: apply.fetch, forge: "forgejo" })).go).toBe(false);
-    expect(apply.sent.filter((x) => x.method === "POST")[0].body.body).toContain("never runs `apply`");
+    expect(apply.sent.filter((x) => x.method === "POST")[0].body.body).toContain("does not apply on a comment");
     const root = setup({ comment: "/terragucci plan $(id)", event: { repository: { full_name: "acme/infra", permissions: { push: true } }, sender: { login: "dev" } } });
     expect((await decideComment({ layers, env: root.env, fetch: root.fetch, forge: "forgejo" })).go).toBe(false);
     const fork = setup({ comment: "/terragucci plan", pr: { state: "open", head: { sha: "a".repeat(40), repo: { full_name: "evil/infra" } }, base: { ref: "main" } }, event: { repository: { full_name: "acme/infra", permissions: { push: true } }, sender: { login: "dev" } } });

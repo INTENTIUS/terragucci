@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
-import { applyScript, AWS_CLI, cloudScripts, driftScript, forgeApi, planScript, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, planScript, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -79,11 +79,13 @@ describe("apply concurrency", () => {
 });
 
 describe("the comment trigger", () => {
-  it.each(["github", "forgejo"] as const)("%s: issue_comment starts a re-plan job and nothing that applies", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: issue_comment starts a re-plan job that never applies", (forge) => {
     const doc = body(render(forge, OIDC));
     expect(doc.on.issue_comment).toEqual({ types: ["created"] });
     expect(doc.jobs.replan.if).toContain("github.event_name == 'issue_comment'");
     expect(doc.jobs.replan.if).toContain("startsWith(github.event.comment.body, '/terragucci')");
+    // `/terragucci apply` is the apply-comment job's, never the re-plan job's.
+    expect(doc.jobs.replan.if).toContain("!startsWith(github.event.comment.body, '/terragucci apply')");
     // The comment-triggered run takes the plan job's read-only role, never the apply role.
     expect(JSON.stringify(doc.jobs.replan)).toContain(OIDC.plan_role);
     expect(JSON.stringify(doc.jobs.replan)).not.toContain(OIDC.apply_role);
@@ -101,8 +103,11 @@ describe("the comment trigger", () => {
     expect(run).not.toContain("github.event.comment");
     expect(run).toContain("terragucci comment --layers");
     expect(run).not.toContain("eval ");
-    // The only mention of the comment body outside the script is the job's startsWith filter.
-    expect(text.match(/github\.event\.comment/g)).toHaveLength(1);
+    // The only mentions of the comment body are the jobs' startsWith filters, never a script.
+    const doc = body(text);
+    expect(JSON.stringify(doc.jobs["apply-comment"].steps)).not.toContain("github.event.comment");
+    expect(text.match(/github\.event\.comment/g)).toHaveLength(3);
+    for (const line of text.split("\n").filter((l) => l.includes("github.event.comment"))) expect(line.trim()).toMatch(/^if: /);
   });
 
   it("the re-plan script checks the comment before it asks for credentials, then plans the pull request's head", () => {
@@ -129,6 +134,145 @@ describe("the comment trigger", () => {
     expect(planScript("tofu", layers, "github", OIDC, {}, true)).not.toContain("--forge");
     expect(script).toContain('git fetch --quiet origin "refs/pull/$TG_PR/head"');
     expect(script.indexOf('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(script.indexOf("tg status terragucci/plan pending"));
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: `/terragucci apply` starts the apply-comment job, with the apply role, under the apply lock", (forge) => {
+    const doc = body(render(forge, OIDC));
+    const job = doc.jobs["apply-comment"];
+    expect(job.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')");
+    expect(job.concurrency).toEqual(doc.jobs["apply-wave-1"].concurrency);
+    expect(job.concurrency).toEqual({ group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false });
+    const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
+    expect(run).toContain(OIDC.apply_role);
+    expect(run).not.toContain(OIDC.plan_role);
+    // It checks out the merge commit from the default branch's history, never a pull request's head.
+    expect(job.steps[0]).toEqual({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } });
+    expect(run).not.toContain("refs/pull/");
+    expect(run).toContain('git checkout --quiet --detach "$TG_SHA"');
+    if (forge === "github") expect(job.permissions["id-token"]).toBe("write");
+    else expect(job["enable-openid-connect"]).toBe(true);
+    // Each wave of a push still runs only for a push to the default branch.
+    expect(doc.jobs["apply-wave-1"].if).toBe("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
+  });
+
+  it("a Terragrunt repo, which applies in one job with no gates, gets no apply-comment job, and its re-plan job answers the comment", () => {
+    const text = renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content;
+    const doc = body(text);
+    expect(doc.jobs["apply-comment"]).toBeUndefined();
+    expect(doc.jobs.replan.if).not.toContain("/terragucci apply");
+  });
+
+  it("the apply-comment script decides before any credential, checks out the merge commit, and runs the waves in order", () => {
+    const script = commentApplyScript("tofu", layers, "github", OIDC, { gate: "always" });
+    const at = (s: string): number => script.indexOf(s);
+    expect(at("terragucci comment-apply --layers")).toBeGreaterThan(-1);
+    expect(at("terragucci comment-apply")).toBeLessThan(at('git checkout --quiet --detach "$TG_SHA"'));
+    expect(at('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(at("tg oidc"));
+    expect(at("tg oidc")).toBeLessThan(at("terragucci stage tf-apply"));
+    expect(script).toContain('terragucci stage tf-apply --wave "$wave" --layers');
+    expect(script).toContain("--gate always");
+    expect(script).not.toContain("tg stale");
+    expect(script).not.toContain("terragucci-apply-lock");
+    expect(commentApplyScript("tofu", layers, "github", OIDC, { canary: ["app"] })).toContain("--canary 'app'");
+  });
+
+  it("forgejo: the apply-comment script takes the lock tag without standing down for the tip, and decides again once it holds it", () => {
+    const script = commentApplyScript("tofu", layers, "forgejo", OIDC);
+    const at = (s: string): number => script.indexOf(s);
+    expect(script).toContain("refs/tags/terragucci-apply-lock");
+    expect(script).not.toContain("standing down");
+    expect(script.match(/terragucci comment-apply [^\n]* --forge forgejo/g)).toHaveLength(2);
+    expect(at("refs/tags/terragucci-apply-lock")).toBeLessThan(script.lastIndexOf("terragucci comment-apply"));
+    expect(script.lastIndexOf("terragucci comment-apply")).toBeLessThan(at("tg oidc"));
+  });
+
+  describe("an apply a comment started", () => {
+    const decision = (d: Record<string, unknown>) => JSON.stringify(d);
+    const fake = (waits?: number) => fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+      terragucci: [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = comment-apply ]; then while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done; printf \'%s\\n\' "$DECISION" > "$out"; exit 0; fi',
+        'echo "wave $4 at $(git rev-parse HEAD)" >> "$LOG"',
+        ...(waits ? [`if [ "$4" = ${waits} ]; then echo "wave $4 waits: chant approve tf-apply wave-$4 --plan sha256:abc123 --sign" > "$TG_OUTCOME"; exit 3; fi`] : []),
+        "exit 0",
+      ].join("\n"),
+    });
+    const repo = (): { work: string; sha: string } => {
+      const work = tmp("tg-work-");
+      git(work, "init", "-q", "-b", "main");
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "merge");
+      const sha = git(work, "rev-parse", "HEAD").trim();
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "tip");
+      return { work, sha };
+    };
+    const envFor = (api: string, dir: string, d: string): Record<string, string> => ({
+      LOG: join(dir, "stage.log"), DECISION: d, TG_TOKEN: "t", GITHUB_API_URL: api, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "https://forge.test", GITHUB_RUN_ID: "9",
+    });
+
+    it("applies every wave at the merge commit, posts the apply status there and replies with the run", async () => {
+      const { work, sha } = repo();
+      const { dir, env } = fake();
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
+        expect(r.status, r.out).toBe(0);
+        expect(readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n")).toEqual([`wave 1 at ${sha}`, `wave 2 at ${sha}`]);
+        const statuses = api.hits.filter((h) => h.url.startsWith("/repos/acme/infra/statuses/"));
+        expect(statuses.every((h) => h.url === `/repos/acme/infra/statuses/${sha}`)).toBe(true);
+        expect(statuses.at(-1)?.body.state).toBe("success");
+        const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments");
+        expect(reply?.body.body).toBe(`terragucci: applied wave 1, 2 of pull request 7 at ${sha.slice(0, 8)}. https://forge.test/acme/infra/actions/runs/9`);
+      } finally {
+        api.close();
+      }
+    });
+
+    it("stops at a waiting wave, approves nothing, and the reply names the wave, its digest and the approval command", async () => {
+      const { work, sha } = repo();
+      const { dir, env } = fake(2);
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
+        expect(r.status).toBe(3);
+        const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
+        expect(reply).toContain("wave 2 waits for an approval of its set digest sha256:abc123");
+        expect(reply).toContain("`chant approve tf-apply wave-2 --plan sha256:abc123 --sign`");
+        expect(reply).toContain("(applied: wave 1)");
+        expect(reply).toContain("https://forge.test/acme/infra/actions/runs/9");
+        expect(api.hits.some((h) => h.url.includes("chant") || h.url.includes("lifecycle"))).toBe(false);
+      } finally {
+        api.close();
+      }
+    });
+
+    it("runs no further than the wave the comment named", async () => {
+      const { work, sha } = repo();
+      const { dir, env } = fake();
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main", wave: 1 })) });
+        expect(r.status, r.out).toBe(0);
+        expect(readFileSync(join(dir, "stage.log"), "utf-8").trim()).toBe(`wave 1 at ${sha}`);
+        expect(api.hits.filter((h) => h.url.includes("/statuses/")).at(-1)?.body.state).toBe("pending");
+      } finally {
+        api.close();
+      }
+    });
+
+    it("a comment the decision refused runs no stage and asks for no token", async () => {
+      const { work } = repo();
+      const { dir, env } = fake();
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github", OIDC)}`, { ...env, ...envFor(api.url, dir, decision({ go: false, reason: "pull request 7 is not merged" })) });
+        expect(r.status).toBe(0);
+        expect(existsSync(join(dir, "stage.log"))).toBe(false);
+        expect(r.out).not.toContain("OIDC");
+        expect(api.hits).toEqual([]);
+      } finally {
+        api.close();
+      }
+    });
   });
 
   it("gitlab: no comment trigger", () => {
