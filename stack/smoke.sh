@@ -601,8 +601,7 @@ provider "aws" {
   (cd "$work/in-line" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
   push_tree "$work/in-line" "$USER/in-line" main "Two roots, pipeline in line" >/dev/null
   push_tree "$work/two-roots" "$repo" main "Two roots, no pipeline" >/dev/null
-  settle "repos/$USER/in-line/branches/main" 200 || return 1
-  settle "repos/$repo/branches/main" 200 || return 1
+  [ -n "$(remote_head "$USER/in-line" main)" ] && [ -n "$(remote_head "$repo" main)" ] || { log "a pushed main is not listed by git"; return 1; }
   settle "repos/$repo/pulls?state=open" 200 || return 1
 
   cat > "$work/terragucci.yml" <<YML
@@ -623,11 +622,11 @@ YML
   grep -q "localhost/$USER/in-line: unchanged" <<<"$out" || { log "in-line was not left alone"; return 1; }
   pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open" | jq -r '.[] | select(.head.ref == "terragucci/pipeline") | .number' | head -1)"
   [ -n "$pr" ] || { log "no pull request on $repo"; return 1; }
-  sha="$(api "$URL/api/v1/repos/$repo/branches/terragucci%2Fpipeline" | jq -r .commit.id)"
+  sha="$(remote_head "$repo" terragucci/pipeline)"
   wait_run "$repo" "$sha"
   [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the pull request's check ended $RUN_STATUS"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge"
-  sha="$(api "$URL/api/v1/repos/$repo/branches/main" | jq -r .commit.id)"
+  sha="$(remote_head "$repo" main)"
   wait_run "$repo" "$sha"
   [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the merged pipeline ended $RUN_STATUS"; return 1; }
   for b in tg-reconcile-network tg-reconcile-network-app; do
@@ -2358,7 +2357,7 @@ TF
   after="$(statuses "$head_sha" terragucci/plan)"
   [ "$after" = "$before" ] || { log "a refused comment still planned ($before before, $after after)"; rc=1; }
   [ "$(statuses "$main_sha" terragucci/apply)" = "$applied_before" ] || { log "main gained an apply status from a comment"; rc=1; }
-  [ "$(api "$URL/api/v1/repos/$repo/branches/main" | jq -r .commit.id)" = "$main_sha" ] || { log "main moved"; rc=1; }
+  [ "$(remote_head "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }
   drop_work "$work" 2>/dev/null || true
   [ "$rc" = 0 ] && log "plan re-planned the pull request; apply, an unknown root and a shell-shaped root were each refused and planned nothing"
   return "$rc"
@@ -3663,7 +3662,7 @@ YML
   plans() { # sha -> how many terragucci/plan statuses it carries
     api "$URL/api/v1/repos/$repo/commits/$1/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length'
   }
-  branch_sha() { api "$URL/api/v1/repos/$1/branches/$2" | jq -r .commit.id; }
+  branch_sha() { remote_head "$1" "$2"; }
   comment() { # pr, text[, token] -> posts it, as the admin unless a token is given
     curl -fsS -o /dev/null -H "Authorization: token ${3:-$TOKEN}" -H 'content-type: application/json' -X POST \
       -d "$(jq -cn --arg b "$2" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$1/comments"
@@ -3708,7 +3707,7 @@ YML
     log "the agent comment pushed nothing (run $CR_ID: $CR_STATUS)"; run_logs "$CR_ID"; return 1
   fi
   [ "$(api "$URL/api/v1/repos/$repo/git/commits/$new_sha" | jq -r '.parents[0].sha')" = "$head_sha" ] || { log "the agent's commit ${new_sha:0:8} is not on top of the old head"; rc=1; }
-  [ "$(api "$URL/api/v1/repos/$repo/raw/app/rev.txt?ref=agent-change")" = 3 ] || { log "the agent's commit does not set app/rev.txt to 3"; rc=1; }
+  [ "$(api "$URL/api/v1/repos/$repo/raw/app/rev.txt?ref=$new_sha")" = 3 ] || { log "the agent's commit does not set app/rev.txt to 3"; rc=1; }
   grep -q "^terragucci: pushed \[\`${new_sha:0:8}\`\]" <<<"$(replies "$pr")" || { log "no reply links the pushed commit ${new_sha:0:8}"; rc=1; }
   for i in $(seq 1 $(( TIMEOUT / 3 ))); do
     [ "$(plans "$new_sha")" -ge 2 ] && break
