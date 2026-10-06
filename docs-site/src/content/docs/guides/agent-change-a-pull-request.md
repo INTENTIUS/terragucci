@@ -13,7 +13,7 @@ A comment such as this one on a pull request:
 /terragucci agent rename var.bucket to var.bucket_name in app and its callers
 ```
 
-A coding agent makes the change on the pull request's branch. terragucci commits it to that branch and replies with a link to the commit. The new commit is planned again like any other, and nothing is ever applied or merged by it.
+A coding agent makes the change. terragucci commits it to the pull request's head and replies with a link to the commit. The new commit is planned again like any other, and nothing is ever applied or merged by it.
 
 ## Before you start
 
@@ -25,7 +25,7 @@ A coding agent makes the change on the pull request's branch. terragucci commits
 
 ### 1. Make the agent's token
 
-The token writes to a pull request's branch and comments on it. Branch rules on the forge keep it off everything else. The job's own token will not do, because a commit sent with it starts no workflow run, and the change would never be planned.
+The token writes to a pull request's branch and comments on it. Branch rules on the forge keep it off everything else. The job's own token will not do: a commit sent with it starts no workflow run, so the change would never be planned.
 
 On GitHub, use a machine user with write access to the repository. Give it a fine-grained personal access token for that repository alone with these permissions:
 
@@ -35,7 +35,7 @@ On GitHub, use a machine user with write access to the repository. Give it a fin
 
 A token's permissions cannot name a branch. Add a ruleset on the default branch that requires a pull request and one approval of the most recent reviewable change, and give the machine user no bypass. GitHub then keeps it off the default branch and does not count its approval of its own commit. It cannot merge without a person's approval either. If you use code owners, leave the machine user out of `CODEOWNERS`.
 
-On Forgejo, add a machine user as a collaborator with Write access. Its access token needs the `write:repository` and `write:issue` scopes. In the default branch's protection, leave the machine user out of the push, approval and merge allowlists. Forgejo then refuses its commits to the default branch and counts none of its approvals.
+On Forgejo, add a machine user as a collaborator with Write access. Its access token needs the `write:repository` and `write:issue` scopes. In the default branch's protection, leave the machine user out of the push allowlist, the approval allowlist and the merge allowlist. Forgejo then refuses its commits to the default branch and counts none of its approvals.
 
 Keep the token in a secret such as `AGENT_FORGE_TOKEN`. The model's key goes in another, such as `ANTHROPIC_API_KEY`.
 
@@ -72,7 +72,7 @@ Write `/terragucci agent` and the ask on one line, with one space between them. 
 
 Two jobs answer the comment.
 
-The `agent` job runs the agent. `terragucci comment` reads the comment first and applies the checks a re-plan applies. Only an author with write access gets an agent, and only on an open pull request whose branch is in this repository. The ask goes into the agent's prompt file and the commit message, never into a shell. The checkout keeps no credentials, the model's key is in the agent's step alone, and this job's own token can read and comment. Whatever the agent changed leaves the job as a patch.
+The `agent` job runs the agent. `terragucci comment` reads the comment first and applies the checks a re-plan applies. Only an author with write access gets an agent, and only on an open pull request whose branch is in this repository. The ask goes into the prompt file and the commit message, and no shell ever sees it. The checkout keeps no credentials. The model's key is in the agent's step alone. This job's own token can read and comment. Whatever the agent changed leaves the job as a patch.
 
 The `agent-push` job never runs the agent. In a fresh container it checks out the same head and applies the patch. A patch that touches CI files, `terragucci.yml`, `.chant/` or the policy directory is refused with a reply naming the paths. A patch to a file that decides who reviews or how an agent behaves is refused the same way: `CODEOWNERS`, `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.cursor/`, `.cursorrules`, `.mcp.json`, `.gitattributes` or `.gitmodules`. [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists every path the job guards. Any other patch becomes one commit on top of the head, sent to the head branch without force. A branch that moved meanwhile keeps what it has.
 
@@ -92,14 +92,14 @@ The agent edits files and may run two read-only terragucci commands. Nobody is t
 
 Some comments get no agent:
 
-- one whose author lacks write access, which gets no reply either
-- one on a pull request from a fork, which gets a reply saying why
-- one on a pull request whose head is the default branch
+- a comment whose author lacks write access, which gets no reply either
+- a comment on a pull request from a fork, which gets a reply saying why
+- a comment on a pull request whose head is the default branch
 - an ask longer than one line or 2000 characters
 - an ask with control characters in it
 - an edited comment, since only a new one runs
 
-When the agent fails or reaches its turn limit, the reply says so and the branch stays as it was. The same holds when the pull request moves while the agent works.
+When the agent fails or reaches its turn limit, the reply says so and the branch stays as it was. If the pull request moves while the agent works, the branch also stays as it was.
 
 ## Use another agent
 
