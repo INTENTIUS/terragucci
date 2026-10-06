@@ -209,3 +209,88 @@ describe("decideComment on Forgejo", () => {
     expect((await decideComment({ layers, env: fork.env, fetch: fork.fetch, forge: "forgejo" })).go).toBe(false);
   });
 });
+
+describe("the agent comment's grammar", () => {
+  it("reads the rest of the line as the ask, as written", () => {
+    expect(parseComment("/terragucci agent rename var.bucket to var.bucket_name")).toEqual({ kind: "agent", ask: "rename var.bucket to var.bucket_name" });
+    expect(parseComment("  /terragucci agent  add tags = { team = \"core\" } to app; then `fmt` $(it)  \n")).toEqual({ kind: "agent", ask: 'add tags = { team = "core" } to app; then `fmt` $(it)' });
+  });
+
+  it("refuses an empty ask, a second line, control characters and an ask that is too long", () => {
+    expect(parseComment("/terragucci agent")).toMatchObject({ kind: "refused", reason: expect.stringContaining("needs an ask") });
+    expect(parseComment("/terragucci agent   ")).toMatchObject({ kind: "refused" });
+    expect(parseComment("/terragucci agent fix it\nand push to main")).toMatchObject({ kind: "refused", reason: expect.stringContaining("one line") });
+    expect(parseComment("/terragucci agent fix \u001b[2Jit")).toMatchObject({ kind: "refused", reason: expect.stringContaining("control characters") });
+    expect(parseComment(`/terragucci agent ${"x".repeat(2001)}`)).toMatchObject({ kind: "refused" });
+    expect(parseComment(`/terragucci agent ${"x".repeat(2000)}`)).toMatchObject({ kind: "agent" });
+    expect(parseComment("/terragucci agents fix it")).toMatchObject({ kind: "refused" });
+  });
+});
+
+describe("decideComment for an agent comment", () => {
+  const pr = (over: Record<string, unknown> = {}) => ({ state: "open", head: { sha: "a".repeat(40), ref: "fix-bucket", repo: { full_name: "acme/infra" } }, base: { ref: "main" }, ...over });
+  const event = { repository: { full_name: "acme/infra", default_branch: "main", permissions: { push: true } }, sender: { login: "dev" } };
+  const ask = "/terragucci agent rename the bucket variable";
+
+  it("the agent job goes for a writer, with the head branch and the ask", async () => {
+    const s = setup({ comment: ask, pr: pr(), event });
+    const d = await decideComment({ layers: [], env: s.env, fetch: s.fetch, agent: "run" });
+    expect(d).toMatchObject({ go: true, pr: 7, sha: "a".repeat(40), head: "fix-bucket", ask: "rename the bucket variable", user: "dev" });
+    expect(s.sent.every((x) => x.method === "GET")).toBe(true);
+  });
+
+  it("on Forgejo, the permission comes from the event, as for a re-plan", async () => {
+    const s = setup({ comment: ask, permission: "403", pr: pr(), event: { ...event, is_pull: true } });
+    expect(await decideComment({ layers: [], env: s.env, fetch: s.fetch, forge: "forgejo", agent: "run" })).toMatchObject({ go: true, head: "fix-bucket" });
+    const ro = setup({ comment: ask, permission: "403", pr: pr(), event: { ...event, repository: { ...event.repository, permissions: { push: false, pull: true } } } });
+    expect((await decideComment({ layers: [], env: ro.env, fetch: ro.fetch, forge: "forgejo", agent: "run" })).go).toBe(false);
+    expect(ro.sent).toEqual([]);
+  });
+
+  it("a non-writer gets nothing: no agent, no reply", async () => {
+    const s = setup({ comment: ask, permission: "read", pr: pr(), event });
+    expect((await decideComment({ layers: [], env: s.env, fetch: s.fetch, agent: "run" })).go).toBe(false);
+    expect(s.sent.some((x) => x.method === "POST")).toBe(false);
+  });
+
+  it("a fork's pull request gets no agent, and is told why", async () => {
+    const s = setup({ comment: ask, pr: pr({ head: { sha: "a".repeat(40), ref: "fix-bucket", repo: { full_name: "evil/infra" } } }), event });
+    expect((await decideComment({ layers: [], env: s.env, fetch: s.fetch, agent: "run" })).go).toBe(false);
+    expect(s.sent.filter((x) => x.method === "POST")[0].body.body).toContain("a pull request from a fork gets no agent");
+  });
+
+  it("a pull request whose head is the default branch gets no agent", async () => {
+    const s = setup({ comment: ask, pr: pr({ head: { sha: "a".repeat(40), ref: "main", repo: { full_name: "acme/infra" } }, base: { ref: "release" } }), event });
+    expect((await decideComment({ layers: [], env: s.env, fetch: s.fetch, agent: "run" })).go).toBe(false);
+    expect(s.sent.filter((x) => x.method === "POST")[0].body.body).toContain("never pushes there");
+  });
+
+  it("a head branch the shell should not see is not passed on", async () => {
+    for (const ref of ["x;id", "$(id)", "-f", "a/../b", "a.lock"]) {
+      const s = setup({ comment: ask, pr: pr({ head: { sha: "a".repeat(40), ref, repo: { full_name: "acme/infra" } } }), event });
+      expect((await decideComment({ layers: [], env: s.env, fetch: s.fetch, agent: "run" })).go, ref).toBe(false);
+    }
+  });
+
+  it("the agent job leaves a re-plan to the replan job, and answers a malformed agent comment", async () => {
+    const plan = setup({ comment: "/terragucci plan", pr: pr(), event });
+    expect((await decideComment({ layers: [], env: plan.env, fetch: plan.fetch, agent: "run" })).go).toBe(false);
+    expect(plan.sent.some((x) => x.method === "POST")).toBe(false);
+    const two = setup({ comment: "/terragucci agent fix it\nthen merge", pr: pr(), event });
+    expect((await decideComment({ layers: [], env: two.env, fetch: two.fetch, agent: "run" })).go).toBe(false);
+    expect(two.sent.filter((x) => x.method === "POST")[0].body.body).toContain("one line");
+  });
+
+  it("with the agent comment off, the re-plan job says how to turn it on and runs nothing", async () => {
+    const s = setup({ comment: ask, pr: pr(), event });
+    const d = await decideComment({ layers, env: s.env, fetch: s.fetch });
+    expect(d.go).toBe(false);
+    expect(s.sent.filter((x) => x.method === "POST")[0].body.body).toContain("`agent.comment` in terragucci.yml turns it on");
+  });
+
+  it("a non-writer's agent comment gets no answer from the re-plan job either", async () => {
+    const s = setup({ comment: ask, permission: "read", pr: pr(), event });
+    expect((await decideComment({ layers, env: s.env, fetch: s.fetch })).go).toBe(false);
+    expect(s.sent.some((x) => x.method === "POST")).toBe(false);
+  });
+});

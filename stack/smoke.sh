@@ -123,7 +123,8 @@ drift-attribute|with respond.drift: attribute, tf-drift lists who changed each d
 version-bump-job|with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service|
 tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
 oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
-comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|'
+comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
+comment-agent|a /terragucci agent comment pushes the stand-in agent's commit to the pull request's branch, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -3550,6 +3551,228 @@ run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   fi
 }
 
+# ── the agent comment ─────────────────────────────────────────────────────
+claim_comment_agent() {
+  # A scratch repo with two roots, app and net, whose terragucci.yml turns
+  # agent.comment on with a stand-in agent: .smoke/agent.sh reads the prompt
+  # on stdin and sets app/rev.txt to 3, and also appends to the pipeline file
+  # when the ask says "touch ci". Its push token (AGENT_TOKEN) is the admin's.
+  # A push to main, and a pull request from the same repo that changes net.
+  # Then:
+  #   `/terragucci agent set app's rev to 3`, by the admin: the head branch
+  #       gains one commit on top of the old head that sets app/rev.txt to 3,
+  #       the reply links it, and the new head gets its own terragucci/plan
+  #       statuses (the push re-plans it).
+  #   `/terragucci agent touch ci ...`, by the admin: the reply names
+  #       .forgejo/workflows/terragucci.yml and the branch does not move.
+  #   `/terragucci agent ...`, by a user with no write access: no reply, and
+  #       the branch does not move.
+  #   `/terragucci agent ...` on a pull request from that user's fork, by the
+  #       admin: the reply says a fork gets no agent, and the fork's branch
+  #       does not move.
+  # main never moves and gains no terragucci/apply status from a comment.
+  # BREAK: the pushed pipeline's push step applies and pushes the agent's
+  # patch itself, without `terragucci comment --agent push` and its path
+  # guard, so the ask that touches CI is pushed.
+  log() { echo "[smoke comment-agent] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/comment-agent" tree wf main_sha head_sha new_sha pr fpr i rc=0 replies last root
+  local reader=tg-agent-reader rpass="tg-agent-reader-$$" rtoken applied_before
+  local wait=$(( TIMEOUT < 300 ? TIMEOUT : 300 ))
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  fresh_repo comment-agent || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  local s
+  for s in AGENT_TOKEN:"$TOKEN" AGENT_KEY:stand-in; do
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "${s#*:}" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/${s%%:*}" \
+      || { log "could not set the ${s%%:*} secret"; return 1; }
+  done
+  for root in app net; do
+    mkdir -p "$tree/$root"
+    echo 1 > "$tree/$root/rev.txt"
+    cat > "$tree/$root/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+resource "terraform_data" "rev" {
+  input = file("${path.module}/rev.txt")
+}
+TF
+  done
+  mkdir -p "$tree/.smoke"
+  cat > "$tree/.smoke/agent.sh" <<'SH'
+#!/bin/sh
+# A stand-in agent: the prompt comes on stdin, and it edits one file.
+ask="$(sed -n '/^<ask>$/,/^<\/ask>$/p')"
+echo "stand-in agent asked: $ask"
+echo 3 > app/rev.txt
+case "$ask" in
+  *"touch ci"*) echo "# the agent was here" >> .forgejo/workflows/terragucci.yml ;;
+esac
+SH
+  cat > "$tree/terragucci.yml" <<'YML'
+forge: forgejo
+binary: tofu
+gate: never
+agent:
+  via: forge
+  token_env: AGENT_TOKEN
+  comment:
+    command: sh .smoke/agent.sh
+    key_secret: AGENT_KEY
+    timeout: 10
+YML
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; return 1; }
+  wf="$tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  agent-push:' "$wf" || { log "the pipeline has no agent-push job"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    awk -v cmd="git apply --index /tmp/terragucci-agent/change/change.patch && git -c user.name=agent -c user.email=agent@localhost commit -qm agent && git -c \"http.extraHeader=Authorization: Basic \$(printf 'x-access-token:%s' \"\$TG_TOKEN\" | base64 -w0)\" push -q origin \"HEAD:refs/heads/\$TG_HEAD\"" \
+      '/terragucci comment --agent push / { match($0, /^ */); print substr($0, 1, RLENGTH) cmd; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'git apply --index /tmp/terragucci-agent' "$wf" || { log "could not take the path guard out of the push step"; return 1; }
+  fi
+  main_sha="$(push_tree "$tree" "$repo" main "comment-agent: first")" || return 1
+  wait_run "$repo" "$main_sha" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the push to main did not go green"; return 1; }
+  applied_before="$(api "$URL/api/v1/repos/$repo/commits/$main_sha/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/apply")] | length')"
+  echo 2 > "$tree/net/rev.txt"
+  head_sha="$(push_tree "$tree" "$repo" agent-change "comment-agent: change net")" || return 1
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"agent-change","base":"main","title":"comment-agent: net"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  log "pull request $pr for ${head_sha:0:8}"
+  plans() { # sha -> how many terragucci/plan statuses it carries
+    api "$URL/api/v1/repos/$repo/commits/$1/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length'
+  }
+  branch_sha() { api "$URL/api/v1/repos/$1/branches/$2" | jq -r .commit.id; }
+  comment() { # pr, text[, token] -> posts it, as the admin unless a token is given
+    curl -fsS -o /dev/null -H "Authorization: token ${3:-$TOKEN}" -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg b "$2" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$1/comments"
+  }
+  replies() { api "$URL/api/v1/repos/$repo/issues/$1/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | map(.body) | join("\n")'; }
+  last_comment_run() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq '[.workflow_runs[] | select(.event == "issue_comment") | .id] | max // 0'; }
+  # Wait for the first comment run newer than $1 to finish; sets CR_ID and CR_STATUS.
+  wait_comment_run() { # run id
+    local run
+    CR_ID=""; CR_STATUS=""
+    for i in $(seq 1 $(( wait / 3 ))); do
+      run="$(api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq -c --argjson after "$1" '[.workflow_runs[] | select(.event == "issue_comment" and .id > $after)] | min_by(.id) // empty')"
+      if [ -n "$run" ]; then
+        CR_ID="$(jq -r .id <<<"$run")"; CR_STATUS="$(jq -r .status <<<"$run")"
+        case "$CR_STATUS" in success|failure|cancelled|skipped) return 0 ;; esac
+      elif [ $(( i * 3 )) -ge 90 ]; then
+        log "no run started for the comment in 90s"; return 1
+      fi
+      sleep 3
+    done
+    log "the comment's run $CR_ID did not finish in ${wait}s (last status: ${CR_STATUS:-none})"; return 1
+  }
+  run_logs() { # run id -> the agent jobs' terragucci lines
+    local job
+    for job in $(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r '.[] | select(.name == "agent" or .name == "agent-push") | .id'); do
+      api "$URL/api/v1/repos/$repo/actions/jobs/$job/logs" 2>/dev/null | grep -E 'terragucci( comment)?:|stand-in agent' | cut -c30- | sed 's/^/[smoke comment-agent]   /' >&2 || true
+    done
+  }
+  # The pull request's own plan runs first.
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(plans "$head_sha")" -ge 2 ] && break
+    sleep 3
+  done
+  [ "$(plans "$head_sha")" -ge 2 ] || { log "the pull request's own plan never finished"; return 1; }
+
+  # 1. The ask: one commit on the head branch, a reply that links it, and a re-plan of the new head.
+  last="$(last_comment_run)"
+  comment "$pr" "/terragucci agent set app's rev to 3"
+  wait_comment_run "$last" || return 1
+  new_sha="$(branch_sha "$repo" agent-change)"
+  if [ "$new_sha" = "$head_sha" ]; then
+    log "the agent comment pushed nothing (run $CR_ID: $CR_STATUS)"; run_logs "$CR_ID"; return 1
+  fi
+  [ "$(api "$URL/api/v1/repos/$repo/git/commits/$new_sha" | jq -r '.parents[0].sha')" = "$head_sha" ] || { log "the agent's commit ${new_sha:0:8} is not on top of the old head"; rc=1; }
+  [ "$(api "$URL/api/v1/repos/$repo/raw/app/rev.txt?ref=agent-change")" = 3 ] || { log "the agent's commit does not set app/rev.txt to 3"; rc=1; }
+  grep -q "^terragucci: pushed \[\`${new_sha:0:8}\`\]" <<<"$(replies "$pr")" || { log "no reply links the pushed commit ${new_sha:0:8}"; rc=1; }
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(plans "$new_sha")" -ge 2 ] && break
+    sleep 3
+  done
+  [ "$(plans "$new_sha")" -ge 2 ] || { log "the pushed commit was not re-planned (no terragucci/plan statuses on ${new_sha:0:8})"; rc=1; }
+  [ $rc = 0 ] && log "the ask pushed ${new_sha:0:8} on top of ${head_sha:0:8}, the reply links it, and the push re-planned the pull request"
+
+  # 2. A forbidden path: refused by name, nothing pushed.
+  head_sha="$new_sha"
+  last="$(last_comment_run)"
+  comment "$pr" "/terragucci agent touch ci and set app's rev to 3"
+  wait_comment_run "$last" || return 1
+  if [ "$(branch_sha "$repo" agent-change)" != "$head_sha" ]; then
+    log "an ask that touches the pipeline file was pushed"; rc=1
+  elif grep -q 'touches `.forgejo/workflows/terragucci.yml`' <<<"$(replies "$pr")"; then
+    log "an ask that touches the pipeline file was refused by path and pushed nothing"
+  else
+    log "an ask that touches the pipeline file pushed nothing, but no reply names the path"; run_logs "$CR_ID"; rc=1
+  fi
+
+  # 3. A user with no write access: nothing, not even a reply.
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$reader?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg u "$reader" --arg p "$rpass" '{username: $u, email: ($u + "@smoke.local"), password: $p, must_change_password: false}')" \
+    "$URL/api/v1/admin/users" || { log "could not create $reader"; return 1; }
+  rtoken="$(curl -fsS -u "$reader:$rpass" -H 'content-type: application/json' -X POST -d '{"name":"smoke","scopes":["write:repository","write:issue","read:user"]}' "$URL/api/v1/users/$reader/tokens" | jq -r .sha1)"
+  [ -n "$rtoken" ] && [ "$rtoken" != null ] || { log "could not make a token for $reader"; return 1; }
+  local nreplies
+  nreplies="$(replies "$pr" | grep -c '^terragucci: ' || true)"
+  last="$(last_comment_run)"
+  comment "$pr" "/terragucci agent set app's rev to 3" "$rtoken"
+  # A run that never starts for a stranger's comment is as good as one that stops at the permission check.
+  if wait_comment_run "$last" || [ -z "$CR_ID" ]; then
+    [ "$(branch_sha "$repo" agent-change)" = "$head_sha" ] || { log "a non-writer's ask was pushed"; rc=1; }
+    [ "$(replies "$pr" | grep -c '^terragucci: ' || true)" = "$nreplies" ] || { log "a non-writer's ask was answered"; rc=1; }
+    [ $rc = 0 ] && log "a non-writer's ask got no reply and pushed nothing${CR_ID:+ (run $CR_ID: $CR_STATUS)}"
+  else
+    rc=1
+  fi
+
+  # 4. A pull request from a fork: refused, and the fork's branch does not move.
+  local fork="$reader/comment-agent" fork_sha remote
+  curl -fsS -o /dev/null -H "Authorization: token $rtoken" -H 'content-type: application/json' -X POST -d '{}' "$URL/api/v1/repos/$repo/forks" \
+    || { log "$reader could not fork $repo"; return 1; }
+  for i in $(seq 1 30); do api -o /dev/null "$URL/api/v1/repos/$fork" 2>/dev/null && break; sleep 1; done
+  git -C "$tree" checkout -q main
+  echo 5 > "$tree/net/rev.txt"
+  git -C "$tree" checkout -q -B fork-change
+  git -C "$tree" add -A
+  git -C "$tree" -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "comment-agent: fork change"
+  remote="${URL/#http:\/\//http://${reader}:${rtoken}@}/${fork}.git"
+  git -C "$tree" push -q --force "$remote" HEAD:refs/heads/fork-change 2>/dev/null || { log "could not push to the fork"; return 1; }
+  fork_sha="$(git -C "$tree" rev-parse HEAD)"
+  fpr="$(curl -fsS -H "Authorization: token $rtoken" -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg h "$reader:fork-change" '{head: $h, base: "main", title: "comment-agent: fork"}')" "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  [ -n "$fpr" ] && [ "$fpr" != null ] || { log "could not open a pull request from the fork"; return 1; }
+  last="$(last_comment_run)"
+  comment "$fpr" "/terragucci agent set app's rev to 3"
+  if wait_comment_run "$last"; then
+    [ "$(branch_sha "$fork" fork-change)" = "$fork_sha" ] || { log "the agent pushed to the fork's branch"; rc=1; }
+    grep -q 'a pull request from a fork gets no agent' <<<"$(replies "$fpr")" || { log "the fork's pull request got no refusal"; run_logs "$CR_ID"; rc=1; }
+  else
+    rc=1
+  fi
+
+  [ "$(branch_sha "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }
+  [ "$(api "$URL/api/v1/repos/$repo/commits/$main_sha/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/apply")] | length')" = "$applied_before" ] \
+    || { log "main gained an apply status from a comment"; rc=1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$reader?purge=true" 2>/dev/null || true
+  drop_work "$work" 2>/dev/null || true
+  [ "$rc" = 0 ] && log "the ask was pushed and re-planned; a forbidden path, a non-writer and a fork pushed nothing"
+  return "$rc"
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -3661,6 +3884,7 @@ version-bump-job     runner self! weight=150
 tg-spans             tg after=tg-waves weight=450
 oidc-clouds          weight=20
 comment-apply        runner self! weight=200
+comment-agent        runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
