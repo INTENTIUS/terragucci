@@ -71,6 +71,10 @@ forge_run() { # name branch sha [source: unused here; act runs a push event]
   git clone -q "${URL/#http:\/\//http://oauth2:${TOKEN}@}/$USER/$name.git" "$dir" 2>/dev/null
   git -C "$dir" checkout -q "$sha"
   git -C "$dir" remote set-url origin "http://mock-github:8188/$USER/$name.git"
+  # act's workflow schema does not know concurrency's `queue` (GitHub's since
+  # 2026-05), and act runs one job at a time anyway, so its copy drops the line.
+  grep -v '^ *queue: max$' "$dir/$PIPELINE_FILE" > "$dir.workflow.yml"
+  cat "$dir.workflow.yml" > "$dir/$PIPELINE_FILE"
   jq -n --arg ref "refs/heads/$branch" --arg sha "$sha" --arg repo "$USER/$name" \
     '{ref: $ref, after: $sha, repository: {full_name: $repo, default_branch: "main"}}' > "$dir.event.json"
   RUN_LOG="$dir.log"

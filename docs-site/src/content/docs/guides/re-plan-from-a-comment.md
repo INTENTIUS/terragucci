@@ -59,7 +59,7 @@ Nothing applies, and the reply says why, when:
 - a later commit on the default branch has an apply of its own, which the reply links, since going back would undo that newer tree;
 - the named wave does not exist.
 
-Waiting and refused waves behave as on a push. GitLab has no comment trigger, so retry the job there. A Terragrunt pipeline has no `apply-comment` job, and its reply says so.
+Waiting, refused and failed waves behave as on a push: a refused wave prints its diff (`respond.wave-refused`) and a failed one its triage (`respond.apply-failed`) before the reply. GitLab has no comment trigger, so retry the job there. A Terragrunt pipeline has no `apply-comment` job, and its reply says so.
 
 ## Next
 

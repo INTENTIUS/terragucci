@@ -374,11 +374,12 @@ jobs:
           git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the merge commit ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }
           tg status terragucci/apply pending "applying on a comment"
           outcome="$(mktemp)"
+          log="$(mktemp)"
           done_waves=""
           for wave in $(seq 1 "$last"); do
             : >"$outcome"
-            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy
-            rc=$?
+            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --canary 'envs/dev/*' --binary tofu --gate on-destroy 2>&1 | tee "$log"
+            rc=${PIPESTATUS[0]}
             case "$rc" in
               0) done_waves="${done_waves:+$done_waves, }$wave" ;;
               3)
@@ -389,10 +390,12 @@ jobs:
                 exit 3 ;;
               4)
                 tg status terragucci/apply failure "$(cat "$outcome")"
+                terragucci respond wave-refused --wave "$wave" --approved terragucci-report/approved --current terragucci-report/current || true
                 tg reply "wave $wave was refused: its plans changed since it was approved, so nothing in it was applied (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). $run_url"
                 exit 4 ;;
               *)
                 tg status terragucci/apply failure "an apply failed"
+                terragucci respond apply-failed --log "$log" || true
                 why="$(cat "$outcome")"
                 tg reply "wave $wave did not apply${why:+ ($why)}${done_waves:+; applied: wave $done_waves}. The run has the log: $run_url"
                 exit 1 ;;
@@ -515,8 +518,8 @@ jobs:
             sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
           done
           trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
-          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+          tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
             tg status terragucci/apply success "superseded by a newer push"
             exit 0
@@ -633,8 +636,8 @@ jobs:
             sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
           done
           trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
-          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+          tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
             tg status terragucci/apply success "superseded by a newer push"
             exit 0
@@ -750,8 +753,8 @@ jobs:
             sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
           done
           trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
-          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+          tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
             tg status terragucci/apply success "superseded by a newer push"
             exit 0
@@ -867,8 +870,8 @@ jobs:
             sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
           done
           trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
-          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+          tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
             tg status terragucci/apply success "superseded by a newer push"
             exit 0

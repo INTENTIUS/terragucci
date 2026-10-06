@@ -436,17 +436,38 @@ export function forgejoLock(standDown = true): string {
     '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
     "done",
     "trap 'git push -q --force-with-lease=\"$lock_ref:$mine\" origin \":$lock_ref\" || true' EXIT",
-    ...(standDown
-      ? [
-          'tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"',
-          'if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then',
-          '  echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"',
-          '  tg status terragucci/apply success "superseded by a newer push"',
-          "  exit 0",
-          "fi",
-        ]
-      : []),
+    ...(standDown ? [STAND_DOWN] : []),
   ].join("\n");
+}
+
+/**
+ * A push's wave that runs once the branch has moved past its commit stands
+ * down, because the newer push applies the whole tree. On Forgejo it runs
+ * once the wave holds the lock tag; on GitHub at the top of the wave, which
+ * the apply concurrency group starts only when no other apply runs.
+ */
+export const STAND_DOWN = [
+  'tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"',
+  'if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then',
+  '  echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"',
+  '  tg status terragucci/apply success "superseded by a newer push"',
+  "  exit 0",
+  "fi",
+].join("\n");
+
+/**
+ * The concurrency group of every apply job on GitHub: each wave of a push and
+ * the apply a comment starts. One runs at a time. `queue: max` keeps up to 100
+ * waiting, in the order they began to wait; with the default (`single`) a job
+ * that starts waiting cancels the one already waiting, whatever
+ * cancel-in-progress says, so a push and a comment could cancel each other.
+ * Nothing is cancelled now, so a push's wave that finds a newer push on the
+ * branch stands down instead (STAND_DOWN), and the comment's apply decides
+ * once the group starts it, when no other apply runs. Forgejo runs a
+ * workflow's jobs whatever their concurrency says, and holds the lock tag.
+ */
+export function applyConcurrency(forge: ForgeName): Record<string, unknown> {
+  return { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false, ...(forge === "github" ? { queue: "max" } : {}) };
 }
 
 /**
@@ -510,7 +531,7 @@ export function applyScript(
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
       : []),
-    ...(forge === "forgejo" ? [forgejoLock()] : []),
+    ...(forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
     // A waiting wave records what it planned on the chant/lifecycle branch, so the job's checkout must be able to push.
     ...(forge === "gitlab" && gate !== "never" ? ['git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"'] : []),
@@ -542,13 +563,17 @@ const APPLY_DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process
  * and the job then checks out the pull request's merge commit, never its
  * head. It holds the lock a push's apply holds (on Forgejo the lock tag, and
  * the decision is made again once it is held; on GitHub the apply concurrency
- * group), and runs `stage tf-apply` wave by wave from wave 1, as a re-run
+ * group, which starts the job only when no other apply runs), and runs `stage tf-apply` wave by wave from wave 1, as a re-run
  * does: a wave already applied plans no change, a gated wave counts only the
  * sealed approval of the plans it makes now, and the first wave that does not
- * apply stops the run. The reply says what happened and links the run.
+ * apply stops the run. A refused wave and a failed apply get the responses a
+ * push's wave gets (respond wave-refused, respond apply-failed) before the
+ * reply. The reply says what happened and links the run.
  */
-export function commentApplyScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: { canary?: string[]; gate?: Gate } = {}): string {
+export function commentApplyScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: { canary?: string[]; gate?: Gate; respond?: PipelineInput["respond"] } = {}): string {
   const total = layers.flat().length;
+  const triage = responds(input.respond, "apply-failed");
+  const refused = responds(input.respond, "wave-refused");
   const count = applyWaves(layers, input.canary).length;
   const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
   const canaryArg = input.canary?.length ? ` --canary ${sh(input.canary.join(","))}` : "";
@@ -582,11 +607,12 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     'tg status terragucci/apply pending "applying on a comment"',
     'outcome="$(mktemp)"',
+    ...(triage ? ['log="$(mktemp)"'] : []),
     'done_waves=""',
     'for wave in $(seq 1 "$last"); do',
     '  : >"$outcome"',
-    `  TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" ${args.join(" ")}`,
-    "  rc=$?",
+    `  TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
+    triage ? "  rc=${PIPESTATUS[0]}" : "  rc=$?",
     '  case "$rc" in',
     '    0) done_waves="${done_waves:+$done_waves, }$wave" ;;',
     "    3)",
@@ -597,10 +623,13 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     "      exit 3 ;;",
     "    4)",
     '      tg status terragucci/apply failure "$(cat "$outcome")"',
+    // The responses a push's wave runs, on the same exit codes (applyScript).
+    ...(refused ? [`      terragucci respond wave-refused --wave "$wave" --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true`] : []),
     '      tg reply "wave $wave was refused: its plans changed since it was approved, so nothing in it was applied (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). $run_url"',
     "      exit 4 ;;",
     "    *)",
     '      tg status terragucci/apply failure "an apply failed"',
+    ...(triage ? ['      terragucci respond apply-failed --log "$log" || true'] : []),
     '      why="$(cat "$outcome")"',
     '      tg reply "wave $wave did not apply${why:+ ($why)}${done_waves:+; applied: wave $done_waves}. The run has the log: $run_url"',
     "      exit 1 ;;",
@@ -637,7 +666,7 @@ export function terragruntApplyScript(
     movedRoots(waves.flat().sort()),
     '# The base branch moved under these units: plan notes that cover them are stale.',
     'tg stale "$moved" "${TG_BRANCH:-}"',
-    ...(forge === "forgejo" ? [forgejoLock()] : []),
+    ...(forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
     'tg status terragucci/apply pending "applying"',
     ...terragruntApplyBody(waves, responds(respond, "apply-failed")),
   ].join("\n");
@@ -1129,10 +1158,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
       permissions: { contents: writesLedger ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
-      concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
+      concurrency: applyConcurrency(forge),
       env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
       steps: [
-        ...steps(new Step({ name: "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, { canary: input.canary, gate }) }), true, true),
+        ...steps(new Step({ name: "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, { canary: input.canary, gate, respond: input.respond }) }), true, true),
         new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
       ],
     } as never) as never);
@@ -1148,8 +1177,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // contents: write only to record a waiting wave's plan on the chant/lifecycle branch.
       permissions: { contents: writesLedger ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
-      // One apply per project at a time; a push that waits is not cancelled.
-      concurrency: { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false },
+      // One apply per project at a time; nothing that waits is cancelled (applyConcurrency).
+      concurrency: applyConcurrency(forge),
       env: {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",

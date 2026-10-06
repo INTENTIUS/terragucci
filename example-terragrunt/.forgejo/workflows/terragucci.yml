@@ -381,8 +381,8 @@ jobs:
             sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
           done
           trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
-          tip="$(git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" | cut -f1)"
-          if [ -n "$tip" ] && [ "$tip" != "$GITHUB_SHA" ]; then
+          tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"
+          if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then
             echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"
             tg status terragucci/apply success "superseded by a newer push"
             exit 0
