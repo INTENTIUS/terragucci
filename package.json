@@ -11,12 +11,12 @@
     "lint-docs": "node scripts/lint-docs.mjs"
   },
   "devDependencies": {
-    "@intentius/chant": "0.106.3",
-    "@intentius/chant-lexicon-docker": "0.106.3",
-    "@intentius/chant-lexicon-github": "0.106.3",
-    "@intentius/chant-lexicon-grafana": "0.106.3",
-    "@intentius/chant-lexicon-otel": "0.106.3",
-    "@intentius/chant-lexicon-prometheus": "0.106.3",
+    "@intentius/chant": "0.106.4",
+    "@intentius/chant-lexicon-docker": "0.106.4",
+    "@intentius/chant-lexicon-github": "0.106.4",
+    "@intentius/chant-lexicon-grafana": "0.106.4",
+    "@intentius/chant-lexicon-otel": "0.106.4",
+    "@intentius/chant-lexicon-prometheus": "0.106.4",
     "@types/node": "^24.0.0",
     "esbuild": "0.28.2",
     "sentences": "0.5.1",
