@@ -17,6 +17,7 @@
     "packages/*/test/**/*.ts",
     "capture/**/*.ts",
     "nightly/**/*.ts",
+    "publish/**/*.ts",
     "observability/**/*.ts",
     "scripts/*.ts",
     "workflows/**/*.ts",

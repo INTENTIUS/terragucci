@@ -14,6 +14,7 @@ lint:
     npx chant lint ci
     npx chant lint pages
     npx chant lint image-ci
+    npx chant lint publish
     npx chant lint images
     npx chant lint capture
     npx chant lint nightly
@@ -50,6 +51,7 @@ ci:
     npx chant build capture -o .github/workflows/capture.yml --format yaml
     npx chant build nightly -o .github/workflows/nightly.yml --format yaml
     npx chant build image-ci -o .github/workflows/images.yml --format yaml
+    npx chant build publish -o .github/workflows/publish.yml --format yaml
     just render-observability
     just render-images
 
@@ -78,7 +80,7 @@ ci-check:
     out="$(mktemp -t terragucci-ci-XXXX.yml)"
     trap 'rm -f "$out"' EXIT
     rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "nightly:.github/workflows/nightly.yml" "image-ci:.github/workflows/images.yml"; do
+    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "nightly:.github/workflows/nightly.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml"; do
       src="${pair%%:*}"; committed="${pair#*:}"
       npx chant build "$src" -o "$out" --format yaml >/dev/null
       if diff -u "$committed" "$out"; then
