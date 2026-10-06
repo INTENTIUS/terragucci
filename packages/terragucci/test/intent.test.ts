@@ -75,6 +75,11 @@ describe("description check: the three cases of #30", () => {
     expect(after.endsWith(note)).toBe(true);
     expect(read(dir, "report.html")).toContain('id="description-flag"');
     expect(JSON.parse(read(dir, "intent.json"))).toMatchObject({ flagged: true });
+    // report.json carries the same decision without intent.json's schema line.
+    const written = JSON.parse(read(dir, "report.json"));
+    expect(written.intent).toMatchObject({ status: "confident", flagged: true, probability: 0.93, model: LAYA_MODEL, unmentioned: ["envs/staging/email: module.service.aws_dynamodb_table.records[0]"] });
+    expect(written.intent.schema).toBeUndefined();
+    expect(r.files).toContain("report.json");
     // The report itself is untouched, so its digests and groups are.
     expect(JSON.parse(read(dir, "report.json")).change_set).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
   });
@@ -87,7 +92,13 @@ describe("description check: the three cases of #30", () => {
     expect(r.text).toMatch(/^no flag: /);
     expect(read(dir, "note.md")).toBe(before.note);
     expect(read(dir, "report.html")).toBe(before.html);
-    expect(read(dir, "report.json")).toBe(before.json);
+    // The decision is in report.json, and nothing else in it moved.
+    const after = JSON.parse(read(dir, "report.json"));
+    expect(after.intent).toMatchObject({ status: "unavailable", flagged: false, unmentioned: [] });
+    const { intent: _intent, minor, ...rest } = after;
+    const { minor: _minor, ...was } = JSON.parse(before.json);
+    expect(rest).toEqual(was);
+    expect(minor).toBeGreaterThanOrEqual(5);
   });
 });
 

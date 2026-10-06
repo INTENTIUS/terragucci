@@ -8,6 +8,7 @@
  */
 import { closeIssue, findIssue, openIssue, updateIssue, type Fetch, type ForgeTarget, type Issue } from "../forge";
 import type { ForgeName } from "../config";
+import type { Attributed } from "../respond/attribute";
 import type { Report, ReportChange } from "./schema";
 
 type Json = Record<string, unknown>;
@@ -78,6 +79,20 @@ export interface IssueOptions {
   artifacts?: boolean;
   /** Per root, the real names of its drifted objects by address (see driftNames). */
   names?: Map<string, Map<string, string>>;
+  /** Per root, who changed each drifted attribute, when the run attributed them (`respond.drift: attribute`). */
+  attributions?: Map<string, Attributed>;
+}
+
+const SOURCE_WORD = { table: "known write", audit: "audit log", model: "model", unattributed: "unattributed" } as const;
+
+/** One line per attributed attribute: who changed it, from what evidence. */
+function attributionLines(a: Attributed | undefined): string[] {
+  if (!a) return [];
+  const lines = a.attributions.map((x) => {
+    const who = x.actor === "human" ? "a person" : x.actor === "controller" ? "a controller" : x.actor === "provider-default" ? "a provider default" : "not attributed";
+    return `  - ${code(x.address)} ${code(x.path)}: ${who} (${SOURCE_WORD[x.source]}: ${x.detail})`;
+  });
+  return [...lines, ...a.notes.map((n) => `  - note: ${n}`)];
 }
 
 /** The issue's body: drifted roots grouped, each with the resources that moved. */
@@ -101,6 +116,8 @@ export function renderDriftIssue(report: Report, options: IssueOptions = {}): st
     members.forEach((u) => done.add(u));
     lines.push(`#### ${members.map(code).join(", ")}`, "");
     for (const c of r.changes) lines.push(changeLine(c, options.names?.get(r.path)?.get(c.address)));
+    const who = members.flatMap((u) => attributionLines(options.attributions?.get(u)));
+    if (who.length > 0) lines.push("- Who changed it:", ...who);
     lines.push("");
   }
   const failed = report.roots.filter((r) => r.status === "failed");

@@ -26,6 +26,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `deferred[]` | Terragrunt units planned after the units they wait for apply, and what each waits for |
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
+| `intent` | the description check's decision: its status, whether it flagged the pull request, the decision in a sentence, the probability and threshold, the model and the destroys and replacements the text leaves out; present only after `respond description` ran on the report |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |

@@ -718,7 +718,40 @@ describe("decide token on the plan jobs", () => {
     expect(withDecide(forge)).not.toContain("JEV_API_KEY");
   });
 
+  it.each(["github", "forgejo"] as const)("%s: the drift job maps the secret when drift attributes, and not otherwise", (forge) => {
+    const render = (respond: Record<string, string>) =>
+      renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, decideTokenEnv: "JEV_API_KEY", drift: "0 6 * * *", respond }).content;
+    expect(body(render({ drift: "attribute" })).jobs.drift.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
+    expect(body(render({ drift: "pull-request" })).jobs.drift.env.JEV_API_KEY).toBeUndefined();
+    expect(body(render({ drift: "attribute" })).jobs.plan.env.JEV_API_KEY).toBeUndefined();
+  });
+
   it("gitlab: the CI/CD variable is already in every job, so nothing is mapped", () => {
     expect(withDecide("gitlab", { description: "check" })).not.toContain("JEV_API_KEY");
+  });
+});
+
+describe("the version-bump job", () => {
+  const render = (forge: ForgeName, respond?: Record<string, string>, extra: object = {}): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, decideTokenEnv: "JEV_API_KEY", ...extra, ...(respond ? { respond } : {}) }).content;
+
+  it.each(["github", "forgejo"] as const)("%s: respond.version-bump: suggest adds a job after the last apply that runs the response with the service's key", (forge) => {
+    const job = body(render(forge, { "version-bump": "suggest" })).jobs["version-bump"];
+    expect(job.needs).toBe("apply-wave-2");
+    expect(job.permissions).toEqual({ contents: "write", "pull-requests": "write" });
+    expect(job.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
+    expect(job.steps[0].with["fetch-depth"]).toBe(0);
+    expect(job.steps.at(-1).run).toContain("terragucci respond version-bump --mode apply || true");
+  });
+
+  it("gitlab: the job runs from the default branch with full history", () => {
+    const job = body(render("gitlab", { "version-bump": "suggest" }))["version-bump"];
+    expect(job.needs).toEqual(["apply-wave-2"]);
+    expect(job.variables.GIT_DEPTH).toBe("0");
+    expect(job.script.join("\n")).toContain("terragucci respond version-bump --mode apply || true");
+  });
+
+  it.each(FORGES)("%s: there is no job while version-bump is off", (forge) => {
+    expect(render(forge)).not.toContain("version-bump");
   });
 });

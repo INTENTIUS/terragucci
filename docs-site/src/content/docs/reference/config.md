@@ -121,7 +121,7 @@ decide:
 | `backend` | required | `laya` (terragucci's `terragucci-decide` image), `von`, `decider` or `jev` (TypeSafe's API); each answers the same request shape |
 | `url` | required, except `jev` | the service's base URL; `jev` defaults to `https://api.typesafe.ai` |
 | `model` | required, except `laya` | the pinned model version, such as `jev-1.13.0`; a moving alias such as `jev-latest` is refused, and an answer from any other version is not used |
-| `token_env` | none, required for `jev` | the environment variable holding the service's bearer token; on GitHub and Forgejo the plan and re-plan jobs get the secret of that name when `respond.description` is `check` |
+| `token_env` | none, required for `jev` | the environment variable holding the service's bearer token; on GitHub and Forgejo the secret of that name reaches the plan and re-plan jobs when `respond.description` is `check`, the drift job when `respond.drift` is `attribute`, and the `version-bump` job when `respond.version-bump` is `suggest` |
 | `thresholds` | `noul` 0.8, `choice` 0.7, `score` 0.7 | the probability an answer needs before a response acts on it |
 
 An answer below its threshold, a service that does not answer, or an answer from another model leaves the response as it would be with no `decide` block. A decision raises a flag, picks a route or suggests a value for a person to confirm. It never approves, applies or resolves a gate. The model reads the redacted report, never a secret or a raw plan value.

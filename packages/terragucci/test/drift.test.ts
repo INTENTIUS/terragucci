@@ -82,6 +82,31 @@ describe("terragucci stage tf-drift", () => {
     expect(renderNote(report)).toContain("deleted outside Terraform");
   });
 
+  it("names who changed each drifted attribute in the issue when respond.drift is attribute", { timeout: 60_000 }, async () => {
+    const asked: { type: string; ref: string }[] = [];
+    const audit = {
+      lookup: async (q: { type: string; ref: string }) => {
+        asked.push({ type: q.type, ref: q.ref });
+        return { status: "found" as const, actor: "human" as const, who: "alice@example.com", event: "PutBucketTagging", at: "2026-10-01T09:00:00Z" };
+      },
+    };
+    const repo = repoWith({ orders: drifted });
+    writeFileSync(join(repo, "terragucci.yml"), 'roots: ["envs/*"]\nrespond:\n  drift: attribute\n');
+    const result = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, audit }, () => {});
+    const issue = readFileSync(join(result.dir, "issue.md"), "utf-8");
+    expect(asked).toEqual([{ type: "aws_s3_bucket", ref: "logs" }]);
+    expect(issue).toContain("- Who changed it:");
+    expect(issue).toContain("`aws_s3_bucket.logs` `tags`: a person (audit log: PutBucketTagging by alice@example.com at 2026-10-01T09:00:00Z)");
+  });
+
+  it("asks nobody and says nothing of who when respond.drift is left at its default", { timeout: 60_000 }, async () => {
+    let asked = 0;
+    const audit = { lookup: async () => (asked++, { status: "silent" as const }) };
+    const result = await runStage("tf-drift", repoWith({ orders: drifted }), { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, audit }, () => {});
+    expect(asked).toBe(0);
+    expect(readFileSync(join(result.dir, "issue.md"), "utf-8")).not.toContain("Who changed it");
+  });
+
   it("plans with -refresh-only only for tf-drift", async () => {
     const bin = tmp();
     const repo = repoWith({ a: clean });

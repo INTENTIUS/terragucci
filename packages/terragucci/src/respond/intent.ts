@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decide, isConfident, summarize, type DecideFetch, type DecideSettings, type DecisionRecord } from "../decide";
 import { PR_INTENT } from "../decide/questions";
-import type { Report, ReportNamed } from "../report/schema";
+import { REPORT_MINOR, type Report, type ReportIntent, type ReportNamed } from "../report/schema";
 
 /** What the model reads: the pull request's text and the report's summary. No plan values. */
 export type IntentState = {
@@ -72,18 +72,8 @@ export function unmentioned(report: Report, text: string): ReportNamed[] {
   return left.length > 0 ? left : all;
 }
 
-export interface IntentRecord {
+export interface IntentRecord extends ReportIntent {
   schema: "terragucci.intent/v1";
-  /** confident, not-confident, off or unavailable. */
-  status: string;
-  /** Whether the flag was raised. */
-  flagged: boolean;
-  decision: string;
-  probability?: number;
-  threshold?: number;
-  model?: string;
-  state_digest: string;
-  unmentioned: string[];
 }
 
 const FLAG_MARK = "<!-- terragucci:description -->";
@@ -155,6 +145,10 @@ export async function checkDescription(i: IntentInput): Promise<IntentResult> {
     // The record is written for a decision that answered or failed to, so the report says why nothing was flagged.
     writeFileSync(join(i.dir, "intent.json"), JSON.stringify(record, null, 2) + "\n");
     files.push("intent.json");
+    // The same decision goes into report.json, so a reader of the report has it without intent.json.
+    const { schema: _schema, ...intent } = record;
+    writeFileSync(reportFile, JSON.stringify({ ...report, minor: Math.max(report.minor, REPORT_MINOR), intent }, null, 2) + "\n");
+    files.push("report.json");
   }
   if (i.write && confident) {
     const flag = flagLine(names, line);

@@ -135,7 +135,8 @@ export const decide = new Dockerfile({
       env: ["PIP_NO_CACHE_DIR=1", "PIP_DISABLE_PIP_VERSION_CHECK=1"],
       // Every wheel, torch and laya included, comes from the hash-locked file: nothing resolves at build time.
       run: [
-        "python -m venv --upgrade-deps /opt/venv",
+        // The venv keeps the pip the pinned base image ships; the lock file then installs the pinned one.
+        "python -m venv /opt/venv",
         "--mount=type=bind,source=images/decide/requirements.txt,target=/tmp/requirements.txt /opt/venv/bin/pip install --require-hashes --no-deps --only-binary=:all: --extra-index-url https://download.pytorch.org/whl/cpu -r /tmp/requirements.txt && /opt/venv/bin/pip check",
         download,
       ],
