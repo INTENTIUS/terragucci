@@ -3342,7 +3342,7 @@ claim_oidc_clouds() {
   # BREAK: the credential steps are dropped from the scripts, so nothing is
   # written and no ARM_* variable is set.
   log() { echo "[smoke oidc-clouds] $*" >&2; }
-  local work job rc=0 provider="projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci"
+  local work job name sa client rc=0 provider="projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/tree/app"
   printf 'provider "external" {}\n\nresource "terraform_data" "mark" {}\n' > "$work/tree/app/main.tf"
