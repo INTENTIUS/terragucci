@@ -118,7 +118,10 @@ dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO recor
 drill-down|the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job|
 policy-wave|a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings|
 check-diagnostics|tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal|
-comment-not-affected|a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause|'
+comment-not-affected|a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause|
+drift-attribute|with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue|
+version-bump-job|with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service|
+tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -3096,6 +3099,214 @@ TF
   return "$rc"
 }
 
+claim_drift_attribute() {
+  # A scratch repo with one root, a queue with a literal visibility timeout,
+  # is applied to floci; then the timeout is changed in floci, outside
+  # Terraform. With respond.drift: attribute in terragucci.yml, a tf-drift run
+  # must open the drift issue with "Who changed it" under the root, naming the
+  # person the audit log gives for the timeout. floci has no CloudTrail and
+  # the CI image has no aws CLI, so the run's `aws` is a stand-in that answers
+  # LookupEvents with one SetQueueAttributes record by the IAM user alice, as
+  # drift.test.ts's fake audit log does; the claim also checks the run asked
+  # it about this queue by name.
+  # BREAK: the config leaves respond.drift at its default, so the run
+  # attributes nothing and the issue says nothing of who.
+  log() { echo "[smoke drift-attribute] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/drift-attribute" queue="tg-attr-$STAMP" key="respond/attribute-$STAMP.tfstate" tree url issues body image rc=0
+  local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  image="$(image_tag tofu)"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  fresh_repo drift-attribute || return 1
+  respond_tree "$work" "$repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+}")"
+  [ -n "${BREAK:-}" ] || printf 'respond:\n  drift: attribute\n' >> "$tree/terragucci.yml"
+  push_tree "$tree" "$repo" main "a queue with a literal timeout" >/dev/null || return 1
+  in_image "$tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; return 1; }
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r .QueueUrl)"
+  sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null || { log "could not change $queue's timeout"; return 1; }
+  # The stand-in audit log: every call is noted, and lookup-events answers one write by a person.
+  mkdir -p "$work/smoke"
+  cat > "$work/smoke/aws" <<'SH'
+#!/bin/sh
+echo "$*" >> /smoke/aws-calls.log
+[ "$1 $2" = "cloudtrail lookup-events" ] || { echo "the smoke stand-in answers only cloudtrail lookup-events" >&2; exit 1; }
+cat <<'JSON'
+{"Events":[{"EventName":"SetQueueAttributes","EventTime":"2026-10-01T09:00:00Z","CloudTrailEvent":"{\"eventName\":\"SetQueueAttributes\",\"eventTime\":\"2026-10-01T09:00:00Z\",\"readOnly\":false,\"userAgent\":\"aws-cli/2.17.0\",\"userIdentity\":{\"type\":\"IAMUser\",\"userName\":\"alice\",\"arn\":\"arn:aws:iam::000000000000:user/alice\"}}"}]}
+JSON
+SH
+  chmod +x "$work/smoke/aws"
+  open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
+  docker run --rm --network terragucci -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$work/smoke:/smoke" -v "$work/smoke/aws:/usr/local/bin/aws:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" \
+    -e "GITHUB_REPOSITORY=$repo" -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "TG_TOKEN=$TOKEN" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-drift --forge forgejo --report-url "http://forgejo:3000/$repo/actions" >&2 || true
+  clean_mounted "$tree" "$image"
+  if [ ! -f "$tree/terragucci-report/report.json" ]; then
+    log "the drift run wrote no report"; rc=1
+  else
+    jq -e '[.roots[].changes[] | .attributes[]?.path] | index("visibility_timeout_seconds")' "$tree/terragucci-report/report.json" >/dev/null \
+      || { log "the report does not show the timeout drifted"; rc=1; }
+    grep -q "AttributeValue=$queue" "$work/smoke/aws-calls.log" 2>/dev/null \
+      || { log "the run never asked the audit log about $queue"; rc=1; }
+    issues="$(open_issues)"
+    [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; rc=1; }
+    body="$(jq -r '.[0].body // ""' <<<"$issues")"
+    awk '/^#### /{ f = index($0, "`app`") > 0 } f' <<<"$body" | grep -qx -- '- Who changed it:' \
+      || { log "the issue has no 'Who changed it' under app"; rc=1; }
+    # shellcheck disable=SC2016 # the backticks are the issue's markdown
+    grep -Fq '`aws_sqs_queue.jobs` `visibility_timeout_seconds`: a person (audit log: SetQueueAttributes by alice at 2026-10-01T09:00:00Z)' <<<"$body" \
+      || { log "the issue does not name alice for the timeout"; rc=1; }
+    [ $rc = 0 ] || grep -A8 'Who changed it' <<<"$body" | sed 's/^/[smoke drift-attribute]   /' >&2 || true
+  fi
+  # The queue is this run's own; it goes with the claim.
+  sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  drop_work "$work" "$image" 2>/dev/null || true
+  [ $rc = 0 ] && log "the drift issue lists who changed it under app: alice, from the audit log, for visibility_timeout_seconds"
+  return $rc
+}
+
+claim_version_bump_job() {
+  # A scratch repo with one root, app, and a module, modules/queue, released
+  # as modules/queue/v0.1.0. main then gains a commit to the module with no
+  # conventional type, so only the decision service can suggest its bump.
+  # terragucci.yml sets respond.version-bump: suggest and decide: at the
+  # stack's service (http://decide:8790), and the repo commits the pipeline
+  # init writes. The push to main must run the version-bump job after the
+  # apply wave, and the job must open the release pull request that writes
+  # modules/queue/version, its body saying what the service answered.
+  # The service is opt-in (stack/decide.sh up builds a 1.5 GB image). When it
+  # is running, the body must carry its answer. When it is not, the job's call
+  # gets no answer, the pull request proposes a patch and says the service did
+  # not answer, and the claim's evidence says so: it then shows the job runs
+  # and reaches the service call, not a model's suggestion.
+  # BREAK: the config leaves version-bump off, so the pipeline has no
+  # version-bump job and no release pull request opens.
+  log() { echo "[smoke version-bump-job] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/version-bump" tree wf sha jobs job status pr body logs decide_up="" remote rc=0
+  local c=(git -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false)
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  [ -n "$(docker ps -q --filter name=terragucci-decide --filter health=healthy 2>/dev/null)" ] && decide_up=1
+  fresh_repo version-bump || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  mkdir -p "$tree/app" "$tree/modules/queue"
+  respond_root "respond/version-bump.tfstate" 'resource "terraform_data" "mark" {}' > "$tree/app/main.tf"
+  cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$tree/app/"
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/respond/version-bump.tfstate" || true
+  printf 'variable "name" {\n  type = string\n}\n\nresource "aws_sqs_queue" "jobs" {\n  name = var.name\n}\n' > "$tree/modules/queue/main.tf"
+  printf 'binary: tofu\nforge: forgejo\nroots: ["app"]\ndecide:\n  backend: laya\n  url: http://decide:8790\nrespond:\n  tips: "off"\n' > "$tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] || printf '  version-bump: suggest\n' >> "$tree/terragucci.yml"
+  (cd "$tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  wf="$tree/.forgejo/workflows/terragucci.yml"
+  if [ -z "${BREAK:-}" ]; then
+    awk '/^  version-bump:/ { f = 1; next } f && /^  [a-z]/ { exit } f' "$wf" | grep -q '^    needs: apply-wave-1$' \
+      || { log "the pipeline has no version-bump job after apply-wave-1"; return 1; }
+  fi
+  # The release, then a change to the module that names no conventional type.
+  (cd "$tree" && git add -A && "${c[@]}" commit -qm "add the queue module" && git tag modules/queue/v0.1.0) || return 1
+  printf '\nvariable "tags" {\n  type    = map(string)\n  default = {}\n}\n' >> "$tree/modules/queue/main.tf"
+  (cd "$tree" && git add -A && "${c[@]}" commit -qm "add an optional tags variable to the queue module") || return 1
+  # The tag and main in one push: the pipeline runs on branches only, so the tag starts no run.
+  remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  git -C "$tree" push -q --force "$remote" refs/tags/modules/queue/v0.1.0 HEAD:refs/heads/main 2>/dev/null || { log "the push failed"; return 1; }
+  sha="$(git -C "$tree" rev-parse HEAD)"
+  wait_run "$repo" "$sha" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS'"; print_logs "$repo" "$RUN_ID" | tail -40 >&2; return 1; }
+  jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs")"
+  [ "$(jq -r '.[] | select(.name == "apply-wave-1") | .status' <<<"$jobs")" = success ] || { log "apply-wave-1 did not succeed"; rc=1; }
+  job="$(jq -r '.[] | select(.name == "version-bump") | .id' <<<"$jobs" | head -1)"
+  if [ -z "$job" ]; then
+    log "the run has no version-bump job"; return 1
+  fi
+  status="$(jq -r --argjson id "$job" '.[] | select(.id == $id) | .status' <<<"$jobs")"
+  [ "$status" = success ] || { log "the version-bump job ended '$status'"; rc=1; }
+  logs="$(api "$URL/api/v1/repos/$repo/actions/jobs/$job/logs" 2>/dev/null || true)"
+  if grep -Eq 'modules/queue 0\.1\.0 -> ' <<<"$logs"; then
+    grep -E 'modules/queue 0\.1\.0 -> ' <<<"$logs" | head -3 | sed 's/^/[smoke version-bump-job]   /' >&2
+  else
+    log "the job's log has no suggestion for modules/queue"; rc=1
+  fi
+  pr="$(open_pr "$repo" terragucci/release/modules-queue)"
+  [ -n "$pr" ] || { log "no release pull request from terragucci/release/modules-queue"; return 1; }
+  [ "$(pr_files "$repo" "$pr")" = "modules/queue/version" ] || { log "the release pull request changes $(pr_files "$repo" "$pr"), not modules/queue/version"; rc=1; }
+  body="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.body // ""')"
+  if [ -n "$decide_up" ]; then
+    grep -Eq 'with probability [0-9.]+|below the [0-9.]+ threshold' <<<"$body" \
+      || { log "the decision service is up, but the pull request carries no answer from it: $(head -1 <<<"$body")"; rc=1; }
+    [ $rc = 0 ] && log "after apply-wave-1 the version-bump job opened pull request $pr writing modules/queue/version, with the service's answer: $(head -1 <<<"$body")"
+  else
+    grep -q 'the service did not answer' <<<"$body" \
+      || { log "the pull request does not say the service did not answer: $(head -1 <<<"$body")"; rc=1; }
+    [ $rc = 0 ] && log "after apply-wave-1 the version-bump job opened pull request $pr writing modules/queue/version; the decision service was not running (stack/decide.sh up), so the job's call to it got no answer and the pull request proposes a patch and says so"
+  fi
+  drop_work "$work" 2>/dev/null || true
+  return $rc
+}
+
+claim_tg_spans() {
+  # module-bump reaches the Terragrunt example's 12 service units. Their
+  # tf-plan run must give every planned unit timings from Terragrunt's run
+  # report (source terragrunt) with spans > 0: its plan's own spans, which
+  # OpenTofu 1.13 sends for provider start-up and the state lock (detail
+  # "none", nothing per resource) and which reach the stage only through the
+  # TG_TF_PATH wrapper. Terragrunt itself is a logging shim in front of the
+  # real one (TERRAGUCCI_TERRAGRUNT), so the claim also sees that each
+  # `run --all -- plan` carries -lock-timeout=5m and runs with TG_TF_PATH
+  # pointed at the wrapper rather than at tofu.
+  # BREAK: the shim points TG_TF_PATH back at tofu after noting it, so
+  # Terragrunt runs the binary without the wrapper and no unit's spans arrive.
+  log() { echo "[smoke tg-spans] $*" >&2; }
+  local work r n plans rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/run" "$work/smoke"
+  cat > "$work/smoke/terragrunt" <<'SH'
+#!/bin/sh
+echo "TG_TF_PATH=${TG_TF_PATH:-} $*" >> /smoke/terragrunt-calls.log
+if [ -n "${SMOKE_BYPASS:-}" ]; then TG_TF_PATH=tofu; export TG_TF_PATH; fi
+exec terragrunt "$@"
+SH
+  chmod +x "$work/smoke/terragrunt"
+  local -a TG_RUN_EXTRA=(-v "$work/smoke:/smoke" -e TERRAGUCCI_TERRAGRUNT=/smoke/terragrunt)
+  [ -n "${BREAK:-}" ] && TG_RUN_EXTRA+=(-e SMOKE_BYPASS=1)
+  tg_report_run "$work/run" module-bump || true
+  r="$work/run/terragucci-report/report.json"
+  if [ ! -f "$r" ]; then
+    log "no report"; rc=1
+  else
+    n="$(jq '[.roots[] | select(.status == "planned")] | length' "$r")"
+    [ "$n" -gt 0 ] || { log "no unit was planned"; rc=1; }
+    jq -r '.roots[] | select(.status == "planned") | "\(.path) source=\(.timings.source // "none") spans=\(.timings.spans // 0) detail=\(.timings.detail // "none")"' "$r" | sed 's/^/[smoke tg-spans]   /' >&2
+    [ "$(jq '[.roots[] | select(.status == "planned") | select(.timings.source == "terragrunt" and (.timings.spans // 0) > 0)] | length' "$r")" = "$n" ] \
+      || { log "not every planned unit has spans from its plan"; rc=1; }
+    plans="$(grep -E -- ' -- plan( |$)' "$work/smoke/terragrunt-calls.log" 2>/dev/null || true)"
+    if [ -z "$plans" ]; then
+      log "Terragrunt was never asked to plan"; rc=1
+    else
+      if grep -vq -- '-lock-timeout=5m' <<<"$plans"; then
+        log "a Terragrunt plan ran without -lock-timeout=5m: $(grep -v -- '-lock-timeout=5m' <<<"$plans" | head -1)"; rc=1
+      fi
+      if grep -Eq '^TG_TF_PATH=(tofu)? ' <<<"$plans"; then
+        log "a Terragrunt plan ran with TG_TF_PATH at tofu, not the wrapper"; rc=1
+      fi
+    fi
+  fi
+  drop_work "$work" "$(tg_image)" 2>/dev/null || true
+  [ $rc = 0 ] && log "$n units planned, each with spans from its plan through the TG_TF_PATH wrapper, and every Terragrunt plan carried -lock-timeout=5m"
+  return $rc
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -3223,6 +3434,9 @@ drill-down      ex otel after=boot weight=120
 policy-wave     weight=150
 check-diagnostics    runner self! weight=150
 comment-not-affected runner self! weight=150
+drift-attribute      self! weight=90
+version-bump-job     runner self! weight=150
+tg-spans             tg after=tg-waves weight=450
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
