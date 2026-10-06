@@ -43,7 +43,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\"}",
+          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"}",
           "legendFormat": "SLI"
         }
       ],
@@ -141,7 +141,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:error_budget:remaining{slo=\"terragucci-plan-time\"}",
+          "expr": "slo:error_budget:remaining{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"}",
           "legendFormat": "remaining"
         }
       ],
@@ -257,7 +257,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\"}",
+          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"}",
           "legendFormat": "SLI"
         }
       ],
@@ -309,7 +309,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:error_budget:remaining{slo=\"terragucci-plan-time\"}",
+          "expr": "slo:error_budget:remaining{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"}",
           "legendFormat": "remaining"
         }
       ],
@@ -375,7 +375,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:sli_error:ratio_rate1h{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate1h{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "1h"
         },
         {
@@ -384,7 +384,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate5m{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "5m"
         }
       ],
@@ -438,7 +438,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "6h"
         },
         {
@@ -447,7 +447,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "slo:sli_error:ratio_rate30m{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate30m{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "30m"
         }
       ],
@@ -501,7 +501,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:sli_error:ratio_rate1d{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate1d{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "1d"
         },
         {
@@ -510,7 +510,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "slo:sli_error:ratio_rate2h{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate2h{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "2h"
         }
       ],
@@ -564,7 +564,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:sli_error:ratio_rate3d{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate3d{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "3d"
         },
         {
@@ -573,7 +573,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\"} / 0.05",
+          "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-plan-time\", terragucci_project=~\"$project\"} / 0.05",
           "legendFormat": "6h"
         }
       ],
@@ -613,7 +613,25 @@
     "slo"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "type": "query",
+        "name": "project",
+        "label": "Project",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\"}, terragucci_project)",
+        "definition": "label_values(slo:sli_error:ratio_rate28d{slo=\"terragucci-plan-time\"}, terragucci_project)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "options": []
+      }
+    ]
   },
   "time": {
     "from": "now-7d",

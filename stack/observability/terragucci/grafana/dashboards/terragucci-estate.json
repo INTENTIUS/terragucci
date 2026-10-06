@@ -10,7 +10,7 @@
     {
       "title": "Report index",
       "type": "link",
-      "url": "http://localhost:4580/terragucci-reports/reports/index.html",
+      "url": "http://localhost:TGPH0FLOCIPORT/terragucci-reports/reports/index.html",
       "icon": "doc",
       "tooltip": "",
       "tags": [],
@@ -77,7 +77,7 @@
                 "value": [
                   {
                     "title": "Report index",
-                    "url": "http://localhost:4580/terragucci-reports/reports/${__value.raw}/index.html",
+                    "url": "http://localhost:TGPH0FLOCIPORT/terragucci-reports/reports/${__value.raw}/index.html",
                     "targetBlank": true
                   }
                 ]

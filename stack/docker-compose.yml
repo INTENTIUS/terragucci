@@ -199,14 +199,14 @@ services:
         aliases: [prometheus]
 
   # Where the collector sends the stage traces; Grafana's Runs dashboard lists
-  # them. Monolithic, local storage inside the container: a stack restart
+  # them. Tempo 3's single binary (target all, no Kafka), local storage inside the container: a stack restart
   # starts it empty. Root, so it can write /var/tempo.
   tempo:
-    image: grafana/tempo:2.9.5@sha256:785fd6c81d7f26ff0973208cd7093ac6030e13946c288612ff32f02416941d3a
+    image: grafana/tempo:3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd
     container_name: terragucci-tempo
     profiles: [observability]
     user: "0:0"
-    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    command: ["-target=all", "-config.file=/etc/tempo/tempo.yaml"]
     volumes:
       - ./observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
     ports:
@@ -222,7 +222,19 @@ services:
     image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
     container_name: terragucci-grafana
     profiles: [observability]
+    # The rendered dashboards link the reports bucket by a placeholder for floci's
+    # published port (scripts/render-dashboards.ts); Grafana starts from copies
+    # that carry TERRAGUCCI_FLOCI_PORT.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mkdir -p /var/lib/grafana/dashboards/terragucci &&
+        for f in /etc/terragucci/dashboards/*.json; do
+        sed "s/TGPH0FLOCIPORT/$${FLOCI_PORT}/g" "$$f" > "/var/lib/grafana/dashboards/terragucci/$$(basename "$$f")";
+        done && exec /run.sh
     environment:
+      FLOCI_PORT: "${TERRAGUCCI_FLOCI_PORT:-4580}"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
@@ -234,7 +246,7 @@ services:
       - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/stack.yaml:ro
       - ./observability/terragucci/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./observability/terragucci/grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
-      - ./observability/terragucci/grafana/dashboards:/var/lib/grafana/dashboards/terragucci:ro
+      - ./observability/terragucci/grafana/dashboards:/etc/terragucci/dashboards:ro
     ports:
       - "${TERRAGUCCI_GRAFANA_PORT:-3310}:3000"
     networks:

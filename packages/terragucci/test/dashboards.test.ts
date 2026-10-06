@@ -100,6 +100,28 @@ describe("dashboards: rendering", () => {
     expect(expr(DASHBOARD_UIDS.drift, "Drifted roots")).toContain(`[${DASHBOARD_DEFAULTS.schedule}]`);
   });
 
+  it("each SLO dashboard filters its series by project, and the objective stays whole", () => {
+    for (const [name, label] of [["slo-terragucci-plan-time", "terragucci_project"], ["slo-terragucci-apply-success", "terragucci_project"], ["slo-terragucci-drift-corrected", "project"]]) {
+      const json = JSON.parse(byPath.get(`${DIR}/grafana/dashboards/${name}.json`)!);
+      expect(json.templating.list.map((v: { name: string }) => v.name)).toEqual(["project"]);
+      const exprs = panelsOf(json).flatMap((p) => (p.targets ?? []).map((t) => t.expr ?? ""));
+      for (const e of exprs.filter((x) => x.startsWith("slo:objective:ratio"))) expect(e).not.toContain("$project");
+      for (const e of exprs.filter((x) => x.includes("slo:sli_error") || x.includes("slo:error_budget"))) expect(e).toContain(`${label}=~"$project"`);
+    }
+  });
+
+  it("the drift SLO reads the drift gauges as the latest run's, not as they live five minutes", () => {
+    const rules = byPath.get(`${DIR}/prometheus/terragucci.rules.yml`)!;
+    expect(rules).toContain(`max by (project) (last_over_time(${METRIC.driftRoots}[${DASHBOARD_DEFAULTS.schedule}]))`);
+    expect(rules).not.toContain(`count_over_time(${METRIC.driftRoots}[`);
+  });
+
+  it("Pipeline health opens on 24 hours and the others on a week", () => {
+    const time = (uid: string) => JSON.parse(byPath.get(`${DIR}/grafana/dashboards/${uid}.json`)!).time.from;
+    expect(time(DASHBOARD_UIDS.pipeline)).toBe("now-24h");
+    expect(time(DASHBOARD_UIDS.drift)).toBe("now-7d");
+  });
+
   it("the Runs dashboard lists the traces from Tempo", () => {
     const runs = JSON.parse(byPath.get(`${DIR}/grafana/dashboards/${DASHBOARD_UIDS.runs}.json`)!);
     const traces = panelsOf(runs).find((p) => p.title === "Runs")!;
