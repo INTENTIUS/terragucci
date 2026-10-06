@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
-import { applyScript, driftScript, planScript, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, driftScript, planScript, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -759,6 +759,34 @@ describe("decide token on the plan jobs", () => {
     expect(body(render({ drift: "attribute" })).jobs.drift.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
     expect(body(render({ drift: "pull-request" })).jobs.drift.env.JEV_API_KEY).toBeUndefined();
     expect(body(render({ drift: "attribute" })).jobs.plan.env.JEV_API_KEY).toBeUndefined();
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the drift job installs the AWS CLI before tf-drift when drift attributes, and not otherwise", (forge) => {
+    const render = (respond: Record<string, string>) =>
+      renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond }).content;
+    const steps = body(render({ drift: "attribute" })).jobs.drift.steps as { name?: string; run?: string }[];
+    const at = steps.findIndex((s) => s.name?.startsWith("Install the AWS CLI"));
+    expect(at).toBeGreaterThan(0);
+    expect(steps[at + 1].run).toContain("terragucci stage tf-drift");
+    expect(steps[at].run).toContain("if ! command -v aws");
+    expect(steps[at].run).toContain(`awscli-exe-linux-$arch-${AWS_CLI.version}.zip`);
+    expect(steps[at].run).toContain(AWS_CLI.sha256.x86_64);
+    expect(steps[at].run).toContain(AWS_CLI.sha256.aarch64);
+    expect(steps[at].run).toContain("sha256sum -c");
+    expect(steps[at].run).toContain('>> "$GITHUB_PATH"');
+    expect(render({ drift: "pull-request" })).not.toContain("AWS CLI");
+    expect(render({})).not.toContain("AWS CLI");
+    expect(body(render({ drift: "attribute" })).jobs.plan.steps.some((s: { name?: string }) => s.name?.startsWith("Install the AWS CLI"))).toBe(false);
+  });
+
+  it("gitlab: the drift job installs the AWS CLI before tf-drift when drift attributes, and not otherwise", () => {
+    const render = (respond: Record<string, string>) =>
+      renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond }).content;
+    const script = (body(render({ drift: "attribute" })).drift.script as string[]);
+    expect(script.findIndex((l) => l.includes("command -v aws"))).toBeGreaterThanOrEqual(0);
+    expect(script.findIndex((l) => l.includes("command -v aws"))).toBeLessThan(script.findIndex((l) => l.includes("terragucci stage tf-drift")));
+    expect(script.join("\n")).toContain('export PATH="$dir/bin:$PATH"');
+    expect(render({ drift: "pull-request" })).not.toContain("command -v aws");
   });
 
   it("gitlab: the CI/CD variable is already in every job, so nothing is mapped", () => {
