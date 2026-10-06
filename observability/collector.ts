@@ -52,7 +52,13 @@ export const prometheus = new PrometheusExporter({
   resource_to_telemetry_conversion: { enabled: true },
 });
 
-export const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
+// Batching on the exporter's queue stands in for a batch processor (OTEL125).
+export const tempo = new OtlpExporter({
+  name: "tempo",
+  endpoint: "tempo:4317",
+  tls: { insecure: true },
+  sending_queue: { batch: { flush_timeout: "1s", min_size: 512, max_size: 2048 } },
+});
 
 // Flushed every 5s so a smoke claim sees a run's counts soon after it ends.
 export const stageSpans = new SpanMetricsConnector({
