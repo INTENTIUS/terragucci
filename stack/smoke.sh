@@ -1169,20 +1169,26 @@ claim_publish() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
-  mkdir -p "$work/certs" "$work/tree/modules/service" "$work/tree/modules/queue" "$work/tree/envs/dev"
+  # The registry bind-mounts its certificates and outlives the claim. They live in a
+  # directory no run removes and are rewritten in place (same inode), so Docker
+  # Desktop's VM never holds a deleted file open.
+  local certs="$HERE/.state/registry-certs"
+  mkdir -p "$certs" "$work/newcerts" "$work/tree/modules/service" "$work/tree/modules/queue" "$work/tree/envs/dev"
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,DNS:registry,IP:127.0.0.1" \
-    -keyout "$work/certs/registry.key" -out "$work/certs/registry.crt" >/dev/null 2>&1 \
+    -keyout "$work/newcerts/registry.key" -out "$work/newcerts/registry.crt" >/dev/null 2>&1 \
     || { log "openssl could not make a certificate"; drop_work "$work"; return 1; }
-  chmod 644 "$work/certs/registry.key"
-  with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$work/certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+  cat "$work/newcerts/registry.key" > "$certs/registry.key"
+  cat "$work/newcerts/registry.crt" > "$certs/registry.crt"
+  chmod 644 "$certs/registry.key"
+  with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
     --profile registry up -d --force-recreate registry >&2 || { drop_work "$work"; return 1; }
   local i
   for i in $(seq 1 30); do
-    curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 && break
+    curl -fsS --cacert "$certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 && break
     sleep 1
   done
-  curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 \
+  curl -fsS --cacert "$certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 \
     || { log "the registry did not come up"; drop_work "$work"; return 1; }
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
   settle "repos/$repo" 404 || { drop_work "$work"; return 1; }
@@ -1198,7 +1204,7 @@ claim_publish() {
   # The job container reaches the registry as registry:5000 on the stack network
   # and trusts its certificate from the repo's copy, a path relative to the checkout.
   local tree="$work/tree" remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
-  cp "$work/certs/registry.crt" "$tree/registry.crt"
+  cp "$certs/registry.crt" "$tree/registry.crt"
   curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
   printf 'resource "terraform_data" "service" {}\n' > "$tree/modules/service/main.tf"
   printf 'resource "terraform_data" "queue" {}\n' > "$tree/modules/queue/main.tf"
@@ -1206,7 +1212,7 @@ claim_publish() {
   printf 'binary: tofu\nforge: forgejo\nenv:\n  NODE_EXTRA_CA_CERTS: registry.crt\nmodules:\n  path: modules/*\n  publish:\n    - oci://registry:5000/%s\n    - git-tags\n' "$repo" > "$tree/terragucci.yml"
   (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { drop_work "$work"; return 1; }
   grep -q "terragucci publish" "$tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no publish job"; drop_work "$work"; return 1; }
-  tags() { curl -fsS --cacert "$work/certs/registry.crt" "https://localhost:$port/v2/$repo/$1/tags/list" | jq -r '.tags // [] | sort | join(",")'; }
+  tags() { curl -fsS --cacert "$certs/registry.crt" "https://localhost:$port/v2/$repo/$1/tags/list" | jq -r '.tags // [] | sort | join(",")'; }
   gittags() { git ls-remote --tags "$remote" 'refs/tags/modules/*' | sed -E 's#.*refs/tags/##; /\^\{\}$/d' | sort | paste -sd, -; }
   run() { # message: push the tree and wait for the run on it
     sha="$(push_tree "$tree" "$repo" main "$1")"
