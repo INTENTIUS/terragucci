@@ -3,7 +3,7 @@ import type { ChantConfig } from "@intentius/chant";
 /**
  * terragucci's own config.
  *
- * The repo declares its workflows (ci/, pages/, capture/, image-ci/) with the
+ * The repo declares its workflows (ci/, pages/, capture/, image-ci/, publish/) with the
  * github lexicon and its CI images (images/) with the docker lexicon. The
  * kit's lifecycle Ops will add the terraform lexicon when they land.
  */

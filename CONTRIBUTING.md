@@ -8,7 +8,7 @@ just site-dev   # serve the docs locally
 
 ## The package
 
-`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. `just build-cli` bundles it into one file, `dist/terragucci.mjs`, with no runtime dependencies; chant is a build dependency of this repo only. `just bundle-check`, part of `just check`, fails if the package gains a dependency, the bundle imports anything but Node's modules and the two optional packages (the TypeScript folder that a `terragucci.ts` config needs, and the HCL parser), or the build's esbuild metafile lists an input from the TypeScript compiler, chant's lint rules, codegen or CLI, a lexicon's entry point, lint rules or codegen, or the dashboards' renderers (below). The size is not budgeted: 1 MB is an accident ceiling, and every `just build-cli` prints the raw and gzipped size, the change against origin/main and the ten largest inputs without failing on growth. The origin/main baseline is built from the origin/main sources on the chant installed in node_modules, and the line names that chant build (a `chant-local` install adds several KB over the pin, so compare sizes only on one chant build). The build writes into a private stage and renames the files into dist at the end, so builds that overlap leave a whole bundle. `npm pack` in that directory builds the tarball; publishing to npm waits for an explicit go.
+`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. `just build-cli` bundles it into one file, `dist/terragucci.mjs`, with no runtime dependencies; chant is a build dependency of this repo only. `just bundle-check`, part of `just check`, fails if the package gains a dependency, the bundle imports anything but Node's modules and the two optional packages (the TypeScript folder that a `terragucci.ts` config needs, and the HCL parser), or the build's esbuild metafile lists an input from the TypeScript compiler, chant's lint rules, codegen or CLI, a lexicon's entry point, lint rules or codegen, or the dashboards' renderers (below). The size is not budgeted: 1 MB is an accident ceiling, and every `just build-cli` prints the raw and gzipped size, the change against origin/main and the ten largest inputs without failing on growth. The origin/main baseline is built from the origin/main sources on the chant installed in node_modules, and the line names that chant build (a `chant-local` install adds several KB over the pin, so compare sizes only on one chant build). The build writes into a private stage and renames the files into dist at the end, so builds that overlap leave a whole bundle. `npm pack` in that directory builds the tarball. The publish workflow puts it on npm; see [Releasing](#releasing).
 
 ## Building on a local chant
 
@@ -50,6 +50,37 @@ just decide down
 
 The client is `packages/terragucci/src/decide/` (`decide`, `isConfident`, `summarize`), and the uses' questions are in `decide/questions.ts`. `test/decide.test.ts` holds it to a recorded Jev response.
 
+## Releasing
+
+A release puts the CI images on GHCR and then `@intentius/terragucci` on npm. The npm package must name the images by digest, and the digests exist only after the images are pushed, so the order is fixed:
+
+1. Set the version in `packages/terragucci/package.json`, merge to main, and push the tag `v<version>` on that commit. Image tags carry the package version (`imageTag` in `packages/terragucci/src/images.ts`).
+2. The images workflow runs on the tag. Its publish job pushes the four images to GHCR and prints each reference with its digest.
+3. Record those digests in `packages/terragucci/src/image-digests.json`, keyed by the references `npx tsx scripts/images.ts tags` prints, run `just ci` and `just example-patches` (`init` now pins by digest, so generated files change), and merge to main.
+4. Run the publish workflow on main: `gh workflow run publish.yml --ref main` (its `ref` input defaults to main; pass `-f ref=<ref>` to publish another one).
+
+The tag starts the publish workflow too. At that point the digests are not recorded yet, so that run refuses and the step 4 dispatch publishes. A tag pushed after its digests are already on main publishes directly.
+
+The publish workflow (`publish/pipeline.ts`, rendered to `.github/workflows/publish.yml`) builds the bundle, runs `just bundle-check`, and then:
+
+- skips with a notice when npm already has this version;
+- on a tag, fails unless the tag is `v` plus the package version;
+- fails unless every image reference this version's bundle names has a `sha256:` digest in `image-digests.json`, and that digest is in the built bundle;
+- runs `npm publish --provenance --access public` from `packages/terragucci`.
+
+It publishes with npm trusted publishing: npm accepts the job's GitHub OIDC token (the workflow has `id-token: write`), so no npm token is stored anywhere, and the package carries a provenance statement for the run. Trusted publishing needs npm 11.5.1 or later; the workflow installs the npm pinned as `NPM_VERSION` in `workflows/shared.ts` when the Node 24 it gets bundles an older one.
+
+The trusted publisher is configured once, on npmjs.com, in the settings of `@intentius/terragucci` under Trusted Publisher, GitHub Actions:
+
+| Field | Value |
+|---|---|
+| Organization or user | `INTENTIUS` |
+| Repository | `terragucci` |
+| Workflow filename | `publish.yml` |
+| Environment | (empty) |
+
+The fields are case-sensitive, and `repository.url` in `packages/terragucci/package.json` must match the repository exactly. Renaming the workflow file breaks publishing until the setting is changed too. npm expires a new trusted publisher configuration that has not published within 2 days, so configure it shortly before a release. Once it works, the package's publishing access can be set to require two-factor authentication and disallow tokens, which leaves this workflow as the only way to publish. npm's reference: https://docs.npmjs.com/trusted-publishers.
+
 ## Workflows
 
 Every workflow in this repo is a chant declaration. The YAML is rendered from it and committed, because GitHub reads YAML from the default branch.
@@ -65,6 +96,7 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `pages/pipeline.ts` | `.github/workflows/pages.yml` |
 | `capture/pipeline.ts` | `.github/workflows/capture.yml` |
 | `image-ci/pipeline.ts` | `.github/workflows/images.yml` |
+| `publish/pipeline.ts` | `.github/workflows/publish.yml` |
 | `images/images.ts` | `images/Dockerfile.*` |
 | `workflows/shared.ts` | the pins they share |
 | `observability/collector.ts`, `observability/prometheus.ts` | `stack/observability/collector.yaml` and `prometheus.yml` |

@@ -23,6 +23,15 @@ export const SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31
 
 export const NODE_VERSION = "24";
 
+/**
+ * The npm the publish workflow installs when the Node it gets bundles an older
+ * one. npm's trusted publishing needs 11.5.1 or later; Node 24.21.0 bundles
+ * 11.19.0, so on a current Node 24 the install is skipped.
+ */
+export const NPM_VERSION = "11.19.0";
+
+export const NPM_TRUSTED_PUBLISHING_MIN = "11.5.1";
+
 export const JUST_VERSION = "1.36.0";
 
 /**
