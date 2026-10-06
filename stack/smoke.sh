@@ -1528,7 +1528,7 @@ claim_respond_fmt() {
   log() { echo "[smoke respond-fmt] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/respond-fmt" main_sha head subject mode=apply out refs sha
+  local work clone repo="$USER/respond-fmt" main_sha head subject mode=apply out refs sha
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-fmt || return 1
   respond_tree "$work" "$repo" "$(respond_root "respond/fmt.tfstate" "")"
@@ -1548,7 +1548,11 @@ claim_respond_fmt() {
   [ -n "$sha" ] || { log "smoke-fmt is gone"; return 1; }
   subject="$(api "$URL/api/v1/repos/$repo/git/commits/$sha?stat=false&files=false&verification=false" | jq -r '.commit.message' | head -1)"
   [ "$subject" = "style: tofu fmt" ] || { log "the branch's last commit is '$subject'"; return 1; }
-  api "$URL/api/v1/repos/$repo/raw/app/locals.tf?ref=$sha" | grep -q '^  team  = "orders"$' || { log "locals.tf is not formatted on the branch"; return 1; }
+  # The raw endpoint can lag even for a sha, so the file comes from git: a
+  # clone of the branch, then the file at the sha.
+  clone="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$clone"
+  git clone -q --single-branch --branch smoke-fmt "${URL/#http:\/\/http://${USER}:${TOKEN}@}/${repo}.git" "$clone/repo" >&2 || { log "cannot clone smoke-fmt"; return 1; }
+  git -C "$clone/repo" show "$sha:app/locals.tf" | grep -q '^  team  = "orders"$' || { log "locals.tf is not formatted on the branch"; return 1; }
   [ "$head" = "$main_sha" ] || { log "main moved"; return 1; }
   log "one fmt commit on smoke-fmt; main untouched"
 }
