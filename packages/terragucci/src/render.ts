@@ -434,6 +434,15 @@ export function forgejoLock(standDown = true): string {
   ].join("\n");
 }
 
+/**
+ * The first line of a script that reads a stage's exit code. A step with
+ * `shell: bash` runs as `bash --noprofile --norc -e -o pipefail {0}` on GitHub
+ * and on Forgejo's runner, so without `set +e` a wave that waits (3) or is
+ * refused (4) ends the step at the stage, before its status, its response or
+ * the comment's reply.
+ */
+export const READS_EXIT = "set +e -uo pipefail";
+
 /** Which wave an apply job runs, and how the waves are cut and gated. */
 export interface ApplyWaveInput {
   /** 1-based. */
@@ -476,7 +485,7 @@ export function applyScript(
     "--gate", gate,
   ];
   return [
-    "set -uo pipefail",
+    READS_EXIT,
     forgeApi(forge),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...(first
@@ -527,7 +536,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
   const decide = `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-comment.json || exit 1`;
   const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy"];
   return [
-    "set -uo pipefail",
+    READS_EXIT,
     forgeApi(forge),
     // Before any credential: the comment, the commenter, the pull request and the merge commit.
     decide,

@@ -283,7 +283,7 @@ jobs:
       - name: Apply a merged pull request on request, from its merge commit
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -430,7 +430,7 @@ jobs:
       - name: Apply wave 1 of 4
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -559,7 +559,7 @@ jobs:
       - name: Apply wave 2 of 4
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -676,7 +676,7 @@ jobs:
       - name: Apply wave 3 of 4
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -793,7 +793,7 @@ jobs:
       - name: Apply wave 4 of 4
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
