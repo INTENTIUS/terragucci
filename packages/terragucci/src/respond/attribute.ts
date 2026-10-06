@@ -178,7 +178,7 @@ export interface AwsAuditOptions {
 }
 
 /**
- * CloudTrail's LookupEvents through the `aws` CLI the job already carries,
+ * CloudTrail's LookupEvents through the `aws` CLI when the job has installed it (the images do not carry it),
  * with the credentials it already has. Only `aws_` resources are searched.
  */
 export function awsAuditLog(o: AwsAuditOptions = {}): AuditLog {
