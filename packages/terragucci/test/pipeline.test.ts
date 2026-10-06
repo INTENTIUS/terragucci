@@ -26,7 +26,10 @@ describe("the check job", () => {
     expect(run).toContain("terragucci check-policy || failed=1");
     expect(run).toContain('exit "$failed"');
     expect(run).not.toContain("validate -no-color");
-    expect(check.steps[0].with["fetch-depth"]).toBe(0);
+    // Without `policy:` the clone is shallow; with it the policy tests have the history.
+    expect(check.steps[0].with).toBeUndefined();
+    const withPolicy = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content).jobs.check;
+    expect(withPolicy.steps[0].with["fetch-depth"]).toBe(0);
     expect(check.env.TG_BRANCH).toBe("${{ github.event.repository.default_branch }}");
     const keep = check.steps.find((s: { name?: string }) => s.name === "Keep the check report");
     expect(keep.with.path).toBe("terragucci-check/");
@@ -36,7 +39,10 @@ describe("the check job", () => {
     const doc = body(render("gitlab"));
     expect(doc.check.script.join("\n")).toContain('terragucci check-root "$dir" --binary tofu || failed=1');
     expect(doc.check.artifacts).toEqual({ name: "terragucci-check", when: "always", paths: ["terragucci-check/"] });
-    expect(doc.check.variables).toMatchObject({ GIT_DEPTH: "0", TG_BRANCH: "$CI_DEFAULT_BRANCH" });
+    expect(doc.check.variables).toMatchObject({ TG_BRANCH: "$CI_DEFAULT_BRANCH" });
+    expect(doc.check.variables.GIT_DEPTH).toBeUndefined();
+    const withPolicy = body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content);
+    expect(withPolicy.check.variables.GIT_DEPTH).toBe("0");
   });
 
   it("a choudoufu pipeline passes its binary, which check-root uses to run live-check", () => {

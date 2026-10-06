@@ -18,7 +18,7 @@ import { S3Client, s3FromEnv, type S3Fetch } from "../report/s3";
 import { copyToRun } from "../report/store";
 import { forgeOf, git, propose, worktree, type Proposed } from "./change";
 import { IDENTITY } from "../reconcile";
-import { attribute, awsAuditLog, route, withoutLeft, type Attribution, type AuditLog } from "./attribute";
+import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, route, withoutLeft, type Attributed, type Attribution, type AuditLog } from "./attribute";
 import type { DecideOptions } from "../decide";
 import { codify, driftOf, hasQuery, importBlocks, type Codified, type Left } from "./drift";
 import { checkDescription } from "./intent";
@@ -72,6 +72,8 @@ export interface RespondOptions {
   s3Fetch?: S3Fetch;
   /** drift, with respond.drift set to attribute: the audit log to read (default CloudTrail through the aws CLI). */
   audit?: AuditLog;
+  /** drift, with respond.drift set to attribute: the attributions `tf-drift` already made, per root, or the file that holds them. Default `terragucci-report/attributions.json`. A root without one is attributed here. */
+  attributions?: Record<string, Attributed> | string;
   /** drift, with respond.drift set to attribute: how the decision client reaches its service. */
   decideOptions?: DecideOptions;
   env?: NodeJS.ProcessEnv;
@@ -176,7 +178,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const t = triage(o.log!);
     r = { text: describeTriage(t, agent), data: t };
   } else if (ev === "drift") {
-    const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions } : undefined;
+    const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions, known: knownAttributions(repo, o.attributions) } : undefined;
     const d = await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
     const body = [
       ...d.routed,
@@ -246,7 +248,18 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
 const IMPORTS = "terragucci_imports.tf";
 const GENERATED = "terragucci_generated.tf";
 
-async function drift(repo: string, roots: string[], binary: string, imports: { address: string; id: string }[], env: NodeJS.ProcessEnv, attributing?: { audit: AuditLog; decide?: ResolvedSettings["decide"]; options?: DecideOptions }) {
+/** The attributions the stage made, from the given map or file, or the stage's default file when it is there. */
+function knownAttributions(repo: string, given: RespondOptions["attributions"]): Record<string, Attributed> | undefined {
+  if (given && typeof given !== "string") return given;
+  const file = resolve(repo, given ?? join("terragucci-report", ATTRIBUTIONS_FILE));
+  if (!existsSync(file)) {
+    if (given) throw new ConfigError(`--attributions ${given}: no such file`);
+    return undefined;
+  }
+  return JSON.parse(readFileSync(file, "utf-8")) as Record<string, Attributed>;
+}
+
+async function drift(repo: string, roots: string[], binary: string, imports: { address: string; id: string }[], env: NodeJS.ProcessEnv, attributing?: { audit: AuditLog; decide?: ResolvedSettings["decide"]; options?: DecideOptions; known?: Record<string, Attributed> }) {
   if (roots.length === 0) throw new ConfigError("no root matches");
   if (imports.length && roots.length !== 1) throw new ConfigError(`--import needs --root to name one root; ${roots.length} match`);
   const d = { codified: [] as Codified[], left: [] as Left[], files: new Map<string, string>(), imports: [] as string[], attributions: [] as Attribution[], routed: [] as string[], notes: [] as string[] };
@@ -263,7 +276,7 @@ async function drift(repo: string, roots: string[], binary: string, imports: { a
       run("plan", "-refresh-only", "-input=false", "-lock=false", `-out=${planFile}`);
       let found = driftOf(JSON.parse(run("show", "-json", planFile).stdout));
       if (attributing) {
-        const at = await attribute(root, found, attributing);
+        const at = attributing.known?.[root] ?? (await attribute(root, found, attributing));
         const routed = route(at.attributions);
         found = withoutLeft(found, routed.leave);
         d.attributions.push(...at.attributions);

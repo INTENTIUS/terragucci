@@ -19,6 +19,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `run.report_url` | where this `report.html` is served from the bucket, when `reports.url` is set |
 | `run.trace_id`, `run.trace_url` | the run's trace, when the stage sent one, and its link when `telemetry.trace_url` is set |
 | `groups[]` | a stable id per normalized change, its roots and the change |
+| `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts are read from it |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
 | `waves[]` | number, roots, set digest, approval state and a link to the approval record |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
