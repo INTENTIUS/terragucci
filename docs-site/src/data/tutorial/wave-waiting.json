@@ -1,10 +1,10 @@
 {
   "step": "wave-waiting",
-  "source_hash": "53d2ce1a38f1fe7f",
+  "source_hash": "a2d8f60c83c3eab5",
   "commands": [
     {
       "cmd": "just example change destroy",
-      "output": "[example] pushed change/destroy at a14cd02e\n[example] run 9 for a14cd02e: success (http://localhost:3300/terragucci-admin/example/actions/runs/9)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/9 (success)",
+      "output": "[example] pushed change/destroy at 8feeb980\n[example] run 9 for 8feeb980: success (http://localhost:3300/terragucci-admin/example/actions/runs/9)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/9 (success)",
       "exit": 0
     },
     {
@@ -16,7 +16,7 @@
   "shots": {
     "pull-light": "79e257c77d948afe",
     "pull-dark": "1296185598c5d65c",
-    "log-light": "ed45cfdb45ad61b4",
-    "log-dark": "f984b40f53686cba"
+    "log-light": "8ed9594310eb12e8",
+    "log-dark": "8decb2ece662712e"
   }
 }
