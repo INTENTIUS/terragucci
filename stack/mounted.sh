@@ -12,6 +12,8 @@
 #
 #   run_copied ARGS...         `docker run ARGS...`, with each -v of a host temp
 #                              dir or file copied in and (unless :ro) back out
+#                              (a file in it that is the run's own stdout or
+#                              stderr keeps what the run wrote to it)
 #   clean_mounted DIR [IMAGE]  remove DIR's .terraform and .terragrunt-cache dirs
 #   drop_work DIR [IMAGE]      rm -rf DIR (IMAGE is ignored; kept for callers)
 #
@@ -86,6 +88,53 @@ copy_in() { # container id, host path, container path, owner
   fi
 }
 
+# A caller may send the run's own output into a file in a dir it copies, as
+# `run_copied -v "$work:/repo" ... > "$work/apply.log"`. The shell opened that
+# file before the run, so the container has only the empty copy, and the
+# copy-back would replace the log with it. Such a file stays the host's: it is
+# moved aside (same inode, so the open descriptor keeps writing into it) before
+# the dir is emptied and moved back over the container's copy after.
+# OUTPUT_IDS holds the dev:inode of the caller's stdout and stderr, set by
+# run_copied; `stat` on stdin is an fstat with GNU and BSD stat alike (on macOS
+# stat of /dev/fd/N gives the descriptor's node, not the file).
+OUTPUT_IDS=""
+file_id() { # [path]: dev:inode of the path, or of stdin with none
+  if [ $# = 0 ]; then stat -c '%d:%i' - 2>/dev/null || stat -f '%d:%i' 2>/dev/null
+  else stat -c '%d:%i' "$1" 2>/dev/null || stat -f '%d:%i' "$1" 2>/dev/null; fi
+}
+
+output_file() { # host path: whether it is the caller's stdout or stderr
+  local id
+  id="$(file_id "$1")" || return 1
+  case " $OUTPUT_IDS " in *" $id "*) return 0 ;; esac
+  return 1
+}
+
+KEEP_OUTPUT=""
+keep_output_out() { # host dir
+  local f rel id
+  KEEP_OUTPUT=""
+  for id in $OUTPUT_IDS; do
+    while IFS= read -r -d '' f; do
+      output_file "$f" || continue
+      [ -n "$KEEP_OUTPUT" ] || KEEP_OUTPUT="$(mktemp -d "$(dirname "$1")/.run_copied.XXXXXX")" || return 0
+      rel="${f#"$1"/}"
+      mkdir -p "$KEEP_OUTPUT/$(dirname "$rel")" && mv "$f" "$KEEP_OUTPUT/$rel"
+    done < <(find "$1" -type f -inum "${id#*:}" -print0 2>/dev/null)
+  done
+}
+
+keep_output_in() { # host dir
+  local f rel
+  [ -n "$KEEP_OUTPUT" ] || return 0
+  while IFS= read -r -d '' f; do
+    rel="${f#"$KEEP_OUTPUT"/}"
+    mkdir -p "$1/$(dirname "$rel")" && mv -f "$f" "$1/$rel"
+  done < <(find "$KEEP_OUTPUT" -type f -print0)
+  rm -rf "$KEEP_OUTPUT"
+  KEEP_OUTPUT=""
+}
+
 # `docker run` without bind-mounting host temp paths: the container is created,
 # each copied source goes in with `docker cp`, the container runs attached
 # (its exit code is returned), each writable one comes back out over the
@@ -136,12 +185,17 @@ run_copied() { # docker run arguments...
     return 0
   fi
   docker start -a ${attach[@]+"${attach[@]}"} "$cid" || rc=$?
+  { OUTPUT_IDS="$(file_id <&3) $(file_id <&4)"; } 3>&1 4>&2
   for i in ${srcs[@]+"${!srcs[@]}"}; do
     [ "${ros[$i]}" = 0 ] || continue
     if [ -d "${srcs[$i]}" ]; then
+      keep_output_out "${srcs[$i]}"
       find "${srcs[$i]}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       docker cp -q "$cid:${dsts[$i]}/." "${srcs[$i]}" >/dev/null \
         || { echo "run_copied: could not copy ${dsts[$i]} back out of the container" >&2; [ $rc != 0 ] || rc=1; }
+      keep_output_in "${srcs[$i]}"
+    elif output_file "${srcs[$i]}"; then
+      :
     else
       docker cp -q "$cid:${dsts[$i]}" "${srcs[$i]}" >/dev/null \
         || { echo "run_copied: could not copy ${dsts[$i]} back out of the container" >&2; [ $rc != 0 ] || rc=1; }
