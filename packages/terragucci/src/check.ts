@@ -61,34 +61,56 @@ export function parseValidate(stdout: string): { valid: boolean; diagnostics: Va
 const indent = (s: string, by = "    "): string => s.split("\n").map((l) => (l ? by + l : l)).join("\n");
 const tail = (s: string, n = 5): string => s.trim().split("\n").slice(-n).join("\n");
 
+/** One refusal of `live-check -json`: a rule, why, and the types and sites it covers. */
 export interface LiveRefusal {
-  address: string;
-  type: string;
   rule: string;
   reason: string;
+  /** How many resource instances the rule refuses; 1 for an instance row. */
+  count: number;
+  types: { type: string; count: number }[];
+  sites: { address: string; location: string }[];
 }
 
 /**
- * The roster `choudoufu live-check -json` printed, or undefined when the text is
- * not one. Refusals come from `instances[].refused` and from a top-level
- * `refusals` array when the release prints one.
+ * The document `choudoufu live-check -json` printed (choudoufu 0.22.0 and
+ * later): `blocked`, and a `refusals` array of `{rule, reason, count, types[],
+ * sites[]}` naming everything behind `blocked`. A release without it names
+ * refused instances in `instances[].refused` only, which come back as one
+ * refusal each; when neither lists a refusal, the caller reads the text
+ * output (#191). Undefined when the text is not a document.
  */
 export function parseLiveCheck(stdout: string): { blocked: boolean; refused: LiveRefusal[] } | undefined {
   try {
     const doc = JSON.parse(stdout) as {
       blocked?: unknown;
       instances?: { address?: string; type?: string; refused?: boolean; rule?: string; reason?: string }[];
-      refusals?: { address?: string; type?: string; rule?: string; reason?: string; message?: string }[];
+      refusals?: unknown;
     };
     if (typeof doc.blocked !== "boolean") return undefined;
-    const refused: LiveRefusal[] = (Array.isArray(doc.instances) ? doc.instances : []).filter((i) => i.refused).map((i) => ({ address: i.address ?? "", type: i.type ?? "", rule: i.rule ?? "", reason: i.reason ?? "" }));
-    for (const r of Array.isArray(doc.refusals) ? doc.refusals : []) {
-      if (r && typeof r === "object") refused.push({ address: r.address ?? "", type: r.type ?? "", rule: r.rule ?? "", reason: r.reason ?? r.message ?? "" });
+    if (Array.isArray(doc.refusals)) {
+      const refused: LiveRefusal[] = [];
+      for (const r of doc.refusals as Record<string, unknown>[]) {
+        if (!r || typeof r !== "object") continue;
+        const types = (Array.isArray(r.types) ? (r.types as { type?: string; count?: number }[]) : []).map((t) => ({ type: t?.type ?? "", count: t?.count ?? 0 }));
+        const sites = (Array.isArray(r.sites) ? (r.sites as { address?: string; location?: string }[]) : []).map((x) => ({ address: x?.address ?? "", location: x?.location ?? "" }));
+        refused.push({ rule: String(r.rule ?? ""), reason: String(r.reason ?? ""), count: typeof r.count === "number" ? r.count : Math.max(sites.length, 1), types, sites });
+      }
+      return { blocked: doc.blocked, refused };
     }
+    const refused: LiveRefusal[] = (Array.isArray(doc.instances) ? doc.instances : [])
+      .filter((i) => i.refused)
+      .map((i) => ({ rule: i.rule ?? "", reason: i.reason ?? "", count: 1, types: i.type ? [{ type: i.type, count: 1 }] : [], sites: i.address ? [{ address: i.address, location: "" }] : [] }));
     return { blocked: doc.blocked, refused };
   } catch {
     return undefined;
   }
+}
+
+/** The log line and report bullet for one refusal. */
+export function refusalLine(dir: string, r: LiveRefusal): string {
+  const types = r.types.map((t) => (t.count > 1 ? `${t.type} x${t.count}` : t.type)).join(", ");
+  const where = r.sites.map((x) => (x.location ? `${x.address} (${x.location})` : x.address)).filter(Boolean).join(", ");
+  return `refused: ${dir}: ${r.rule ? `${r.rule}: ` : ""}${r.reason}${types ? ` [${types}]` : ""}${where ? `: ${where}` : ""}`;
 }
 
 /** The non-empty lines of `choudoufu live-check <dir>`'s text output, which names a refusal the JSON does not. */
@@ -146,13 +168,16 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
       await textRefusals();
     } else {
       for (const r of live.refused) {
-        log.push(`refused: ${dir}: ${r.address} (${r.type}): ${r.rule ? `${r.rule}: ` : ""}${r.reason}`);
-        report.push(`- refused: \`${r.address}\` (${r.type}): ${r.rule ? `${r.rule}: ` : ""}${r.reason}`);
+        const line = refusalLine(dir, r);
+        log.push(line);
+        report.push(`- ${line.replace(`refused: ${dir}: `, `refused: \`${dir}\`: `)}`);
       }
       if (live.blocked || c.status !== 0) {
         ok = false;
+        // A release that prints no `refusals` array names a refusal only in the text output.
         if (live.refused.length === 0) await textRefusals();
-        log.push(`FAILED ${dir}: choudoufu live-check refused ${live.refused.length} resource${live.refused.length === 1 ? "" : "s"} (exit ${c.status})`);
+        const refusedCount = live.refused.reduce((n, r) => n + r.count, 0);
+        log.push(`FAILED ${dir}: choudoufu live-check refused ${refusedCount} resource${refusedCount === 1 ? "" : "s"} (exit ${c.status})`);
       } else {
         log.push(`live-check passed ${dir}`);
         report.push("- live-check passed");

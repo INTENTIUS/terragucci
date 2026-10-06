@@ -26,7 +26,7 @@ FAILED envs/dev/orders: validate found 1 error(s)
 
 Warnings print and fail nothing. A failing root does not stop the next, so one run shows every diagnostic.
 
-With `binary: choudoufu`, `choudoufu live-check -json` runs after `validate`. Each refused resource prints with its rule and reason, and a non-zero exit fails the check.
+With `binary: choudoufu`, `choudoufu live-check -json` runs after `validate`. Each refusal prints with its rule, reason, resource types and sites, and a non-zero exit fails the check.
 
 With [`policy`](/terragucci/reference/policy/) set, the last step runs the policy's own tests: `conftest verify` for the `conftest` engine, `opa test` for `opa`. A failing test fails the check and its output is in the log. A policy directory with no `*_test.rego` file is skipped with a note. The tests come from the default branch, or from the pull request's target, so a change cannot edit its own tests away.
 

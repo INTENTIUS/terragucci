@@ -71,9 +71,9 @@ describe("choudoufu live-check", () => {
     expect(r.ok).toBe(false);
     expect(calls.map((c) => c[1])).toEqual(["-chdir=app", "live-check"]);
     expect(calls[1]).toEqual(["choudoufu", "live-check", "-json", "app"]);
-    expect(r.log.join("\n")).toContain("refused: app: aws_x.y (aws_x): count-index: count.index in a resource name");
+    expect(r.log.join("\n")).toContain("refused: app: count-index: count.index in a resource name [aws_x]: aws_x.y");
     expect(r.log.join("\n")).not.toContain("aws_ok.z");
-    expect(r.report.join("\n")).toContain("refused: `aws_x.y`");
+    expect(r.report.join("\n")).toContain("refused: `app`: count-index: count.index in a resource name [aws_x]: aws_x.y");
   });
 
   it("passes when nothing is refused, and fails when live-check could not read the directory", async () => {
@@ -100,14 +100,31 @@ describe("choudoufu live-check", () => {
     expect(log).toContain("FAILED app: choudoufu live-check refused 0 resources (exit 1)");
   });
 
-  it("falls back to the text output when the JSON does not parse, and reads a top-level refusals array", async () => {
+  it("falls back to the text output when the JSON does not parse", async () => {
     const unparsed = await checkRoot("choudoufu", "app", "/repo", { exec: fake({ validate: { status: 0, stdout: good }, "live-check": { status: 1, stdout: "garbage" }, "live-check-text": { status: 1, stdout: "Logical resource is not admitted" } }).exec });
     expect(unparsed.log.join("\n")).toContain("refused: app: Logical resource is not admitted");
-    const arr = JSON.stringify({ blocked: true, instances: [], refusals: [{ address: "terraform_data.probe", type: "terraform_data", rule: "logical", reason: "not admitted" }] });
+  });
+
+  it("reads live-check's refusals array (choudoufu 0.22.0) and does not run the text output", async () => {
+    const arr = JSON.stringify({
+      blocked: true,
+      instances: [{ address: "terraform_data.probe", type: "terraform_data" }],
+      refusals: [
+        { rule: "logical", reason: "Logical resource is not admitted", count: 2, types: [{ type: "terraform_data", count: 2 }], sites: [{ address: "terraform_data.probe", location: "main.tf:1" }, { address: "terraform_data.other", location: "main.tf:5" }] },
+        { rule: "count-index", reason: "count.index in a resource name", count: 1, types: [{ type: "aws_x", count: 1 }], sites: [] },
+      ],
+    });
     const { exec, calls } = fake({ validate: { status: 0, stdout: good }, "live-check": { status: 1, stdout: arr } });
     const r = await checkRoot("choudoufu", "app", "/repo", { exec });
-    expect(r.log.join("\n")).toContain("refused: app: terraform_data.probe (terraform_data): logical: not admitted");
+    const log = r.log.join("\n");
+    expect(r.ok).toBe(false);
+    expect(log).toContain("refused: app: logical: Logical resource is not admitted [terraform_data x2]: terraform_data.probe (main.tf:1), terraform_data.other (main.tf:5)");
+    expect(log).toContain("refused: app: count-index: count.index in a resource name [aws_x]");
+    expect(log).toContain("FAILED app: choudoufu live-check refused 3 resources (exit 1)");
+    expect(r.report.join("\n")).toContain("refused: `app`: logical: Logical resource is not admitted");
     expect(calls).toHaveLength(2);
+    const parsed = parseLiveCheck(arr);
+    expect(parsed?.refused.map((x) => x.count)).toEqual([2, 1]);
   });
 
   it("still runs live-check when validate failed, so one run shows both", async () => {
