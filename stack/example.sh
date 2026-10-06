@@ -276,11 +276,16 @@ OUT
     [ -n "$pr" ] || pr="$(api "$URL/api/v1/repos/$REPO/pulls?state=open" | jq -r --arg h "change/$name" '.[] | select(.head.ref == $h) | .html_url' | head -1)"
     pr="${pr/#http:\/\/forgejo:3000/$URL}"
     log "pushed change/$name at ${sha:0:8}"
-    wait_run "$REPO" "$sha"
+    # The branch's head has two runs: the pull request's, whose plan job posts
+    # the plan note, and the push's, whose check job checks the format.
+    wait_run "$REPO" "$sha" pull_request
+    plan_url="$RUN_URL" plan_status="$RUN_STATUS"
+    wait_run "$REPO" "$sha" push
     cat <<OUT
 
-  Pull request  $pr
-  Pipeline      $RUN_URL ($RUN_STATUS)
+  Pull request  $pr (the plan note is in its conversation)
+  Plan          $plan_url ($plan_status)
+  Check         $RUN_URL ($RUN_STATUS)
 OUT
     ;;
 

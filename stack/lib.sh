@@ -8,8 +8,9 @@
 #   push_tree DIR REPO BRANCH MESSAGE   commit DIR as one commit and force-push it;
 #                              prints the sha. TG_FIXED_DATE=1 pins the commit
 #                              dates so the same tree always gets the same sha.
-#   wait_run REPO SHA          wait for the Actions run on SHA; sets RUN_ID,
-#                              RUN_STATUS and RUN_URL
+#   wait_run REPO SHA [EVENT]  wait for the Actions run on SHA (the newest one,
+#                              or the one EVENT started); sets RUN_ID,
+#                              RUN_INDEX, RUN_STATUS and RUN_URL
 #   print_logs REPO RUN_ID     every job's log tail, for a run that went wrong
 #
 # Callers define log() and fail() before sourcing.
@@ -73,10 +74,13 @@ print_logs() { # repo, run id
   done
 }
 
-wait_run() { # repo, sha
-  local repo="$1" sha="$2" deadline=$(( $(date +%s) + TIMEOUT )) run="" status=""
+wait_run() { # repo, sha, [event]
+  local repo="$1" sha="$2" event="${3:-}" deadline=$(( $(date +%s) + TIMEOUT )) run="" status=""
   while :; do
-    run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" | jq -c '.workflow_runs[0] // empty')"
+    # A branch with a pull request has two runs on its head: the push run and
+    # the pull_request run, in whichever order Forgejo queued them.
+    run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" \
+      | jq -c --arg e "$event" '[.workflow_runs[] | select($e == "" or .event == $e)][0] // empty')"
     if [ -n "$run" ]; then
       status="$(echo "$run" | jq -r '.status')"
       case "$status" in
@@ -85,13 +89,21 @@ wait_run() { # repo, sha
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
       [ -n "$run" ] && print_logs "$repo" "$(echo "$run" | jq -r '.id')" >&2
-      fail "no finished run for $sha after ${TIMEOUT}s (last status: ${status:-none})" || return 1
+      fail "no finished ${event:+$event }run for $sha after ${TIMEOUT}s (last status: ${status:-none})" || return 1
     fi
     sleep 3
   done
   RUN_ID="$(echo "$run" | jq -r '.id')"
+  RUN_INDEX="$(echo "$run" | jq -r '.index_in_repo')"
   RUN_STATUS="$status"
   # Forgejo builds links from its in-network address; show the one a browser opens.
   RUN_URL="$(echo "$run" | jq -r '.html_url' | sed "s#^http://forgejo:3000#$URL#")"
-  log "run $(echo "$run" | jq -r '.index_in_repo') for ${sha:0:8}: $status ($RUN_URL)"
+  # A run's own page redirects to its first job at that in-network address,
+  # which a browser cannot open, so link the first job that ran instead.
+  # Forgejo numbers a run's jobs from 0 in the order it created them.
+  local pos
+  pos="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" 2>/dev/null \
+    | jq -r 'sort_by(.id) | to_entries | map(select(.value.status != "skipped")) | .[0].key // empty' 2>/dev/null || true)"
+  [ -z "$pos" ] || RUN_URL="$RUN_URL/jobs/$pos/attempt/1"
+  log "run $RUN_INDEX for ${sha:0:8}${event:+ ($event)}: $status ($RUN_URL)"
 }
