@@ -128,7 +128,8 @@ comment-agent|a /terragucci agent comment pushes the commit of the stand-in agen
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
-command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+# --list needs no Docker: `just lint` runs it to catch a broken CLAIMS.
+[ "${1:-}" = --list ] || { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; } \
   || { echo "SKIP: Docker is not available, so no claim can run."; exit 0; }
 
 # ── the implemented claims ────────────────────────────────────────────────
@@ -3978,6 +3979,18 @@ with_lock() { # resource, command... : run the command holding the resource alon
   unlock_holder "$holder"
   return $rc
 }
+
+# --list: one line per claim, "name function=yes|no group=yes|no", then exits
+# before anything touches Docker. scripts/check-smoke.mjs reads it.
+if [ "${1:-}" = --list ]; then
+  while IFS='|' read -r n _; do
+    [ -n "$n" ] || continue
+    f=no; declare -F "claim_${n//-/_}" >/dev/null && f=yes
+    g=no; awk -v n="$n" '$1 == n { f = 1 } END { exit !f }' <<<"$CLAIM_GROUPS" && g=yes
+    echo "$n function=$f group=$g"
+  done <<<"$CLAIMS"
+  exit 0
+fi
 
 # ── what a claim's runs hold ──
 
