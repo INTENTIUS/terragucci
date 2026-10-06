@@ -53,8 +53,7 @@ ci:
 
 [doc("Render the stack's collector and Prometheus configs from observability/, and the dashboards, rules and Grafana datasources, into stack/observability/.")]
 render-observability:
-    npx chant build observability -o stack/observability/collector.yaml --format yaml
-    npx tsx scripts/render-prometheus.ts > stack/observability/prometheus.yml
+    npx chant build observability --lexicon-output otel=stack/observability/collector.yaml --lexicon-output prometheus=stack/observability/prometheus.yml --format yaml
     npx tsx scripts/render-dashboards.ts
     @echo "  ✓ stack/observability/ rendered"
 
@@ -101,15 +100,15 @@ ci-check:
     done
     rm -rf "$dir"
     # The stack's collector and Prometheus configs, from observability/.
-    npx chant build observability -o "$out" --format yaml >/dev/null
+    pout="$out.prometheus"
+    npx chant build observability --lexicon-output "otel=$out" --lexicon-output "prometheus=$pout" --format yaml >/dev/null
     if diff -u stack/observability/collector.yaml "$out"; then
       echo "  ✓ stack/observability/collector.yaml matches observability/collector.ts"
     else
       echo "  stack/observability/collector.yaml is not what observability/collector.ts renders. Run 'just ci' and commit the result."
       rc=1
     fi
-    npx tsx scripts/render-prometheus.ts > "$out"
-    if diff -u stack/observability/prometheus.yml "$out"; then
+    if diff -u stack/observability/prometheus.yml "$pout"; then
       echo "  ✓ stack/observability/prometheus.yml matches observability/prometheus.ts"
     else
       echo "  stack/observability/prometheus.yml is not what observability/prometheus.ts renders. Run 'just ci' and commit the result."

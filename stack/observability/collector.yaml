@@ -17,6 +17,11 @@ exporters:
     endpoint: tempo:4317
     tls:
       insecure: true
+    sending_queue:
+      batch:
+        flush_timeout: 1s
+        min_size: 512
+        max_size: 2048
   file/traces:
     path: /out/traces.jsonl
 

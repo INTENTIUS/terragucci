@@ -6,8 +6,9 @@
  * scripts/render-dashboards.ts writes under stack/observability/terragucci/.
  *
  * It is declared with the prometheus lexicon's `PrometheusConfig` and
- * `ScrapeConfig` entities. `scripts/render-prometheus.ts` writes it; `just ci`
- * runs that and `just ci-check` fails when the committed file differs.
+ * `ScrapeConfig` entities. `chant build observability` writes it next to the
+ * collector's file (`--lexicon-output`); `just ci` runs that and `just ci-check`
+ * fails when the committed file differs.
  */
 import { PrometheusConfig, ScrapeConfig, prometheusConfigYaml } from "@intentius/chant-lexicon-prometheus";
 
