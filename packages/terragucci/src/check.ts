@@ -61,16 +61,39 @@ export function parseValidate(stdout: string): { valid: boolean; diagnostics: Va
 const indent = (s: string, by = "    "): string => s.split("\n").map((l) => (l ? by + l : l)).join("\n");
 const tail = (s: string, n = 5): string => s.trim().split("\n").slice(-n).join("\n");
 
-/** The roster `choudoufu live-check -json` printed, or undefined when the text is not one. */
-export function parseLiveCheck(stdout: string): { blocked: boolean; refused: { address: string; type: string; rule: string; reason: string }[] } | undefined {
+export interface LiveRefusal {
+  address: string;
+  type: string;
+  rule: string;
+  reason: string;
+}
+
+/**
+ * The roster `choudoufu live-check -json` printed, or undefined when the text is
+ * not one. Refusals come from `instances[].refused` and from a top-level
+ * `refusals` array when the release prints one.
+ */
+export function parseLiveCheck(stdout: string): { blocked: boolean; refused: LiveRefusal[] } | undefined {
   try {
-    const doc = JSON.parse(stdout) as { blocked?: unknown; instances?: { address?: string; type?: string; refused?: boolean; rule?: string; reason?: string }[] };
+    const doc = JSON.parse(stdout) as {
+      blocked?: unknown;
+      instances?: { address?: string; type?: string; refused?: boolean; rule?: string; reason?: string }[];
+      refusals?: { address?: string; type?: string; rule?: string; reason?: string; message?: string }[];
+    };
     if (typeof doc.blocked !== "boolean") return undefined;
-    const refused = (doc.instances ?? []).filter((i) => i.refused).map((i) => ({ address: i.address ?? "", type: i.type ?? "", rule: i.rule ?? "", reason: i.reason ?? "" }));
+    const refused: LiveRefusal[] = (Array.isArray(doc.instances) ? doc.instances : []).filter((i) => i.refused).map((i) => ({ address: i.address ?? "", type: i.type ?? "", rule: i.rule ?? "", reason: i.reason ?? "" }));
+    for (const r of Array.isArray(doc.refusals) ? doc.refusals : []) {
+      if (r && typeof r === "object") refused.push({ address: r.address ?? "", type: r.type ?? "", rule: r.rule ?? "", reason: r.reason ?? r.message ?? "" });
+    }
     return { blocked: doc.blocked, refused };
   } catch {
     return undefined;
   }
+}
+
+/** The non-empty lines of `choudoufu live-check <dir>`'s text output, which names a refusal the JSON does not. */
+export function liveCheckTextLines(out: { stdout: string; stderr: string }, max = 40): string[] {
+  return `${out.stdout}\n${out.stderr}`.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim() !== "").slice(0, max);
 }
 
 /**
@@ -108,10 +131,19 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
   if (binary === "choudoufu") {
     const c = await exec(binary, ["live-check", "-json", dir], repo);
     const live = parseLiveCheck(c.stdout);
+    // A refusal the JSON does not list is named only by the text output.
+    const textRefusals = async (): Promise<void> => {
+      const t = await exec(binary, ["live-check", dir], repo);
+      for (const l of liveCheckTextLines(t)) {
+        log.push(`refused: ${dir}: ${l}`);
+        report.push(`- refused: \`${dir}\`: ${l}`);
+      }
+    };
     if (!live) {
       ok = false;
       log.push(`FAILED ${dir}: choudoufu live-check gave no result (exit ${c.status})`, indent(tail(c.stderr || c.stdout)));
       report.push(`- \`choudoufu live-check\` gave no result (exit ${c.status}):`, "", "```", tail(c.stderr || c.stdout), "```");
+      await textRefusals();
     } else {
       for (const r of live.refused) {
         log.push(`refused: ${dir}: ${r.address} (${r.type}): ${r.rule ? `${r.rule}: ` : ""}${r.reason}`);
@@ -119,6 +151,7 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
       }
       if (live.blocked || c.status !== 0) {
         ok = false;
+        if (live.refused.length === 0) await textRefusals();
         log.push(`FAILED ${dir}: choudoufu live-check refused ${live.refused.length} resource${live.refused.length === 1 ? "" : "s"} (exit ${c.status})`);
       } else {
         log.push(`live-check passed ${dir}`);

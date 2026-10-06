@@ -2943,6 +2943,8 @@ REGO
     log "the choudoufu check step passed: nothing refused terraform_data.probe"; rc=1
   elif grep -q 'refused: app: terraform_data.probe (terraform_data)' "$work/choudoufu.log"; then
     log "live-check: $(grep -m1 'refused: app: terraform_data.probe' "$work/choudoufu.log" | cut -c1-200)"
+  elif grep -q '^refused: app:.*terraform_data' "$work/choudoufu.log" && grep -q '^refused: app:.*Logical resource is not admitted' "$work/choudoufu.log"; then
+    log "live-check (text output): $(grep -m1 '^refused: app:.*Logical resource is not admitted' "$work/choudoufu.log" | cut -c1-200)"
   else
     log "the choudoufu check step exited $code but its log names no refusal of terraform_data.probe"
     tail -20 "$work/choudoufu.log" | sed 's/^/[smoke check-diagnostics]   /' >&2
