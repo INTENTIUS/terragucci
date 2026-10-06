@@ -252,7 +252,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     notes.push("waves.canary is set; the canary units apply first, then the rest; Terragrunt waves apply one after another with no approval between them");
   }
   if (settings.runtime === "fountain") notes.push("runtime fountain is not built yet; the pipeline runs on the forge");
-  if (settings.reports) notes.push("reports is set; the plan report is not built yet");
 
   if (!options.dryRun) {
     for (const f of files) {
