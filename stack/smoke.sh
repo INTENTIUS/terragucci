@@ -124,7 +124,7 @@ version-bump-job|with respond.version-bump: suggest, the version-bump job of the
 tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
 oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
 comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
-comment-agent|a /terragucci agent comment pushes the stand-in agent's commit to the pull request's branch, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|'
+comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
