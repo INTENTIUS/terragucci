@@ -66,7 +66,7 @@ trap 'cleanup_works; exit 143' TERM
 # The provider and binary cache the forge's job containers mount at /cache
 # (container.options in bootstrap.sh). Every local run that installs providers
 # mounts it too, so a provider downloads once per stack pass, not once per
-# root per run, and no provider binary sits in a bind-mounted work dir.
+# root per run, and no provider binary sits in a work dir (run_copied in mounted.sh copies work dirs in and out instead of bind-mounting them).
 # JOB_CACHE_VOLUME is set at the top, next to mounted.sh.
 
 # name|what the site says|issue that builds it (empty: implemented here)
@@ -699,7 +699,7 @@ report_run() {
   local extra=() kv
   for kv in ${REPORT_ENV:-}; do extra+=(-e "$kv"); done
   [ -n "$base" ] && extra+=(-e "TG_BASE=$base")
-  docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     ${extra[@]+"${extra[@]}"} \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
@@ -721,7 +721,7 @@ apply_roots() { # root...
   cp -R "$EXAMPLE/." "$work/"
   if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_overlay_example "$work" || return 1; smoke_aws_queue_settle; fi
   for root in "$@"; do
-    docker run --rm --network terragucci -v "$work:/repo" -w "/repo/$root" \
+    run_copied --rm --network terragucci -v "$work:/repo" -w "/repo/$root" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
@@ -1310,7 +1310,7 @@ in_image() { # dir, command...
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
   [ -f "$bundle" ] || build_cli || return 1
-  docker run --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TERRAGUCCI_FORGEJO_TOKEN="${TOKEN:-}" \
@@ -1562,7 +1562,7 @@ tg_report_run() { # work, patches...
   [ -n "${REPORT_CONFIG:-}" ] && printf '%s\n' "$REPORT_CONFIG" >> "$work/terragucci.yml"
   [ -n "${TG_EDIT:-}" ] && (cd "$work" && eval "$TG_EDIT")
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke $(date +%s%N)"
-  docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
@@ -1592,7 +1592,7 @@ tg_apply_units() { # unit...
   cp -R "$TG_EXAMPLE/." "$work/"
   if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_overlay_tg "$work" || return 1; smoke_aws_queue_settle; fi
   for unit in "$@"; do
-    docker run --rm --network terragucci -v "$work:/repo" -w /repo \
+    run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
       "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
@@ -2037,7 +2037,7 @@ claim_policy_wave() {
   [ -z "${BREAK:-}" ] && printf 'policy:\n  engine: %s\n  path: %s\n  input: %s\n' "$engine" "$dir" "$input" >> "$work/terragucci.yml"
   git -C "$work" init -q -b main
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke policy-wave"
-  docker run --rm --network terragucci -v "$work:/repo" -w /repo \
+  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -2449,7 +2449,7 @@ HCL
   aws_env=(-e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1)
   if [ -z "${BREAK:-}" ]; then
     holder="terragucci-smoke-lock-holder-$$"
-    docker run -d --name "$holder" --network terragucci -v "$work/holder:/repo" -w /repo/lock -v "$bin:/usr/local/bin/choudoufu:ro" \
+    run_copied -d --name "$holder" --network terragucci -v "$work/holder:/repo" -w /repo/lock -v "$bin:/usr/local/bin/choudoufu:ro" \
       "${aws_env[@]}" "$image" \
       sh -c 'choudoufu init -input=false -no-color >/dev/null && sleep 50 | choudoufu plan -input=true -no-color' >/dev/null || rc=1
     # The holder holds the lock once its lock object is in the bucket.
@@ -2464,7 +2464,7 @@ HCL
     fi
   fi
   if [ $rc = 0 ]; then
-    docker run --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" -v "$bin:/usr/local/bin/choudoufu:ro" \
+    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" -v "$bin:/usr/local/bin/choudoufu:ro" \
       "${aws_env[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TF_VAR_hold=given \
       -e TF_CLI_ARGS_plan=-lock-timeout=150s \
       -e OTEL_EXPORTER_OTLP_ENDPOINT="$OTLP_ENDPOINT" \
@@ -2578,7 +2578,7 @@ HCL
   git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke dashboards $id"
   git -C "$work/wave" remote add origin /origin.git
   for kv in $env; do extra+=(-e "$kv"); done
-  docker run --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -2947,7 +2947,7 @@ REGO
   body="$(check_step_body "$cdir/.forgejo/workflows/terragucci.yml")"
   grep -q '^choudoufu fmt -check' <<<"$body" || { log "no check step for choudoufu in the pipeline init wrote"; return 1; }
   grep -qF "image: $cimage" "$cdir/.forgejo/workflows/terragucci.yml" || { log "the pipeline init wrote for the choudoufu repo does not run in $cimage"; return 1; }
-  docker run --rm --network terragucci -v "$cdir:/repo" -w /repo \
+  run_copied --rm --network terragucci -v "$cdir:/repo" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -3158,7 +3158,7 @@ JSON
 SH
   chmod +x "$work/smoke/aws"
   open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
-  docker run --rm --network terragucci -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+  run_copied --rm --network terragucci -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$work/smoke:/smoke" -v "$work/smoke/aws:/usr/local/bin/aws:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
