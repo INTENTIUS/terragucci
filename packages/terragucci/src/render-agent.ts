@@ -11,6 +11,9 @@ import { READS_EXIT } from "./render";
 /** Comments the agent job reads. The replan job leaves them alone when the agent comment is on. */
 export const AGENT_COMMENT_IF = "startsWith(github.event.comment.body, '/terragucci agent ')";
 
+/** Variables a runner may set to the job's own token or to its artifact and identity services. The agent's step runs without them. */
+export const RUNNER_TOKEN_VARS = "GITHUB_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL";
+
 const sh = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /**
@@ -48,6 +51,8 @@ export function agentRunScript(command: string): string {
     '  echo "terragucci: the pull request moved after the comment was read" >&2',
     "  exit 0",
     "fi",
+    // Forgejo's runner puts the job's token in the step's environment and ignores \`permissions:\`, so the agent does not get to see it.
+    `unset ${RUNNER_TOKEN_VARS}`,
     `export TG_AGENT_PROMPT=${AGENT_DIR}/prompt.md`,
     `( ${command} ) <"$TG_AGENT_PROMPT"`,
     `echo "$?" >${AGENT_CHANGE_DIR}/rc`,
@@ -68,6 +73,7 @@ export function agentCommentJobs(forge: Exclude<ForgeName, "gitlab">, image: str
   const secret = (name: string): string => `\${{ secrets.${name} }}`;
   // The agent runs here. The job's token reads the pull request and answers a refusal; it cannot push.
   // No oidc, no role, no forge token in the agent's step: the model's key is all it holds.
+  // Forgejo ignores `permissions:`, so the step also drops the runner's own token variables (agentRunScript).
   const run = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },

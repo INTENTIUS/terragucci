@@ -64,8 +64,14 @@ describe("forbiddenPaths", () => {
     expect(forbiddenPaths(guarded)).toEqual(guarded);
     expect(forbiddenPaths([
       "app/CODEOWNERS", "docs/guide.md", "docs/CODEOWNERS.md", "CLAUDE.md.bak", "README-AGENTS.md", ".mcp.jsonc", ".claude-plugin/x",
-      ".cursorrules.d/x", ".cursorignore", "app/.gitattributes", "app/.gitmodules", ".claudex/y", "claude.mdx",
+      ".cursorrules.d/x", ".cursorignore", ".claudex/y", "claude.mdx", "app/.gitattributes.d/x", "app/my-CLAUDE.md", "app/AGENTS.md.bak",
     ])).toEqual([]);
+  });
+
+  it("names CLAUDE.md, AGENTS.md, .gitattributes and .gitmodules in any directory, in any case", () => {
+    const nested = ["app/CLAUDE.md", "a/b/c/AGENTS.md", "modules/net/.gitattributes", "vendor/.gitmodules", "App/claude.MD", "x/.GitModules", "CLAUDE.md"];
+    expect(forbiddenPaths(nested)).toEqual(nested);
+    expect(forbiddenPaths(["app/CODEOWNERS", "app/main.tf", "docs/AGENTS.mdx"])).toEqual([]);
   });
 });
 
