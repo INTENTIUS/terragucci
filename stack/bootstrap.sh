@@ -405,6 +405,12 @@ cache:
 container:
   network: ${NETWORK}
   privileged: false
+  # A job's workspace (workdir_parent, /workspace) is a named volume the
+  # runner creates for the job and removes with its container when the job
+  # ends: forgejo-runner never bind-mounts a host workdir. With valid_volumes
+  # naming only the cache volume, no job mounts a host path either, so a
+  # job's .terraform and providers never sit in host files that Docker
+  # Desktop's VM could keep open after they are deleted.
   options: "-v terragucci-job-cache:/cache"
   valid_volumes:
     - terragucci-job-cache

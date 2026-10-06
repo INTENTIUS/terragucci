@@ -2245,7 +2245,10 @@ TF
 # CHOUDOUFU_REF (default origin/main) of the checkout at CHOUDOUFU_DIR, read
 # with git archive so the checkout itself is left alone, and kept under
 # .state/choudoufu/<commit> for the next run. The host's Go cross-compiles it
-# when there is one; otherwise a golang container does.
+# when there is one; otherwise a golang container does, from the archive piped
+# into its stdin and unpacked inside it. No host temp dir is bind-mounted, so
+# Docker Desktop's VM has no deleted source tree to keep open afterwards; only
+# the output dir under .state, which is kept, is mounted.
 choudoufu_linux() {
   if [ -n "${CHOUDOUFU_BIN:-}" ]; then echo "$CHOUDOUFU_BIN"; return 0; fi
   local dir="${CHOUDOUFU_DIR:-$HOME/Documents/checkouts/intentius/choudoufu}" ref="${CHOUDOUFU_REF:-origin/main}" sha arch out src go
@@ -2254,17 +2257,18 @@ choudoufu_linux() {
   out="$HERE/.state/choudoufu/$sha-$arch/choudoufu"
   [ -x "$out" ] && { echo "$out"; return 0; }
   mkdir -p "$(dirname "$out")"
-  src="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-choudoufu.XXXXXX")"
-  git -C "$dir" archive "$sha" | tar -x -C "$src" || { drop_work "$src"; return 1; }
   echo "building choudoufu ${sha:0:10} for linux/$arch" >&2
   if command -v go >/dev/null 2>&1; then
-    (cd "$src" && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -o "$out" ./cmd/choudoufu) >&2 || { drop_work "$src"; return 1; }
+    src="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-choudoufu.XXXXXX")"
+    git -C "$dir" archive "$sha" | tar -x -C "$src" || { rm -rf "$src"; return 1; }
+    (cd "$src" && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -o "$out" ./cmd/choudoufu) >&2 || { rm -rf "$src"; return 1; }
+    rm -rf "$src"
   else
-    go="$(sed -n 's/^go \([0-9.]*\)$/\1/p' "$src/go.mod")"
-    docker run --rm -v "$src:/src" -v "$(dirname "$out"):/out" -v terragucci-go-cache:/root/go -w /src \
-      -e GOOS=linux -e GOARCH="$arch" -e CGO_ENABLED=0 "golang:${go:-1}" go build -o /out/choudoufu ./cmd/choudoufu >&2 || { drop_work "$src"; return 1; }
+    go="$(git -C "$dir" show "$sha:go.mod" | sed -n 's/^go \([0-9.]*\)$/\1/p')"
+    git -C "$dir" archive "$sha" | docker run -i --rm -v "$(dirname "$out"):/out" -v terragucci-go-cache:/root/go \
+      -e GOOS=linux -e GOARCH="$arch" -e CGO_ENABLED=0 "golang:${go:-1}" \
+      sh -c 'mkdir -p /src && tar -x -C /src && cd /src && go build -o /out/choudoufu ./cmd/choudoufu' >&2 || return 1
   fi
-  drop_work "$src"
   echo "$out"
 }
 
