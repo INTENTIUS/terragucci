@@ -374,7 +374,11 @@ export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, s
   ];
 }
 
-/** Roots that changed in the push, or all of them when the push cannot be diffed. */
+/**
+ * Roots that changed in the push, or all of them when the push cannot be diffed.
+ * grep reads the whole list (no -q): under pipefail, a grep -q that quits at its
+ * first match can leave printf with SIGPIPE on a long list and report no match.
+ */
 export function movedRoots(roots: string[]): string {
   return [
     'if [ -n "${TG_BEFORE:-}" ] && [ "${TG_BEFORE#0000000}" = "$TG_BEFORE" ] && git fetch -q --depth=1 origin "$TG_BEFORE" 2>/dev/null; then',
@@ -384,7 +388,7 @@ export function movedRoots(roots: string[]): string {
     "fi",
     'moved=""',
     `for dir in ${roots.map(sh).join(" ")}; do`,
-    '  if [ -z "$changed" ] || printf \'%s\\n\' "$changed" | grep -q "^$dir/"; then moved="${moved:+$moved,}$dir"; fi',
+    '  if [ -z "$changed" ] || printf \'%s\\n\' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi',
     "done",
   ].join("\n");
 }

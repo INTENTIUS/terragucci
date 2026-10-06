@@ -493,7 +493,7 @@ jobs:
           fi
           moved=""
           for dir in 'envs/dev/email' 'envs/dev/orders' 'envs/dev/payments' 'envs/dev/platform' 'envs/dev/search' 'envs/prod/email' 'envs/prod/orders' 'envs/prod/payments' 'envs/prod/platform' 'envs/prod/search' 'envs/staging/email' 'envs/staging/orders' 'envs/staging/payments' 'envs/staging/platform' 'envs/staging/search'; do
-            if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -q "^$dir/"; then moved="${moved:+$moved,}$dir"; fi
+            if [ -z "$changed" ] || printf '%s\n' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi
           done
           # The base branch moved under these roots: plan notes that cover them are stale.
           tg stale "$moved" "${TG_BRANCH:-}"

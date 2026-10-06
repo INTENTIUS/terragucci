@@ -107,6 +107,20 @@ describe("terragucci stage tf-drift", () => {
     expect(readFileSync(join(result.dir, "issue.md"), "utf-8")).not.toContain("Who changed it");
   });
 
+  it("removes an attributions.json an earlier run left in a reused report directory", { timeout: 60_000 }, async () => {
+    const audit = { lookup: async () => ({ status: "found" as const, actor: "human" as const, who: "alice@example.com", event: "PutBucketTagging", at: "2026-10-01T09:00:00Z" }) };
+    const repo = repoWith({ orders: drifted });
+    writeFileSync(join(repo, "terragucci.yml"), 'roots: ["envs/*"]\nrespond:\n  drift: attribute\n');
+    const first = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, audit }, () => {});
+    const file = join(first.dir, "attributions.json");
+    expect(existsSync(file)).toBe(true);
+    // Same repo and report directory, now with attribution off: the old file must not survive.
+    writeFileSync(join(repo, "terragucci.yml"), 'roots: ["envs/*"]\n');
+    const second = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH } }, () => {});
+    expect(second.dir).toBe(first.dir);
+    expect(existsSync(file)).toBe(false);
+  });
+
   it("plans with -refresh-only only for tf-drift", async () => {
     const bin = tmp();
     const repo = repoWith({ a: clean });

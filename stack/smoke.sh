@@ -1419,7 +1419,7 @@ claim_respond_drift() {
   log() { echo "[smoke respond-drift] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/respond-drift" queue="tg-drift-$STAMP" extra="tg-drift-$STAMP-extra" url xurl out pr files args=()
+  local work repo="$USER/respond-drift" sha queue="tg-drift-$STAMP" extra="tg-drift-$STAMP-extra" url xurl out pr files args=()
   if [ -n "${SMOKE_AWS:-}" ]; then queue="$SMOKE_AWS_PREFIX-$queue"; extra="$SMOKE_AWS_PREFIX-$extra"; fi
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-drift || return 1
@@ -1448,8 +1448,11 @@ claim_respond_drift() {
   [ -n "$pr" ] || { log "no drift pull request"; return 1; }
   files="$(pr_files "$repo" "$pr")"
   [ "$files" = "app/main.tf,app/terragucci_generated.tf,app/terragucci_imports.tf" ] || { log "the pull request changes $files"; return 1; }
-  api "$URL/api/v1/repos/$repo/raw/app/main.tf?ref=terragucci%2Fdrift" | grep -q 'visibility_timeout_seconds = 45' || { log "main.tf on the branch does not hold the live timeout"; return 1; }
-  api "$URL/api/v1/repos/$repo/raw/app/terragucci_generated.tf?ref=terragucci%2Fdrift" | grep -q "$extra" || { log "the generated config does not name $extra"; return 1; }
+  # The branch table lags a push; the files are read by the sha git ls-remote gives.
+  sha="$(remote_head "$repo" terragucci/drift)"
+  [ -n "$sha" ] || { log "terragucci/drift has no head"; return 1; }
+  api "$URL/api/v1/repos/$repo/raw/app/main.tf?ref=$sha" | grep -q 'visibility_timeout_seconds = 45' || { log "main.tf on the branch does not hold the live timeout"; return 1; }
+  api "$URL/api/v1/repos/$repo/raw/app/terragucci_generated.tf?ref=$sha" | grep -q "$extra" || { log "the generated config does not name $extra"; return 1; }
   log "pull request $pr writes the live timeout and imports $extra"
 }
 
