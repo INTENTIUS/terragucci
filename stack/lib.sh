@@ -38,6 +38,17 @@ remote_head() { # repo, branch -> prints the branch's sha (empty when it is gone
   git ls-remote "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$1.git" "refs/heads/$2" 2>/dev/null | awk -v r="refs/heads/$2" '$2 == r { print $1 }'
 }
 
+# Forgejo's raw endpoint can 404 for a sha it has just been pushed, so a file
+# is read from git itself.
+file_at() { # repo, branch, sha, path -> prints the file as the sha holds it
+  local repo="$1" branch="$2" sha="$3" path="$4" dir rc=0
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/tgs.XXXXXX")" || return 1
+  git clone -q --single-branch --branch "$branch" "${URL/#http:\/\/http://${USER}:${TOKEN}@}/$repo.git" "$dir/repo" >/dev/null 2>&1 \
+    && git -C "$dir/repo" show "$sha:$path" 2>/dev/null || rc=1
+  rm -rf "$dir"
+  return $rc
+}
+
 api -o /dev/null "$URL/api/v1/user" 2>/dev/null \
   || fail "Forgejo at $URL does not accept the token; run 'just stack-up forgejo' again" || return 1
 
