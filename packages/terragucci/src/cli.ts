@@ -56,7 +56,7 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>]
   terragucci check-policy [--config <file>] [--base <ref>]
-  terragucci install tofu|terraform|terragrunt <version>
+  terragucci install tofu|terraform|terragrunt|choudoufu <version>
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo]
@@ -206,8 +206,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "install": {
         const [tool, version] = args;
-        if (!tool || !version || !["tofu", "terraform", "terragrunt"].includes(tool)) {
-          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt <version>");
+        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu"].includes(tool)) {
+          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu <version>");
         }
         console.log(await install(tool as Tool, version));
         return 0;

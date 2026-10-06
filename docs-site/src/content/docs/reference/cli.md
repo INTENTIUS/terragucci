@@ -17,7 +17,7 @@ description: Every terragucci command, its flags and its exit codes.
 | `comment` | reads a `/terragucci plan [root]` pull request comment; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
-| `install` | fetches a release of OpenTofu, Terraform or Terragrunt, verified against its checksums |
+| `install` | fetches a release of OpenTofu, Terraform, Terragrunt or choudoufu, verified against its checksums |
 | `profiles` | prints the stack profiles a config needs, for the local validation stack |
 
 ## init
@@ -139,7 +139,7 @@ terragucci check-policy [--config <file>] [--base <ref>]
 ## install
 
 ```bash
-terragucci install tofu|terraform|terragrunt <version>
+terragucci install tofu|terraform|terragrunt|choudoufu <version>
 ```
 
 Fetches the release, checks it against the release's SHA256SUMS, unpacks it and prints the directory. A pipeline uses it when a repo pins a version its image does not carry.

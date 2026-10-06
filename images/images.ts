@@ -59,6 +59,18 @@ const terragruntFetch = (v: string): string =>
     `mkdir -p /out && install -m 0755 "/tmp/terragrunt_linux_$a" /out/terragrunt`,
   ].join(" && ");
 
+/** choudoufu's SHA256SUMS names each file as ./<file>, which sha256sum -c reads as is from /tmp. */
+const choudoufuFetch = (v: string): string => {
+  const base = `https://github.com/INTENTIUS/choudoufu/releases/download/v${v}`;
+  const file = `choudoufu_v${v}_linux_$a.tar.gz`;
+  return [
+    'case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac',
+    `curl -fsSLo "/tmp/${file}" "${base}/${file}" && curl -fsSLo /tmp/SHA256SUMS "${base}/SHA256SUMS" && ` +
+      `(cd /tmp && grep "  \\./${file}$" SHA256SUMS | sha256sum -c -)`,
+    `mkdir -p /out && tar -xzf "/tmp/${file}" -C /out choudoufu`,
+  ].join(" && ");
+};
+
 const finalStage = (name: string, description: string) => ({
   from: NODE,
   run: [
@@ -104,6 +116,13 @@ export const terragrunt = new Dockerfile({
       run: [fetchTools, tofuFetch(TOOL_VERSIONS.tofu), terragruntFetch(TOOL_VERSIONS.terragrunt)],
     },
     finalStage("terragrunt", `Terragrunt ${TOOL_VERSIONS.terragrunt}, OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`),
+  ],
+});
+
+export const choudoufu = new Dockerfile({
+  stages: [
+    { from: DEBIAN, as: "fetch", arg: ["TARGETARCH"], run: [fetchTools, choudoufuFetch(TOOL_VERSIONS.choudoufu)] },
+    finalStage("choudoufu", `choudoufu ${TOOL_VERSIONS.choudoufu} and the terragucci engine`),
   ],
 });
 

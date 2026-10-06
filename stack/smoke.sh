@@ -2817,11 +2817,11 @@ claim_check_diagnostics() {
   #             main, fails, and its log says conftest verify failed on the
   #             policy read from origin/main and names the test.
   #   live-check a binary: choudoufu repo whose root holds a terraform_data
-  #             resource and no live block: the check step init writes for it,
-  #             run in the tofu CI image with choudoufu built for Linux, fails,
-  #             and its log names the refused resource. The Forgejo runner's
-  #             job image has no choudoufu, so this one runs the job's own
-  #             script in that image rather than on the runner.
+  #             resource and no live block: init writes its pipeline in the
+  #             choudoufu CI image, and the check step, run in that image,
+  #             fails and its log names the refused resource. The Forgejo
+  #             runner's job image is the tofu one, so this one runs the job's
+  #             own script in the choudoufu image rather than on the runner.
   # BREAK: every pipeline's check step is the one before tf-check printed
   # diagnostics (validate -no-color >/dev/null, no live-check, no policy
   # tests), so the validate error is not named, and the failing policy test
@@ -2829,7 +2829,7 @@ claim_check_diagnostics() {
   log() { echo "[smoke check-diagnostics] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/checkdiag" tree wf sha main_sha logs rc=0 image bin bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 body cdir
+  local work repo="$USER/checkdiag" tree wf sha main_sha logs rc=0 image cimage bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 body cdir
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
@@ -2922,7 +2922,8 @@ REGO
   wait_run "$repo" "$main_sha" >/dev/null 2>&1 || true
 
   # live-check: a choudoufu root that holds a logical resource and no live block.
-  bin="$(choudoufu_linux)" || { log "no choudoufu built for Linux"; return 1; }
+  cimage="$(image_tag choudoufu)"
+  docker image inspect "$cimage" >/dev/null 2>&1 || { log "no CI image $cimage; run 'just images' first"; return 1; }
   cdir="$work/choudoufu"
   mkdir -p "$cdir/app"
   cp "$tree/app/main.tf" "$cdir/app/main.tf"
@@ -2932,11 +2933,12 @@ REGO
   [ -n "${BREAK:-}" ] && check_step_unchecked "$cdir/.forgejo/workflows/terragucci.yml"
   body="$(check_step_body "$cdir/.forgejo/workflows/terragucci.yml")"
   grep -q '^choudoufu fmt -check' <<<"$body" || { log "no check step for choudoufu in the pipeline init wrote"; return 1; }
+  grep -qF "image: $cimage" "$cdir/.forgejo/workflows/terragucci.yml" || { log "the pipeline init wrote for the choudoufu repo does not run in $cimage"; return 1; }
   docker run --rm --network terragucci -v "$cdir:/repo" -w /repo \
-    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$bin:/usr/local/bin/choudoufu:ro" \
+    -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$image" sh -c "$body" >"$work/choudoufu.log" 2>&1 || code=$?
+    "$cimage" sh -c "$body" >"$work/choudoufu.log" 2>&1 || code=$?
   if [ "$code" = 0 ]; then
     log "the choudoufu check step passed: nothing refused terraform_data.probe"; rc=1
   elif grep -q 'refused: app: terraform_data.probe (terraform_data)' "$work/choudoufu.log"; then

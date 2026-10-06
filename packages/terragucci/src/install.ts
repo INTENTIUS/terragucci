@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { ConfigError } from "./config";
 
-export type Tool = "tofu" | "terraform" | "terragrunt";
+export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu";
 
 export interface Release {
   url: string;
@@ -38,6 +38,11 @@ export function release(tool: Tool, version: string, a = arch()): Release {
     const file = `terraform_${version}_linux_${a}.zip`;
     return { url: `${base}/${file}`, sums: `${base}/terraform_${version}_SHA256SUMS`, file, kind: "zip" };
   }
+  if (tool === "choudoufu") {
+    const base = `https://github.com/INTENTIUS/choudoufu/releases/download/v${version}`;
+    const file = `choudoufu_v${version}_linux_${a}.tar.gz`;
+    return { url: `${base}/${file}`, sums: `${base}/SHA256SUMS`, file, kind: "tar.gz" };
+  }
   const base = `https://github.com/gruntwork-io/terragrunt/releases/download/v${version}`;
   const file = `terragrunt_linux_${a}`;
   return { url: `${base}/${file}`, sums: `${base}/SHA256SUMS`, file, kind: "binary" };
@@ -47,7 +52,8 @@ export function release(tool: Tool, version: string, a = arch()): Release {
 export function expectedSum(sums: string, file: string): string {
   for (const line of sums.split("\n")) {
     const [sum, name] = line.trim().split(/\s+\*?/);
-    if (name === file) return sum.toLowerCase();
+    // choudoufu's SHA256SUMS names each file as ./<file>.
+    if (name?.replace(/^\.\//, "") === file) return sum.toLowerCase();
   }
   throw new ConfigError(`the release's checksums do not list ${file}`);
 }
