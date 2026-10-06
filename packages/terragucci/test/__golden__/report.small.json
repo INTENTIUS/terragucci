@@ -13,7 +13,7 @@
     "job_url": "https://forgejo.example/acme/infra/actions/runs/42",
     "terragucci": "0.2.0"
   },
-  "change_set": "jcs1-sha256:77eab549602662c8d0f8021eb0e4e3dfc6b1f3c853a058f45183a26ee7bed8a0",
+  "change_set": "jcs1-sha256:4ca04cb82de2a30bc479023782b8833e8a4206fbd30a01d93aa8fd93eb8e9dc3",
   "unit": "member",
   "units": 4,
   "totals": {
