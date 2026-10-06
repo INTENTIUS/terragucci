@@ -22,6 +22,7 @@ export const GATES = ["always", "on-destroy", "never"] as const;
 export const RUNTIMES = ["forge", "fountain"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
 export const POLICY_ENGINES = ["conftest", "opa"] as const;
+export const POLICY_INPUTS = ["plan", "hcp"] as const;
 
 export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
@@ -29,6 +30,7 @@ export type Gate = (typeof GATES)[number];
 export type Runtime = (typeof RUNTIMES)[number];
 export type Dependents = (typeof DEPENDENTS)[number];
 export type PolicyEngine = (typeof POLICY_ENGINES)[number];
+export type PolicyInput = (typeof POLICY_INPUTS)[number];
 
 /**
  * Policy as code, off unless set. `tf-plan` runs the engine over each planned
@@ -40,8 +42,10 @@ export interface PolicySettings {
   engine?: PolicyEngine;
   /** The directory of Rego policy, relative to the repo root. Default `policy`. */
   path?: string;
-  /** The Rego package whose `deny` rules count. conftest default: every namespace. opa default: `main`. */
+  /** The Rego package whose `deny`, `violation`, `deny_*` and `warn` rules count. conftest default: every namespace. opa default: `main`, or every package under `terraform.policies` with `input: hcp`. */
   namespace?: string;
+  /** What `input` holds: `plan`, the bare plan JSON (default); `hcp`, `{plan, run}` as HCP Terraform's OPA policies read it. */
+  input?: PolicyInput;
 }
 
 /** A plan role and an apply role, for the units under one path. */
@@ -399,11 +403,12 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {
-    problems.push(`${where} must be a map (settings: engine, path, namespace)`);
+    problems.push(`${where} must be a map (settings: engine, path, namespace, input)`);
     return;
   }
-  for (const k of Object.keys(p)) if (!["engine", "path", "namespace"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace)`);
+  for (const k of Object.keys(p)) if (!["engine", "path", "namespace", "input"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace, input)`);
   oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
+  oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
   if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {
     problems.push(`${where}.path must be a directory inside the repo, such as policy`);
   }

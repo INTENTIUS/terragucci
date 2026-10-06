@@ -15,6 +15,8 @@ import {
   type ReportUnit,
   type ReportMockRead,
   type ReportDeferred,
+  type ReportPolicy,
+  type ReportRootPolicy,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
 } from "./schema";
 
@@ -35,6 +37,12 @@ export interface RootInput {
   preventDestroy?: ReadonlySet<string>;
   /** Set when the root is a Terragrunt unit. */
   terragrunt?: ReportUnit;
+  /**
+   * The policy's verdict on its plan. A root it denied (or could not check)
+   * carries both `plan` and `error`: it fails, with no plan digest, and its
+   * changes stay in the report.
+   */
+  policy?: ReportRootPolicy;
 }
 
 export interface WaveInput {
@@ -56,6 +64,8 @@ export interface BuildInput {
   mockReads?: ReportMockRead[];
   /** Terragrunt units that plan after other units apply. */
   deferred?: ReportDeferred[];
+  /** The run's policy check, when `policy` is on. */
+  policy?: ReportPolicy;
 }
 
 /** The files a root's full plan is kept in, relative to the report: `roots/<root>/plan.{txt,json}`. */
@@ -143,13 +153,20 @@ function varies(roots: ReportRoot[]): ReportGroup["varies"] {
   return out;
 }
 
+/** A root the policy refused: it planned, so its changes are known, but it fails and no gate may bind its digest. */
+const policyRefused = (r: RootInput): boolean => r.plan !== undefined && r.error !== undefined && r.policy !== undefined && r.policy.result !== "passed";
+
+function plannedPart(r: RootInput): ChangeSetPart {
+  const part = terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform", ...(r.terragrunt ? { scope: r.terragrunt.stack } : {}) });
+  if (!policyRefused(r)) return part;
+  return { ...part, member: { ...part.member, status: "failed", error: r.error, planDigest: null } };
+}
+
 export function buildReport(input: BuildInput): Report {
   const inputRun = input.run;
   const byPath = new Map(input.roots.map((r) => [r.path, r]));
   const parts = input.roots.map((r) =>
-    r.plan !== undefined && r.error === undefined
-      ? terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform", ...(r.terragrunt ? { scope: r.terragrunt.stack } : {}) })
-      : failedPart(r),
+    r.plan !== undefined && (r.error === undefined || policyRefused(r)) ? plannedPart(r) : failedPart(r),
   ).map((p, i) =>
     // A provisional plan stays out of the change set's digest and out of every group of real plans.
     input.roots[i].terragrunt?.provisional ? { ...p, member: { ...p.member, provisional: true as const } } : p,
@@ -187,7 +204,8 @@ export function buildReport(input: BuildInput): Report {
     if (m.status === "failed") named.push({ root: m.member, action: "refused", reason: m.error ?? "the root did not plan" });
     const highlights: Highlight[] = changes.filter((c) => c.why !== undefined).map((c) => ({ address: c.address, type: c.type, action: c.action, why: c.why! }));
     const why: string[] = [];
-    if (m.status === "failed") why.push("refused to plan");
+    if (m.status === "failed") why.push(policyRefused(src) ? "refused by policy" : "refused to plan");
+    if (src.policy?.warnings.length) why.push(`${src.policy.warnings.length} policy warning${src.policy.warnings.length === 1 ? "" : "s"}`);
     if (inputRun.stage === "tf-drift" && changes.length > 0) why.push("drifted");
     if (outliers.has(m.member)) why.push("outlier: its change matches no other root's");
     if (highlights.length > 0) why.push(...new Set(highlights.map((h) => h.why)));
@@ -207,6 +225,7 @@ export function buildReport(input: BuildInput): Report {
       highlights,
       fold: why.length > 0 ? "open" : "folded",
       why,
+      ...(src.policy ? { policy: src.policy } : {}),
     };
   });
 
@@ -269,5 +288,6 @@ export function buildReport(input: BuildInput): Report {
     ...(input.mockReads?.length ? { mock_reads: input.mockReads } : {}),
     ...(input.deferred?.length ? { deferred: input.deferred } : {}),
     ...(input.tips ? { tips: input.tips } : {}),
+    ...(input.policy ? { policy: input.policy } : {}),
   };
 }

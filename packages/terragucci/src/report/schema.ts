@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 5;
+export const REPORT_MINOR = 6;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -246,6 +246,39 @@ export interface ReportRoot {
   why: string[];
   /** Where its plan spent its time, from the binary's spans (minor 2). */
   timings?: ReportRootTimings;
+  /**
+   * What the policy found in its plan, when `policy` is on and the root was
+   * checked (minor 6). A denied root is `failed` with the denial as its
+   * error, and keeps its changes so a reader sees what was refused.
+   */
+  policy?: ReportRootPolicy;
+}
+
+/** One root's policy verdict (minor 6). */
+export interface ReportRootPolicy {
+  /** `denied`: a deny rule matched; `error`: the policy could not be read or run. Either fails the root. */
+  result: "passed" | "denied" | "error";
+  /** The messages of `deny`, `violation` and `deny_*` rules. */
+  denials: string[];
+  /** The messages of `warn` rules: advice that fails nothing. */
+  warnings: string[];
+  /** Why the policy could not be checked, with `result: error`. */
+  error?: string;
+}
+
+/** The run's policy check (minor 6). Absent when `policy` is off, and on a drift report. */
+export interface ReportPolicy {
+  engine: "conftest" | "opa";
+  /** What `input` held: the bare plan, or HCP Terraform's `{plan, run}`. */
+  input: "plan" | "hcp";
+  /** The namespace the config sets, if any. */
+  namespace?: string;
+  /** Where the policy was read from: the checkout, or the pull request's base branch. */
+  from: "checkout" | "base";
+  /** The roots it failed, by path. */
+  denied: string[];
+  /** How many warnings it gave across the roots. */
+  warnings: number;
 }
 
 export interface ReportWave {
@@ -345,6 +378,8 @@ export interface Report {
   timings?: ReportTimings;
   /** The description check's decision (minor 5). Written by `respond description`; absent when it did not run or `decide:` is unset. */
   intent?: ReportIntent;
+  /** The run's policy check, when `policy` is on (minor 6). Each root's verdict is under the root. */
+  policy?: ReportPolicy;
 }
 
 /**

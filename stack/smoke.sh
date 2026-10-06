@@ -112,7 +112,8 @@ dash-drift|the Drift dashboard init writes shows the roots a drift run found dri
 dash-estate|the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs|
 dash-runs|the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo|
 dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes|
-drill-down|the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job|'
+drill-down|the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job|
+policy-wave|a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1949,6 +1950,61 @@ printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  input.the_pu
   return $rc
 }
 
+claim_policy_wave() {
+  # stack/fixtures/policy-wave: one root creating a terraform_data resource,
+  # local state, gate: never, and a policy that denies terraform_data. A
+  # tf-apply wave runs in the tofu CI image; the policy must refuse it: the
+  # wave exits 1, the root has no state, and the wave's report.json marks the
+  # root failed with policy.result denied, names the denial, and keeps the
+  # root's changes. The engine is fetched on demand at its pinned digest.
+  #   SMOKE_POLICY_ENGINE=conftest|opa  the engine (default conftest)
+  #   SMOKE_POLICY_INPUT=plan|hcp       plan: policy/ (package main, a deny_*
+  #     rule and a warn rule, whose warning the report must carry); hcp:
+  #     policy-hcp/, an HCP Terraform policy reading input.plan and input.run
+  #     (default plan)
+  # BREAK: the config turns no policy on, so the wave applies the root.
+  log() { echo "[smoke policy-wave] $*" >&2; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 rc=0 r q
+  local engine="${SMOKE_POLICY_ENGINE:-conftest}" input="${SMOKE_POLICY_INPUT:-plan}" dir=policy
+  [ "$input" = hcp ] && dir=policy-hcp
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$HERE/fixtures/policy-wave/." "$work/"
+  [ -z "${BREAK:-}" ] && printf 'policy:\n  engine: %s\n  path: %s\n  input: %s\n' "$engine" "$dir" "$input" >> "$work/terragucci.yml"
+  git -C "$work" init -q -b main
+  git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke policy-wave"
+  docker run --rm --network terragucci -v "$work:/repo" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >&2 || code=$?
+  clean_mounted "$work" "$image"
+  r="$work/terragucci-report/report.json"
+  [ "$code" = 1 ] || { log "the wave exited $code, not 1: the policy did not refuse it"; rc=1; }
+  if [ -f "$work/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$work/app/terraform.tfstate" >/dev/null 2>&1; then
+    log "app has state: the wave applied it"; rc=1
+  fi
+  if [ ! -f "$r" ]; then
+    log "the wave wrote no report"; rc=1
+  else
+    q='.roots[] | select(.path == "app")'
+    jq -e "$q | select(.status == \"failed\" and .policy.result == \"denied\")" "$r" >/dev/null || { log "app is not failed with policy.result denied in the report"; rc=1; }
+    jq -e "$q | .policy.denials | any(test(\"terraform_data.probe: terraform_data is not allowed here\"))" "$r" >/dev/null || { log "the report does not name the denial under app"; rc=1; }
+    jq -e "$q | .changes | any(.address == \"terraform_data.probe\" and .action == \"create\")" "$r" >/dev/null || { log "the report lost app's change detail"; rc=1; }
+    jq -e --arg e "$engine" --arg i "$input" '.policy.engine == $e and .policy.input == $i and (.policy.denied == ["app"])' "$r" >/dev/null || { log "the report's policy field does not name $engine, input $input and app"; rc=1; }
+    if [ "$input" = hcp ]; then
+      jq -e "$q | .policy.denials | any(test(\"workspace app\"))" "$r" >/dev/null || { log "the HCP policy did not read input.run.workspace.name"; rc=1; }
+    else
+      jq -e "$q | .policy.warnings | any(test(\"a new resource, check its owner tag\"))" "$r" >/dev/null || { log "the report does not carry the policy's warning"; rc=1; }
+    fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "$engine (input $input) refused the wave, app has no state, and the report keeps its change with the denial"
+  return $rc
+}
+
 claim_forgejo_oidc() {
   # A scratch repo whose one root reads a data source that runs a probe in the
   # job: it reads the token the job wrote to $AWS_WEB_IDENTITY_TOKEN_FILE,
@@ -2801,6 +2857,7 @@ dash-estate     ex otel after=boot weight=120
 dash-runs       ex otel after=boot weight=120
 dash-slos       ex otel after=boot weight=120
 drill-down      ex otel after=boot weight=120
+policy-wave     weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

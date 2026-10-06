@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkPlan, trustedPolicy, conftestViolations, describeVerdict, engineBinary, opaViolations, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
+import { checkPlan, checkPlans, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, resolvePolicySettings, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
+import { buildReport } from "../src/report/build";
+import { renderNote } from "../src/report/views";
+import { plan, rc, RUN } from "./report-fixtures";
 import { runStage } from "../src/report/stage";
 import { git, tmp, write } from "./helpers";
 
@@ -18,10 +21,55 @@ describe("policy output", () => {
     expect(conftestViolations("not json")).toBeUndefined();
   });
 
+  it("reads conftest warnings apart from its failures", () => {
+    expect(conftestFindings(deny("no public buckets"))).toEqual({ violations: ["no public buckets"], warnings: ["advice only"] });
+  });
+
   it("reads the deny set from opa eval", () => {
     expect(opaViolations(JSON.stringify({ result: [{ expressions: [{ value: ["a", "b"] }] }] }))).toEqual(["a", "b"]);
     expect(opaViolations("{}")).toEqual([]);
     expect(opaViolations(JSON.stringify({ result: [{ expressions: [{ value: "x" }] }] }))).toBeUndefined();
+    expect(opaViolations(JSON.stringify({ errors: [{ message: "rego_parse_error" }] }))).toBeUndefined();
+  });
+
+  it("counts deny, violation and deny_* from an opa package as conftest does, and reads warn apart", () => {
+    const pkg = {
+      deny: ["d"],
+      violation: [{ msg: "v", details: {} }],
+      deny_public: ["dp"],
+      violation_tags: ["vt"],
+      warn: ["w"],
+      warn_cost: ["wc"],
+      denylist: ["not a rule that counts"],
+      allowed: true,
+      sub: { deny: ["a child package"] },
+    };
+    const out = JSON.stringify({ result: [{ expressions: [{ value: pkg }] }] });
+    const found = opaFindings(out)!;
+    expect(found.violations.sort()).toEqual(["d", "dp", "v", "vt"]);
+    expect(found.warnings.sort()).toEqual(["w", "wc"]);
+    // Nested: each child package of terraform.policies is one policy of an HCP set.
+    expect(opaFindings(out, true)!.violations).toContain("a child package");
+    expect(opaFindings(JSON.stringify({ result: [{ expressions: [{ value: { deny: true } }] }] }))!.violations).toEqual(["deny"]);
+  });
+});
+
+describe("policy input", () => {
+  it("passes the bare plan by default, and {plan, run} with input: hcp", () => {
+    expect(policyInput({}, '{"resource_changes":[]}')).toBe('{"resource_changes":[]}');
+    const wrapped = JSON.parse(policyInput({ input: "hcp" }, '{"resource_changes":[]}', { root: "envs/dev/app", stage: "tf-plan", project: "github.com/acme/infra", commit: "abc", pullRequest: "7" }));
+    expect(wrapped.plan).toEqual({ resource_changes: [] });
+    expect(wrapped.run.workspace.name).toBe("envs/dev/app");
+    expect(wrapped.run.workspace.working_directory).toBe("envs/dev/app");
+    expect(wrapped.run.organization.name).toBe("acme");
+    expect(wrapped.run.project.name).toBe("infra");
+    expect(wrapped.run.commit_sha).toBe("abc");
+    expect(wrapped.run.speculative).toBe(true);
+    expect(wrapped.run.message).toBe("pull request 7");
+  });
+
+  it("marks a tf-apply run as not speculative", () => {
+    expect(hcpRun({ root: "a", stage: "tf-apply" }).speculative).toBe(false);
   });
 });
 
@@ -30,9 +78,9 @@ describe("checkPlan", () => {
   it("passes a plan the policy allows and names what it denies", async () => {
     const repo = tmp();
     const exec: PolicyExec = async () => ({ status: 1, stdout: deny("no public buckets"), stderr: "" });
-    expect(await checkPlan("conftest", policy, repo, "{}", { exec })).toEqual({ violations: ["no public buckets"] });
+    expect(await checkPlan("conftest", policy, repo, "{}", { exec })).toEqual({ violations: ["no public buckets"], warnings: ["advice only"] });
     const ok: PolicyExec = async () => ({ status: 0, stdout: deny(), stderr: "" });
-    expect(await checkPlan("conftest", policy, repo, "{}", { exec: ok })).toEqual({ violations: [] });
+    expect(await checkPlan("conftest", policy, repo, "{}", { exec: ok })).toEqual({ violations: [], warnings: ["advice only"] });
   });
 
   it("fails closed when the engine gives no verdict or cannot run", async () => {
@@ -45,12 +93,29 @@ describe("checkPlan", () => {
     expect((await checkPlan("conftest", policy, repo, "{}", { exec: crashed })).error).toMatch(/exited 2/);
   });
 
-  it("runs opa with the namespace's deny rule", async () => {
+  it("runs opa over the namespace's package, counting deny_* and showing warn", async () => {
     let seen: string[] = [];
-    const exec: PolicyExec = async (_f, args) => ((seen = args), { status: 0, stdout: JSON.stringify({ result: [{ expressions: [{ value: ["x"] }] }] }), stderr: "" });
+    const exec: PolicyExec = async (_f, args) => ((seen = args), { status: 0, stdout: JSON.stringify({ result: [{ expressions: [{ value: { deny_public: ["x"], warn: ["y"] } }] }] }), stderr: "" });
     const v = await checkPlan("opa", { engine: "opa", namespace: "terraform.plan" }, tmp(), "{}", { exec });
-    expect(v.violations).toEqual(["x"]);
-    expect(seen).toContain("data.terraform.plan.deny");
+    expect(v).toEqual({ violations: ["x"], warnings: ["y"] });
+    expect(seen).toContain("data.terraform.plan");
+    await checkPlan("opa", { engine: "opa" }, tmp(), "{}", { exec });
+    expect(seen).toContain("data.main");
+  });
+
+  it("runs an HCP policy set with input: hcp: every package under terraform.policies, input wrapped as {plan, run}", async () => {
+    let seen: string[] = [];
+    let input: { plan?: unknown; run?: { workspace?: { name?: string } } } = {};
+    const exec: PolicyExec = async (_f, args) => {
+      seen = args;
+      input = JSON.parse(readFileSync(args[args.indexOf("--input") + 1], "utf-8"));
+      return { status: 0, stdout: JSON.stringify({ result: [{ expressions: [{ value: { no_public: { deny: ["public"] }, tags: { deny: [] } } }] }] }), stderr: "" };
+    };
+    const v = await checkPlan("opa", { engine: "opa", input: "hcp" }, tmp(), '{"format_version":"1.2"}', { exec }, { root: "envs/dev/app" });
+    expect(seen).toContain("data.terraform.policies");
+    expect(input.plan).toEqual({ format_version: "1.2" });
+    expect(input.run?.workspace?.name).toBe("envs/dev/app");
+    expect(v.violations).toEqual(["public"]);
   });
 });
 
@@ -79,6 +144,8 @@ describe("config", () => {
   it("is off by default and accepts the three keys", () => {
     expect(validateConfig({}, "t").policy).toBeUndefined();
     expect(validateConfig({ policy: { engine: "opa", path: "rego", namespace: "terraform.plan" } }, "t").policy).toEqual({ engine: "opa", path: "rego", namespace: "terraform.plan" });
+    expect(validateConfig({ policy: { input: "hcp" } }, "t").policy).toEqual({ input: "hcp" });
+    expect(() => validateConfig({ policy: { input: "spacelift" } }, "t")).toThrow(/policy.input/);
   });
 });
 
@@ -135,12 +202,99 @@ describe("trustedPolicy", () => {
     expect(t.error).toBeUndefined();
   });
 
+  it("reads a terragucci.ts config's policy key from the base, folded and not run", async () => {
+    const repo = prRepo(
+      { "terragucci.ts": 'export default { policy: { engine: "opa", path: "rego", input: "hcp" } };\n', "rego/p.rego": "package main\n" },
+      { "terragucci.ts": "export default { roots: [] };\n" },
+    );
+    const t = await trustedPolicy(repo, {}, "main", { config: join(repo, "terragucci.ts") });
+    try {
+      expect(t.error).toBeUndefined();
+      expect(t.from).toBe("base");
+      expect(t.policy.engine).toBe("opa");
+      expect(t.policy.input).toBe("hcp");
+      expect(readTree(t.policy.path!)["p.rego"]).toBe("package main\n");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  it("fails closed when a terragucci.ts config at the base is not data", async () => {
+    const repo = prRepo({ "terragucci.ts": "export default { policy: { engine: process.env.E } };\n", "policy/p.rego": "package main\n" }, { "terragucci.ts": "export default {};\n" });
+    const t = await trustedPolicy(repo, {}, "main", { config: join(repo, "terragucci.ts") });
+    expect(t.error).toMatch(/could not read the config at main/);
+  });
+
+  it("resolves the settings tf-check reads: directory, engine, namespace and input", async () => {
+    const repo = prRepo({ "terragucci.yml": "policy:\n  engine: opa\n  path: rego\n  input: hcp\n", "rego/p.rego": "package main\n" }, { "README.md": "pr\n" });
+    const r = await resolvePolicySettings(repo, {}, "main", { config: join(repo, "terragucci.yml") });
+    try {
+      expect(r).toMatchObject({ engine: "opa", input: "hcp", from: "base" });
+      expect(r.namespace).toBeUndefined();
+      expect(readTree(r.dir)["p.rego"]).toBe("package main\n");
+    } finally {
+      r.cleanup();
+    }
+    const own = await resolvePolicySettings(repo, { path: "nothing" }, undefined);
+    expect(own).toMatchObject({ engine: "conftest", input: "plan", from: "checkout" });
+    expect(own.error).toMatch(/does not exist/);
+  });
+
   it("fails closed when the base has the key but not the directory, or is not a ref", async () => {
     const repo = prRepo({ "terragucci.yml": yml }, { "policy/p.rego": "package main\n" });
     const t = await trustedPolicy(repo, checkout, "main", { config: join(repo, "terragucci.yml") });
     expect(t.error).toMatch(/does not exist at main/);
     const bad = await trustedPolicy(repo, checkout, "origin/nothing", { config: join(repo, "terragucci.yml") });
     expect(bad.error).toMatch(/could not read/);
+  });
+});
+
+describe("checkPlans and the report", () => {
+  const onPath = (stdout: string, status = 1): PolicyExec => async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status, stdout, stderr: "" });
+
+  it("gives each root its verdict and warnings, and the run's settings", async () => {
+    const repo = write(tmp(), { "policy/p.rego": "package main\n" });
+    const found = await checkPlans(repo, { path: "policy" }, [{ path: "a", plan: {} }], undefined, {}, { exec: onPath(deny("no")) }, () => {});
+    expect(found.roots.get("a")).toEqual({ result: "denied", denials: ["no"], warnings: ["advice only"] });
+    expect(found.failed.get("a")).toMatch(/policy violation \(conftest\)/);
+    expect(found.policy).toEqual({ engine: "conftest", input: "plan", from: "checkout", denied: ["a"], warnings: 1 });
+    const passed = await checkPlans(repo, { path: "policy" }, [{ path: "a", plan: {} }], undefined, {}, { exec: onPath(deny(), 0) }, () => {});
+    expect(passed.roots.get("a")).toEqual({ result: "passed", denials: [], warnings: ["advice only"] });
+    expect(passed.failed.size).toBe(0);
+  });
+
+  it("keeps a denied root's changes in the report, failed with no plan digest, and shows warnings in the note", () => {
+    const p = plan([rc("aws_s3_bucket.logs", ["create"], null, { bucket: "logs" })]);
+    const report = buildReport({
+      run: RUN,
+      roots: [
+        { path: "envs/dev/a", plan: p, error: "policy violation (conftest):\n- no buckets", policy: { result: "denied", denials: ["no buckets"], warnings: [] } },
+        { path: "envs/dev/b", plan: p, policy: { result: "passed", denials: [], warnings: ["tag it"] } },
+      ],
+      waves: [{ number: 1, roots: ["envs/dev/a", "envs/dev/b"] }],
+      policy: { engine: "conftest", input: "plan", from: "checkout", denied: ["envs/dev/a"], warnings: 1 },
+    });
+    const a = report.roots.find((r) => r.path === "envs/dev/a")!;
+    expect(a.status).toBe("failed");
+    expect(a.plan_digest).toBeNull();
+    expect(a.changes.map((c) => c.address)).toEqual(["aws_s3_bucket.logs"]);
+    expect(a.policy?.denials).toEqual(["no buckets"]);
+    expect(a.why).toContain("refused by policy");
+    expect(report.waves[0].set_digest).toBeNull();
+    expect(report.policy?.denied).toEqual(["envs/dev/a"]);
+    expect(report.named.find((n) => n.root === "envs/dev/a" && n.action === "refused")?.reason).toMatch(/no buckets/);
+    const b = report.roots.find((r) => r.path === "envs/dev/b")!;
+    expect(b.status).toBe("planned");
+    expect(b.policy?.warnings).toEqual(["tag it"]);
+    const note = renderNote(report);
+    expect(note).toContain("Policy warnings (1), which fail nothing");
+    expect(note).toContain("tag it");
+  });
+
+  it("still fails a root whose plan never came, with no changes", () => {
+    const report = buildReport({ run: RUN, roots: [{ path: "x", error: "plan failed" }] });
+    expect(report.roots[0]).toMatchObject({ status: "failed", changes: [] });
+    expect(report.roots[0].policy).toBeUndefined();
   });
 });
 
@@ -159,6 +313,9 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan with policy", () => {
     const result = await runStage("tf-plan", repo, { policy: { exec } }, () => {});
     expect(result.failed).toBe(true);
     expect(result.report.roots[0].status).toBe("failed");
+    expect(result.report.roots[0].policy?.result).toBe("denied");
+    expect(result.report.roots[0].changes.map((c) => c.address)).toEqual(["terraform_data.x"]);
+    expect(result.report.policy).toMatchObject({ engine: "conftest", input: "plan", denied: ["a"] });
     expect(JSON.stringify(result.report)).toContain("terraform_data.x is not allowed");
   });
 

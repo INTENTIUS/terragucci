@@ -27,6 +27,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
 | `intent` | the description check's decision: its status, whether it flagged the pull request, the decision in a sentence, the probability and threshold, the model and the destroys and replacements the text leaves out; present only after `respond description` ran on the report |
+| `policy` | the run's policy check, when `policy` is on: the engine, the input mode, the namespace, whether the policy came from the checkout or the base branch, the roots it failed and how many warnings it gave |
+| `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the warnings and, for `error`, why it could not run. A denied root is `failed` and keeps its `changes`, so the report shows what was refused |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
@@ -45,6 +47,7 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | the full plan of a root | `roots[].plan` |
 | the slowest resources of a run | `timings.resources`, then `roots[].timings.resources` |
 | how long a root waited for its state lock | `roots[].timings.lock_waits`, with the attempts it took |
+| what the policy denied or warned about in a root | `roots[].policy` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
 Approvals stay on your repo's `chant/lifecycle` branch. The report links to each record and never copies it, so the branch is the one record of who approved what.
