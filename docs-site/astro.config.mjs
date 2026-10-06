@@ -76,6 +76,7 @@ export default defineConfig({
 								{ label: 'Have an agent explain a plan', slug: 'guides/agent-explain-a-plan' },
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
 								{ label: 'Have an agent propose drift fixes', slug: 'guides/agent-drift-fixes' },
+								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
 							],
 						},
 					],
