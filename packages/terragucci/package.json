@@ -11,7 +11,7 @@
   },
   "homepage": "https://intentius.io/terragucci/",
   "bin": {
-    "terragucci": "./dist/terragucci.mjs"
+    "terragucci": "dist/terragucci.mjs"
   },
   "exports": {
     ".": {
