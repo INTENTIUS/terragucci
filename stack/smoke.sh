@@ -34,6 +34,9 @@ EXAMPLE="$(cd "$HERE/../example" && pwd)"
 JOB_CACHE_VOLUME=terragucci-job-cache
 # shellcheck source=mounted.sh
 . "$HERE/mounted.sh"
+# The AWS a claim's own `docker run` sees: floci. Under SMOKE_AWS=1,
+# smoke_aws_start (stack/smoke-aws.sh) swaps in the real account's keys.
+AWS_DOCKER_ENV=(-e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1)
 
 # Every claim's temp work dir is recorded here and removed on every exit path:
 # when the claim returns (run_claim), and on exit, interrupt or termination.
@@ -155,6 +158,11 @@ wipe_example() {
     [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/repos/$USER/example")" = 404 ] && break
     sleep 1
   done
+  if [ -n "${SMOKE_AWS:-}" ]; then
+    smoke_aws_wipe 'shop-(dev|staging|prod)-' envs/ || return 1
+    log "wiped the example's repo, and its resources and state in AWS under $SMOKE_AWS_PREFIX-"
+    return 0
+  fi
   for b in $(curl -fsS "$FLOCI/" | grep -o '<Name>[^<]*</Name>' | sed -E 's#</?Name>##g' | grep -E "$mine" || true); do
     for k in $(curl -fsS "$FLOCI/$b?list-type=2" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' || true); do
       curl -s -o /dev/null -X DELETE "$FLOCI/$b/$k" || true
@@ -665,6 +673,7 @@ report_run() {
   build_cli || return 1
   cp -R "${REPORT_TREE:-$EXAMPLE}/." "$work/"
   rm -rf "$work/.git"
+  [ -z "${SMOKE_AWS:-}" ] || smoke_aws_overlay_example "$work" || return 1
   git -C "$work" init -q -b main
   local base=""
   if [ -n "${REPORT_BASE:-}" ]; then
@@ -676,7 +685,8 @@ report_run() {
   [ -n "${REPORT_CONFIG:-}" ] && printf '%s\n' "$REPORT_CONFIG" >> "$work/terragucci.yml"
   git -C "$work" remote add origin "http://forgejo:3000/$USER/example.git"
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost commit -qm "smoke report $(date +%s%N)"
-  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_bucket "$REPORT_BUCKET" || true
+  else curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true; fi
   # REPORT_ENV: extra KEY=VALUE pairs for the stage, space-separated.
   local extra=() kv
   for kv in ${REPORT_ENV:-}; do extra+=(-e "$kv"); done
@@ -684,7 +694,7 @@ report_run() {
   docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     ${extra[@]+"${extra[@]}"} \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
-    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     ${REPORT_EXTRA[@]+"${REPORT_EXTRA[@]}"} \
@@ -701,10 +711,11 @@ apply_roots() { # root...
   image="$(image_tag tofu)"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   cp -R "$EXAMPLE/." "$work/"
+  if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_overlay_example "$work" || return 1; smoke_aws_queue_settle; fi
   for root in "$@"; do
     docker run --rm --network terragucci -v "$work:/repo" -w "/repo/$root" \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
-      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
       "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { drop_work "$work"; return 1; }
   done
@@ -744,16 +755,24 @@ claim_report() {
       log "the JSON inlined in report.html is not report.json"; rc=1
     fi
   done
+  # The bucket's objects: floci's S3 over plain HTTP, or under SMOKE_AWS the aws CLI.
+  if [ -n "${SMOKE_AWS:-}" ]; then
+    report_get() { smoke_aws_s3_get "$REPORT_BUCKET" "$1"; }
+    report_has() { smoke_aws_s3_has "$REPORT_BUCKET" "$1"; }
+  else
+    report_get() { curl -fsS "$FLOCI/$REPORT_BUCKET/$1"; }
+    report_has() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$REPORT_BUCKET/$1")" = 200 ]; }
+  fi
   if [ $rc = 0 ]; then
-    if ! index="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json")"; then
+    if ! index="$(report_get "$prefix/index.json")"; then
       log "no index at $REPORT_BUCKET/$prefix/index.json"; rc=1
     else
       for c in "${commits[@]}"; do
         path="$(jq -r --arg c "$c" '.reports[] | select(.commit == $c) | .path' <<<"$index" | head -1)"
         if [ -z "$path" ]; then log "the index does not list commit $c"; rc=1; continue; fi
-        [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$REPORT_BUCKET/$prefix/$path/report.html")" = 200 ] || { log "$path/report.html is not in the bucket"; rc=1; }
-        f="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$path/report.json" | jq -r '.roots[0].plan.text')"
-        [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$REPORT_BUCKET/$prefix/$path/$f")" = 200 ] || { log "$path/$f is not in the bucket"; rc=1; }
+        report_has "$prefix/$path/report.html" || { log "$path/report.html is not in the bucket"; rc=1; }
+        f="$(report_get "$prefix/$path/report.json" | jq -r '.roots[0].plan.text')"
+        report_has "$prefix/$path/$f" || { log "$path/$f is not in the bucket"; rc=1; }
       done
     fi
   fi
@@ -979,6 +998,7 @@ claim_drift() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 dir issues n body root="envs/staging/orders" queue="shop-staging-orders-jobs"
+  [ -z "${SMOKE_AWS:-}" ] || queue="$SMOKE_AWS_PREFIX-$queue"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   open_issues() { api "$URL/api/v1/repos/$USER/example/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
   drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
@@ -994,7 +1014,11 @@ claim_drift() {
   done
   local deleted=""
   if [ -z "${BREAK:-}" ]; then
-    TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { drop_work "$work"; return 1; }
+    if [ -n "${SMOKE_AWS:-}" ]; then
+      smoke_aws_delete_queue "$queue" || { drop_work "$work"; return 1; }
+    else
+      TERRAGUCCI_FLOCI_URL="$FLOCI" "$EXAMPLE/changes/drift.sh" >&2 || { drop_work "$work"; return 1; }
+    fi
     deleted=1
   fi
   drift_checks() {
@@ -1276,7 +1300,7 @@ in_image() { # dir, command...
   [ -f "$bundle" ] || build_cli || return 1
   docker run --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
-    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     "$image" "$@"
@@ -1365,15 +1389,22 @@ claim_respond_drift() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/respond-drift" queue="tg-drift-$STAMP" extra="tg-drift-$STAMP-extra" url xurl out pr files args=()
+  if [ -n "${SMOKE_AWS:-}" ]; then queue="$SMOKE_AWS_PREFIX-$queue"; extra="$SMOKE_AWS_PREFIX-$extra"; fi
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-drift || return 1
   respond_tree "$work" "$repo" "$(respond_root "respond/drift-$STAMP.tfstate" "resource \"aws_sqs_queue\" \"jobs\" {
   name                       = \"$queue\"
   visibility_timeout_seconds = 30
 }")"
+  [ -z "${SMOKE_AWS:-}" ] || smoke_aws_overlay_example "$work/tree" || return 1
   push_tree "$work/tree" "$repo" main "a queue with a literal timeout" >/dev/null || return 1
   in_image "$work/tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; return 1; }
-  if [ -z "${BREAK:-}" ]; then
+  if [ -z "${BREAK:-}" ] && [ -n "${SMOKE_AWS:-}" ]; then
+    url="$(smoke_aws_queue_url "$queue")" || { log "$queue is not in AWS"; return 1; }
+    sa sqs set-queue-attributes --queue-url "$url" --attributes VisibilityTimeout=45 >/dev/null || return 1
+    xurl="$(sa sqs create-queue --queue-name "$extra" | jq -r .QueueUrl)" || return 1
+    args=(--import "aws_sqs_queue.extra=$xurl")
+  elif [ -z "${BREAK:-}" ]; then
     url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r .QueueUrl)"
     sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null
     xurl="$(sqs CreateQueue "{\"QueueName\":\"$extra\"}" | jq -r .QueueUrl)"
@@ -1505,6 +1536,7 @@ tg_report_run() { # work, patches...
   build_cli || return 1
   cp -R "$TG_EXAMPLE/." "$work/"
   rm -rf "$work/.git"
+  [ -z "${SMOKE_AWS:-}" ] || smoke_aws_overlay_tg "$work" || return 1
   git -C "$work" init -q -b main
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm base
   base="$(git -C "$work" rev-parse HEAD)"
@@ -1514,7 +1546,7 @@ tg_report_run() { # work, patches...
   git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke $(date +%s%N)"
   docker run --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
-    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
     -e TG_BASE="${TG_BASE_OVERRIDE-$base}" \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
@@ -1540,10 +1572,11 @@ tg_apply_units() { # unit...
   image="$(tg_image)"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   cp -R "$TG_EXAMPLE/." "$work/"
+  if [ -n "${SMOKE_AWS:-}" ]; then smoke_aws_overlay_tg "$work" || return 1; smoke_aws_queue_settle; fi
   for unit in "$@"; do
     docker run --rm --network terragucci -v "$work:/repo" -w /repo \
       -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
-      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      "${AWS_DOCKER_ENV[@]}" \
       -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
       "$image" terragrunt run --working-dir "$unit" -- apply -auto-approve -input=false -no-color >&2 || { drop_work "$work"; return 1; }
   done
@@ -1773,6 +1806,14 @@ claim_tg_drift() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work rc=0 n issues body r unit="live/staging/orders" queue="shop-tg-staging-orders-jobs" repo="$USER/$TG_REPO_NAME" deletes extra
+  if [ -n "${SMOKE_AWS:-}" ]; then
+    queue="$SMOKE_AWS_PREFIX-$queue"
+    # tg-waves does not run on AWS, so the claim boots the Terragrunt example there itself.
+    if ! smoke_aws_queue_url "$queue" >/dev/null; then
+      log "$queue is not in AWS; booting the Terragrunt example there"
+      "$HERE/example-terragrunt.sh" up >&2 || return 1
+    fi
+  fi
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   open_issues() { api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
   drift_run() { # dir -> the run's report in $1/terragucci-report; the stage keeps the issue
@@ -1786,7 +1827,10 @@ claim_tg_drift() {
     api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/issues/$n"
   done
   local deleted=""
-  if [ -z "${BREAK:-}" ]; then
+  if [ -z "${BREAK:-}" ] && [ -n "${SMOKE_AWS:-}" ]; then
+    smoke_aws_delete_queue "$queue" || { drop_work "$work"; return 1; }
+    deleted=1
+  elif [ -z "${BREAK:-}" ]; then
     extra="$(curl -fsS -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.GetQueueUrl' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')" || extra=""
     [ -n "$extra" ] || { log "$queue is not in floci; run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
     curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'X-Amz-Target: AmazonSQS.DeleteQueue' -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$extra\"}" || { drop_work "$work"; return 1; }
@@ -2763,7 +2807,14 @@ run_claim() { # name -> prints the SMOKE line, returns 1 on fail
 
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
-runnable_names() { awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS"; }
+runnable_names() {
+  if [ -n "${SMOKE_AWS:-}" ]; then
+    # Only the pilot's claims run on real AWS.
+    awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS" | while read -r n; do smoke_aws_claim "$n" && echo "$n"; done
+    return 0
+  fi
+  awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS"
+}
 
 # ── the runner ────────────────────────────────────────────────────────────
 #
@@ -3029,6 +3080,7 @@ build_queue() { # "plain break" | plain | break, claim...
 # Pending claims print their line and run nothing.
 record_pending() {
   local name issue line
+  [ -z "${SMOKE_AWS:-}" ] || return 0
   for name in $(names); do
     issue="$(grep "^$name|" <<<"$CLAIMS" | cut -d'|' -f3)"
     [ -n "$issue" ] || continue
@@ -3178,6 +3230,22 @@ disk_check() {
     echo "smoke: WARNING the record used ${lost} GB of disk, more than SMOKE_DISK_WARN_GB=${SMOKE_DISK_WARN_GB}. Docker Desktop may be holding deleted bind-mounted files; 'lsof +L1 -a -p <pid of the VM process>' lists them, and restarting Docker Desktop frees them." >&2
   fi
 }
+
+# SMOKE_AWS=1: the pilot on real AWS (stack/smoke-aws.sh, CONTRIBUTING.md).
+# Five claims run there; any other refuses, and so does --record, which is
+# floci's record.
+if [ -n "${SMOKE_AWS:-}" ]; then
+  # shellcheck source=smoke-aws.sh
+  . "$HERE/smoke-aws.sh"
+  if [ "${1:-}" = --record ]; then
+    echo "smoke: SMOKE_AWS=1 does not record; smoke.json is floci's record" >&2; exit 2
+  fi
+  if [ -n "${1:-}" ] && ! smoke_aws_claim "$1"; then
+    echo "smoke: claim '$1' refuses to run under SMOKE_AWS=1; only $SA_CLAIMS run on real AWS" >&2; exit 2
+  fi
+  smoke_aws_start || exit 1
+  REPORT_BUCKET="$SMOKE_AWS_PREFIX-terragucci-reports"
+fi
 
 if [ "${1:-}" = --record ]; then
   out="${2:?usage: smoke.sh --record FILE}"
