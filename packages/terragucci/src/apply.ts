@@ -48,8 +48,9 @@ import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { S3Client, s3FromEnv } from "./report/s3";
-import type { PolicyOptions } from "./report/policy";
-import { artifactReportUrl, checkPolicy, eachLimited, reportLinks, rootsParallelism, runFacts } from "./report/stage";
+import { checkPlans, type PolicyOptions } from "./report/policy";
+import type { ReportPolicy, ReportRootPolicy } from "./report/schema";
+import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -283,6 +284,8 @@ interface PlannedRoot {
   destroys: number;
   summary: string;
   error?: string;
+  /** The policy's verdict on its plan, when `policy` is on. */
+  policy?: ReportRootPolicy;
 }
 
 /** How long a plan or an apply waits for a state lock unless the job set a `-lock-timeout` of its own. */
@@ -395,6 +398,8 @@ interface WaveRun {
   planned?: PlannedRoot[];
   roots?: string[];
   started?: string;
+  /** The wave's policy check, when `policy` is on. */
+  policy?: ReportPolicy;
 }
 
 /**
@@ -417,11 +422,15 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   }
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
-    roots: w.planned.map((p) => (p.error
-      ? { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0] }
-      : { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json } })),
+    roots: w.planned.map((p) => {
+      const policy = p.policy ? { policy: p.policy } : {};
+      // A root the policy refused keeps its plan, so the report shows what it would have changed.
+      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
+    }),
     waves: [{ number: wave, roots: w.roots }],
     redacted,
+    ...(w.policy ? { policy: w.policy } : {}),
   });
   w.observer.addTimings(report, ["plan", "apply"]);
   const dir = join(repo, "terragucci-report");
@@ -486,7 +495,14 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   if (settings.policy) {
     const env = options.env ?? process.env;
     const base = options.base ?? (env.TG_BASE || undefined);
-    const denied = await checkPolicy(repo, settings.policy, planned.map((p) => ({ path: p.root, plan: p.plan })), base, configPath ? { config: configPath } : {}, options.policy ?? {}, (l) => console.log(l));
+    const runAt = runFacts(repo, env, settings.forge);
+    const found = await checkPlans(repo, settings.policy, planned.map((p) => ({ path: p.root, plan: p.plan })), base, configPath ? { config: configPath } : {}, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
+    const denied = found.failed;
+    w.policy = found.policy;
+    for (const p of planned) {
+      const verdict = found.roots.get(p.root);
+      if (verdict) p.policy = verdict;
+    }
     if (denied.size > 0) {
       for (const p of planned) {
         const error = denied.get(p.root);
