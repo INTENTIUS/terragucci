@@ -24,13 +24,20 @@
 JOB_CACHE_VOLUME="${JOB_CACHE_VOLUME:-terragucci-job-cache}"
 
 # Whether a -v source is a host temp path (a mktemp dir or a file in one),
-# which run_copied copies instead of mounting. Named volumes and paths in the
-# checkout (the CLI bundle, .state) are mounted as given.
+# which run_copied copies instead of mounting, and the CLI bundle in the
+# checkout's dist/. build-cli.mjs renames each new bundle over the old one, and
+# Docker Desktop's VM keeps the replaced file open for as long as a container
+# had it bind-mounted (the same hold as for the work dirs), so each rebuild
+# would leave one deleted file held. A copied bundle (440 KB) never reaches the
+# VM as a host path. Mounting dist/ instead would not help: the build replaces
+# the files in it, so the VM would still hold the old ones. Named volumes and
+# the rest of the checkout (.state) are mounted as given.
 copied_source() { # path
   local p="$1" t="${TMPDIR:-/tmp}"
   t="${t%/}"
   case "$p" in /*) ;; *) return 1 ;; esac
   [ -e "$p" ] || return 1
+  case "$p" in */packages/terragucci/dist/*) return 0 ;; esac
   case "$p" in "$t"/*|/tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) return 0 ;; esac
   return 1
 }
@@ -167,7 +174,10 @@ run_copied() { # docker run arguments...
       *) set -- "$a" "$@"; break ;;
     esac
   done
-  cid="$(docker create ${opts[@]+"${opts[@]}"} "$@")" || return 1
+  # The label names the shell that made the container, so reap_run_copied can
+  # remove what a killed claim left, now (this shell, on exit) or at the next
+  # harness start (a shell that is gone).
+  cid="$(docker create --label "terragucci.run-copied=$$" ${opts[@]+"${opts[@]}"} "$@")" || return 1
   if [ ${#srcs[@]} -gt 0 ]; then
     owner="$(container_owner "$cid")" || owner=""
     for i in "${!srcs[@]}"; do
@@ -203,6 +213,22 @@ run_copied() { # docker run arguments...
   done
   docker rm -f "$cid" >/dev/null 2>&1 || true
   return $rc
+}
+
+# Remove the containers run_copied made and a kill left behind: those of this
+# shell (reap_run_copied mine, from a trap) or of a shell that is no longer
+# running (reap_run_copied stale, at the start of a harness).
+reap_run_copied() { # mine|stale
+  local id pid
+  while read -r id pid; do
+    [ -n "$id" ] || continue
+    case "$1" in
+      mine) [ "$pid" = "$$" ] || continue ;;
+      *) kill -0 "$pid" 2>/dev/null && continue ;;
+    esac
+    docker rm -f "$id" >/dev/null 2>&1 || true
+  done < <(docker ps -a --filter label=terragucci.run-copied --format '{{.ID}} {{.Label "terragucci.run-copied"}}' 2>/dev/null)
+  return 0
 }
 
 # Work dirs are copied, not mounted, so this runs on the host.
