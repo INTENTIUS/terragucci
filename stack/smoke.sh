@@ -52,6 +52,8 @@ cleanup_works() {
 SMOKE_RUNNING=""
 on_exit() {
   cleanup_works
+  reap_run_copied mine
+  [ -z "${SMOKE_TMP:-}" ] || rm -rf "$SMOKE_TMP"
   local pid run
   while read -r pid run; do
     [ -n "$pid" ] && kill "$pid" 2>/dev/null
@@ -60,6 +62,23 @@ on_exit() {
   return 0
 }
 trap on_exit EXIT
+# Everything this process makes in $TMPDIR, the CLI's own scratch dirs
+# (terragucci-plan-*, terragucci-apply-*, ...) and the work dirs, goes under one
+# dir of its own that on_exit removes, so a record leaves none behind. A claim
+# process the runner starts makes its own inside the runner's. A kill that
+# skips the trap leaves the dir; the next start removes any whose process is
+# gone, and the stopped run_copied containers of such a process.
+SMOKE_TMP=""
+if [ "${1:-}" != --list ]; then
+  SMOKE_BASE="${TMPDIR:-/tmp}"; SMOKE_BASE="${SMOKE_BASE%/}"
+  for d in "$SMOKE_BASE"/terragucci-smoke-run.*; do
+    [ -f "$d/pid" ] && ! kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null && rm -rf "$d"
+  done
+  unset d
+  SMOKE_TMP="$(mktemp -d "$SMOKE_BASE/terragucci-smoke-run.XXXXXX")" && echo $$ > "$SMOKE_TMP/pid" && export TMPDIR="$SMOKE_TMP" \
+    || { echo "smoke: no temp dir in $SMOKE_BASE" >&2; exit 1; }
+  reap_run_copied stale
+fi
 trap 'cleanup_works; exit 130' INT
 trap 'cleanup_works; exit 143' TERM
 
@@ -944,14 +963,14 @@ claim_metrics() {
   [ "$project" = "smoke.local/metrics/run-$id" ] || { log "the run's project is $project, want smoke.local/metrics/run-$id"; drop_work "$work"; return 1; }
   value() { curl -fsS -G "$PROMETHEUS/api/v1/query" --data-urlencode "query=$1" | jq -r '.data.result[0].value[1] // empty'; }
   for i in $(seq 1 12); do   # Prometheus scrapes every 5s
-    rc=0
+    rc=0; q=""
     want="$(jq '.roots | length' "$report")"
     got="$(value "terragucci_roots_planned{project=\"$project\"}")"
     [ "$got" = "$want" ] || { rc=1; q="roots_planned: $got, want $want"; }
     for action in create update replace delete; do
       want="$(jq --arg a "$action" '.totals[$a] // 0' "$report")"
       got="$(value "terragucci_plan_changes{project=\"$project\",action=\"$action\"}")"
-      [ "$got" = "$want" ] || { rc=1; q="plan_changes $action: $got, want $want"; }
+      [ "$got" = "$want" ] || { rc=1; q="${q:+$q; }plan_changes $action: $got, want $want"; }
     done
     [ $rc = 0 ] && break
     sleep 5
