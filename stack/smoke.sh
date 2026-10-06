@@ -1481,7 +1481,7 @@ claim_respond_fmt() {
   log() { echo "[smoke respond-fmt] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/respond-fmt" main_sha head subject mode=apply out
+  local work repo="$USER/respond-fmt" main_sha head subject mode=apply out refs sha
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-fmt || return 1
   respond_tree "$work" "$repo" "$(respond_root "respond/fmt.tfstate" "")"
@@ -1492,10 +1492,16 @@ claim_respond_fmt() {
   out="$(in_image "$work/tree" terragucci respond fmt --branch smoke-fmt --mode "$mode" 2>&1)" || { echo "$out" >&2; drop_work "$work" 2>/dev/null; return 1; }
   echo "$out" >&2
   drop_work "$work" 2>/dev/null || true
-  subject="$(api "$URL/api/v1/repos/$repo/branches/smoke-fmt" | jq -r '.commit.message' | head -1)"
+  # Forgejo fills its branch table from a push queue, so /branches/<name> can
+  # 404 or lag for seconds after a push. The refs come from git itself, and
+  # the commit and file are read by sha.
+  refs="$(git ls-remote "${URL/#http:\/\//http://${USER}:${TOKEN}@}/${repo}.git" refs/heads/main refs/heads/smoke-fmt)" || { log "cannot list the repo's branches"; return 1; }
+  sha="$(awk '$2 == "refs/heads/smoke-fmt" { print $1 }' <<<"$refs")"
+  head="$(awk '$2 == "refs/heads/main" { print $1 }' <<<"$refs")"
+  [ -n "$sha" ] || { log "smoke-fmt is gone"; return 1; }
+  subject="$(api "$URL/api/v1/repos/$repo/git/commits/$sha?stat=false&files=false&verification=false" | jq -r '.commit.message' | head -1)"
   [ "$subject" = "style: tofu fmt" ] || { log "the branch's last commit is '$subject'"; return 1; }
-  api "$URL/api/v1/repos/$repo/raw/app/locals.tf?ref=smoke-fmt" | grep -q '^  team  = "orders"$' || { log "locals.tf is not formatted on the branch"; return 1; }
-  head="$(api "$URL/api/v1/repos/$repo/branches/main" | jq -r .commit.id)"
+  api "$URL/api/v1/repos/$repo/raw/app/locals.tf?ref=$sha" | grep -q '^  team  = "orders"$' || { log "locals.tf is not formatted on the branch"; return 1; }
   [ "$head" = "$main_sha" ] || { log "main moved"; return 1; }
   log "one fmt commit on smoke-fmt; main untouched"
 }
