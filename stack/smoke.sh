@@ -3368,7 +3368,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 const [wf, out, brk] = process.argv.slice(1);
 const doc = parseYAML(readFileSync(wf, "utf-8").split("\n").filter((l) => !l.startsWith("#")).join("\n"));
 for (const job of ["plan", "apply-wave-1"]) {
-  const run = doc.jobs[job].steps.map((s) => s.run ?? "").find((r) => r.startsWith("set -uo pipefail"));
+  const run = doc.jobs[job].steps.map((s) => s.run ?? "").find((r) => r.startsWith("set +e -uo pipefail"));
   if (!run) throw new Error("no script in " + job);
   let lines = run.split("\n");
   lines = lines.slice(0, lines.findIndex((l) => /^(lock_ref=|tg status terragucci\/|terragucci stage )/.test(l)));

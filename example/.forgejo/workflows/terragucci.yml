@@ -77,7 +77,7 @@ jobs:
       - name: Plan the roots the change reaches and write the plan report
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -173,7 +173,7 @@ jobs:
       - name: Re-plan the pull request on request and write the plan report
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export TG_FORGE=forgejo
           tg() { node --input-type=module -e 'import { writeFileSync, readFileSync } from "node:fs";
           const [cmd, ...a] = process.argv.slice(1);
@@ -926,7 +926,7 @@ jobs:
       - name: Plan every root against what exists, and keep the drift issue
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           terragucci stage tf-drift --out terragucci-report --binary tofu --forge forgejo --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           rc=$?
           export FORGEJO_TOKEN="$TG_TOKEN"
