@@ -299,19 +299,24 @@ const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
  * plan or apply with whatever credentials the runner happens to hold. On GitLab the token is the job's
  * `id_tokens` entry `gitlabVar`, one per audience.
  */
-export function tokenScript(forge: ForgeName, audience = AUDIENCE, file = "$AWS_WEB_IDENTITY_TOKEN_FILE", gitlabVar = "TERRAGUCCI_OIDC"): string {
+export function tokenScript(forge: ForgeName, audience = AUDIENCE, file = "$AWS_WEB_IDENTITY_TOKEN_FILE", gitlabVar = "TERRAGUCCI_OIDC", check = true): string {
   if (forge === "gitlab") return `printf '%s' "$${gitlabVar}" >"${file}"`;
+  return [...(check ? [tokenCheck(forge)] : []), `tg oidc "${file}" ${sh(audience)} || exit 1`].join("\n");
+}
+
+/** Stops the job when the runner served no token. A script that fetches several tokens runs it once, before the first. GitLab has none: its tokens are job variables. */
+export function tokenCheck(forge: ForgeName): string {
+  if (forge === "gitlab") return "";
   return [
     'if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then',
     `  echo ${sh(`terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); ${NO_TOKEN[forge]}`)} >&2`,
     "  exit 1",
     "fi",
-    `tg oidc "${file}" ${sh(audience)} || exit 1`,
   ].join("\n");
 }
 
-export function oidcScript(forge: ForgeName, role: string, session: string, audience = AUDIENCE): string {
-  const token = tokenScript(forge, audience);
+export function oidcScript(forge: ForgeName, role: string, session: string, audience = AUDIENCE, check = true): string {
+  const token = tokenScript(forge, audience, undefined, undefined, check);
   return [
     `export AWS_ROLE_ARN=${sh(role)} AWS_ROLE_SESSION_NAME=${sh(session)}`,
     'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"',
@@ -319,10 +324,13 @@ export function oidcScript(forge: ForgeName, role: string, session: string, audi
   ].join("\n");
 }
 
+/** Google's global STS endpoint; `oidc.gcp.token_url` names a regional one. */
+export const GCP_TOKEN_URL = "https://sts.googleapis.com/v1/token";
+
 /** The audience GCP's Workload Identity Federation accepts by default: the provider's full name. */
 export const gcpAudience = (provider: string): string => `https://iam.googleapis.com/${provider}`;
 
-/** The audience Entra ID accepts on a federated credential. */
+/** The audience Entra ID accepts on a federated credential in the public cloud; `oidc.azure.audience` names a sovereign cloud's. */
 export const AZURE_AUDIENCE = "api://AzureADTokenExchange";
 
 /** GitLab's `id_tokens` entries for GCP's and Azure's tokens. AWS's (and Terragrunt's) is TERRAGUCCI_OIDC. */
@@ -335,24 +343,24 @@ const GITLAB_AZURE_TOKEN = "TERRAGUCCI_OIDC_AZURE";
  * impersonates the stage's service account. The google provider, the gcs
  * backend and the gcloud tools read it through GOOGLE_APPLICATION_CREDENTIALS.
  */
-export function gcpScript(forge: ForgeName, provider: string, serviceAccount: string): string {
+export function gcpScript(forge: ForgeName, provider: string, serviceAccount: string, tokenUrl = GCP_TOKEN_URL, check = true): string {
   const json = (v: string): string => sh(JSON.stringify(v));
   return [
     'export TERRAGUCCI_GCP_TOKEN_FILE="$(mktemp)" GOOGLE_APPLICATION_CREDENTIALS="$(mktemp)"',
-    tokenScript(forge, gcpAudience(provider), "$TERRAGUCCI_GCP_TOKEN_FILE", GITLAB_GCP_TOKEN),
+    tokenScript(forge, gcpAudience(provider), "$TERRAGUCCI_GCP_TOKEN_FILE", GITLAB_GCP_TOKEN, check),
     "printf '" +
-      '{"type":"external_account","audience":%s,"subject_token_type":"urn:ietf:params:oauth:token-type:jwt","token_url":"https://sts.googleapis.com/v1/token",' +
+      '{"type":"external_account","audience":%s,"subject_token_type":"urn:ietf:params:oauth:token-type:jwt","token_url":%s,' +
       '"service_account_impersonation_url":%s,"credential_source":{"file":"%s"}}\\n' +
-      `' ${json(`//iam.googleapis.com/${provider}`)} ${json(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`)} "$TERRAGUCCI_GCP_TOKEN_FILE" >"$GOOGLE_APPLICATION_CREDENTIALS"`,
+      `' ${json(`//iam.googleapis.com/${provider}`)} ${json(tokenUrl)} ${json(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`)} "$TERRAGUCCI_GCP_TOKEN_FILE" >"$GOOGLE_APPLICATION_CREDENTIALS"`,
   ].join("\n");
 }
 
 /** Azure: the job's token for Entra ID in a file, and the ARM_* variables the azurerm provider and backend read for OIDC. */
-export function azureScript(forge: ForgeName, azure: NonNullable<OidcSettings["azure"]>, clientId: string): string {
+export function azureScript(forge: ForgeName, azure: NonNullable<OidcSettings["azure"]>, clientId: string, check = true): string {
   return [
     `export ARM_USE_OIDC=true ARM_CLIENT_ID=${sh(clientId)} ARM_TENANT_ID=${sh(azure.tenant_id)} ARM_SUBSCRIPTION_ID=${sh(azure.subscription_id)}`,
     'export ARM_OIDC_TOKEN_FILE_PATH="$(mktemp)"',
-    tokenScript(forge, AZURE_AUDIENCE, "$ARM_OIDC_TOKEN_FILE_PATH", GITLAB_AZURE_TOKEN),
+    tokenScript(forge, azure.audience ?? AZURE_AUDIENCE, "$ARM_OIDC_TOKEN_FILE_PATH", GITLAB_AZURE_TOKEN, check),
   ].join("\n");
 }
 
@@ -367,10 +375,13 @@ const hasAws = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.plan_r
 export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, stage: "plan" | "apply", session: string): string[] {
   if (!oidc) return [];
   const plan = stage === "plan";
+  // With GCP or Azure the check runs once, ahead of every token; an AWS-only script keeps it inside the AWS step.
+  const shared = Boolean(oidc.gcp || oidc.azure) && forge !== "gitlab";
   return [
-    ...(hasAws(oidc) ? [oidcScript(forge, (plan ? oidc.plan_role : oidc.apply_role) as string, session, oidc.audience)] : []),
-    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account)] : []),
-    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id)] : []),
+    ...(shared ? [tokenCheck(forge)] : []),
+    ...(hasAws(oidc) ? [oidcScript(forge, (plan ? oidc.plan_role : oidc.apply_role) as string, session, oidc.audience, !shared)] : []),
+    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account, oidc.gcp.token_url, !shared)] : []),
+    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id, !shared)] : []),
   ];
 }
 
@@ -607,7 +618,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
 /** Shell for a Terragrunt job's credentials: the auth provider, and the AWS OIDC token when `oidc` did not fetch it. */
 function terragruntCredentials(forge: ForgeName, phase: "plan" | "apply", oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>): string[] {
   if (!credentials || Object.keys(credentials).length === 0) return [];
-  return [credentialsScript(credentials, phase, hasAws(oidc) ? undefined : tokenScript(forge, AUDIENCE))];
+  return [credentialsScript(credentials, phase, hasAws(oidc) ? undefined : tokenScript(forge, AUDIENCE, undefined, undefined, !(oidc?.gcp || oidc?.azure)))];
 }
 
 /** A Terragrunt repo's apply: the stale notes, the lock and status as for roots, then one `run --all` per wave. */
