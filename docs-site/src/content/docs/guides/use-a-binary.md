@@ -51,7 +51,7 @@ updated .github/workflows/terragucci.yml
 using terragucci.yml
 ```
 
-Every job now runs in the CI image for that binary, pinned by digest once the image is published. Commit the file and your next pull request runs on it.
+Every job now runs in the CI image for that binary, pinned by digest. Commit the file and your next pull request runs on it.
 
 ## What each binary changes
 
