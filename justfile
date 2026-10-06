@@ -254,6 +254,10 @@ chant-local *args:
 decide-image platform="":
     npx tsx scripts/images.ts build-decide {{ if platform == "" { "" } else { "--platform " + platform } }}
 
+[doc("Rewrite images/decide/requirements.txt from the pins in DECIDE_IMAGE: resolve pip, torch (CPU) and laya for linux x86_64 and aarch64 with pip's dry-run report and keep every wheel's sha256. Needs python3 with pip and network access.")]
+decide-requirements:
+    npx tsx scripts/decide-requirements.ts
+
 [doc("The decision service in the stack: up (builds the image if missing), ask (the three uses' questions, on CPU), down.")]
 decide *args="up":
     stack/decide.sh {{args}}

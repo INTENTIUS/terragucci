@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 4;
+export const REPORT_MINOR = 5;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -290,6 +290,28 @@ export interface ReportTip {
   url: string;
 }
 
+/**
+ * The description check's decision (minor 5): what `respond description`
+ * asked about the pull request's text and what the service answered. Present
+ * only on a report the check ran against. The decision is advice; no gate
+ * reads it.
+ */
+export interface ReportIntent {
+  /** confident, not-confident or unavailable. */
+  status: string;
+  /** Whether the flag was raised on the note and the report. */
+  flagged: boolean;
+  /** The decision in a sentence, as the note shows it. */
+  decision: string;
+  probability?: number;
+  threshold?: number;
+  model?: string;
+  /** The digest of the state the service was asked about. */
+  state_digest: string;
+  /** The destroys and replacements the text does not mention, by root and address. */
+  unmentioned: string[];
+}
+
 export interface Report {
   schema: typeof REPORT_SCHEMA;
   minor: number;
@@ -321,6 +343,8 @@ export interface Report {
   tips?: ReportTip[];
   /** Where the run spent its time (minor 2). Absent from a report built without running the binary. */
   timings?: ReportTimings;
+  /** The description check's decision (minor 5). Written by `respond description`; absent when it did not run or `decide:` is unset. */
+  intent?: ReportIntent;
 }
 
 /**

@@ -24,13 +24,16 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../../package.json";
 import { applyWaves } from "../apply";
-import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type ForgeName, type PolicySettings } from "../config";
+import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
 import { ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { describeTips, repoTips } from "../tips";
+import type { DecideOptions } from "../decide";
+import { attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
+import { driftOf } from "../respond/drift";
 import { driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { checkPlan, describeVerdict, engineBinary, policyPathExists, trustedPolicy, type PolicyOptions, type TrustedOptions } from "./policy";
@@ -82,6 +85,10 @@ export interface StageOptions {
   forgeFetch?: Fetch;
   /** How many roots of a layer plan at once. Default: the config's `parallelism`, then from the state backend. */
   parallelism?: number;
+  /** tf-drift with `respond.drift: attribute`: the audit log to read. Default CloudTrail through the aws CLI. */
+  audit?: AuditLog;
+  /** tf-drift with `respond.drift: attribute`: how the decision client reaches its service. */
+  decideOptions?: DecideOptions;
   /** tf-plan with `policy:` set: how the engine runs and is fetched. Default: the real thing. */
   policy?: PolicyOptions;
 }
@@ -322,6 +329,7 @@ interface RootOutcome {
   input?: RootInput;
   plan?: { text?: string; json?: string };
   names?: Map<string, string>;
+  attributed?: Attributed;
   redacted?: number;
   deferred?: ReportDeferred;
 }
@@ -551,6 +559,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
   const names = new Map<string, Map<string, string>>();
+  const attributions = new Map<string, Attributed>();
+  // Drift names who changed what when the project asks for it; the same table, audit log and decision as `respond drift`.
+  const attributing = drift && responseTo(settings, "drift") === "attribute";
+  const audit = attributing ? (options.audit ?? awsAuditLog({ region: settings.audit_region })) : undefined;
   const deferred: ReportDeferred[] = [];
   const held = new Set<string>();
   const upstreamState = new Map<string, boolean | undefined>();
@@ -591,11 +603,20 @@ export async function runStage(stage: string, repo: string, options: StageOption
         return failed(`show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, `${root}: show -json failed`);
       }
       const safe = redactPlan(plan);
+      let attributed: Attributed | undefined;
+      if (audit && driftCount(plan) > 0) {
+        try {
+          attributed = await attribute(root, driftOf(plan), { audit, decide: settings.decide, options: options.decideOptions });
+        } catch (e) {
+          lines.push(`${root}: attribution skipped, ${(e as Error).message}`);
+        }
+      }
       lines.push(drift ? `${root}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
       return {
         root, lines, redacted: safe.values,
         plan: { text: text.stdout, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
+        ...(attributed ? { attributed } : {}),
         input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) },
       };
     } finally {
@@ -613,6 +634,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     if (o.input) inputs.push(o.input);
     if (o.plan) plans.set(o.root, o.plan);
     if (o.names) names.set(o.root, o.names);
+    if (o.attributed) attributions.set(o.root, o.attributed);
     redacted += o.redacted ?? 0;
   };
 
@@ -647,7 +669,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
         .filter((w) => w.roots.length > 0);
 
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(deferred.length ? { deferred } : {}) });
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}) });
 }
 
 interface Planned {
@@ -669,6 +691,8 @@ interface Planned {
   stage?: "tf-plan" | "tf-drift";
   /** tf-drift: the real names of drifted objects, per root. */
   names?: Map<string, Map<string, string>>;
+  /** tf-drift with `respond.drift: attribute`: who changed what, per root. */
+  attributions?: Map<string, Attributed>;
 }
 
 /**
@@ -866,7 +890,7 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions }: Planned,
 ): Promise<StageResult> {
   let inputs = planned;
   const drift = stage === "tf-drift";
@@ -912,7 +936,7 @@ async function finish(
   }
   let issue: StageResult["issue"];
   if (drift) {
-    const issueOptions = { ...(names ? { names } : {}), ...links.note };
+    const issueOptions = { ...(names ? { names } : {}), ...(attributions ? { attributions } : {}), ...links.note };
     writeFileSync(join(dir, "issue.md"), renderDriftIssue(report, issueOptions));
     const token = options.token ?? env.TG_TOKEN;
     const target = targetFromEnv(options.forge, env, token);

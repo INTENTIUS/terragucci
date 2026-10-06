@@ -194,6 +194,21 @@
         }
       }
     },
+    "intent": {
+      "description": "The description check's decision (minor 5). Written by respond description; absent when it did not run.",
+      "type": "object",
+      "required": ["status", "flagged", "decision", "state_digest", "unmentioned"],
+      "properties": {
+        "status": { "type": "string" },
+        "flagged": { "type": "boolean" },
+        "decision": { "type": "string" },
+        "probability": { "type": "number" },
+        "threshold": { "type": "number" },
+        "model": { "type": "string" },
+        "state_digest": { "type": "string" },
+        "unmentioned": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "mock_reads": {
       "description": "Terragrunt dependencies that would have planned on mock_outputs (minor 1).",
       "type": "array",
