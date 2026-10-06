@@ -1,10 +1,10 @@
 {
   "step": "check",
-  "source_hash": "7f1fc662b5c69345",
+  "source_hash": "7923cc86374e6b8c",
   "commands": [
     {
       "cmd": "just example change unformatted",
-      "output": "[example] pushed change/unformatted at c88c8734\n[example] run 4 for c88c8734 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1)\n[example] run 5 for c88c8734 (push): failure (http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1 (failure)",
+      "output": "[example] pushed change/unformatted at bfcb74cf\n[example] run 4 for bfcb74cf (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1)\n[example] run 5 for bfcb74cf (push): failure (http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1 (failure)",
       "exit": 0
     },
     {
@@ -14,8 +14,8 @@
     }
   ],
   "shots": {
-    "pull-light": "4f35decbf49684c1",
-    "pull-dark": "dd17b91c2538b855",
+    "pull-light": "e06843fba4870954",
+    "pull-dark": "118f1a3ce2bba9c2",
     "log-light": "39060042c7a72ccd",
     "log-dark": "14c990f14cff46e1"
   }
