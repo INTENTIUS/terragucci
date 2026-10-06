@@ -245,7 +245,7 @@ capture *args:
 build-cli:
     node scripts/build-cli.mjs
 
-[doc("Build the three CI images for one platform (default: this machine's) into the local Docker daemon.")]
+[doc("Build the four CI images for one platform (default: this machine's) into the local Docker daemon.")]
 images platform="":
     just build-cli
     npx tsx scripts/images.ts build {{ if platform == "" { "" } else { "--platform " + platform } }}

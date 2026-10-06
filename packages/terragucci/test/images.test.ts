@@ -12,6 +12,7 @@ describe("images", () => {
   it.each([
     ["tofu", `ghcr.io/intentius/terragucci-tofu:${pkg.version}-tofu${TOOL_VERSIONS.tofu}`],
     ["terraform", `ghcr.io/intentius/terragucci-terraform:${pkg.version}-tf${TOOL_VERSIONS.terraform}`],
+    ["choudoufu", `ghcr.io/intentius/terragucci-choudoufu:${pkg.version}-choudoufu${TOOL_VERSIONS.choudoufu}`],
   ] as const)("%s runs in %s", (binary, ref) => {
     expect(imageReference(imageFor(binary, {})!)).toBe(ref);
   });
@@ -21,9 +22,19 @@ describe("images", () => {
     expect(imageReference(imageFor("tofu", { [tag]: DIGEST })!)).toBe(`${tag}@${DIGEST}`);
   });
 
-  it("there is no image for choudoufu or cdktn yet", () => {
-    expect(imageFor("choudoufu")).toBeUndefined();
+  it("there is no image for cdktn yet", () => {
     expect(imageFor("cdktn")).toBeUndefined();
+  });
+
+  it("a choudoufu repo's pipeline runs in the choudoufu image, and its required_version is not taken as a choudoufu release", async () => {
+    const dir = write(twoRootRepo(), { "network/versions.tf": 'terraform {\n  required_version = "1.13.1"\n}\n', "app/versions.tf": 'terraform {\n  required_version = "1.13.1"\n}\n' });
+    git(dir, "init", "-q");
+    git(dir, "remote", "add", "origin", "https://github.com/a/b.git");
+    const r = await init(dir, { binary: "choudoufu" });
+    const text = readFileSync(r.files[0].path, "utf-8");
+    expect(r.version).toEqual({ value: TOOL_VERSIONS.choudoufu, reason: "the image" });
+    expect(text).toContain(`image: ghcr.io/intentius/terragucci-choudoufu:${imageTag("choudoufu")}`);
+    expect(text).not.toContain("terragucci install");
   });
 
   it.each([

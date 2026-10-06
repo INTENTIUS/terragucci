@@ -28,10 +28,10 @@ The tarballs land in `.chant-local/`, which git ignores, and are installed with 
 
 ## The CI images
 
-`images/images.ts` declares one image per toolchain (tofu, terraform, terragrunt) with chant's docker lexicon; `just ci` renders `images/Dockerfile.*`, and `just ci-check` fails on a hand edit. Tool versions come from `packages/terragucci/src/images.ts`, the table `init` reads too.
+`images/images.ts` declares one image per toolchain (tofu, terraform, terragrunt, choudoufu) with chant's docker lexicon; `just ci` renders `images/Dockerfile.*`, and `just ci-check` fails on a hand edit. Tool versions come from `packages/terragucci/src/images.ts`, the table `init` reads too.
 
 ```bash
-just images             # build all three for this machine, into the local daemon
+just images             # build all four for this machine, into the local daemon
 just images-check       # run each image's tools and hold it to images/budget.json
 ```
 

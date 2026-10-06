@@ -151,7 +151,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
 
-  const pinned = tgMode ? undefined : detectVersion(repo, roots);
+  // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
+  const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
   const version = settings.version
     ? { value: settings.version, reason: "terragucci.yml" }
     : pinned
@@ -185,7 +186,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   } else {
     ref = imageFor(binary.value);
   }
-  if (!ref) throw new RenderError(`terragucci has no CI image for ${binary.value} yet; set binary to tofu or terraform`);
+  if (!ref) throw new RenderError(`terragucci has no CI image for ${binary.value} yet; set binary to tofu, terraform or choudoufu`);
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   const pipeline = renderPipeline({
     forge: forgeChoice.value,

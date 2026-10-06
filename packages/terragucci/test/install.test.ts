@@ -10,6 +10,7 @@ describe("install", () => {
     ["tofu", "1.12.0", "arm64", "https://github.com/opentofu/opentofu/releases/download/v1.12.0/tofu_1.12.0_linux_arm64.tar.gz", "tar.gz"],
     ["terraform", "1.14.0", "amd64", "https://releases.hashicorp.com/terraform/1.14.0/terraform_1.14.0_linux_amd64.zip", "zip"],
     ["terragrunt", "1.1.6", "amd64", "https://github.com/gruntwork-io/terragrunt/releases/download/v1.1.6/terragrunt_linux_amd64", "binary"],
+    ["choudoufu", "0.21.0", "arm64", "https://github.com/INTENTIUS/choudoufu/releases/download/v0.21.0/choudoufu_v0.21.0_linux_arm64.tar.gz", "tar.gz"],
   ] as const)("%s %s on %s comes from %s", (tool, version, arch, url, kind) => {
     expect(release(tool, version, arch)).toMatchObject({ url, kind });
   });
@@ -23,6 +24,11 @@ describe("install", () => {
     const sums = `${"1".repeat(64)}  tofu_1.12.0_linux_amd64.tar.gz\n${"2".repeat(64)} *tofu_1.12.0_linux_arm64.tar.gz\n`;
     expect(expectedSum(sums, "tofu_1.12.0_linux_arm64.tar.gz")).toBe("2".repeat(64));
     expect(() => expectedSum(sums, "other")).toThrow(/do not list other/);
+  });
+
+  it("reads a digest SHA256SUMS lists as ./<file>, as choudoufu's does", () => {
+    const sums = `${"3".repeat(64)}  ./choudoufu_v0.21.0_linux_amd64.tar.gz\n`;
+    expect(expectedSum(sums, "choudoufu_v0.21.0_linux_amd64.tar.gz")).toBe("3".repeat(64));
   });
 
   it.each([

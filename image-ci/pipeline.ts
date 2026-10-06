@@ -3,7 +3,7 @@
  * published on a release tag.
  *
  * `just ci` renders this into .github/workflows/images.yml. The check job
- * builds all three images natively on an amd64 and an arm64 runner, runs each
+ * builds all four images natively on an amd64 and an arm64 runner, runs each
  * image's tools, and holds each to its size budget. The publish job runs only
  * for a `v*` tag: it pushes both platforms to GHCR with provenance and an
  * SBOM, and prints each image's digest for the release to record.
