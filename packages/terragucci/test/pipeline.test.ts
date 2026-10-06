@@ -388,6 +388,21 @@ describe("the agent comment", () => {
     expect(readFileSync(join(dir, "change", "rc"), "utf-8").trim()).toBe("2");
     expect(readFileSync(join(dir, "change", "change.patch"), "utf-8")).toContain("half.txt");
   });
+
+  it("the agent's step runs without the runner's token variables, which Forgejo sets whatever permissions: says", async () => {
+    const work = tmp("tg-agent-work-");
+    git(work, "init", "-q", "-b", "main");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "head");
+    const sha = git(work, "rev-parse", "HEAD").trim();
+    const dir = tmp("tg-agent-dir-");
+    writeFileSync(join(dir, "prompt.md"), "the ask\n");
+    const script = agentRunScript('env | grep -E "^(GITHUB_TOKEN|FORGEJO_TOKEN|GITEA_TOKEN|ACTIONS_RUNTIME_TOKEN|ACTIONS_ID_TOKEN_REQUEST_TOKEN|ACTIONS_ID_TOKEN_REQUEST_URL)=" > seen.txt || true; echo "$ANTHROPIC_API_KEY" > key.txt').replaceAll(AGENT_DIR, dir);
+    const tokens = Object.fromEntries(["GITHUB_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"].map((k) => [k, "secret"]));
+    const r = await runStep(`cd ${work} && ${script}`, { TG_SHA: sha, ANTHROPIC_API_KEY: "model-key", ...tokens });
+    expect(r.status, r.out).toBe(0);
+    expect(readFileSync(join(work, "seen.txt"), "utf-8")).toBe("");
+    expect(readFileSync(join(work, "key.txt"), "utf-8").trim()).toBe("model-key");
+  });
 });
 
 describe("publish job", () => {
