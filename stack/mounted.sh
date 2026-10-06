@@ -65,6 +65,11 @@ run_copied() { # docker run arguments...
       *) set -- "$a" "$@"; break ;;
     esac
   done
+  # docker cp leaves the copies owned by another uid than the one git runs as
+  # inside, and git then refuses a repository there ("dubious ownership").
+  # Trust every path in the container, through the environment, so no git
+  # config is written into the copied trees.
+  [ ${#srcs[@]} -gt 0 ] && opts+=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e "GIT_CONFIG_VALUE_0=*")
   cid="$(docker create ${opts[@]+"${opts[@]}"} "$@")" || return 1
   for i in ${srcs[@]+"${!srcs[@]}"}; do
     if [ -d "${srcs[$i]}" ]; then
