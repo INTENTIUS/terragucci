@@ -121,7 +121,8 @@ check-diagnostics|tf-check fails with the cause in its log for a validate error,
 comment-not-affected|a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause|
 drift-attribute|with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue|
 version-bump-job|with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service|
-tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|'
+tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
+oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -3311,6 +3312,116 @@ SH
   return $rc
 }
 
+claim_oidc_clouds() {
+  # A scratch tree whose terragucci.yml sets oidc.gcp and oidc.azure (no AWS).
+  # init writes its Forgejo pipeline; the plan job's and apply-wave-1's scripts
+  # are cut before they plan, lock or post (their forge calls and credential
+  # steps stay), and run in the tofu image against a stand-in token endpoint
+  # in the same container that answers each request with a token naming its
+  # audience. Each must leave a GOOGLE_APPLICATION_CREDENTIALS file that is an
+  # external_account config for the provider and the stage's service account,
+  # whose credential_source.file holds the token for the provider's audience,
+  # and ARM_USE_OIDC, ARM_CLIENT_ID (the stage's), ARM_TENANT_ID,
+  # ARM_SUBSCRIPTION_ID and an ARM_OIDC_TOKEN_FILE_PATH holding the token for
+  # api://AzureADTokenExchange. Its limits: floci serves neither cloud, so no
+  # Google STS or Entra ID exchange happens and the forge's token is a
+  # stand-in; the claim shows the job hands the google and azurerm providers
+  # the configuration they read, not that a cloud accepts it.
+  # BREAK: the credential steps are dropped from the scripts, so nothing is
+  # written and no ARM_* variable is set.
+  log() { echo "[smoke oidc-clouds] $*" >&2; }
+  local work job rc=0 provider="projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/tree/app"
+  printf 'provider "external" {}\n\nresource "terraform_data" "mark" {}\n' > "$work/tree/app/main.tf"
+  cat > "$work/tree/terragucci.yml" <<YML
+forge: forgejo
+binary: tofu
+oidc:
+  gcp:
+    workload_identity_provider: $provider
+    plan_service_account: tg-plan@shop.iam.gserviceaccount.com
+    apply_service_account: tg-apply@shop.iam.gserviceaccount.com
+  azure:
+    tenant_id: tenant-0001
+    subscription_id: sub-0002
+    plan_client_id: client-plan
+    apply_client_id: client-apply
+YML
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  # Each job's credential prefix, as the job runs it, from the generated workflow.
+  (cd "$HERE/.." && npx tsx -e '
+import { readFileSync, writeFileSync } from "node:fs";
+import { parseYAML } from "@intentius/chant/yaml";
+const [wf, out, brk] = process.argv.slice(1);
+const doc = parseYAML(readFileSync(wf, "utf-8").split("\n").filter((l) => !l.startsWith("#")).join("\n"));
+for (const job of ["plan", "apply-wave-1"]) {
+  const run = doc.jobs[job].steps.map((s) => s.run ?? "").find((r) => r.startsWith("set -uo pipefail"));
+  if (!run) throw new Error("no script in " + job);
+  let lines = run.split("\n");
+  lines = lines.slice(0, lines.findIndex((l) => /^(lock_ref=|tg status terragucci\/|terragucci stage )/.test(l)));
+  if (brk) {
+    const a = lines.findIndex((l) => l.startsWith("export TERRAGUCCI_GCP_TOKEN_FILE=")), b = lines.findIndex((l) => l.startsWith("tg oidc \"$ARM_OIDC_TOKEN_FILE_PATH\""));
+    if (a >= 0 && b >= a) lines.splice(a, b - a + 1);
+  }
+  writeFileSync(out + "/" + job + ".sh", lines.join("\n") + "\n");
+}' "$work/tree/.forgejo/workflows/terragucci.yml" "$work" "${BREAK:-}") || { log "could not read the jobs' scripts from the pipeline"; drop_work "$work"; return 1; }
+  cat > "$work/token-server.mjs" <<'JS'
+import { createServer } from "node:http";
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+createServer((req, res) => {
+  const aud = new URL(req.url, "http://x").searchParams.get("audience");
+  const ok = req.headers.authorization === "bearer stand-in-request-token";
+  res.statusCode = ok ? 200 : 401;
+  res.end(JSON.stringify({ value: b64({ alg: "none" }) + "." + b64({ aud, sub: "repo:shop/infra:pull_request" }) + ".x" }));
+}).listen(8080, "127.0.0.1");
+JS
+  cat > "$work/check.mjs" <<'JS'
+import { existsSync, readFileSync } from "node:fs";
+const [provider, sa, client] = process.argv.slice(2);
+const e = process.env, bad = [];
+const aud = (file) => JSON.parse(Buffer.from(readFileSync(file, "utf-8").split(".")[1], "base64url").toString()).aud;
+const want = (what, got, exp) => { if (got !== exp) bad.push(`${what} is ${JSON.stringify(got)}, not ${JSON.stringify(exp)}`); };
+if (!e.GOOGLE_APPLICATION_CREDENTIALS || !existsSync(e.GOOGLE_APPLICATION_CREDENTIALS)) bad.push("no GOOGLE_APPLICATION_CREDENTIALS file");
+else {
+  const c = JSON.parse(readFileSync(e.GOOGLE_APPLICATION_CREDENTIALS, "utf-8"));
+  want("type", c.type, "external_account");
+  want("audience", c.audience, "//iam.googleapis.com/" + provider);
+  want("subject_token_type", c.subject_token_type, "urn:ietf:params:oauth:token-type:jwt");
+  want("token_url", c.token_url, "https://sts.googleapis.com/v1/token");
+  want("service_account_impersonation_url", c.service_account_impersonation_url, `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${sa}:generateAccessToken`);
+  if (!c.credential_source?.file || !existsSync(c.credential_source.file)) bad.push("credential_source.file is not a file");
+  else want("the GCP token's aud", aud(c.credential_source.file), "https://iam.googleapis.com/" + provider);
+}
+want("ARM_USE_OIDC", e.ARM_USE_OIDC, "true");
+want("ARM_CLIENT_ID", e.ARM_CLIENT_ID, client);
+want("ARM_TENANT_ID", e.ARM_TENANT_ID, "tenant-0001");
+want("ARM_SUBSCRIPTION_ID", e.ARM_SUBSCRIPTION_ID, "sub-0002");
+if (!e.ARM_OIDC_TOKEN_FILE_PATH || !existsSync(e.ARM_OIDC_TOKEN_FILE_PATH)) bad.push("no ARM_OIDC_TOKEN_FILE_PATH file");
+else want("the Azure token's aud", aud(e.ARM_OIDC_TOKEN_FILE_PATH), "api://AzureADTokenExchange");
+for (const b of bad) console.error("oidc-clouds: " + b);
+if (bad.length) process.exit(1);
+console.log("credential config for " + sa + " and " + client + " is what the google and azurerm providers read");
+JS
+  for job in plan:tg-plan:client-plan apply-wave-1:tg-apply:client-apply; do
+    IFS=: read -r name sa client <<<"$job"
+    in_image "$work" bash -c '
+node /repo/token-server.mjs & server=$!
+for i in $(seq 1 50); do node -e "fetch(\"http://127.0.0.1:8080/\").then(()=>process.exit(0),()=>process.exit(1))" 2>/dev/null && break; sleep 0.1; done
+export ACTIONS_ID_TOKEN_REQUEST_URL="http://127.0.0.1:8080/token?api-version=2.0" ACTIONS_ID_TOKEN_REQUEST_TOKEN=stand-in-request-token
+set +e
+. "/repo/$1.sh"
+rc=$?
+set +u
+[ "$rc" = 0 ] && node /repo/check.mjs "$2" "$3" "$4"; rc=$?
+kill "$server" 2>/dev/null
+exit "$rc"' oidc "$name" "$provider" "$sa@shop.iam.gserviceaccount.com" "$client" >&2 || { log "$name: the job's credential step did not leave the GCP and Azure configuration"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "plan and apply-wave-1 each wrote an external_account file for their service account and set the ARM_* variables for their client, with each cloud's token"
+  return $rc
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -3441,6 +3552,7 @@ comment-not-affected runner self! weight=150
 drift-attribute      self! weight=90
 version-bump-job     runner self! weight=150
 tg-spans             tg after=tg-waves weight=450
+oidc-clouds          weight=20
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
-import { applyScript, AWS_CLI, driftScript, planScript, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, driftScript, forgeApi, planScript, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -817,5 +817,130 @@ describe("the version-bump job", () => {
 
   it.each(FORGES)("%s: there is no job while version-bump is off", (forge) => {
     expect(render(forge)).not.toContain("version-bump");
+  });
+});
+
+describe("GCP and Azure credentials", () => {
+  const PROVIDER = "projects/123456/locations/global/workloadIdentityPools/forge/providers/ci";
+  const GCP = { workload_identity_provider: PROVIDER, plan_service_account: "plan-ro@shop.iam.gserviceaccount.com", apply_service_account: "apply-rw@shop.iam.gserviceaccount.com" };
+  const AZURE = { tenant_id: "tenant-1", subscription_id: "sub-1", plan_client_id: "client-plan", apply_client_id: "client-apply" };
+  const CLOUDS = { gcp: GCP, azure: AZURE };
+  const renderWith = (forge: ForgeName, oidc: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, ...extra } as never).content;
+
+  it.each(FORGES)("%s: plan holds the plan service account and client, apply the apply ones, check neither", (forge) => {
+    const doc = body(renderWith(forge, CLOUDS));
+    const jobs = forge === "gitlab" ? doc : doc.jobs;
+    const flat = (j: unknown): string => JSON.stringify(j);
+    expect(flat(jobs.plan)).toContain(GCP.plan_service_account);
+    expect(flat(jobs.plan)).toContain("ARM_CLIENT_ID='client-plan'");
+    expect(flat(jobs.plan)).not.toContain(GCP.apply_service_account);
+    expect(flat(jobs.plan)).not.toContain("client-apply");
+    expect(flat(jobs["apply-wave-1"])).toContain(GCP.apply_service_account);
+    expect(flat(jobs["apply-wave-1"])).toContain("ARM_CLIENT_ID='client-apply'");
+    expect(flat(jobs["apply-wave-1"])).not.toContain(GCP.plan_service_account);
+    expect(flat(jobs["apply-wave-1"])).not.toContain("client-plan");
+    expect(flat(jobs.check)).not.toMatch(/GOOGLE_APPLICATION_CREDENTIALS|ARM_|id_tokens|id-token/);
+    // No AWS role is set, so none is assumed.
+    expect(flat(jobs.plan)).not.toContain("AWS_ROLE_ARN");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: one token request per audience, with the job's id-token permission", (forge) => {
+    const text = renderWith(forge, CLOUDS);
+    const doc = body(text);
+    for (const j of ["plan", "replan", "apply-wave-1", "apply-wave-2"]) {
+      expect(doc.jobs[j].permissions["id-token"]).toBe("write");
+      if (forge === "forgejo") expect(doc.jobs[j]["enable-openid-connect"]).toBe(true);
+    }
+    const plan = doc.jobs.plan.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    expect(plan).toContain(`tg oidc "$TERRAGUCCI_GCP_TOKEN_FILE" 'https://iam.googleapis.com/${PROVIDER}' || exit 1`);
+    expect(plan).toContain(`tg oidc "$ARM_OIDC_TOKEN_FILE_PATH" 'api://AzureADTokenExchange' || exit 1`);
+    expect(plan.match(/tg oidc /g)).toHaveLength(2);
+    // A fork's pull request still gets no plan job, and apply runs only on the default branch.
+    expect(doc.jobs.plan.if).toContain("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(doc.jobs["apply-wave-1"].if).toContain("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
+  });
+
+  it("gitlab: an id_token per cloud, each with its audience, on plan, apply and drift", () => {
+    const doc = body(renderWith("gitlab", CLOUDS, { drift: "0 6 * * *" }));
+    const want = { TERRAGUCCI_OIDC_GCP: { aud: `https://iam.googleapis.com/${PROVIDER}` }, TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchange" } };
+    for (const j of ["plan", "apply-wave-1", "drift"]) expect(doc[j].id_tokens).toEqual(want);
+    expect(doc.check.id_tokens).toBeUndefined();
+    expect(doc.plan.script.join("\n")).toContain('printf \'%s\' "$TERRAGUCCI_OIDC_GCP" >"$TERRAGUCCI_GCP_TOKEN_FILE"');
+    expect(doc.plan.script.join("\n")).toContain('printf \'%s\' "$TERRAGUCCI_OIDC_AZURE" >"$ARM_OIDC_TOKEN_FILE_PATH"');
+    // Beside AWS, all three tokens, AWS's under its old name.
+    const all = body(renderWith("gitlab", { ...OIDC, ...CLOUDS }));
+    expect(all.plan.id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" }, ...want });
+    expect(JSON.stringify(all.plan)).toContain(OIDC.plan_role);
+  });
+
+  it.each(FORGES)("%s: drift takes the plan identities", (forge) => {
+    const run = driftScript("tofu", layers, forge, CLOUDS);
+    expect(run).toContain(GCP.plan_service_account);
+    expect(run).toContain("client-plan");
+    expect(run).not.toContain(GCP.apply_service_account);
+    expect(run).not.toContain("client-apply");
+  });
+
+  it("the token step writes the external_account file and the ARM variables the providers read", async () => {
+    const api = await stubApi((hit) => ({ value: "jwt-for-" + new URL(hit.url, "http://x").searchParams.get("audience") }));
+    try {
+      const script = [
+        forgeApi("github"),
+        ...cloudScripts("github", CLOUDS, "plan", "terragucci-plan"),
+        'cat "$GOOGLE_APPLICATION_CREDENTIALS"',
+        'echo "gcp-token=$(cat "$(node -e \'console.log(JSON.parse(require("fs").readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,"utf-8")).credential_source.file)\')")"',
+        'echo "azure-token=$(cat "$ARM_OIDC_TOKEN_FILE_PATH")"',
+        'echo "arm=$ARM_USE_OIDC,$ARM_CLIENT_ID,$ARM_TENANT_ID,$ARM_SUBSCRIPTION_ID"',
+      ].join("\n");
+      const r = await run(script, { ACTIONS_ID_TOKEN_REQUEST_URL: `${api.url}/token?api-version=2.0`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "req" });
+      expect(r.status, r.out).toBe(0);
+      const lines = r.out.trim().split("\n");
+      const cred = JSON.parse(lines[0]);
+      expect(cred).toMatchObject({
+        type: "external_account",
+        audience: `//iam.googleapis.com/${PROVIDER}`,
+        subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+        token_url: "https://sts.googleapis.com/v1/token",
+        service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP.plan_service_account}:generateAccessToken`,
+      });
+      expect(lines).toContain(`gcp-token=jwt-for-https://iam.googleapis.com/${PROVIDER}`);
+      expect(lines).toContain("azure-token=jwt-for-api://AzureADTokenExchange");
+      expect(lines).toContain("arm=true,client-plan,tenant-1,sub-1");
+      expect(api.hits).toHaveLength(2);
+    } finally {
+      api.close();
+    }
+  });
+
+  it("gitlab: the token step writes each cloud's id_token to its file", async () => {
+    const script = [
+      ...cloudScripts("gitlab", CLOUDS, "apply", "terragucci-apply"),
+      'node -e \'const c=JSON.parse(require("fs").readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,"utf-8"));console.log(require("fs").readFileSync(c.credential_source.file,"utf-8"),c.service_account_impersonation_url)\'',
+      'echo "$(cat "$ARM_OIDC_TOKEN_FILE_PATH") $ARM_CLIENT_ID"',
+    ].join("\n");
+    const r = await run(script, { TERRAGUCCI_OIDC_GCP: "gcp-jwt", TERRAGUCCI_OIDC_AZURE: "azure-jwt" });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toContain(`gcp-jwt https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP.apply_service_account}:generateAccessToken`);
+    expect(r.out).toContain("azure-jwt client-apply");
+  });
+
+  it("a runner that serves no token stops the job before it plans", async () => {
+    const r = await run([forgeApi("forgejo"), ...cloudScripts("forgejo", { gcp: GCP }, "plan", "terragucci-plan"), "echo planned"].join("\n"), { ACTIONS_ID_TOKEN_REQUEST_URL: "" });
+    expect(r.status).toBe(1);
+    expect(r.out).not.toContain("planned");
+  });
+
+  it("the config takes gcp and azure beside or instead of AWS, and refuses one identity for both stages", () => {
+    expect(validateConfig({ oidc: CLOUDS }, "t").oidc).toEqual(CLOUDS);
+    expect(validateConfig({ oidc: { ...OIDC, ...CLOUDS } }, "t").oidc).toEqual({ ...OIDC, ...CLOUDS });
+    expect(() => validateConfig({ oidc: { gcp: { ...GCP, apply_service_account: GCP.plan_service_account } } }, "t")).toThrow(/same service account/);
+    expect(() => validateConfig({ oidc: { azure: { ...AZURE, apply_client_id: "client-plan" } } }, "t")).toThrow(/same client/);
+    expect(() => validateConfig({ oidc: { gcp: { ...GCP, workload_identity_provider: "my-pool" } } }, "t")).toThrow(/provider's resource name/);
+    expect(() => validateConfig({ oidc: { gcp: { ...GCP, plan_service_account: "plan-ro" } } }, "t")).toThrow(/service account's email/);
+    expect(() => validateConfig({ oidc: { azure: { tenant_id: "t" } } }, "t")).toThrow(/azure.plan_client_id must be set/);
+    expect(() => validateConfig({ oidc: { azure: { ...AZURE, region: "x" } } }, "t")).toThrow(/azure.region is not a setting/);
+    expect(() => validateConfig({ oidc: {} }, "t")).toThrow(/must set plan_role and apply_role \(AWS\), gcp, azure, or several/);
+    expect(() => validateConfig({ oidc: { plan_role: "r", gcp: GCP } }, "t")).toThrow(/apply_role must name a role/);
   });
 });
