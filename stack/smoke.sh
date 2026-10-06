@@ -2418,10 +2418,12 @@ dash_rendered() { # work, uid
   cp -R "$EXAMPLE/." "$dir/"
   rm -rf "$dir/.git"
   # The stack's reports bucket, as scripts/render-dashboards.ts names it: the Runs and Estate dashboards link it.
-  printf '\ndashboards: true\nreports:\n  bucket: s3://terragucci-reports\n  prefix: reports\n  url: http://localhost:4580/terragucci-reports\n' >> "$dir/terragucci.yml"
+  printf '\ndashboards: true\nreports:\n  bucket: s3://terragucci-reports\n  prefix: reports\n  url: http://localhost:%s/terragucci-reports\n' "${TERRAGUCCI_FLOCI_PORT:-4580}" >> "$dir/terragucci.yml"
   (cd "$dir" && "$TERRAGUCCI" init --forge forgejo --dry-run --json) | jq -j --arg f "$f" '.results.files[] | select(.path == $f) | .content' > "$1/rendered.json"
   [ -s "$1/rendered.json" ] || { log "init wrote no $f"; return 1; }
-  cmp -s "$1/rendered.json" "$HERE/observability/terragucci/grafana/dashboards/$2.json" \
+  # The committed file carries a placeholder for floci's port; the compose file swaps it in for Grafana.
+  sed "s/TGPH0FLOCIPORT/${TERRAGUCCI_FLOCI_PORT:-4580}/g" "$HERE/observability/terragucci/grafana/dashboards/$2.json" > "$1/committed.json"
+  cmp -s "$1/rendered.json" "$1/committed.json" \
     || { log "init renders $f differently from what Grafana is provisioned with; run 'just ci'"; return 1; }
   curl -fsS -o /dev/null "$GRAFANA/api/dashboards/uid/$2" || { log "Grafana does not serve dashboard $2"; return 1; }
 }

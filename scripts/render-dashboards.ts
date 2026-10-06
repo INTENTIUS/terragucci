@@ -29,10 +29,13 @@ const datasources = [
 ];
 
 // Where the stack serves the reports bucket to a browser on the host: floci's
-// published port (TERRAGUCCI_FLOCI_PORT's default), the bucket and the prefix
-// the drill-down smoke claim writes under. A repo sets these as reports.url and
-// reports.prefix in terragucci.yml; init renders the same links from them.
-const STACK_REPORTS = { url: "http://localhost:4580/terragucci-reports", prefix: "reports" };
+// published port, the bucket and the prefix the drill-down smoke claim writes
+// under. The port is TERRAGUCCI_FLOCI_PORT, which a file cannot hold, so the
+// links carry FLOCI_PORT_PLACEHOLDER and the stack's Grafana swaps it for the
+// port when it starts (stack/docker-compose.yml). A repo sets these as
+// reports.url and reports.prefix in terragucci.yml; init renders the same links from them.
+export const FLOCI_PORT_PLACEHOLDER = "TGPH0FLOCIPORT";
+const STACK_REPORTS = { url: `http://localhost:${FLOCI_PORT_PLACEHOLDER}/terragucci-reports`, prefix: "reports" };
 
 const TEMPLATE = "packages/terragucci/src/dashboards/rendered.json";
 const template = buildTemplate(renderDashboards, "Rendered by scripts/render-dashboards.ts from src/dashboards/index.ts. Do not edit; run 'just ci'.");

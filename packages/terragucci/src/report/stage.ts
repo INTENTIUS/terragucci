@@ -27,14 +27,14 @@ import { applyWaves } from "../apply";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
-import { ForgeError, type Fetch } from "../forge";
+import { findIssue, ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { describeTips, repoTips } from "../tips";
 import type { DecideOptions } from "../decide";
 import { attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf } from "../respond/drift";
-import { driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
+import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { checkPlan, describeVerdict, engineBinary, policyPathExists, trustedPolicy, type PolicyOptions, type TrustedOptions } from "./policy";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
@@ -942,6 +942,16 @@ async function finish(
     const target = targetFromEnv(options.forge, env, token);
     if (!target) {
       log("no forge token or no forge in the environment, so the drift issue is left alone");
+      // Its age can still be read: a public repo answers an issue search without a token.
+      const reader = token ? undefined : targetFromEnv(options.forge, env, undefined, true);
+      if (reader && drifted(report).roots > 0) {
+        try {
+          const open = await findIssue(options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), reader, DRIFT_MARKER);
+          if (open?.created) observer.drift = { since: open.created };
+        } catch (e) {
+          if (!(e instanceof ForgeError) && !(e instanceof TypeError)) throw e;
+        }
+      }
     } else {
       try {
         issue = await trackDrift(options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), target, report, issueOptions);

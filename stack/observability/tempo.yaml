@@ -10,9 +10,10 @@ distributor:
       protocols:
         grpc:
           endpoint: 0.0.0.0:4317
-ingester:
-  # Cut blocks quickly, so a smoke claim's trace is searchable soon after it ends.
-  max_block_duration: 1m
+live_store:
+  # Tempo 3's single binary holds recent traces in its live-store, which cuts a
+  # block after 30s by default, so a smoke claim's trace is searchable soon after it ends.
+  max_block_duration: 30s
 storage:
   trace:
     backend: local
