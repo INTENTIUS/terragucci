@@ -2,7 +2,6 @@
 title: Have an agent change a pull request
 description: Write /terragucci agent and an ask on a pull request, and a coding agent commits the change to its branch, on GitHub and Forgejo.
 claims: [comment-agent]
-draft: true
 ---
 
 ## What you end up with
