@@ -197,6 +197,7 @@ export function awsAuditLog(o: AwsAuditOptions = {}): AuditLog {
         "--lookup-attributes", `AttributeKey=ResourceName,AttributeValue=${q.ref}`,
         ...(o.region ? ["--region", o.region] : []),
       ]);
+      if ((p.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { status: "unavailable", reason: "the aws CLI is not installed" };
       if (p.error || p.status !== 0) return { status: "unavailable", reason: (p.error?.message ?? (p.stderr.trim() || `aws exited ${p.status}`)).split("\n")[0]! };
       let doc: { Events?: { CloudTrailEvent?: string; EventName?: string; EventTime?: string }[] };
       try {
