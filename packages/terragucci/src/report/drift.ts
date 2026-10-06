@@ -157,8 +157,10 @@ export async function trackDrift(fetch: Fetch, target: ForgeTarget, report: Repo
 }
 
 /** The forge a run is on, from the CI environment. */
-export function targetFromEnv(forge: ForgeName | undefined, env: NodeJS.ProcessEnv, token: string | undefined): ForgeTarget | undefined {
-  if (!token) return undefined;
+export function targetFromEnv(forge: ForgeName | undefined, env: NodeJS.ProcessEnv, token: string | undefined, readOnly = false): ForgeTarget | undefined {
+  // Without a token the target can only read, which a public repo answers.
+  if (!token && !readOnly) return undefined;
+  token ??= "";
   if (env.GITHUB_REPOSITORY && env.GITHUB_SERVER_URL) {
     return {
       forge: forge === "forgejo" ? "forgejo" : "github",

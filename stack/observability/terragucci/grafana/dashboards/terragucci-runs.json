@@ -10,7 +10,7 @@
     {
       "title": "Report index",
       "type": "link",
-      "url": "http://localhost:4580/terragucci-reports/reports/index.html",
+      "url": "http://localhost:TGPH0FLOCIPORT/terragucci-reports/reports/index.html",
       "icon": "doc",
       "tooltip": "",
       "tags": [],
@@ -308,7 +308,7 @@
                 "value": [
                   {
                     "title": "Report",
-                    "url": "http://localhost:4580/terragucci-reports/reports/traces/${__data.fields.traceID}.html",
+                    "url": "http://localhost:TGPH0FLOCIPORT/terragucci-reports/reports/traces/${__data.fields.traceID}.html",
                     "targetBlank": true
                   }
                 ]
@@ -321,7 +321,7 @@
         {
           "title": "Report index",
           "type": "link",
-          "url": "http://localhost:4580/terragucci-reports/reports/index.html",
+          "url": "http://localhost:TGPH0FLOCIPORT/terragucci-reports/reports/index.html",
           "icon": "external link",
           "tooltip": "",
           "tags": [],

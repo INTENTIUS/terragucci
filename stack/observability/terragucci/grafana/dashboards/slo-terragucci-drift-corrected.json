@@ -43,7 +43,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\"}",
+          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\", project=~\"$project\"}",
           "legendFormat": "SLI"
         }
       ],
@@ -141,7 +141,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:error_budget:remaining{slo=\"terragucci-drift-corrected\"}",
+          "expr": "slo:error_budget:remaining{slo=\"terragucci-drift-corrected\", project=~\"$project\"}",
           "legendFormat": "remaining"
         }
       ],
@@ -257,7 +257,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\"}",
+          "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\", project=~\"$project\"}",
           "legendFormat": "SLI"
         }
       ],
@@ -309,7 +309,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:error_budget:remaining{slo=\"terragucci-drift-corrected\"}",
+          "expr": "slo:error_budget:remaining{slo=\"terragucci-drift-corrected\", project=~\"$project\"}",
           "legendFormat": "remaining"
         }
       ],
@@ -375,7 +375,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:sli_error:ratio_rate1d{slo=\"terragucci-drift-corrected\"} / 0.1",
+          "expr": "slo:sli_error:ratio_rate1d{slo=\"terragucci-drift-corrected\", project=~\"$project\"} / 0.1",
           "legendFormat": "1d"
         },
         {
@@ -384,7 +384,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "slo:sli_error:ratio_rate2h{slo=\"terragucci-drift-corrected\"} / 0.1",
+          "expr": "slo:sli_error:ratio_rate2h{slo=\"terragucci-drift-corrected\", project=~\"$project\"} / 0.1",
           "legendFormat": "2h"
         }
       ],
@@ -438,7 +438,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "slo:sli_error:ratio_rate3d{slo=\"terragucci-drift-corrected\"} / 0.1",
+          "expr": "slo:sli_error:ratio_rate3d{slo=\"terragucci-drift-corrected\", project=~\"$project\"} / 0.1",
           "legendFormat": "3d"
         },
         {
@@ -447,7 +447,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-drift-corrected\"} / 0.1",
+          "expr": "slo:sli_error:ratio_rate6h{slo=\"terragucci-drift-corrected\", project=~\"$project\"} / 0.1",
           "legendFormat": "6h"
         }
       ],
@@ -487,7 +487,25 @@
     "slo"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "type": "query",
+        "name": "project",
+        "label": "Project",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\"}, project)",
+        "definition": "label_values(slo:sli_error:ratio_rate28d{slo=\"terragucci-drift-corrected\"}, project)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "options": []
+      }
+    ]
   },
   "time": {
     "from": "now-7d",

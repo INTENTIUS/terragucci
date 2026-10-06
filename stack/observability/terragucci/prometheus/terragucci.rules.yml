@@ -136,36 +136,36 @@ groups:
       - record: slo:sli_error:ratio_rate2h
         expr: |-
           1 - (
-            ((sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[2h:5m]))) or 0 * ((sum by (project) (count_over_time(terragucci_drift_roots[2h:5m]))) > 0))
+            ((sum by (project) (count_over_time((max by (project) (last_over_time(terragucci_drift_roots[2d])) == 0 or (time() - max by (project) (last_over_time(terragucci_drift_since_seconds[2d]))) <= 86400)[2h:5m]))) or 0 * ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[2h:5m]))) > 0))
             /
-            ((sum by (project) (count_over_time(terragucci_drift_roots[2h:5m]))) > 0)
+            ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[2h:5m]))) > 0)
           )
         labels:
           slo: terragucci-drift-corrected
       - record: slo:sli_error:ratio_rate6h
         expr: |-
           1 - (
-            ((sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[6h:5m]))) or 0 * ((sum by (project) (count_over_time(terragucci_drift_roots[6h:5m]))) > 0))
+            ((sum by (project) (count_over_time((max by (project) (last_over_time(terragucci_drift_roots[2d])) == 0 or (time() - max by (project) (last_over_time(terragucci_drift_since_seconds[2d]))) <= 86400)[6h:5m]))) or 0 * ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[6h:5m]))) > 0))
             /
-            ((sum by (project) (count_over_time(terragucci_drift_roots[6h:5m]))) > 0)
+            ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[6h:5m]))) > 0)
           )
         labels:
           slo: terragucci-drift-corrected
       - record: slo:sli_error:ratio_rate1d
         expr: |-
           1 - (
-            ((sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[1d:5m]))) or 0 * ((sum by (project) (count_over_time(terragucci_drift_roots[1d:5m]))) > 0))
+            ((sum by (project) (count_over_time((max by (project) (last_over_time(terragucci_drift_roots[2d])) == 0 or (time() - max by (project) (last_over_time(terragucci_drift_since_seconds[2d]))) <= 86400)[1d:5m]))) or 0 * ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[1d:5m]))) > 0))
             /
-            ((sum by (project) (count_over_time(terragucci_drift_roots[1d:5m]))) > 0)
+            ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[1d:5m]))) > 0)
           )
         labels:
           slo: terragucci-drift-corrected
       - record: slo:sli_error:ratio_rate3d
         expr: |-
           1 - (
-            ((sum by (project) (count_over_time((terragucci_drift_roots == 0 or (time() - terragucci_drift_since_seconds) <= 86400)[3d:5m]))) or 0 * ((sum by (project) (count_over_time(terragucci_drift_roots[3d:5m]))) > 0))
+            ((sum by (project) (count_over_time((max by (project) (last_over_time(terragucci_drift_roots[2d])) == 0 or (time() - max by (project) (last_over_time(terragucci_drift_since_seconds[2d]))) <= 86400)[3d:5m]))) or 0 * ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[3d:5m]))) > 0))
             /
-            ((sum by (project) (count_over_time(terragucci_drift_roots[3d:5m]))) > 0)
+            ((sum by (project) (count_over_time(max by (project) (last_over_time(terragucci_drift_roots[2d]))[3d:5m]))) > 0)
           )
         labels:
           slo: terragucci-drift-corrected

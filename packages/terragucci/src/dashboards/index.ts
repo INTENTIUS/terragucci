@@ -33,7 +33,7 @@ import { buildGrafana } from "@intentius/chant-lexicon-grafana/build";
 import { selector, type Matcher } from "@intentius/chant-lexicon-grafana/composites/shared";
 import { SloDashboard } from "@intentius/chant-lexicon-grafana/composites/slo-dashboard";
 import { SloAlertRules } from "@intentius/chant-lexicon-grafana/composites/slo-alert-rules";
-import { Slo, type SloInstance } from "@intentius/chant-lexicon-prometheus/composites/slo";
+import { Slo, sloMetrics, type SloInstance } from "@intentius/chant-lexicon-prometheus/composites/slo";
 import { RuleGroup, type RuleGroupEntity } from "@intentius/chant-lexicon-prometheus/rules";
 import { buildRuleFile, emitYaml } from "@intentius/chant-lexicon-prometheus/build";
 import { durationMs } from "@intentius/chant-lexicon-prometheus/duration";
@@ -204,7 +204,7 @@ function pipelineHealth(s: Required<DashboardSettings>): DashboardEntity {
       title: "Results",
       panels: [table("Runs by result", "Stage runs over the dashboard's range, by stage and how they ended.", ds, countedOver(calls, "$__range", [STAGE_L, RESULT_L]), 24)],
     }),
-  ], [projectVar(ds, CALLS, PROJECT_L), stage]);
+  ], [projectVar(ds, CALLS, PROJECT_L), stage], "now-24h");
 }
 
 /** Roots and groups per pull request, and what the plans propose over time. */
@@ -380,10 +380,13 @@ const counted = (sel: string): string => countedOver(sel, "{{window}}", [PROJECT
 const someEvents = (sel: string): string => `${counted(sel)} > 0`;
 
 /** The three SLOs: plans finish within ten minutes, applies succeed, drift is corrected within a day. */
-export function slos(): Record<keyof typeof SLO_NAMES, SloInstance> {
+export function slos(s: Required<DashboardSettings>): Record<keyof typeof SLO_NAMES, SloInstance> {
   const plan = [[STAGE_L, "=", "tf-plan"]] as Matcher[];
   const apply = [[STAGE_L, "=", "tf-apply"]] as Matcher[];
   const applied = selector(CALLS, [...apply, [RESULT_L, "=~", "applied|failed"]]);
+  // The collector drops a gauge five minutes after it last changed, so each drift run's gauges hold until the next run, or until the runs have stopped for longer than `schedule`.
+  const roots = `max by (project) (last_over_time(${METRIC.driftRoots}[${s.schedule}]))`;
+  const since = `max by (project) (last_over_time(${METRIC.driftSince}[${s.schedule}]))`;
   return {
     plans: Slo({
       name: SLO_NAMES.plans,
@@ -414,8 +417,8 @@ export function slos(): Record<keyof typeof SLO_NAMES, SloInstance> {
       // A 10% budget cannot burn at a paging rate; slow burns open a ticket.
       alerting: { page: false },
       sli: {
-        good: `sum by (project) (count_over_time((${METRIC.driftRoots} == 0 or (time() - ${METRIC.driftSince}) <= 86400)[{{window}}:5m]))`,
-        total: `sum by (project) (count_over_time(${METRIC.driftRoots}[{{window}}:5m]))`,
+        good: `sum by (project) (count_over_time((${roots} == 0 or (time() - ${since}) <= 86400)[{{window}}:5m]))`,
+        total: `sum by (project) (count_over_time(${roots}[{{window}}:5m]))`,
       },
     }),
   };
@@ -461,11 +464,45 @@ export function pipelineAlerts(s: Required<DashboardSettings>): RuleGroupEntity 
   });
 }
 
+/**
+ * An SLO's dashboard, filtered by project. The SLO's recorded series carry the
+ * project label of its SLI (`terragucci_project` or `project`), so the
+ * dashboard's own queries take its selector, except the objective, which is one
+ * series for every project.
+ */
+function sloDashboard(slo: SloInstance, ds: ReturnType<typeof prom>): DashboardEntity {
+  const m = sloMetrics(slo);
+  const label = m.name === SLO_NAMES.drift ? "project" : PROJECT_L;
+  const dash = SloDashboard({ slo, datasource: ds, tags: [DASHBOARD_TAG, "slo"] }).dashboard;
+  const filtered = m.selector.replace("}", `, ${label}=~"$project"}`);
+  const scoped = (expr: string): string =>
+    expr.startsWith(m.objectiveRatio) || expr.startsWith("sum(ALERTS") ? expr : expr.split(m.selector).join(filtered);
+  const visit = (item: unknown): void => {
+    const props = (item as { props?: Record<string, unknown> }).props;
+    if (!props) return;
+    for (const child of [...((props.panels as unknown[]) ?? []), ...((props.targets as unknown[]) ?? [])]) visit(child);
+    if (typeof props.expr === "string") props.expr = scoped(props.expr);
+  };
+  for (const row of dash.props.panels ?? []) visit(row);
+  const variable = new QueryVariable({
+    name: "project",
+    label: "Project",
+    datasource: ds,
+    query: `label_values(${m.windowErrorRatio}${m.selector}, ${label})`,
+    multi: true,
+    includeAll: true,
+    allValue: ".+",
+    refresh: "onTimeRangeChange",
+    sort: 1,
+  });
+  return new Dashboard({ ...dash.props, variables: [variable] });
+}
+
 /** Every entity the dashboards and rules are built from. */
 export function dashboardEntities(settings: Required<DashboardSettings>, links: DashboardLinks = {}): { grafana: Declarable[]; prometheus: Declarable[] } {
   const s = settings;
   const ds = prom(s.prometheus);
-  const sl = slos();
+  const sl = slos(s);
   const grafana: Declarable[] = [
     new DashboardProvider({ name: "terragucci", folder: s.folder, path: s.path, foldersFromFilesStructure: false }),
     pipelineHealth(s),
@@ -476,7 +513,7 @@ export function dashboardEntities(settings: Required<DashboardSettings>, links: 
     runs(s, links),
   ];
   for (const slo of Object.values(sl)) {
-    grafana.push(SloDashboard({ slo, datasource: ds, tags: [DASHBOARD_TAG, "slo"] }).dashboard);
+    grafana.push(sloDashboard(slo, ds));
     grafana.push(SloAlertRules({ slo, datasource: ds, folder: s.folder, group: `${slo.rules.groupName}-grafana` }).rules);
   }
   return { grafana, prometheus: [...Object.values(sl).map((x) => x.rules), pipelineAlerts(s)] };
