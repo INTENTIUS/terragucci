@@ -48,6 +48,22 @@ export interface PolicySettings {
   input?: PolicyInput;
 }
 
+/**
+ * The jobs' cloud identities over the forge's OIDC token. `plan_role` and
+ * `apply_role` are AWS roles; `gcp` and `azure` set those clouds, beside AWS
+ * or instead of it.
+ */
+export interface OidcSettings {
+  plan_role?: string;
+  apply_role?: string;
+  /** The AWS token's audience. Default `sts.amazonaws.com`. */
+  audience?: string;
+  /** GCP Workload Identity Federation: the provider's resource name and a service account per stage. */
+  gcp?: { workload_identity_provider: string; plan_service_account: string; apply_service_account: string };
+  /** An Entra app registration or managed identity per stage, with a federated credential for the forge. */
+  azure?: { tenant_id: string; subscription_id: string; plan_client_id: string; apply_client_id: string };
+}
+
 /** A plan role and an apply role, for the units under one path. */
 export interface RolePair {
   plan: string;
@@ -181,11 +197,11 @@ export interface ProjectSettings {
   tips?: boolean;
   modules?: { path?: string; publish?: string | string[] };
   /**
-   * Cloud roles the pipeline assumes over OIDC, so no long-lived keys sit in CI.
-   * Plan runs pull-request code and gets the read-only role; apply gets the
-   * write role. The two must differ.
+   * Cloud identities the pipeline takes over OIDC, so no long-lived keys sit in CI.
+   * Plan runs pull-request code and gets the read-only identity; apply gets the
+   * write one. The two must differ, on every cloud set.
    */
-  oidc?: { plan_role: string; apply_role: string; audience?: string };
+  oidc?: OidcSettings;
   /** Whether removing the project from a control repo removes its generated files. */
   owned?: boolean;
   /** How many roots of one dependency layer plan at once. Default: from the state backend. */
@@ -343,22 +359,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       problems.push(`${where}.reports.url must be the http(s) address that serves the bucket, such as https://reports.example.com`);
     }
   }
-  if (s.oidc !== undefined) {
-    const o = s.oidc;
-    if (!isObject(o)) problems.push(`${where}.oidc must be a map with plan_role and apply_role`);
-    else {
-      for (const k of Object.keys(o)) {
-        if (!["plan_role", "apply_role", "audience"].includes(k)) problems.push(`${where}.oidc.${k} is not a setting (settings: plan_role, apply_role, audience)`);
-      }
-      for (const k of ["plan_role", "apply_role"] as const) {
-        if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.oidc.${k} must name a role, one for plan and one for apply`);
-      }
-      if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.oidc.audience must be a string`);
-      if (typeof o.plan_role === "string" && o.plan_role === o.apply_role) {
-        problems.push(`${where}.oidc.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
-      }
-    }
-  }
+  if (s.oidc !== undefined) checkOidc(s.oidc, `${where}.oidc`, problems);
   if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
@@ -522,6 +523,52 @@ function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
  * An `agent` response needs somewhere to run, and the agent never holds the
  * apply role: at most a forge token and read-only cloud credentials.
  */
+/** The GCP Workload Identity Federation provider's resource name. */
+const WIF_PROVIDER = /^projects\/[0-9]+\/locations\/global\/workloadIdentityPools\/[^/\s]+\/providers\/[^/\s]+$/;
+
+function checkOidc(o: unknown, where: string, problems: string[]): void {
+  if (!isObject(o)) {
+    problems.push(`${where} must be a map with plan_role and apply_role (AWS), gcp, azure, or several`);
+    return;
+  }
+  for (const k of Object.keys(o)) {
+    if (!["plan_role", "apply_role", "audience", "gcp", "azure"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: plan_role, apply_role, audience, gcp, azure)`);
+  }
+  const aws = o.plan_role !== undefined || o.apply_role !== undefined || o.audience !== undefined;
+  if (!aws && o.gcp === undefined && o.azure === undefined) problems.push(`${where} must set plan_role and apply_role (AWS), gcp, azure, or several`);
+  if (aws) {
+    for (const k of ["plan_role", "apply_role"] as const) {
+      if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.${k} must name a role, one for plan and one for apply`);
+    }
+    if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.audience must be a string`);
+    if (typeof o.plan_role === "string" && o.plan_role === o.apply_role) {
+      problems.push(`${where}.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
+    }
+  }
+  const pair = (cloud: string, c: unknown, keys: string[], stages: [string, string], what: string): Record<string, unknown> | undefined => {
+    if (!isObject(c)) {
+      problems.push(`${where}.${cloud} must be a map with ${keys.join(", ")}`);
+      return undefined;
+    }
+    for (const k of Object.keys(c)) if (!keys.includes(k)) problems.push(`${where}.${cloud}.${k} is not a setting (settings: ${keys.join(", ")})`);
+    for (const k of keys) if (typeof c[k] !== "string" || c[k] === "") problems.push(`${where}.${cloud}.${k} must be set`);
+    if (typeof c[stages[0]] === "string" && c[stages[0]] !== "" && c[stages[0]] === c[stages[1]]) {
+      problems.push(`${where}.${cloud}.${stages[0]} and ${stages[1]} are the same ${what}; plan runs pull-request code, so give it a read-only ${what} of its own`);
+    }
+    return c;
+  };
+  if (o.gcp !== undefined) {
+    const g = pair("gcp", o.gcp, ["workload_identity_provider", "plan_service_account", "apply_service_account"], ["plan_service_account", "apply_service_account"], "service account");
+    if (g && typeof g.workload_identity_provider === "string" && g.workload_identity_provider !== "" && !WIF_PROVIDER.test(g.workload_identity_provider)) {
+      problems.push(`${where}.gcp.workload_identity_provider must be the provider's resource name, projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`);
+    }
+    for (const k of ["plan_service_account", "apply_service_account"]) {
+      if (g && typeof g[k] === "string" && g[k] !== "" && !/^[^@\s]+@[^@\s]+$/.test(g[k] as string)) problems.push(`${where}.gcp.${k} must be a service account's email`);
+    }
+  }
+  if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client");
+}
+
 function checkAgent(s: Record<string, unknown>, where: string, problems: string[]): void {
   const respond = isObject(s.respond) ? s.respond : {};
   const agent = isObject(s.agent) ? s.agent : undefined;

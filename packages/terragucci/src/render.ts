@@ -43,7 +43,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { responseTo, type Binary, type ForgeName, type Gate, type RespondEvent, type RolePair } from "./config";
+import { responseTo, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { applyWaves } from "./apply";
 import { CHECK_DIR } from "./check";
@@ -79,8 +79,8 @@ export interface PipelineInput {
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   env: Record<string, string>;
-  /** Cloud roles the jobs assume over OIDC: plan reads, apply writes. */
-  oidc?: { plan_role: string; apply_role: string; audience?: string };
+  /** Cloud identities the jobs take over OIDC (AWS roles, GCP service accounts, Azure clients): plan reads, apply writes. */
+  oidc?: OidcSettings;
   /** The environment variable holding the forge token, where the forge's own job token cannot post statuses (GitLab). */
   tokenEnv?: string;
   /** The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, mapped into the environment of the plan, apply and drift jobs. */
@@ -286,18 +286,20 @@ const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
 };
 
 /**
- * Write the job's OIDC token to `$AWS_WEB_IDENTITY_TOKEN_FILE`, or stop the job:
- * the scripts run without `set -e`, and a job that went on would plan or apply
- * with whatever credentials the runner happens to hold.
+ * Write the job's OIDC token for one audience to `file` (by default
+ * `$AWS_WEB_IDENTITY_TOKEN_FILE`), or stop the job: the scripts run without
+ * `set -e`, and a job that went on would plan or apply with whatever
+ * credentials the runner happens to hold. On GitLab the token is the job's
+ * `id_tokens` entry `gitlabVar`, one per audience.
  */
-export function tokenScript(forge: ForgeName, audience = AUDIENCE): string {
-  if (forge === "gitlab") return 'printf \'%s\' "$TERRAGUCCI_OIDC" >"$AWS_WEB_IDENTITY_TOKEN_FILE"';
+export function tokenScript(forge: ForgeName, audience = AUDIENCE, file = "$AWS_WEB_IDENTITY_TOKEN_FILE", gitlabVar = "TERRAGUCCI_OIDC"): string {
+  if (forge === "gitlab") return `printf '%s' "$${gitlabVar}" >"${file}"`;
   return [
     'if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then',
     `  echo ${sh(`terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); ${NO_TOKEN[forge]}`)} >&2`,
     "  exit 1",
     "fi",
-    `tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" ${sh(audience)} || exit 1`,
+    `tg oidc "${file}" ${sh(audience)} || exit 1`,
   ].join("\n");
 }
 
@@ -308,6 +310,61 @@ export function oidcScript(forge: ForgeName, role: string, session: string, audi
     'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"',
     token,
   ].join("\n");
+}
+
+/** The audience GCP's Workload Identity Federation accepts by default: the provider's full name. */
+export const gcpAudience = (provider: string): string => `https://iam.googleapis.com/${provider}`;
+
+/** The audience Entra ID accepts on a federated credential. */
+export const AZURE_AUDIENCE = "api://AzureADTokenExchange";
+
+/** GitLab's `id_tokens` entries for GCP's and Azure's tokens. AWS's (and Terragrunt's) is TERRAGUCCI_OIDC. */
+const GITLAB_GCP_TOKEN = "TERRAGUCCI_OIDC_GCP";
+const GITLAB_AZURE_TOKEN = "TERRAGUCCI_OIDC_AZURE";
+
+/**
+ * GCP: the job's token for the Workload Identity Federation provider, and an
+ * `external_account` credential file that trades it at Google's STS and
+ * impersonates the stage's service account. The google provider, the gcs
+ * backend and the gcloud tools read it through GOOGLE_APPLICATION_CREDENTIALS.
+ */
+export function gcpScript(forge: ForgeName, provider: string, serviceAccount: string): string {
+  const json = (v: string): string => sh(JSON.stringify(v));
+  return [
+    'export TERRAGUCCI_GCP_TOKEN_FILE="$(mktemp)" GOOGLE_APPLICATION_CREDENTIALS="$(mktemp)"',
+    tokenScript(forge, gcpAudience(provider), "$TERRAGUCCI_GCP_TOKEN_FILE", GITLAB_GCP_TOKEN),
+    "printf '" +
+      '{"type":"external_account","audience":%s,"subject_token_type":"urn:ietf:params:oauth:token-type:jwt","token_url":"https://sts.googleapis.com/v1/token",' +
+      '"service_account_impersonation_url":%s,"credential_source":{"file":"%s"}}\\n' +
+      `' ${json(`//iam.googleapis.com/${provider}`)} ${json(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`)} "$TERRAGUCCI_GCP_TOKEN_FILE" >"$GOOGLE_APPLICATION_CREDENTIALS"`,
+  ].join("\n");
+}
+
+/** Azure: the job's token for Entra ID in a file, and the ARM_* variables the azurerm provider and backend read for OIDC. */
+export function azureScript(forge: ForgeName, azure: NonNullable<OidcSettings["azure"]>, clientId: string): string {
+  return [
+    `export ARM_USE_OIDC=true ARM_CLIENT_ID=${sh(clientId)} ARM_TENANT_ID=${sh(azure.tenant_id)} ARM_SUBSCRIPTION_ID=${sh(azure.subscription_id)}`,
+    'export ARM_OIDC_TOKEN_FILE_PATH="$(mktemp)"',
+    tokenScript(forge, AZURE_AUDIENCE, "$ARM_OIDC_TOKEN_FILE_PATH", GITLAB_AZURE_TOKEN),
+  ].join("\n");
+}
+
+/** Whether `oidc` names AWS roles. */
+const hasAws = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.plan_role && oidc.apply_role);
+
+/**
+ * Shell for a stage's cloud identities: the AWS role, the GCP service
+ * account and the Azure client `oidc` names for it, each with the forge's
+ * token for that cloud's audience. Drift takes the plan identities.
+ */
+export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, stage: "plan" | "apply", session: string): string[] {
+  if (!oidc) return [];
+  const plan = stage === "plan";
+  return [
+    ...(hasAws(oidc) ? [oidcScript(forge, (plan ? oidc.plan_role : oidc.apply_role) as string, session, oidc.audience)] : []),
+    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account)] : []),
+    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id)] : []),
+  ];
 }
 
 /** Roots that changed in the push, or all of them when the push cannot be diffed. */
@@ -407,7 +464,7 @@ export function applyScript(
   return [
     "set -uo pipefail",
     forgeApi(forge),
-    ...(oidc ? [oidcScript(forge, oidc.apply_role, "terragucci-apply", oidc.audience)] : []),
+    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
       : []),
@@ -432,10 +489,10 @@ export function applyScript(
   ].join("\n");
 }
 
-/** Shell for a Terragrunt job's credentials: the auth provider, and the OIDC token when `oidc` did not fetch it. */
+/** Shell for a Terragrunt job's credentials: the auth provider, and the AWS OIDC token when `oidc` did not fetch it. */
 function terragruntCredentials(forge: ForgeName, phase: "plan" | "apply", oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>): string[] {
   if (!credentials || Object.keys(credentials).length === 0) return [];
-  return [credentialsScript(credentials, phase, oidc ? undefined : tokenScript(forge, AUDIENCE))];
+  return [credentialsScript(credentials, phase, hasAws(oidc) ? undefined : tokenScript(forge, AUDIENCE))];
 }
 
 /** A Terragrunt repo's apply: the stale notes, the lock and status as for roots, then one `run --all` per wave. */
@@ -449,7 +506,7 @@ export function terragruntApplyScript(
   return [
     "set -uo pipefail",
     forgeApi(forge),
-    ...(oidc ? [oidcScript(forge, oidc.apply_role, "terragucci-apply", oidc.audience)] : []),
+    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...terragruntCredentials(forge, "apply", oidc, credentials),
     movedRoots(waves.flat().sort()),
     '# The base branch moved under these units: plan notes that cover them are stale.',
@@ -525,7 +582,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     "set -uo pipefail",
     forgeApi(forge),
     ...(replan ? [replanPrelude(layers, forge)] : []),
-    ...(oidc ? [oidcScript(forge, oidc.plan_role, "terragucci-plan", oidc.audience)] : []),
+    ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     // A re-plan of one named root may find the change does not reach it, and then leaves the status as it was.
     replan ? '[ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending "planning"' : 'tg status terragucci/plan pending "planning"',
@@ -624,7 +681,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
   return [
     "set -uo pipefail",
     // The stage keeps the issue itself; the forge calls here are only for the OIDC token.
-    ...(oidc ? [forgeApi(forge), oidcScript(forge, oidc.plan_role, "terragucci-drift", oidc.audience)] : []),
+    ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
     // The drift pull request: a person reviews and merges it, or closes it.
@@ -714,7 +771,16 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_SHA: "$CI_COMMIT_SHA",
       TG_BRANCH: "$CI_DEFAULT_BRANCH",
     };
-    const idTokens = needsToken ? { id_tokens: { TERRAGUCCI_OIDC: { aud: audience } } } : {};
+    // One id_token per audience: AWS's (which the Terragrunt auth provider uses too), GCP's provider, Entra ID.
+    const idTokens = needsToken
+      ? {
+          id_tokens: {
+            ...(hasAws(oidc) || credentials ? { TERRAGUCCI_OIDC: { aud: audience } } : {}),
+            ...(oidc?.gcp ? { [GITLAB_GCP_TOKEN]: { aud: gcpAudience(oidc.gcp.workload_identity_provider) } } : {}),
+            ...(oidc?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: AZURE_AUDIENCE } } : {}),
+          },
+        }
+      : {};
     const notScheduled = drift ? { rules: [new Rule({ if: '$CI_PIPELINE_SOURCE != "schedule"' })] } : {};
     const check = new GitLabJob({
       stage: "check",

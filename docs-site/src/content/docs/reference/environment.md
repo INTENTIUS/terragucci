@@ -53,11 +53,15 @@ oidc:
 |---|---|
 | `plan_role` | the read-only role the plan job assumes |
 | `apply_role` | the write role, assumed only by the apply job on the default branch |
-| `audience` | the token's audience; `sts.amazonaws.com` when omitted |
+| `audience` | the AWS token's audience; `sts.amazonaws.com` when omitted |
+| `gcp.workload_identity_provider` | the GCP workload identity pool provider's resource name, `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
+| `gcp.plan_service_account`, `gcp.apply_service_account` | the service accounts the plan and apply jobs impersonate |
+| `azure.tenant_id`, `azure.subscription_id` | the Entra ID tenant and the subscription the jobs work in |
+| `azure.plan_client_id`, `azure.apply_client_id` | the client IDs of the app registrations or managed identities the plan and apply jobs sign in as |
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
-GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs set `enable-openid-connect: true` and ask the runner's token endpoint; Forgejo serves it from version 15, with Forgejo Runner 12.5 or later. The job writes the token to the file `AWS_WEB_IDENTITY_TOKEN_FILE` names and sets `AWS_ROLE_ARN`, so the AWS SDKs in the binary and its providers pick the role up. Your role's trust policy must accept the forge's issuer and your repo.
+GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs set `enable-openid-connect: true` and ask the runner's token endpoint; Forgejo serves it from version 15, with Forgejo Runner 12.5 or later. The job writes the token to the file `AWS_WEB_IDENTITY_TOKEN_FILE` names and sets `AWS_ROLE_ARN`, so the AWS SDKs in the binary and its providers pick the role up. Your role's trust policy must accept the forge's issuer and your repo. [Credentials](/terragucci/reference/pipeline/#credentials) has the variables GCP and Azure get, and their setup.
 
 | Forge | Issuer | Subject |
 |---|---|---|

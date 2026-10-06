@@ -21,17 +21,47 @@ When the default branch changes a root that a pull request's plan note covers, t
 
 ## Credentials
 
-Set `oidc` in your config and jobs trade the forge's identity token for cloud roles. CI holds no long-lived keys.
+Set `oidc` in your config and jobs trade the forge's identity token for cloud credentials. CI holds no long-lived keys. Each cloud takes one identity for plan and one for apply, and a repo can set more than one cloud:
 
 ```yaml
 oidc:
+  # AWS: an IAM role per stage
   plan_role: arn:aws:iam::111122223333:role/terragucci-plan
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+  # GCP: Workload Identity Federation, impersonating a service account per stage
+  gcp:
+    workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
+    plan_service_account: terragucci-plan@shop.iam.gserviceaccount.com
+    apply_service_account: terragucci-apply@shop.iam.gserviceaccount.com
+  # Azure: an app registration or user-assigned managed identity per stage
+  azure:
+    tenant_id: 00000000-0000-0000-0000-000000000001
+    subscription_id: 00000000-0000-0000-0000-000000000002
+    plan_client_id: 00000000-0000-0000-0000-000000000003
+    apply_client_id: 00000000-0000-0000-0000-000000000004
 ```
 
-Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Apply gets the write role and runs only on the default branch. Forks get no plan job, so nothing reaches their pull requests.
+Plan runs the pull request's code, so it gets the read-only identity on every cloud. The config rejects the same identity for both stages. Apply gets the write identity and runs only on the default branch. Forks get no plan job, so nothing reaches their pull requests. The drift job takes the plan identities.
 
-GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs set `enable-openid-connect: true` and ask the runner's token endpoint, which needs Forgejo 15 or later and Forgejo Runner 12.5 or later. On an older Forgejo the token request fails and the job stops, so leave `oidc` unset there and give the runner static credentials instead.
+The job asks the forge for one token per cloud, with the audience that cloud expects:
+
+| Cloud | Token audience | What the job sets for the provider |
+|---|---|---|
+| AWS | `sts.amazonaws.com`, or `oidc.audience` | `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` |
+| GCP | `https://iam.googleapis.com/` followed by `workload_identity_provider` | `GOOGLE_APPLICATION_CREDENTIALS`, an `external_account` file that reads the token from `credential_source.file` and impersonates the stage's service account |
+| Azure | `api://AzureADTokenExchange` | `ARM_USE_OIDC=true` with `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` and `ARM_OIDC_TOKEN_FILE_PATH` |
+
+The state backend of each cloud reads the same settings as its provider.
+
+GitHub jobs get the token through `id-token: write`, and GitLab jobs through one `id_tokens` entry per cloud. Forgejo jobs set `enable-openid-connect: true` and ask the runner's token endpoint, which needs Forgejo 15 or later and Forgejo Runner 12.5 or later. On an older Forgejo the token request fails and the job stops, so leave `oidc` unset there and give the runner static credentials instead.
+
+Each identity trusts the forge's issuer and checks the token's `sub` claim. [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) lists the issuer and subjects of each forge.
+
+| Cloud | Setup |
+|---|---|
+| AWS | An IAM OIDC identity provider for the issuer. Each role's trust policy allows `sts:AssumeRoleWithWebIdentity` with conditions on `aud` and `sub`: the pull-request subject for the plan role, the default branch's subject for the apply role |
+| GCP | A workload identity pool with an OIDC provider for the issuer that maps `google.subject=assertion.sub` and admits only your repo in its attribute condition. Grant `roles/iam.workloadIdentityUser` on the plan service account to `principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/subject/<pull-request subject>`, and on the apply service account to the principal of the default branch's subject |
+| Azure | A federated identity credential on each app registration or managed identity, for the issuer with audience `api://AzureADTokenExchange` and the exact subject: the pull-request subject for the plan client, the default branch's for the apply client |
 
 ### Terragrunt
 
@@ -45,6 +75,9 @@ terragrunt:
 ```
 
 The pipeline runs Terragrunt with an auth provider command that terragucci writes. For each unit, it hands Terragrunt the role of the first glob the unit's path matches, with the job's identity token. A unit that sets its own `iam_role` keeps it, and Terragrunt assumes that role with the same token. terragucci never sets `TG_IAM_ASSUME_ROLE`, so no single role overrides every unit.
+
+The globs name AWS roles, since Terragrunt's auth provider command can hand a unit only an AWS role. With `oidc.gcp` or `oidc.azure` set, every unit in a job runs as that stage's identity on the cloud. A GCP unit that needs another service account sets `impersonate_service_account` in its `google` provider, and the job's service account needs `roles/iam.serviceAccountTokenCreator` on it. An Azure unit sets `client_id` in its `azurerm` provider to another client whose federated credential trusts the same subject.
+
 
 ## Terragrunt jobs
 
