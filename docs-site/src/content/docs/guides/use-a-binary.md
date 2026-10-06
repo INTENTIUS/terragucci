@@ -67,7 +67,7 @@ Every job now runs in the CI image for that binary, pinned by digest. Commit the
 
 [choudoufu](https://github.com/INTENTIUS/choudoufu) is a fork of OpenTofu. It keeps no state file. Each resource it manages carries tags that name its owner, and a plan reads the live resources by those tags.
 
-Its jobs run in the `terragucci-choudoufu` CI image, which carries a choudoufu release (0.21.0) and the terragucci engine. To run another release, set `version` to it, and each job installs that release from choudoufu's GitHub releases, checked against their SHA256SUMS. A root's `required_version` names the OpenTofu language version choudoufu is forked from, so terragucci does not read it as a choudoufu release.
+Its jobs run in the `terragucci-choudoufu` CI image, which carries a choudoufu release (0.22.0) and the terragucci engine. To run another release, set `version` to it, and each job installs that release from choudoufu's GitHub releases, checked against their SHA256SUMS. A root's `required_version` names the OpenTofu language version choudoufu is forked from, so terragucci does not read it as a choudoufu release.
 
 You need none of this to use terragucci with Terraform or OpenTofu. The choudoufu stages are separate workflows that appear only when the binary is `choudoufu`.
 
