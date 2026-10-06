@@ -9,12 +9,12 @@
     },
     {
       "cmd": "just example change module-bump",
-      "output": "[example] pushed change/module-bump at 1b0c6648\n[example] run 13 for 1b0c6648: success (http://localhost:3300/terragucci-admin/example/actions/runs/13)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/13 (success)",
+      "output": "[example] pushed change/module-bump at 7fe5b662\n[example] run 12 for 7fe5b662 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/12/jobs/1/attempt/1)\n[example] run 13 for 7fe5b662 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/13/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/12/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/13/jobs/0/attempt/1 (success)",
       "exit": 0
     },
     {
       "cmd": "just example merge module-bump",
-      "output": "[example] merged change/module-bump into main\n\n  Merged    pull request 5 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/14 (failure)\n  wave 4 changed after it was approved, so nothing in it was applied. approved: jcs1-sha256:2e7a63f3f8af41bdf101ad8f6758bab88a6307d9b0bbce452a455ec024c37996; planned now: jcs1-sha256:707339809ec53a67c42f4f1668a345e618adf3c87d3e3f73f8409ba2ddae52d5. Read the new plan, then approve it: chant approve tf-apply wave-4 --plan jcs1-sha256:707339809ec53a67c42f4f1668a345e618adf3c87d3e3f73f8409ba2ddae52d5\n  wave 4 of 4: approved by terragucci-admin, but these roots planned differently since: envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search",
+      "output": "[example] merged change/module-bump into main\n\n  Merged    pull request 5 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/14/jobs/0/attempt/1 (failure)\n  wave 4 changed after it was approved, so nothing in it was applied. approved: jcs1-sha256:2e7a63f3f8af41bdf101ad8f6758bab88a6307d9b0bbce452a455ec024c37996; planned now: jcs1-sha256:707339809ec53a67c42f4f1668a345e618adf3c87d3e3f73f8409ba2ddae52d5. Read the new plan, then approve it: chant approve tf-apply wave-4 --plan jcs1-sha256:707339809ec53a67c42f4f1668a345e618adf3c87d3e3f73f8409ba2ddae52d5\n  wave 4 of 4: approved by terragucci-admin, but these roots planned differently since: envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search",
       "exit": 0
     }
   ],
