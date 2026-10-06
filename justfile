@@ -18,6 +18,8 @@ lint:
     npx chant lint capture
     npx chant lint nightly
     npx chant lint observability
+    bash -n stack/smoke.sh
+    node scripts/check-smoke.mjs
 
 [doc("Run the unit tests.")]
 test:
