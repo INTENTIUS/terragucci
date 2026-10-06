@@ -99,6 +99,8 @@ export interface PipelineInput {
   gate?: Gate;
   /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
   respond?: Partial<Record<RespondEvent, string>>;
+  /** `policy:` is set; the check job then runs the policy's tests, which read the policy from the default branch, so it clones with full history. */
+  policy?: boolean;
 }
 
 export interface RenderedPipeline {
@@ -681,8 +683,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const check = new GitLabJob({
       stage: "check",
       image: jobImage,
-      // The policy tests read the policy from the default branch, so the job has its history.
-      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, GIT_DEPTH: "0", ...(fmtOn ? { TG_TOKEN: gitlabEnv.TG_TOKEN } : {}) },
+      // The policy tests read the policy from the default branch, so with `policy:` the job has its history.
+      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy ? { GIT_DEPTH: "0" } : {}), ...(fmtOn ? { TG_TOKEN: gitlabEnv.TG_TOKEN } : {}) },
       ...notScheduled,
       script: script(checkBody),
       // The check report (validate's diagnostics, live-check's refusals, the policy tests) stays with the job.
@@ -810,8 +812,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(fmtOn ? { permissions: { contents: "write" } } : {}),
     env: { TG_BRANCH: "${{ github.event.repository.default_branch }}", ...(fmtOn ? { TG_TOKEN: "${{ github.token }}" } : {}) },
     steps: [
-      // The policy tests read the policy from the default branch, so the checkout has the history.
-      ...steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody }), false, true),
+      // The policy tests read the policy from the default branch, so with `policy:` the checkout has the history.
+      ...steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody }), false, Boolean(input.policy)),
       // The check report stays with the run, beside the job summary.
       new Step({
         name: "Keep the check report",

@@ -177,6 +177,10 @@ export function buildReport(input: BuildInput): Report {
   if (summary.unit === "member") for (const g of summary.groups) for (const u of g.units) memberGroup.set(u, g.id);
   const outliers = new Set(summary.groups.filter((g) => g.outlier).flatMap((g) => g.units));
 
+  // A root the policy refused keeps its changes in the report, but they cannot apply, so the totals leave them out.
+  const totals = { ...doc.summary.actions };
+  for (const e of doc.entries) if (policyRefused(byPath.get(e.member)!) && totals[e.action] > 0) totals[e.action]--;
+
   const named: ReportNamed[] = [];
   const roots: ReportRoot[] = doc.members.map((m) => {
     const src = byPath.get(m.member)!;
@@ -278,7 +282,7 @@ export function buildReport(input: BuildInput): Report {
     change_set: doc.digest,
     unit: summary.unit,
     units: summary.units,
-    totals: doc.summary.actions,
+    totals,
     groups,
     roots,
     waves,

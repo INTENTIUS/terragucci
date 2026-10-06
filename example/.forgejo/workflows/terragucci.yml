@@ -36,8 +36,6 @@ jobs:
       TG_TOKEN: '${{ github.token }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Format check and validate, every root
         run: |
           set -eu

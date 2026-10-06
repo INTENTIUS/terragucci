@@ -236,6 +236,9 @@ export interface AttributeOptions {
   options?: DecideOptions;
 }
 
+/** Where `tf-drift` leaves its attributions, in the report directory, for `respond drift` to read. */
+export const ATTRIBUTIONS_FILE = "attributions.json";
+
 export interface Attributed {
   attributions: Attribution[];
   /** Notes for the report: an unreadable log, a decision that was not used. */
