@@ -24,6 +24,7 @@ import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
+import { agentCommentInput } from "./agent-comment";
 import { MARKER, RenderError, renderPipeline, type PipelineInput } from "./render";
 import { terragruntInstalls } from "./render-terragrunt";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
@@ -208,6 +209,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(!tgInput ? { gate: settings.gate } : {}),
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
+    ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
