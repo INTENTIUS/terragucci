@@ -104,7 +104,10 @@ function pullRequestText(env: NodeJS.ProcessEnv): { title: string; description: 
   const file = env.GITHUB_EVENT_PATH;
   if (!file || !existsSync(file)) return undefined;
   try {
-    const pr = (JSON.parse(readFileSync(file, "utf-8")) as { pull_request?: { title?: string | null; body?: string | null } }).pull_request;
+    const event = JSON.parse(readFileSync(file, "utf-8")) as { pull_request?: { title?: string | null; body?: string | null }; comment?: unknown; issue?: { title?: string | null; body?: string | null; pull_request?: unknown; is_pull?: boolean } };
+    // A comment's event carries the pull request's title and body on its issue; Forgejo marks a pull with is_pull.
+    const issue = event.comment && (event.issue?.pull_request || event.issue?.is_pull === true) ? event.issue : undefined;
+    const pr = event.pull_request ?? issue;
     return pr ? { title: pr.title ?? "", description: pr.body ?? "" } : undefined;
   } catch {
     return undefined;
@@ -113,8 +116,8 @@ function pullRequestText(env: NodeJS.ProcessEnv): { title: string; description: 
 
 /**
  * The pull request's title and description from the forge's API, for a job the
- * event file does not describe: a re-plan started by a comment, whose event is
- * the comment. The job's TG_PR, TG_FORGE and TG_TOKEN name the request and
+ * event file does not describe (a comment's event carries the title and body
+ * itself, read above, so this is the fallback). The job's TG_PR, TG_FORGE and TG_TOKEN name the request and
  * carry the token; a failed call says nothing, so the check is skipped.
  */
 async function pullRequestFromForge(env: NodeJS.ProcessEnv, fetchFn: Fetch): Promise<{ title: string; description: string } | undefined> {

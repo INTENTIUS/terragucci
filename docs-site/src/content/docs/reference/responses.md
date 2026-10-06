@@ -131,7 +131,7 @@ For a resource the state does not hold, pass `--import <address>=<id>`. terraguc
 
 With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the decision service one yes-or-no question before it posts the note: does the pull request's title and description describe what the plan does? The service reads the title, the description and the redacted report's summary (counts by action, the named destroys and replacements, the groups). When it answers yes with a probability at or above the threshold, the note starts with a line asking the author to check the description and naming the destroys and replacements the text does not mention. The same line sits at the top of `report.html`, and `intent.json` in the report directory records the decision, its probability and the model.
 
-Below the threshold, with no `decide` block, or with a service that does not answer, the note is the one it would be without the check, and `intent.json` says why. The flag never blocks a merge and changes no gate, digest or group. The title and description come from the job's event, so a re-plan started by a comment is not checked.
+Below the threshold, with no `decide` block, or with a service that does not answer, the note is the one it would be without the check, and `intent.json` says why. The flag never blocks a merge and changes no gate, digest or group. The title and description come from the job's event. A re-plan started by a comment reads them from that comment's event and asks the forge only when the event has none.
 
 ```bash
 terragucci respond description --report terragucci-report --title "retag email" --description "Tags only." --mode apply

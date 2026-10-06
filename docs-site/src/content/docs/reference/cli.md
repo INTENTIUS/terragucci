@@ -112,7 +112,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo]
 ```
 
-Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`. With `--forge github`, the default, it asks the API for the commenter's permission. With `--forge forgejo` it reads the permission Forgejo wrote into the event for the commenter, since a Forgejo job's token may not ask the API for another user's permission. The generated `replan` job runs it before it asks for any credential. See [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). The decision is to plan, or to stop with a reason; a refused command is answered on the pull request. The only command is `plan`.
+Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`. With `--forge github`, the default, it asks the API for the commenter's permission. With `--forge forgejo` it reads the permission Forgejo wrote into the event for the commenter, since a Forgejo job's token may not ask the API for another user's permission. The generated `replan` job runs it before it asks for any credential. See [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). The decision is to plan, or to stop with a reason; a refused command is answered on the pull request. When the command cannot decide because of an error (the forge refused or failed a call, or the event file is unreadable), it exits 1 with the cause, so the job fails instead of ending as if nothing was asked. The only command is `plan`.
 
 ## config check
 
