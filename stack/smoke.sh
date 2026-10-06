@@ -296,6 +296,13 @@ TF
   case ",$cut," in *,group,*) awk '/^concurrency:/ {skip=1; next} skip && /^ / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf" ;; esac
   case ",$cut," in *,job,*) awk '/^    concurrency:/ {skip=1; next} skip && /^      / {next} {skip=0; print}' "$wf" > "$wf.new" && mv "$wf.new" "$wf" ;; esac
   rm -f "$wf.bak"
+  # With a guard cut, the second run meets the first's state lock. The default
+  # wait is 5m, which is what the BREAK run spent its time on (321 s against 69 s);
+  # a few seconds is enough to see that nothing but the guards kept it out.
+  if [ -n "$cut" ]; then
+    awk '{print} /^  TF_INPUT: / {print "  TF_CLI_ARGS_plan: -lock-timeout=3s"; print "  TF_CLI_ARGS_apply: -lock-timeout=3s"}' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'TF_CLI_ARGS_apply' "$wf" || { log "the pipeline has no env block to set a lock timeout in"; return 1; }
+  fi
   sha1="$(push_tree "$work" "$repo" main "serial: first")"
   for i in $(seq 1 120); do
     listing="$(curl -fsS "$FLOCI/$bucket?list-type=2&prefix=serial-marks/" || true)"
@@ -2491,7 +2498,12 @@ dash_claim() { # uid, panel title...
   dash_rendered "$work" "$uid" || rc=1
   [ $rc = 0 ] && { dash_data "$work" || rc=1; }
   if [ $rc = 0 ]; then
-    for i in $(seq 1 18); do   # up to 90s: the span metrics flush, the scrape and Tempo's ingest
+    # Up to 90s: the span metrics flush, the scrape and Tempo's ingest. Under
+    # BREAK nothing was sent, and a flush (5s), a scrape (5s) and Tempo's ingest
+    # have all had their turn after 30s, so the absence is certain by then.
+    local tries=18
+    [ -n "${BREAK:-}" ] && tries=6
+    for i in $(seq 1 "$tries"); do
       missing=""
       for t in "$@"; do
         n="$(panel_points "$uid" "$t")"
