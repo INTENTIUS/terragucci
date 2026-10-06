@@ -16,6 +16,7 @@ description: Every terragucci command, its flags and its exit codes.
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` pull request comment; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem |
+| `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `install` | fetches a release of OpenTofu, Terraform or Terragrunt, verified against its checksums |
 | `profiles` | prints the stack profiles a config needs, for the local validation stack |
 
@@ -125,6 +126,15 @@ Validates `terragucci.yml`, `terragucci.json` or `terragucci.ts` and lists every
 ```text
 terragucci.yml: ok
 ```
+
+## check-root and check-policy
+
+```bash
+terragucci check-root <dir> [--binary <b>]
+terragucci check-policy [--config <file>] [--base <ref>]
+```
+
+`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range. With `--binary choudoufu` it then runs `choudoufu live-check -json` and prints each refusal. `check-policy` runs the policy's tests when `policy` is set, and does nothing when it is not. Both exit 1 on a failure, append to `terragucci-check/report.md`, and are what the generated `tf-check` job runs. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 

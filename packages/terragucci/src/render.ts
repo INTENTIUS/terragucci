@@ -46,6 +46,7 @@ const forgejoSerializer = {
 import { responseTo, type Binary, type ForgeName, type Gate, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { applyWaves } from "./apply";
+import { CHECK_DIR } from "./check";
 import type { Tool } from "./install";
 import {
   cacheExports,
@@ -160,11 +161,15 @@ export function checkScript(binary: Binary, roots: string[]): string {
   return [
     "set -eu",
     `${binary} fmt -check -recursive -diff .`,
+    "failed=0",
     `for dir in ${roots.map(sh).join(" ")}; do`,
     `  ${binary} -chdir="$dir" init -backend=false -input=false -no-color >/dev/null`,
-    `  ${binary} -chdir="$dir" validate -no-color >/dev/null`,
-    '  echo "valid $dir"',
+    // validate's diagnostics and, for choudoufu, live-check's refusals go to the log and the check report; a root that fails does not stop the next.
+    `  terragucci check-root "$dir" --binary ${binary} || failed=1`,
     "done",
+    // With `policy:` set, the policy's own tests; no `policy:` key prints nothing.
+    "terragucci check-policy || failed=1",
+    'exit "$failed"',
   ].join("\n");
 }
 
@@ -676,9 +681,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const check = new GitLabJob({
       stage: "check",
       image: jobImage,
-      variables: fmtOn ? { ...jobEnv, TG_TOKEN: gitlabEnv.TG_TOKEN } : jobEnv,
+      // The policy tests read the policy from the default branch, so the job has its history.
+      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, GIT_DEPTH: "0", ...(fmtOn ? { TG_TOKEN: gitlabEnv.TG_TOKEN } : {}) },
       ...notScheduled,
       script: script(checkBody),
+      // The check report (validate's diagnostics, live-check's refusals, the policy tests) stays with the job.
+      artifacts: { name: CHECK_DIR, when: "always", paths: [`${CHECK_DIR}/`] },
       // After a failing check on a branch, commit the formatting; the job's own result stands.
       ...(fmtOn
         ? { after_script: [...(installStep ? [installStep] : []), bash("FMT", `if [ "$CI_JOB_STATUS" = failed ] && [ -n "$CI_COMMIT_BRANCH" ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then\n${fmtScript(binary, forge, tokenEnv)}\nfi`)] }
@@ -799,9 +807,18 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'push' || (github.event_name == 'pull_request' && ${isFork})`,
-    ...(fmtOn ? { permissions: { contents: "write" }, env: { TG_TOKEN: "${{ github.token }}" } } : {}),
+    ...(fmtOn ? { permissions: { contents: "write" } } : {}),
+    env: { TG_BRANCH: "${{ github.event.repository.default_branch }}", ...(fmtOn ? { TG_TOKEN: "${{ github.token }}" } : {}) },
     steps: [
-      ...steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody })),
+      // The policy tests read the policy from the default branch, so the checkout has the history.
+      ...steps(new Step({ name: `Format check and validate, every ${what}`, run: checkBody }), false, true),
+      // The check report stays with the run, beside the job summary.
+      new Step({
+        name: "Keep the check report",
+        if: "always()",
+        uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4",
+        with: { name: CHECK_DIR, path: `${CHECK_DIR}/`, "if-no-files-found": "ignore" },
+      }),
       // After a failing check on a branch, commit the formatting to it; a fork's pull request has no push here.
       ...(fmtOn
         ? [new Step({

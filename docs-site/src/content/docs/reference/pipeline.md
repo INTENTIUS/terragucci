@@ -52,7 +52,7 @@ In a Terragrunt repo the same three jobs run Terragrunt:
 
 | Job | Runs |
 |---|---|
-| check | `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs` |
+| check | `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs`, then the policy tests when `policy` is set |
 | plan | `terragucci stage tf-plan`, one `terragrunt run --all` per wave |
 | apply | one `terragrunt run --all` per wave, filtered to exactly that wave's units |
 

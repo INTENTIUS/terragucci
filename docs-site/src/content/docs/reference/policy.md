@@ -40,6 +40,8 @@ A pull request cannot edit the policy to allow itself. When a plan runs for a pu
 
 The base branch is the pull request's target. terragucci finds it from the environment the forge sets: `GITHUB_BASE_REF` on GitHub Actions and Forgejo Actions, and `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` on GitLab merge request pipelines, read as `origin/<branch>`. `TG_BASE` names a ref directly and wins over both. The job's checkout needs that ref fetched, as affected-root selection already does.
 
+`tf-check` tests the policy itself. It runs `conftest verify` (engine `conftest`) or `opa test` (engine `opa`) over the policy directory, from the base branch for a change on another branch, and fails on a failing test. Tests are Rego files named `*_test.rego`; a directory with none is skipped with a note. See [Stages](/terragucci/reference/stages/#check).
+
 `tf-apply` runs the same check on each wave's plans, after planning and before the gate, and refuses a wave with a denial: the wave applies nothing and records no approval to wait for. The apply job runs from the default branch, so its checkout is the policy from main. Set `TG_BASE` to read the policy from another ref.
 
 The images carry neither engine. When the engine you set is not on the path, terragucci downloads a pinned release once per job, conftest 0.71.0 as its Linux archive or OPA 1.21.1 as its static Linux binary, and refuses any download that differs from the SHA-256 shipped with terragucci (taken from the release's own checksums). A job without network access needs the engine installed beforehand, and drift runs and provisional Terragrunt previews skip the check.

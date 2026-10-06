@@ -261,9 +261,10 @@ describe("init in a Terragrunt repo", () => {
     const text = r.files[0].content;
     const doc = body(text);
     expect(doc.env).toMatchObject({ TG_TF_PATH: "tofu", TG_NON_INTERACTIVE: "true", TG_PARALLELISM: "16", TG_PROVIDER_CACHE: "1" });
-    const check = doc.jobs.check.steps.at(-1).run as string;
+    const check = doc.jobs.check.steps.at(-2).run as string;
     expect(check).toContain("terragrunt hcl fmt --check --diff");
     expect(check).toContain("terragrunt hcl validate --inputs --no-color --filter '!./catalog/**'");
+    expect(check).toContain("terragucci check-policy");
     const plan = doc.jobs.plan.steps.at(-2).run as string;
     expect(plan).toMatch(/terragucci stage tf-plan .*--layers 'live\/dev\/app,live\/dev\/vpc;live\/prod\/app,live\/prod\/vpc' .*--terragrunt/);
     const apply = doc.jobs.apply.steps.find((s: { run?: string }) => s.run?.includes("apply_wave")).run as string;
