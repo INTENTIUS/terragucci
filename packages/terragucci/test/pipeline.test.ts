@@ -146,7 +146,7 @@ describe("the comment trigger", () => {
     expect(run).toContain(OIDC.apply_role);
     expect(run).not.toContain(OIDC.plan_role);
     // It checks out the merge commit from the default branch's history, never a pull request's head.
-    expect(job.steps[0]).toEqual({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } });
+    expect(job.steps[0]).toEqual({ uses: "https://code.forgejo.org/actions/checkout@v4", with: { "fetch-depth": 0 } });
     expect(run).not.toContain("refs/pull/");
     expect(run).toContain('git checkout --quiet --detach "$TG_SHA"');
     if (forge === "github") expect(job.permissions["id-token"]).toBe("write");
