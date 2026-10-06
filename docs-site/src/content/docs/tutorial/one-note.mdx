@@ -17,11 +17,13 @@ Every queue in every service should wait 60 seconds before retrying a job. That 
 
 <Captured step="one-note" optional />
 
+Open the pull request link it printed, on Forgejo at `localhost:3300`. The plan note is the comment in the pull request's conversation, posted by the plan run the output names.
+
 terragucci plans only the twelve service roots the change reaches. The three platform roots are left alone. The pull request gets one note instead of twelve. Eleven roots take the identical change and appear as one group. Payments in prod sits apart, because its dead-letter queue changes too.
 
 <Shot step="one-note" view="pull" alt="The plan note on the module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" optional />
 
-The note links to the full report. The report opens on what differs and folds the eleven identical plans into one. Every root in it links to its full plan.
+The note links to the full report. The note's links name Forgejo by the address the pipeline's jobs use on the stack's own network, `http://forgejo:3000`, which your browser cannot reach. Open them at `http://localhost:3300` instead, the rest of the link unchanged. On your own forge the links open as they are. The report opens on what differs and folds the eleven identical plans into one. Every root in it links to its full plan.
 
 <Shot step="report" view="top" alt="The HTML report of the module change: the run's counts, the roots to read first, and the eleven identical plans folded into one group" optional />
 
