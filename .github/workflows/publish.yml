@@ -1,0 +1,105 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The branch, tag or commit to publish from
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '${{ inputs.ref || github.ref }}'
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Use npm 11.5.1 or later, which trusted publishing needs
+        run: |
+          set -eu
+          have="$(npm --version)"
+          if [ "$(printf '%s\n' "11.5.1" "$have" | sort -V | head -n1)" != "11.5.1" ]; then
+            echo "npm $have is older than 11.5.1; installing npm 11.19.0"
+            npm install -g npm@11.19.0
+          fi
+          npm --version
+      - name: Install dependencies
+        run: npm ci
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Build the bundle
+        run: just build-cli
+      - name: Hold the bundle to its shape
+        run: just bundle-check
+      - name: Skip a version npm already has
+        id: version
+        run: |
+          set -eu
+          version="$(node -p 'require("./packages/terragucci/package.json").version')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match packages/terragucci/package.json version $version"
+            exit 1
+          fi
+          if out="$(npm view "@intentius/terragucci@$version" version 2>&1)"; then
+            if [ -n "$out" ]; then
+              echo "::notice::@intentius/terragucci@$version is already on npm; nothing to publish"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          elif ! printf "%s" "$out" | grep -q E404; then
+            echo "$out"
+            exit 1
+          fi
+          echo "@intentius/terragucci@$version is not on npm yet"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+      - name: Refuse a bundle whose images are not pinned by digest
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          set -eu
+          refs="$(npx tsx scripts/images.ts tags)"
+          missing=0
+          while read -r name ref; do
+            digest="$(node -e 'const t = require("./packages/terragucci/src/image-digests.json"); process.stdout.write(t[process.argv[1]] ?? "")' "$ref")"
+            if ! printf "%s" "$digest" | grep -Eq "^sha256:[0-9a-f]{64}$"; then
+              echo "::error::$ref has no digest in packages/terragucci/src/image-digests.json"
+              missing=1
+            elif ! grep -q "$digest" packages/terragucci/dist/terragucci.mjs; then
+              echo "::error::the bundle does not carry the digest of $ref"
+              missing=1
+            else
+              echo "$name $ref@$digest"
+            fi
+          done <<< "$refs"
+          if [ "$missing" -ne 0 ]; then
+            echo "Record each image's digest (the images workflow prints them), merge that to main, and publish from main."
+            exit 1
+          fi
+      - name: Publish with provenance
+        if: steps.version.outputs.skip != 'true'
+        working-directory: packages/terragucci
+        run: npm publish --provenance --access public
