@@ -240,11 +240,15 @@ export class SpanReceiver {
    * pointed here, with a token naming the root and the command.
    */
   env(base: NodeJS.ProcessEnv, root: string, command: string): NodeJS.ProcessEnv {
-    if (!this.server) return base;
+    return { ...base, ...this.exporter(root, command) };
+  }
+
+  /** The variables `env` adds for one run of the binary; none when the receiver is not listening. */
+  exporter(root: string, command: string): Record<string, string> {
+    if (!this.server) return {};
     const token = randomBytes(12).toString("hex");
     this.runs.set(token, { root, command });
     return {
-      ...base,
       OTEL_TRACES_EXPORTER: "otlp",
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: this.url,
       OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
@@ -330,7 +334,7 @@ export interface RootFacts {
   planSeconds?: number;
   /** A tf-apply wave's apply run. Absent when the root was not applied. */
   applySeconds?: number;
-  /** `terragrunt`: Terragrunt ran the binary, so the times are its run report's and no span is the unit's own. */
+  /** `terragrunt`: Terragrunt ran the binary, so the times are its run report's; the spans are its plan's, through terragucci's `TG_TF_PATH` wrapper. */
   source?: "binary" | "terragrunt";
 }
 
@@ -408,7 +412,8 @@ export function rootTimings(spans: CollectedSpan[], facts: RootFacts): ReportRoo
   const detail: ReportRootTimings["detail"] = resources.length > 0 ? "resources" : aggregates.length > 0 ? "aggregate" : "none";
   const what = facts.applySeconds !== undefined ? "plan and apply" : "plan";
   let note: string | undefined;
-  if (facts.source === "terragrunt") note = "Terragrunt ran the binary for this unit, so its time is from Terragrunt's run report and it has no per-resource timings";
+  if (facts.source === "terragrunt" && spans.length === 0) note = `Terragrunt ran the binary for this unit, so its time is from Terragrunt's run report, and ${facts.binary} sent no spans for its plan, so it has no per-resource timings`;
+  else if (facts.source === "terragrunt" && detail === "none") note = `Terragrunt ran the binary for this unit, so its time is from Terragrunt's run report; ${facts.binary} sent ${spans.length} span${spans.length === 1 ? "" : "s"} for its plan, none of them per resource`;
   else if (facts.planSeconds === undefined) note = "the root did not reach a plan, so no spans were read";
   else if (spans.length === 0) note = `${facts.binary} sent no spans for the ${what}, so this root has no per-resource timings. A binary that exports per-resource OpenTelemetry spans, such as choudoufu, gives them`;
   else if (detail === "none") note = `${facts.binary} sent ${spans.length} span${spans.length === 1 ? "" : "s"} for the ${what}, none of them per resource, so this root has no per-resource timings`;

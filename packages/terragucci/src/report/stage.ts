@@ -11,7 +11,7 @@
  * It applies nothing.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
@@ -23,7 +23,7 @@ import { describeTerragruntAffectedReason, findTerragruntAffected } from "@inten
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../../package.json";
-import { applyWaves } from "../apply";
+import { applyWaves, lockTimeoutArgs } from "../apply";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
@@ -405,12 +405,17 @@ async function planUnits(
   const mockReads: ReportMockRead[] = [];
   let redacted = 0;
   const terragrunt = options.terragruntPath ?? (options.env ?? process.env).TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-  const exec = drift ? refreshOnlyExec(options.terragruntExec) : options.terragruntExec;
-  const run = { dir: repo, binary, terragrunt, ...(exec ? { exec } : {}) };
+  // A drift plan takes no lock. A plan waits for one as long as a plain root's apply-time plan does.
+  const exec = drift ? refreshOnlyExec(options.terragruntExec) : lockTimeoutExec(options.terragruntExec, options.env ?? process.env);
+  /** One wave's run: Terragrunt calls the binary through a wrapper that sends each unit's plan spans to the stage. */
+  const runFor = (units: string[], workDir: string) => {
+    const wrapped = options.observer ? unitSpansExec(exec, binary, units, workDir, options.observer, options.env ?? process.env) : exec;
+    return { dir: repo, binary, terragrunt, exec: wrapped };
+  };
 
   const read = (workDir: string, wave: TerragruntWavePlan, provisional: boolean): void => {
     if (wave.code !== 0 && wave.code !== 2) log(tail(wave.log));
-    if (options.observer) for (const [unit, secs] of unitSeconds(join(workDir, "plan-report.json"))) options.observer.unitTimed(unit, secs);
+    if (options.observer) for (const [unit, t] of unitTimes(join(workDir, "plan-report.json"))) options.observer.unitTimed(unit, (t.end - t.start) / 1000, t);
     const results = new Map(wave.results.map((r) => [r.unit, r]));
     for (const part of wave.parts) {
       const path = part.member.member;
@@ -448,7 +453,7 @@ async function planUnits(
     for (let attempt = 0; units.length > 0 && attempt < 2; attempt++) {
       const workDir = join(work, `wave-${i + 1}${attempt ? `-${attempt}` : ""}`);
       try {
-        read(workDir, await planTerragruntWave({ ...run, units, workDir }), false);
+        read(workDir, await planTerragruntWave({ ...runFor(units, workDir), units, workDir }), false);
         units = [];
       } catch (e) {
         if (!(e instanceof TerragruntMockRefusal)) {
@@ -475,7 +480,7 @@ async function planUnits(
   if (preview.length > 0) {
     const workDir = join(work, "provisional");
     try {
-      read(workDir, await planTerragruntWave({ ...run, units: preview, workDir, provisional: true }), true);
+      read(workDir, await planTerragruntWave({ ...runFor(preview, workDir), units: preview, workDir, provisional: true }), true);
     } catch (e) {
       log(`no provisional preview: ${(e as Error).message}`);
     }
@@ -489,12 +494,12 @@ export function isoMillis(text: string): number {
 }
 
 /**
- * Each unit's time in a wave, from Terragrunt's run report (`Started` and
- * `Ended`), in seconds. Empty when the report is missing or unreadable, and a
- * row without both times is left out.
+ * Each unit's start and end in a wave, from Terragrunt's run report
+ * (`Started` and `Ended`), in epoch milliseconds. Empty when the report is
+ * missing or unreadable, and a row without both times is left out.
  */
-export function unitSeconds(reportFile: string): Map<string, number> {
-  const out = new Map<string, number>();
+export function unitTimes(reportFile: string): Map<string, { start: number; end: number }> {
+  const out = new Map<string, { start: number; end: number }>();
   let rows: ReturnType<typeof parseTerragruntReport>;
   try {
     rows = parseTerragruntReport(readFileSync(reportFile, "utf-8"));
@@ -503,10 +508,95 @@ export function unitSeconds(reportFile: string): Map<string, number> {
   }
   for (const [unit, row] of rows) {
     if (!row.started || !row.ended) continue;
-    const ms = isoMillis(row.ended) - isoMillis(row.started);
-    if (Number.isFinite(ms) && ms >= 0) out.set(unit, ms / 1000);
+    const start = isoMillis(row.started);
+    const end = isoMillis(row.ended);
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) out.set(unit, { start, end });
   }
   return out;
+}
+
+/** Each unit's time in a wave, from Terragrunt's run report, in seconds. */
+export function unitSeconds(reportFile: string): Map<string, number> {
+  return new Map([...unitTimes(reportFile)].map(([unit, t]) => [unit, (t.end - t.start) / 1000]));
+}
+
+const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * The `TG_TF_PATH` wrapper for one wave: a shell script that runs the binary
+ * with the variables of the unit whose plan it runs. Terragrunt hands each
+ * unit's plan `-out=<out-dir>/<unit>/tfplan.tfplan`, which names the unit;
+ * every other call (init, show, output, version) runs the binary as it is.
+ * `outDirs` are the wave's plan directory as given and as its real path.
+ */
+export function unitWrapper(binary: string, outDirs: string[], units: Map<string, Record<string, string>>): string {
+  const lines = [
+    "#!/bin/sh",
+    "# terragucci: each unit's plan sends its spans to the stage. Written for one wave.",
+    'out=""',
+    'prev=""',
+    'for a in "$@"; do',
+    '  case "$a" in -out=*|--out=*) out="${a#*=}" ;; esac',
+    '  if [ "$prev" = "-out" ] || [ "$prev" = "--out" ]; then out="$a"; fi',
+    '  prev="$a"',
+    "done",
+    'case "$out" in',
+  ];
+  for (const [unit, vars] of units) {
+    const set = Object.entries(vars);
+    if (set.length === 0) continue;
+    const patterns = [...new Set(outDirs.map((d) => join(d, unit, "tfplan.tfplan")))].map(shq).join(" | ");
+    lines.push(`  ${patterns}) export ${set.map(([k, v]) => `${k}=${shq(v)}`).join(" ")} ;;`);
+  }
+  lines.push("esac", `exec ${shq(binary)} "$@"`);
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * The runner with `TG_TF_PATH` pointed at a wave's wrapper (`unitWrapper`),
+ * so each unit's plan sends its spans to the stage's span receiver, under
+ * the unit's span when tracing. The wrapper carries the binary's name, which
+ * Terragrunt prefixes its log lines with. When there is nothing to send to,
+ * the runner is returned as it is.
+ */
+function unitSpansExec(
+  inner: TerragruntExec | undefined,
+  binary: string,
+  units: string[],
+  workDir: string,
+  observer: StageObserver,
+  env: NodeJS.ProcessEnv,
+): TerragruntExec | undefined {
+  const vars = new Map(units.map((u) => [u, observer.unitEnv(u, "plan", env)]));
+  if ([...vars.values()].every((v) => Object.keys(v).length === 0)) return inner;
+  mkdirSync(workDir, { recursive: true });
+  const plans = join(resolve(workDir), "plans");
+  let real = plans;
+  try {
+    real = join(realpathSync(workDir), "plans");
+  } catch {
+    // The path as given is matched alone.
+  }
+  const dir = `${resolve(workDir)}.bin`;
+  mkdirSync(dir, { recursive: true });
+  const wrapper = join(dir, basename(binary) || "tofu");
+  writeFileSync(wrapper, unitWrapper(binary, [plans, real], vars));
+  chmodSync(wrapper, 0o755);
+  const run = inner ?? defaultTerragruntExec;
+  return (file, args, opts) => run(file, args, { ...opts, env: { ...opts.env, TG_TF_PATH: wrapper } });
+}
+
+/**
+ * The runner with the default `-lock-timeout` added to the binary's plan
+ * command (`lockTimeoutArgs`), unless the job's `TF_CLI_ARGS` names one, so a
+ * unit's plan waits for a lock an apply holds instead of failing at once.
+ */
+function lockTimeoutExec(inner: TerragruntExec = defaultTerragruntExec, env: NodeJS.ProcessEnv): TerragruntExec {
+  return (file, args, opts) => {
+    const at = args.indexOf("--");
+    if (at < 0 || args[at + 1] !== "plan") return inner(file, args, opts);
+    return inner(file, [...args.slice(0, at + 2), ...lockTimeoutArgs("plan", env), ...args.slice(at + 2)], opts);
+  };
 }
 
 /**
@@ -754,6 +844,8 @@ async function runTerragruntStage(
   }
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), drift ? "tf-drift" : "tf-plan", env);
+  // Each unit's plan sends its spans here through the TG_TF_PATH wrapper, for its per-resource timings.
+  await observer.collectSpans(log);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
   try {
     const planned = await planUnits(repo, waves, binary, work, {
