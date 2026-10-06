@@ -68,7 +68,7 @@ projects:
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`: the name of the CI secret or variable holding `OTEL_EXPORTER_OTLP_HEADERS`; the generated plan, apply and drift jobs map it into the environment. `trace_url`: a link to a trace with `{trace_id}` in it, which the report links |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN` | the environment variable holding the forge token |
-| `oidc` | none | `plan_role`, `apply_role` and an optional `audience`: the cloud roles the jobs assume over OIDC; see [Credentials](/terragucci/reference/pipeline/#credentials) |
+| `oidc` | none | the cloud identities the jobs take over OIDC, one for plan and one for apply on each cloud set: AWS with `plan_role`, `apply_role` and an optional `audience`; GCP with `gcp: { workload_identity_provider, plan_service_account, apply_service_account }`; Azure with `azure: { tenant_id, subscription_id, plan_client_id, apply_client_id }`. See [Credentials](/terragucci/reference/pipeline/#credentials) |
 | `parallelism` | 3 for GitLab-managed state, else 16 | how many roots of one dependency layer `tf-plan` and `tf-drift` plan at once, and of one wave `tf-apply` plans at once; a Terragrunt repo uses `terragrunt.parallelism` |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
 | `policy` | off | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace` and `input` (`plan` or `hcp`): run policy over each root's plan, read from the base branch for a pull request, and fail `tf-plan` or refuse a `tf-apply` wave on a denial; see [Policy](/terragucci/reference/policy/) |
@@ -101,7 +101,7 @@ terragrunt:
 | `exclude` | none | unit globs to leave out; `catalog/**` and `.terragrunt-cache` are always left out |
 | `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once |
 | `dependents` | `follow` | `follow` plans dependents in later waves; `plan` also previews them on the pull request, marked provisional and left out of every digest |
-| `credentials` | none | plan and apply roles by unit path glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
+| `credentials` | none | AWS plan and apply roles by unit path glob; GCP and Azure units take `oidc`'s identities or their provider block's. See [Credentials](/terragucci/reference/pipeline/#terragrunt) |
 
 Terragrunt 1.1 or later is required. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers what changes in a Terragrunt repo.
 
