@@ -1472,8 +1472,8 @@ claim_respond_drift() {
   # The branch table lags a push; the files are read by the sha git ls-remote gives.
   sha="$(remote_head "$repo" terragucci/drift)"
   [ -n "$sha" ] || { log "terragucci/drift has no head"; return 1; }
-  api "$URL/api/v1/repos/$repo/raw/app/main.tf?ref=$sha" | grep -q 'visibility_timeout_seconds = 45' || { log "main.tf on the branch does not hold the live timeout"; return 1; }
-  api "$URL/api/v1/repos/$repo/raw/app/terragucci_generated.tf?ref=$sha" | grep -q "$extra" || { log "the generated config does not name $extra"; return 1; }
+  file_at "$repo" terragucci/drift "$sha" app/main.tf | grep -q 'visibility_timeout_seconds = 45' || { log "main.tf on the branch does not hold the live timeout"; return 1; }
+  file_at "$repo" terragucci/drift "$sha" app/terragucci_generated.tf | grep -q "$extra" || { log "the generated config does not name $extra"; return 1; }
   log "pull request $pr writes the live timeout and imports $extra"
 }
 
@@ -3754,7 +3754,7 @@ YML
     log "the agent comment pushed nothing (run $CR_ID: $CR_STATUS)"; run_logs "$CR_ID"; return 1
   fi
   [ "$(api "$URL/api/v1/repos/$repo/git/commits/$new_sha" | jq -r '.parents[0].sha')" = "$head_sha" ] || { log "the agent's commit ${new_sha:0:8} is not on top of the old head"; rc=1; }
-  [ "$(api "$URL/api/v1/repos/$repo/raw/app/rev.txt?ref=$new_sha")" = 3 ] || { log "the agent's commit does not set app/rev.txt to 3"; rc=1; }
+  [ "$(file_at "$repo" agent-change "$new_sha" app/rev.txt)" = 3 ] || { log "the agent's commit does not set app/rev.txt to 3"; rc=1; }
   grep -q "^terragucci: pushed \[\`${new_sha:0:8}\`\]" <<<"$(replies "$pr")" || { log "no reply links the pushed commit ${new_sha:0:8}"; rc=1; }
   for i in $(seq 1 $(( TIMEOUT / 3 ))); do
     [ "$(plans "$new_sha")" -ge 2 ] && break
