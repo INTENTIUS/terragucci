@@ -1,10 +1,10 @@
 {
   "step": "wave-waiting",
-  "source_hash": "7923cc86374e6b8c",
+  "source_hash": "85567b0527d95e8b",
   "commands": [
     {
       "cmd": "just example change destroy",
-      "output": "[example] pushed change/destroy at c1dc5e0f\n[example] run 8 for c1dc5e0f (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1)\n[example] run 9 for c1dc5e0f (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/destroy at 0957eb54\n[example] run 8 for 0957eb54 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1)\n[example] run 9 for 0957eb54 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1 (success)",
       "exit": 0
     },
     {
