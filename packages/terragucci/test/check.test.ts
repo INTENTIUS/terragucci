@@ -105,7 +105,7 @@ describe("policy tests", () => {
   it("skips with a note when the directory has no tests", async () => {
     const repo = repoWith("policy:\n  engine: conftest\n", { "policy/main.rego": "package main\n" });
     const { exec, calls } = fake({});
-    const r = await checkPolicyTests(repo, { exec, env: {} });
+    const r = await checkPolicyTests(repo, { exec, env: {}, policy: { exec } });
     expect(r.ok).toBe(true);
     expect(r.log[0]).toMatch(/policy tests skipped: policy has no \*_test\.rego files/);
     expect(calls).toEqual([]);
@@ -115,7 +115,7 @@ describe("policy tests", () => {
   it("runs conftest verify and fails on a failing test, with the output in the log", async () => {
     const repo = repoWith("policy:\n  engine: conftest\n", { "policy/main.rego": "package main\n", "policy/main_test.rego": "package main\n" });
     const { exec, calls } = fake({ verify: { status: 1, stdout: "FAIL - test_no_public_bucket" } });
-    const r = await checkPolicyTests(repo, { exec, env: {} });
+    const r = await checkPolicyTests(repo, { exec, env: {}, policy: { exec } });
     expect(r.ok).toBe(false);
     expect(calls.at(-1)).toEqual(["conftest", "verify", "--no-color", "--policy", `${repo}/policy`]);
     expect(r.log.join("\n")).toContain("FAIL - test_no_public_bucket");
@@ -124,7 +124,7 @@ describe("policy tests", () => {
   it("runs opa test for the opa engine and passes", async () => {
     const repo = repoWith("policy:\n  engine: opa\n  path: rules\n", { "rules/p_test.rego": "package main\n" });
     const { exec, calls } = fake({ test: { status: 0, stdout: "PASS: 1/1" } });
-    const r = await checkPolicyTests(repo, { exec, env: {} });
+    const r = await checkPolicyTests(repo, { exec, env: {}, policy: { exec } });
     expect(r.ok).toBe(true);
     expect(calls.at(-1)).toEqual(["opa", "test", `${repo}/rules`]);
   });
