@@ -10,7 +10,7 @@
  * collector's file (`--lexicon-output`); `just ci` runs that and `just ci-check`
  * fails when the committed file differs.
  */
-import { PrometheusConfig, ScrapeConfig, prometheusConfigYaml } from "@intentius/chant-lexicon-prometheus";
+import { PrometheusConfig, ScrapeConfig } from "@intentius/chant-lexicon-prometheus";
 
 // Rules evaluate as often as the collector is scraped, so a smoke claim sees an SLO's series soon after a run.
 export const config = new PrometheusConfig({
@@ -22,5 +22,3 @@ export const collector = new ScrapeConfig({
   job_name: "otel-collector",
   static_configs: [{ targets: ["otel-collector:8889"] }],
 });
-
-export const prometheusYaml = (): string => prometheusConfigYaml([config, collector]);

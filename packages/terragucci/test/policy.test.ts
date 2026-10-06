@@ -282,6 +282,8 @@ describe("checkPlans and the report", () => {
     expect(a.why).toContain("refused by policy");
     expect(report.waves[0].set_digest).toBeNull();
     expect(report.policy?.denied).toEqual(["envs/dev/a"]);
+    // Only b's create can apply, so only it counts.
+    expect(report.totals.create).toBe(1);
     expect(report.named.find((n) => n.root === "envs/dev/a" && n.action === "refused")?.reason).toMatch(/no buckets/);
     const b = report.roots.find((r) => r.path === "envs/dev/b")!;
     expect(b.status).toBe("planned");

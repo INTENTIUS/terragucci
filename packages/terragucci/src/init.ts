@@ -206,6 +206,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     ...(!tgInput ? { gate: settings.gate } : {}),
     ...(settings.respond ? { respond: settings.respond } : {}),
+    ...(settings.policy ? { policy: true } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {

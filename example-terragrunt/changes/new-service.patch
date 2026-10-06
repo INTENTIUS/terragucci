@@ -1,8 +1,8 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 699d56f..c58cb0d 100644
+index e49f48c..a1089b9 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
-@@ -134,7 +134,7 @@ jobs:
+@@ -132,7 +132,7 @@ jobs:
            }' -- "$@"; }
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
            tg status terragucci/plan pending "planning"
@@ -11,7 +11,7 @@ index 699d56f..c58cb0d 100644
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              tg status terragucci/plan failure "the plan report was not written"
-@@ -235,7 +235,7 @@ jobs:
+@@ -233,7 +233,7 @@ jobs:
              console.log("terragucci: " + cmd + " failed: " + err.message);
              if (cmd === "oidc") process.exit(1);
            }' -- "$@"; }
@@ -20,7 +20,7 @@ index 699d56f..c58cb0d 100644
            read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
            EOF
-@@ -247,7 +247,7 @@ jobs:
+@@ -245,7 +245,7 @@ jobs:
            git checkout --quiet --detach "$TG_SHA"
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
            [ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending "planning"
@@ -29,7 +29,7 @@ index 699d56f..c58cb0d 100644
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              tg status terragucci/plan failure "the plan report was not written"
-@@ -360,7 +360,7 @@ jobs:
+@@ -358,7 +358,7 @@ jobs:
              changed=
            fi
            moved=""
@@ -38,7 +38,7 @@ index 699d56f..c58cb0d 100644
              if [ -z "$changed" ] || printf '%s\n' "$changed" | grep -q "^$dir/"; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these units: plan notes that cover them are stale.
-@@ -397,11 +397,11 @@ jobs:
+@@ -395,11 +395,11 @@ jobs:
              terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false 2>&1 | tee -a "$log"
            }
            failed() { tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1; }

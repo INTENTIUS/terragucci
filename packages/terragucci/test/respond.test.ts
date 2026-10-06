@@ -337,6 +337,16 @@ describe("respond: running a response", () => {
     expect(forge.calls.filter((c) => c.startsWith("POST"))).toEqual(["POST https://forge.test/api/v1/repos/acme/infra/pulls"]);
   });
 
+  it("drift: attributions the stage already made are used, and the audit log is not read again", async () => {
+    const { repo } = checkout({ "terragucci.yml": "forge: forgejo\nurl: https://forge.test/acme/infra\ntoken_env: FORGE_TOKEN\nrespond:\n  drift: attribute\n", "app/main.tf": `terraform {\n  backend "s3" {}\n}\n\n${ROOT}` });
+    const bin = fakeBinary(driftPlan([drifted("aws_sqs_queue.jobs", { visibility_timeout_seconds: 30 }, { visibility_timeout_seconds: 45 })]));
+    const audit = { lookup: vi.fn(async () => ({ status: "unavailable" as const, reason: "must not be read" })) };
+    const attributions = { app: { attributions: [{ root: "app", address: "aws_sqs_queue.jobs", path: "visibility_timeout_seconds", actor: "human" as const, source: "audit" as const, detail: "UpdateQueue by a person" }], notes: [] } };
+    const r = await respond("drift", repo, { binary: bin, audit, attributions });
+    expect(audit.lookup).not.toHaveBeenCalled();
+    expect((r.data as { attributions: unknown[] }).attributions).toEqual(attributions.app.attributions);
+  });
+
   it("drift: import blocks and the generated config go in the same pull request", async () => {
     const { repo } = checkout({ "app/main.tf": 'terraform {\n  backend "s3" {}\n}\n' });
     const dir = tmp();

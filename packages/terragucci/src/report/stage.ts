@@ -32,7 +32,7 @@ import { buildReport, planFiles, type RootInput, type WaveInput } from "./build"
 import { loadHclParser } from "../rollout/parser";
 import { describeTips, repoTips } from "../tips";
 import type { DecideOptions } from "../decide";
-import { attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
+import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf } from "../respond/drift";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
@@ -1010,6 +1010,8 @@ async function finish(
   if (drift) {
     const issueOptions = { ...(names ? { names } : {}), ...(attributions ? { attributions } : {}), ...links.note };
     writeFileSync(join(dir, "issue.md"), renderDriftIssue(report, issueOptions));
+    // `respond drift` in the same job reads who changed what from here, so the audit log is read once.
+    if (attributions) writeFileSync(join(dir, ATTRIBUTIONS_FILE), JSON.stringify(Object.fromEntries(attributions), null, 2) + "\n");
     const token = options.token ?? env.TG_TOKEN;
     const target = targetFromEnv(options.forge, env, token);
     if (!target) {
