@@ -1,10 +1,10 @@
 {
   "step": "check",
-  "source_hash": "53d2ce1a38f1fe7f",
+  "source_hash": "a2d8f60c83c3eab5",
   "commands": [
     {
       "cmd": "just example change unformatted",
-      "output": "[example] pushed change/unformatted at 851a7f08\n[example] run 5 for 851a7f08: failure (http://localhost:3300/terragucci-admin/example/actions/runs/5)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/5 (failure)",
+      "output": "[example] pushed change/unformatted at 630a5fa7\n[example] run 5 for 630a5fa7: failure (http://localhost:3300/terragucci-admin/example/actions/runs/5)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/5 (failure)",
       "exit": 0
     },
     {
@@ -14,9 +14,9 @@
     }
   ],
   "shots": {
-    "pull-light": "d5ead84ad73ae21d",
-    "pull-dark": "a5ea6aa006833088",
-    "log-light": "13febaa05b94f248",
+    "pull-light": "4f35decbf49684c1",
+    "pull-dark": "dd17b91c2538b855",
+    "log-light": "39060042c7a72ccd",
     "log-dark": "14c990f14cff46e1"
   }
 }

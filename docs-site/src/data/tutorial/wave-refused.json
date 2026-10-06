@@ -1,6 +1,6 @@
 {
   "step": "wave-refused",
-  "source_hash": "53d2ce1a38f1fe7f",
+  "source_hash": "a2d8f60c83c3eab5",
   "commands": [
     {
       "cmd": "just example approve",
@@ -9,7 +9,7 @@
     },
     {
       "cmd": "just example change module-bump",
-      "output": "[example] pushed change/module-bump at dd5d56dd\n[example] run 13 for dd5d56dd: success (http://localhost:3300/terragucci-admin/example/actions/runs/13)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/13 (success)",
+      "output": "[example] pushed change/module-bump at ef3618eb\n[example] run 13 for ef3618eb: success (http://localhost:3300/terragucci-admin/example/actions/runs/13)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/13 (success)",
       "exit": 0
     },
     {
@@ -19,7 +19,7 @@
     }
   ],
   "shots": {
-    "log-light": "45d3bbe648c9a867",
-    "log-dark": "e0e87cc49d00a691"
+    "log-light": "184cd2eea0234d61",
+    "log-dark": "8b2a22c6cdacf0fe"
   }
 }

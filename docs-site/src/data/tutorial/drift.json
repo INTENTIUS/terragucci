@@ -1,6 +1,6 @@
 {
   "step": "drift",
-  "source_hash": "53d2ce1a38f1fe7f",
+  "source_hash": "a2d8f60c83c3eab5",
   "commands": [
     {
       "cmd": "just example change drift",

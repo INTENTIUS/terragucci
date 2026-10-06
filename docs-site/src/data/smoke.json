@@ -1,6 +1,6 @@
 {
-  "recorded": "2026-10-05",
-  "commit": "342fafb",
+  "recorded": "2026-10-06",
+  "commit": "60bf2e7",
   "forge": "forgejo",
   "claims": [
     {
@@ -245,7 +245,7 @@
       "claim": "steward",
       "says": "tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root",
       "needs": null,
-      "verdict": "pass",
+      "verdict": "fail",
       "break": "caught"
     },
     {
@@ -321,6 +321,69 @@
     {
       "claim": "drill-down",
       "says": "the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "policy-wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "check-diagnostics",
+      "says": "tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "comment-not-affected",
+      "says": "a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "drift-attribute",
+      "says": "with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "version-bump-job",
+      "says": "with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-spans",
+      "says": "the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "oidc-clouds",
+      "says": "a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "comment-apply",
+      "says": "a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "comment-agent",
+      "says": "a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
