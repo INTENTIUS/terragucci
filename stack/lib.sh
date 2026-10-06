@@ -31,6 +31,11 @@ USER="$TERRAGUCCI_FORGEJO_USER"
 FLOCI="$TERRAGUCCI_FLOCI_URL"
 
 api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
+# Forgejo fills GET /repos/<repo>/branches/<name> from a push queue, so it can
+# 404 or lag for seconds after a push. A head is read from git itself instead.
+remote_head() { # repo, branch -> prints the branch's sha (empty when it is gone)
+  git ls-remote "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$1.git" "refs/heads/$2" 2>/dev/null | awk -v r="refs/heads/$2" '$2 == r { print $1 }'
+}
 
 api -o /dev/null "$URL/api/v1/user" 2>/dev/null \
   || fail "Forgejo at $URL does not accept the token; run 'just stack-up forgejo' again" || return 1
