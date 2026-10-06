@@ -20,6 +20,12 @@ mkdirSync(dist, { recursive: true });
 // with a missing or half-written dist/terragucci.mjs. Renames within one
 // directory are atomic; the last build to finish wins whole.
 const stage = mkdtempSync(join(dist, ".stage-"));
+// A build that fails (esbuild, tsc, a signal) must not leave the stage behind:
+// it would ship in `npm pack`. After the renames the stage is already gone and
+// the force makes this a no-op.
+const cleanStage = () => rmSync(stage, { recursive: true, force: true });
+process.on("exit", cleanStage);
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));
 
 // The dashboards template (src/dashboards/rendered.json, terragucci#163) goes
 // into the bundle gzipped: as a JS literal it is a fifth of the bundle, and
