@@ -4,12 +4,12 @@
   "commands": [
     {
       "cmd": "just example change destroy",
-      "output": "[example] pushed change/destroy at 4d752723\n[example] run 9 for 4d752723: success (http://localhost:3300/terragucci-admin/example/actions/runs/9)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/9 (success)",
+      "output": "[example] pushed change/destroy at 4d752723\n[example] run 8 for 4d752723 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1)\n[example] run 9 for 4d752723 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/4 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/8/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/9/jobs/0/attempt/1 (success)",
       "exit": 0
     },
     {
       "cmd": "just example merge destroy",
-      "output": "[example] listed the reader's key in .chant/allowed_signers\n[example] merged change/destroy into main\n\n  Merged    pull request 4 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/11 (failure)\n    chant approve tf-apply wave-4 --plan jcs1-sha256:2e7a63f3f8af41bdf101ad8f6758bab88a6307d9b0bbce452a455ec024c37996 --sign",
+      "output": "[example] listed the reader's key in .chant/allowed_signers\n[example] merged change/destroy into main\n\n  Merged    pull request 4 into main\n  Pipeline  http://localhost:3300/terragucci-admin/example/actions/runs/11/jobs/0/attempt/1 (failure)\n    chant approve tf-apply wave-4 --plan jcs1-sha256:2e7a63f3f8af41bdf101ad8f6758bab88a6307d9b0bbce452a455ec024c37996 --sign",
       "exit": 0
     }
   ],
