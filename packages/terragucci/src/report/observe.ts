@@ -85,6 +85,8 @@ export class StageObserver {
   private receiver?: SpanReceiver;
   /** Terragrunt units' times from its run report, by unit, in seconds. */
   private readonly units = new Map<string, number>();
+  /** Terragrunt units' spans, by unit, timed from its run report. */
+  private readonly unitSpans = new Map<string, Span>();
   /** Set by the stage before `finish`: the module pins its plans read. */
   pins: ModulePin[] = [];
   /** Set by a drift stage before `finish`. */
@@ -140,9 +142,38 @@ export class StageObserver {
     t.end = undefined;
   }
 
-  /** A Terragrunt unit's time, from Terragrunt's run report: Terragrunt runs the binary, not terragucci. */
-  unitTimed(path: string, secs: number): void {
-    if (Number.isFinite(secs) && secs >= 0) this.units.set(path, secs);
+  /**
+   * A Terragrunt unit's time, from Terragrunt's run report: Terragrunt runs
+   * the binary, not terragucci. With `at` (epoch milliseconds), the unit's
+   * span is set to the report's start and end.
+   */
+  unitTimed(path: string, secs: number, at?: { start: number; end: number }): void {
+    if (!Number.isFinite(secs) || secs < 0) return;
+    this.units.set(path, secs);
+    const span = this.unitSpans.get(path);
+    if (span && at) {
+      span.start = BigInt(Math.round(at.start * 1000)) * 1000n;
+      span.end = BigInt(Math.round(at.end * 1000)) * 1000n;
+    }
+  }
+
+  /**
+   * The variables one Terragrunt unit's run of the binary gets, beside the
+   * job's own: the span receiver's exporter with a token naming the unit and
+   * the command, and, when tracing, a `root <unit>` span the binary's spans
+   * hang under. Empty when neither is on. terragucci's `TG_TF_PATH` wrapper
+   * sets them for the one run they name.
+   */
+  unitEnv(path: string, command: string, env: NodeJS.ProcessEnv): Record<string, string> {
+    let span = this.unitSpans.get(path);
+    if (this.trace && !span) {
+      span = this.trace.start(`root ${path}`, this.stageSpan, { "terragucci.root": path });
+      this.unitSpans.set(path, span);
+    }
+    const traced = span ? binaryEnv(env, this.trace!, span, path) : env;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(traced)) if (v !== undefined && env[k] !== v) out[k] = v;
+    return { ...out, ...(this.receiver?.exporter(path, command) ?? {}) };
   }
 
   /** Run the binary inside a root, as a span of its own when tracing. */
@@ -174,8 +205,9 @@ export class StageObserver {
    * Put each root's timings, and the run's slowest roots and resources, on
    * the report. `commands` names the runs of the binary whose spans count:
    * the plan, and on a tf-apply wave the apply too. A Terragrunt unit gets
-   * its time from Terragrunt's run report, with no per-resource timings; a
-   * unit the report does not time gets none, and the run says why.
+   * its time from Terragrunt's run report and its spans from its plan, which
+   * the `TG_TF_PATH` wrapper sent here; a unit the report does not time gets
+   * none, and the run says why.
    */
   addTimings(report: Report, commands: readonly string[] = ["plan"]): void {
     const binary = report.run.binary.split("/").pop() || report.run.binary;
@@ -183,7 +215,7 @@ export class StageObserver {
       const t = this.roots.find((x) => x.path === r.path);
       if (!t || t.end === undefined) {
         const unit = this.units.get(r.path);
-        if (unit !== undefined) r.timings = rootTimings([], { binary, seconds: unit, planSeconds: unit, source: "terragrunt" });
+        if (unit !== undefined) r.timings = rootTimings(this.receiver?.spansOf(r.path, "plan") ?? [], { binary, seconds: unit, planSeconds: unit, source: "terragrunt" });
         continue;
       }
       const ran = (c: string) => t.commands.filter((x) => x.command === c).reduce<number | undefined>((n, x) => (n ?? 0) + x.seconds, undefined);
@@ -321,17 +353,23 @@ export class StageObserver {
       }, failed ? `${failed} root(s) failed` : result === "failed" ? `wave ${this.wave?.number} failed` : undefined);
       // Waves are known once every root has planned, so their spans are set
       // around the roots they hold.
+      // A Terragrunt unit the run report did not time ends with the stage.
+      for (const span of this.unitSpans.values()) span.end ??= end;
+      const spans = [
+        ...this.roots.flatMap((t) => (t.span ? [{ path: t.path, span: t.span }] : [])),
+        ...[...this.unitSpans].map(([path, span]) => ({ path, span })),
+      ];
       for (const w of report.waves) {
-        const held = this.roots.filter((t) => w.roots.includes(t.path) && t.span);
+        const held = spans.filter((t) => w.roots.includes(t.path) && t.span.end !== undefined);
         if (held.length === 0) continue;
         const span = this.trace.start(`wave ${w.number}`, this.stageSpan, { "terragucci.wave": w.number, "terragucci.set_digest": w.set_digest ?? undefined, "terragucci.approval": w.approval });
-        span.start = held.reduce((m, t) => (t.start < m ? t.start : m), held[0].start);
-        span.end = held.reduce((m, t) => (t.end! > m ? t.end! : m), held[0].end!);
-        for (const t of held) t.span!.parentSpanId = span.spanId;
+        span.start = held.reduce((m, t) => (t.span.start < m ? t.span.start : m), held[0].span.start);
+        span.end = held.reduce((m, t) => (t.span.end! > m ? t.span.end! : m), held[0].span.end!);
+        for (const t of held) t.span.parentSpanId = span.spanId;
       }
-      for (const t of this.roots) {
+      for (const t of spans) {
         const r = report.roots.find((x) => x.path === t.path);
-        if (!r || !t.span) continue;
+        if (!r) continue;
         Object.assign(t.span.attributes, {
           "terragucci.status": r.status,
           "terragucci.plan_digest": r.plan_digest ?? undefined,
