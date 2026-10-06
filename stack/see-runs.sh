@@ -58,7 +58,7 @@ git -C "$work/repo" remote add origin /origin.git
 # The project the dashboards show the runs under: the example on Forgejo.
 stage() { # log name, stage arguments...
   local name="$1"; shift
-  docker run --rm --network terragucci -v "$work/repo:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
