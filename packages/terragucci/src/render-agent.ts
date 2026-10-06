@@ -6,6 +6,7 @@
 import { Job, Step } from "@intentius/chant-lexicon-github/generated/index";
 import { AGENT_CHANGE_DIR, AGENT_DECISION_JS, AGENT_DIR, type AgentCommentInput } from "./agent-comment";
 import type { ForgeName } from "./config";
+import { READS_EXIT } from "./render";
 
 /** Comments the agent job reads. The replan job leaves them alone when the agent comment is on. */
 export const AGENT_COMMENT_IF = "startsWith(github.event.comment.body, '/terragucci agent ')";
@@ -33,11 +34,14 @@ export function agentAskScript(forge: ForgeName, policyDir: string): string {
 /**
  * The agent's step: the command runs in the checkout with the prompt on
  * stdin, and what it changed against the pull request's head becomes a patch.
- * Its exit code goes with the patch; a failed agent pushes nothing.
+ * Its exit code goes with the patch; a failed agent pushes nothing, and the
+ * push job's reply says it stopped. The step's bash runs with `-e`, which
+ * would end it at a failed agent before the exit code is written, so the
+ * script turns `-e` off and stops on a failed `git` itself.
  */
 export function agentRunScript(command: string): string {
   return [
-    "set -u",
+    READS_EXIT,
     `mkdir -p ${AGENT_CHANGE_DIR}`,
     'if [ "$(git rev-parse HEAD)" != "$TG_SHA" ]; then',
     `  echo moved >${AGENT_CHANGE_DIR}/rc`,
@@ -47,8 +51,8 @@ export function agentRunScript(command: string): string {
     `export TG_AGENT_PROMPT=${AGENT_DIR}/prompt.md`,
     `( ${command} ) <"$TG_AGENT_PROMPT"`,
     `echo "$?" >${AGENT_CHANGE_DIR}/rc`,
-    "git -c core.hooksPath=/dev/null add -A",
-    `git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch`,
+    "git -c core.hooksPath=/dev/null add -A || exit 1",
+    `git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch || exit 1`,
     `git -c core.hooksPath=/dev/null diff --cached --stat "$TG_SHA"`,
   ].join("\n");
 }
