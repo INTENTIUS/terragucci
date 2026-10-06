@@ -986,7 +986,7 @@ describe("the drift stage", () => {
       const log = join(dir, "terragucci.log");
       const script = driftScript("tofu", layers, "github", undefined, {}, {});
       expect(script.split("\n")[0]).toBe(READS_EXIT);
-      const r = await runStep(`cd ${dir} && ${script}`, { ...env, LOG: log, TG_TOKEN: "t" });
+      const r = await runStep(`cd ${dir} && ${script}`, { ...env, LOG: log, TG_TOKEN: "t", GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "1" });
       expect(r.status, r.out).toBe(code);
       const calls = readFileSync(log, "utf-8").trim().split("\n");
       expect(calls[0]).toMatch(/^stage tf-drift /);
