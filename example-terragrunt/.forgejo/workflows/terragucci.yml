@@ -2,7 +2,7 @@
 # terragucci writes this file from terragucci.yml, or from its defaults when
 # the repo has none. Change terragucci.yml and run `npx terragucci init`
 # rather than editing it here.
-# Every job runs in ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1, pinned by digest.
+# Every job runs in ghcr.io/intentius/terragucci-terragrunt:0.2.1-tg1.1.6-tofu1.13.1, pinned by digest.
 name: terragucci
 
 on:
@@ -30,7 +30,7 @@ jobs:
   check:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1@sha256:19fee98af69b0d3a0b8901f856ef3c0593df4f56ff9729d7d276ca358ac7d1c6
+      image: ghcr.io/intentius/terragucci-terragrunt:0.2.1-tg1.1.6-tofu1.13.1@sha256:79de2670acf6d63f9f9eb9ee4f1fd0afac61b743b6661f890dd83aa640d6fc42
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     env:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
@@ -55,7 +55,7 @@ jobs:
   plan:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1@sha256:19fee98af69b0d3a0b8901f856ef3c0593df4f56ff9729d7d276ca358ac7d1c6
+      image: ghcr.io/intentius/terragucci-terragrunt:0.2.1-tg1.1.6-tofu1.13.1@sha256:79de2670acf6d63f9f9eb9ee4f1fd0afac61b743b6661f890dd83aa640d6fc42
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     env:
       TG_TOKEN: '${{ github.token }}'
@@ -157,7 +157,7 @@ jobs:
   replan:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1@sha256:19fee98af69b0d3a0b8901f856ef3c0593df4f56ff9729d7d276ca358ac7d1c6
+      image: ghcr.io/intentius/terragucci-terragrunt:0.2.1-tg1.1.6-tofu1.13.1@sha256:79de2670acf6d63f9f9eb9ee4f1fd0afac61b743b6661f890dd83aa640d6fc42
     if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')
     concurrency:
       group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}
@@ -274,7 +274,7 @@ jobs:
   apply:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1@sha256:19fee98af69b0d3a0b8901f856ef3c0593df4f56ff9729d7d276ca358ac7d1c6
+      image: ghcr.io/intentius/terragucci-terragrunt:0.2.1-tg1.1.6-tofu1.13.1@sha256:79de2670acf6d63f9f9eb9ee4f1fd0afac61b743b6661f890dd83aa640d6fc42
     needs: check
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
@@ -411,7 +411,7 @@ jobs:
   tips:
     runs-on: docker
     container:
-      image: ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1@sha256:19fee98af69b0d3a0b8901f856ef3c0593df4f56ff9729d7d276ca358ac7d1c6
+      image: ghcr.io/intentius/terragucci-terragrunt:0.2.1-tg1.1.6-tofu1.13.1@sha256:79de2670acf6d63f9f9eb9ee4f1fd0afac61b743b6661f890dd83aa640d6fc42
     needs: apply
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     concurrency:
