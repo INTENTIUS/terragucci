@@ -1,6 +1,6 @@
 {
   "step": "wave-refused",
-  "source_hash": "a2d8f60c83c3eab5",
+  "source_hash": "7f1fc662b5c69345",
   "commands": [
     {
       "cmd": "just example approve",
@@ -9,7 +9,7 @@
     },
     {
       "cmd": "just example change module-bump",
-      "output": "[example] pushed change/module-bump at ef3618eb\n[example] run 13 for ef3618eb: success (http://localhost:3300/terragucci-admin/example/actions/runs/13)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/13 (success)",
+      "output": "[example] pushed change/module-bump at 1b0c6648\n[example] run 13 for 1b0c6648: success (http://localhost:3300/terragucci-admin/example/actions/runs/13)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/13 (success)",
       "exit": 0
     },
     {

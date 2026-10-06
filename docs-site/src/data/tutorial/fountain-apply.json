@@ -1,10 +1,10 @@
 {
   "step": "fountain-apply",
-  "source_hash": "53d2ce1a38f1fe7f",
+  "source_hash": "7f1fc662b5c69345",
   "commands": [
     {
       "cmd": "just example up --fresh --fountain",
-      "output": "[example] starting Forgejo, its runner and floci (a minute or two the first time)…\n[example] starting fountain and its runner (a few minutes the first time)…\n[example] wiping floci and the example repo…\n[steward] declared terragucci-steward on fountain: Environment created, Agent created, Teammate created\n[steward] terragucci-steward is online\n[steward] wrote chant.config.ts and tf-apply.op.ts; the pipeline hands tf-apply to terragucci-steward\n[example] pushed to main at 02b3694c; the pipeline applies every root…\n[example] run 1 for 02b3694c: success (http://localhost:3300/terragucci-admin/example/actions/runs/1)\n[example] all 40 resources are in floci\n[example] ready in 90s\n\n  Steward     terragucci-steward, turn 1: chant run tf-apply --on local (completed)\n\n  The example is running.\n\n  Forgejo     http://localhost:3300/terragucci-admin/example\n  Pipeline    http://localhost:3300/terragucci-admin/example/actions/runs/1\n  Sign in as  terragucci-admin / Terragucci-local-pw-1234 (only needed to merge or comment)\n  floci       http://localhost:4580 (the AWS stand-in)\n\n  Next: just example change one-root",
+      "output": "[example] starting Forgejo, its runner and floci (a minute or two the first time)…\n[example] starting fountain and its runner (a few minutes the first time)…\n[example] wiping floci and the example repo…\n[steward] declared terragucci-steward on fountain: Environment created, Agent created, Teammate created\n[steward] terragucci-steward is online\n[steward] wrote chant.config.ts and tf-apply.op.ts; the pipeline hands tf-apply to terragucci-steward\n[example] pushed to main at 5f834797; the pipeline applies every root…\n[example] run 1 for 5f834797: success (http://localhost:3300/terragucci-admin/example/actions/runs/1)\n[example] all 40 resources are in floci\n[example] ready in 90s\n\n  Steward     terragucci-steward, turn 1: chant run tf-apply --on local (completed)\n\n  The example is running.\n\n  Forgejo     http://localhost:3300/terragucci-admin/example\n  Pipeline    http://localhost:3300/terragucci-admin/example/actions/runs/1\n  Sign in as  terragucci-admin / Terragucci-local-pw-1234 (only needed to merge or comment)\n  floci       http://localhost:4580 (the AWS stand-in)\n\n  Next: just example change one-root",
       "exit": 0
     },
     {
