@@ -1,10 +1,10 @@
 {
   "step": "first-pr",
-  "source_hash": "a2d8f60c83c3eab5",
+  "source_hash": "7f1fc662b5c69345",
   "commands": [
     {
       "cmd": "just example change one-root",
-      "output": "[example] pushed change/one-root at a3cbe49d\n[example] run 3 for a3cbe49d: success (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (success)",
+      "output": "[example] pushed change/one-root at b8937dbe\n[example] run 3 for b8937dbe: success (http://localhost:3300/terragucci-admin/example/actions/runs/3)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1\n  Pipeline      http://localhost:3300/terragucci-admin/example/actions/runs/3 (success)",
       "exit": 0
     }
   ],

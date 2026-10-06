@@ -1,6 +1,6 @@
 {
   "recorded": "2026-10-06",
-  "commit": "60bf2e7",
+  "commit": "c19cdea",
   "forge": "forgejo",
   "claims": [
     {
@@ -245,7 +245,7 @@
       "claim": "steward",
       "says": "tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught"
     },
     {
