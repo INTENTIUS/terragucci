@@ -35,8 +35,12 @@ jobs:
     container:
       image: ghcr.io/intentius/terragucci-terragrunt:0.2.0-tg1.1.6-tofu1.13.1
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    env:
+      TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Format check and validate, every unit
         run: |
           set -eu
@@ -45,6 +49,14 @@ jobs:
           terragrunt hcl fmt --check --diff --no-color
           terragrunt hcl validate --inputs --no-color --filter '!./catalog/**' --filter '!./**/.terragrunt-cache/**'
           echo "every unit is formatted and its inputs match its module"
+          terragucci check-policy
+      - name: Keep the check report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-check
+          path: terragucci-check/
+          if-no-files-found: ignore
   plan:
     runs-on: docker
     container:

@@ -18,6 +18,33 @@ const render = (forge: ForgeName, oidc?: typeof OIDC): string =>
 
 const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
 
+describe("the check job", () => {
+  it.each(["github", "forgejo"] as const)("%s: validates through check-root, tests the policy, keeps the report and has the history", (forge) => {
+    const check = body(render(forge)).jobs.check;
+    const run = check.steps.find((s: { run?: string }) => s.run?.includes("check-root")).run as string;
+    expect(run).toContain('terragucci check-root "$dir" --binary tofu || failed=1');
+    expect(run).toContain("terragucci check-policy || failed=1");
+    expect(run).toContain('exit "$failed"');
+    expect(run).not.toContain("validate -no-color");
+    expect(check.steps[0].with["fetch-depth"]).toBe(0);
+    expect(check.env.TG_BRANCH).toBe("${{ github.event.repository.default_branch }}");
+    const keep = check.steps.find((s: { name?: string }) => s.name === "Keep the check report");
+    expect(keep.with.path).toBe("terragucci-check/");
+  });
+
+  it("gitlab: the same script, the report as an artifact, the history in the clone", () => {
+    const doc = body(render("gitlab"));
+    expect(doc.check.script.join("\n")).toContain('terragucci check-root "$dir" --binary tofu || failed=1');
+    expect(doc.check.artifacts).toEqual({ name: "terragucci-check", when: "always", paths: ["terragucci-check/"] });
+    expect(doc.check.variables).toMatchObject({ GIT_DEPTH: "0", TG_BRANCH: "$CI_DEFAULT_BRANCH" });
+  });
+
+  it("a choudoufu pipeline passes its binary, which check-root uses to run live-check", () => {
+    const text = renderPipeline({ forge: "github", binary: "choudoufu", version: "1.0.0", image: "img:1", layers, env: {} }).content;
+    expect(text).toContain('terragucci check-root "$dir" --binary choudoufu || failed=1');
+  });
+});
+
 describe("apply concurrency", () => {
   it.each(["github", "forgejo"] as const)("%s: one apply per project, a waiting push is not cancelled", (forge) => {
     for (const job of ["apply-wave-1", "apply-wave-2"]) {

@@ -79,6 +79,8 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
     "terragrunt hcl fmt --check --diff --no-color",
     `terragrunt hcl validate --inputs --no-color ${filters(tg.exclude)}`,
     'echo "every unit is formatted and its inputs match its module"',
+    // With `policy:` set, the policy's own tests; no `policy:` key prints nothing.
+    "terragucci check-policy",
   ].join("\n");
 }
 

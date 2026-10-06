@@ -37,18 +37,30 @@ jobs:
     permissions:
       contents: write
     env:
+      TG_BRANCH: '${{ github.event.repository.default_branch }}'
       TG_TOKEN: '${{ github.token }}'
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Format check and validate, every root
         run: |
           set -eu
           tofu fmt -check -recursive -diff .
+          failed=0
           for dir in 'envs/dev/email' 'envs/dev/orders' 'envs/dev/payments' 'envs/dev/platform' 'envs/dev/search' 'envs/prod/email' 'envs/prod/orders' 'envs/prod/payments' 'envs/prod/platform' 'envs/prod/search' 'envs/staging/email' 'envs/staging/orders' 'envs/staging/payments' 'envs/staging/platform' 'envs/staging/search'; do
             tofu -chdir="$dir" init -backend=false -input=false -no-color >/dev/null
-            tofu -chdir="$dir" validate -no-color >/dev/null
-            echo "valid $dir"
+            terragucci check-root "$dir" --binary tofu || failed=1
           done
+          terragucci check-policy || failed=1
+          exit "$failed"
+      - name: Keep the check report
+        if: always()
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-check
+          path: terragucci-check/
+          if-no-files-found: ignore
       - name: Commit the formatting
         if: failure() && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
         shell: bash

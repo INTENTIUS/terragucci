@@ -36,6 +36,7 @@ import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { RenderError } from "./render";
 import { applyWave } from "./apply";
+import { checkPolicyTests, checkRoot, emitCheck } from "./check";
 import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
@@ -53,6 +54,8 @@ const USAGE = `usage:
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
+  terragucci check-root <dir> [--binary <b>]
+  terragucci check-policy [--config <file>] [--base <ref>]
   terragucci install tofu|terraform|terragrunt <version>
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
@@ -181,6 +184,20 @@ export async function main(argv: string[]): Promise<number> {
         if (result.report.run.report_url) console.log(`served at ${result.report.run.report_url}`);
         if (result.report.run.trace_id) console.log(`trace: ${result.report.run.trace_url ?? result.report.run.trace_id}`);
         return code;
+      }
+      case "check-root": {
+        // tf-check's per-root step: validate's diagnostics, and choudoufu's live-check for a choudoufu root.
+        const dir = args[0];
+        if (!dir) throw new ConfigError("usage: terragucci check-root <dir> [--binary <b>]");
+        const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd);
+        emitCheck(cwd, result);
+        return result.ok ? 0 : 1;
+      }
+      case "check-policy": {
+        // tf-check's policy step: the policy's own tests, when `policy:` is set.
+        const result = await checkPolicyTests(cwd, { ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "base") ? { base: str(flags, "base") } : {}) });
+        emitCheck(cwd, result);
+        return result.ok ? 0 : 1;
       }
       case "auth-provider": {
         // Terragrunt runs this in each unit's directory and reads the credentials it prints.
