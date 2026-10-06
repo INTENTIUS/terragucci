@@ -1,7 +1,7 @@
 ---
 title: Re-plan a pull request from a comment
 description: Ask for a read-only re-plan of a pull request by writing /terragucci plan, and re-run an approved apply with /terragucci apply, on GitHub and Forgejo.
-claims: [comment-plan]
+claims: [comment-plan, comment-apply, comment-not-affected]
 ---
 
 ## What you end up with

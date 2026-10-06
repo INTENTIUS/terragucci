@@ -1,7 +1,7 @@
 ---
 title: Publish your modules
 description: Version the modules beside your roots automatically, as OCI artifacts or git tags, on every merge.
-claims: [publish]
+claims: [publish, version-bump-job]
 ---
 
 ## What you end up with
