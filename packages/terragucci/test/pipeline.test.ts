@@ -54,11 +54,46 @@ describe("the check job", () => {
 });
 
 describe("apply concurrency", () => {
+  const GROUP = "terragucci-apply-${{ github.repository }}";
+
   it.each(["github", "forgejo"] as const)("%s: one apply per project, a waiting push is not cancelled", (forge) => {
     for (const job of ["apply-wave-1", "apply-wave-2"]) {
-      expect(body(render(forge)).jobs[job].concurrency).toEqual({ group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false });
+      expect(body(render(forge)).jobs[job].concurrency).toMatchObject({ group: GROUP, "cancel-in-progress": false });
     }
     expect(body(render(forge)).jobs.check.concurrency).toBeUndefined();
+  });
+
+  it("github: every apply job, the comment's too, queues in the one group with queue: max, so a job that starts waiting cancels none already waiting", () => {
+    const doc = body(render("github", OIDC));
+    for (const job of ["apply-wave-1", "apply-wave-2", "apply-comment"]) {
+      expect(doc.jobs[job].concurrency, job).toEqual({ group: GROUP, "cancel-in-progress": false, queue: "max" });
+    }
+    // GitHub refuses queue: max beside cancel-in-progress: true; no job in the workflow has that pair.
+    for (const [name, job] of Object.entries(doc.jobs as Record<string, any>)) {
+      if (job.concurrency?.queue === "max") expect(job.concurrency["cancel-in-progress"], name).toBe(false);
+    }
+    // The other groups keep the default queue: a newer run of tips, version-bump or a re-plan replacing an older waiting one is wanted.
+    expect(doc.jobs.replan.concurrency.queue).toBeUndefined();
+    const tg = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content);
+    expect(tg.jobs.apply.concurrency).toEqual({ group: GROUP, "cancel-in-progress": false, queue: "max" });
+  });
+
+  it("forgejo: no queue key, since Forgejo runs a workflow's jobs whatever their concurrency says and the lock tag holds the apply", () => {
+    const doc = body(render("forgejo", OIDC));
+    for (const job of ["apply-wave-1", "apply-wave-2", "apply-comment"]) {
+      expect(doc.jobs[job].concurrency, job).toEqual({ group: GROUP, "cancel-in-progress": false });
+    }
+  });
+
+  it("github: a push's wave stands down when the branch moved past it, because nothing cancels it any more; the comment's apply does not", () => {
+    for (const wave of [1, 2]) expect(applyScript("tofu", layers, "github", undefined, { wave })).toContain("standing down");
+    expect(terragruntApplyScript([["live/a"]], "github")).toContain("standing down");
+    expect(applyScript("tofu", layers, "gitlab", undefined, { wave: 1 })).not.toContain("standing down");
+    expect(commentApplyScript("tofu", layers, "github", OIDC)).not.toContain("standing down");
+    // It stands down before the pending status and before the stage.
+    const script = applyScript("tofu", layers, "github", undefined, { wave: 1 });
+    expect(script.indexOf("standing down")).toBeLessThan(script.indexOf('tg status terragucci/apply pending "applying"'));
+    expect(script.indexOf("standing down")).toBeLessThan(script.indexOf("terragucci stage tf-apply"));
   });
 
   it("gitlab: each wave's apply job is in the one resource group", () => {
@@ -143,7 +178,7 @@ describe("the comment trigger", () => {
     const job = doc.jobs["apply-comment"];
     expect(job.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')");
     expect(job.concurrency).toEqual(doc.jobs["apply-wave-1"].concurrency);
-    expect(job.concurrency).toEqual({ group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false });
+    expect(job.concurrency).toEqual({ group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false, ...(forge === "github" ? { queue: "max" } : {}) });
     const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
     expect(run).toContain(OIDC.apply_role);
     expect(run).not.toContain(OIDC.plan_role);
@@ -261,6 +296,66 @@ describe("the comment trigger", () => {
       } finally {
         api.close();
       }
+    });
+
+    // A terragucci whose stage ends `code` at wave 2, and that logs each respond call with its arguments.
+    const ending = (code: number, outcome: string) => fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+      terragucci: [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = comment-apply ]; then while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done; printf \'%s\\n\' "$DECISION" > "$out"; exit 0; fi',
+        'if [ "$1" = respond ]; then echo "respond ${*:2}" >> "$LOG"; [ "$2" = apply-failed ] && cp "$4" "$LOG.triage"; exit 0; fi',
+        'echo "wave $4" >> "$LOG"',
+        `if [ "$4" = 2 ]; then echo ${JSON.stringify(outcome)} > "$TG_OUTCOME"; echo "Error: creating the bucket: AccessDenied"; exit ${code}; fi`,
+        "exit 0",
+      ].join("\n"),
+    });
+
+    it("a refused wave runs respond wave-refused for that wave, as a push's wave does, before the reply", async () => {
+      const { work, sha } = repo();
+      const { dir, env } = ending(4, "wave 2 was refused: its plans changed since the approval");
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
+        expect(r.status, r.out).toBe(4);
+        const calls = readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n");
+        expect(calls).toEqual(["wave 1", "wave 2", "respond wave-refused --wave 2 --approved terragucci-report/approved --current terragucci-report/current"]);
+        expect(api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body).toContain("wave 2 was refused");
+        expect(api.hits.filter((h) => h.url.includes("/statuses/")).at(-1)?.body.state).toBe("failure");
+      } finally {
+        api.close();
+      }
+    });
+
+    it("a failed wave runs respond apply-failed on that wave's log, as a push's wave does, and later waves do not run", async () => {
+      const { work, sha } = repo();
+      const { dir, env } = ending(1, "");
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", [["network"], ["app"], ["cache"]], "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
+        expect(r.status, r.out).toBe(1);
+        const calls = readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n");
+        expect(calls[0]).toBe("wave 1");
+        expect(calls[1]).toBe("wave 2");
+        expect(calls[2]).toMatch(/^respond apply-failed --log \S+$/);
+        expect(calls).toHaveLength(3);
+        // The log is the failed wave's own output, which the step still prints.
+        expect(readFileSync(join(dir, "stage.log.triage"), "utf-8")).toContain("Error: creating the bucket: AccessDenied");
+        expect(r.out).toContain("Error: creating the bucket: AccessDenied");
+        expect(api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body).toContain("wave 2 did not apply");
+      } finally {
+        api.close();
+      }
+    });
+
+    it("a waiting wave gets no response, and a response set to off is not called", async () => {
+      expect(commentApplyScript("tofu", layers, "github")).toContain("terragucci respond wave-refused --wave \"$wave\"");
+      expect(commentApplyScript("tofu", layers, "github")).toContain('terragucci respond apply-failed --log "$log" || true');
+      const off = commentApplyScript("tofu", layers, "github", undefined, { respond: { "apply-failed": "off", "wave-refused": "off" } });
+      expect(off).not.toContain("terragucci respond");
+      expect(off).toContain("  rc=$?");
+      const script = commentApplyScript("tofu", layers, "github");
+      const waits = script.slice(script.indexOf("    3)"), script.indexOf("    4)"));
+      expect(waits).not.toContain("terragucci respond");
     });
 
     it("a comment the decision refused runs no stage and asks for no token", async () => {
@@ -752,7 +847,8 @@ describe("the plan stage", () => {
 
 describe("stale plan notes", () => {
   const applyEnv = (api: string, bin: Record<string, string>): Record<string, string> => ({
-    ...bin, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", GITHUB_API_URL: api, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
+    // No branch, so a GitHub wave does not ask a remote for the tip (STAND_DOWN), whatever the test's own environment says.
+    ...bin, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", GITHUB_REF_NAME: "", GITHUB_API_URL: api, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
   });
   const noteFor = (roots: string): { id: number; body: string } => ({ id: 55, body: `<!-- terragucci:plan roots=${roots} -->\n## terragucci plan\n` });
 
@@ -833,7 +929,7 @@ describe("the Terragrunt apply in the step's own shell", () => {
       const script = terragruntApplyScript([["live/a"], ["live/b"]], "github");
       expect(script.split("\n")[0]).toBe(READS_EXIT);
       const r = await runStep(`cd ${dir} && ${script}`, {
-        ...env, LOG: log, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
+        ...env, LOG: log, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", GITHUB_REF_NAME: "", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
       });
       expect(r.status, r.out).toBe(1);
       const calls = readFileSync(log, "utf-8").trim().split("\n");
@@ -841,6 +937,36 @@ describe("the Terragrunt apply in the step's own shell", () => {
       expect(calls.some((c) => c.startsWith("terragucci respond apply-failed --log "))).toBe(true);
       const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description]);
       expect(s.at(-1)).toEqual(["failure", "an apply failed"]);
+    } finally {
+      api.close();
+    }
+  });
+});
+
+describe("a GitHub wave whose push is no longer the branch tip", () => {
+  it("stands down with a success status and applies nothing, since the apply group no longer cancels it", async () => {
+    const origin = tmp("tg-origin-");
+    git(origin, "init", "-q", "--bare");
+    const work = tmp("tg-work-");
+    git(work, "init", "-q", "-b", "main");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "one");
+    git(work, "remote", "add", "origin", origin);
+    git(work, "push", "-q", "origin", "main");
+    const tip = git(work, "rev-parse", "HEAD").trim();
+    const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", { terragucci: `#!/usr/bin/env bash\necho applied >> "$LOG"\nexit 0\n` });
+    const log = join(dir, "apply.log");
+    const api = await stubApi(() => []);
+    try {
+      const base = { ...env, LOG: log, TG_TOKEN: "t", TG_BRANCH: "main", GITHUB_REF_NAME: "main", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1" };
+      const old = await runStep(`cd ${work} && ${applyScript("tofu", layers, "github", undefined, { wave: 2 })}`, { ...base, GITHUB_SHA: "0".repeat(40), TG_SHA: "0".repeat(40) });
+      expect(old.status, old.out).toBe(0);
+      expect(old.out).toContain("standing down");
+      expect(existsSync(log)).toBe(false);
+      expect(api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description])).toEqual([["success", "superseded by a newer push"]]);
+      // The push at the tip applies.
+      const now = await runStep(`cd ${work} && ${applyScript("tofu", layers, "github", undefined, { wave: 2 })}`, { ...base, GITHUB_SHA: tip, TG_SHA: tip });
+      expect(now.status, now.out).toBe(0);
+      expect(readFileSync(log, "utf-8").trim()).toBe("applied");
     } finally {
       api.close();
     }
