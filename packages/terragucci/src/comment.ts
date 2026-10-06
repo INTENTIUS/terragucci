@@ -1,8 +1,10 @@
 /**
  * `terragucci comment`: the pull request comment command. A comment that reads
  * `/terragucci plan [root]` re-plans what the pull request changes, read-only.
- * Nothing here applies, approves or unlocks: the only command is `plan`, and a
- * re-plan changes nothing an approval covers, since approvals bind digests.
+ * Nothing here applies, approves or unlocks, and a re-plan changes nothing an
+ * approval covers, since approvals bind digests. `/terragucci apply [wave-<n>]`
+ * parses here too, and is decided by `terragucci comment-apply`
+ * (comment-apply.ts), which re-runs an already approved apply after the merge.
  *
  * The comment is untrusted input. It is read from the event file, never from
  * an expression in a script, and it is parsed against one strict grammar. The
@@ -15,20 +17,22 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { ConfigError } from "./config";
 import type { Fetch } from "./forge";
 
-/** The one command. Everything else is refused, by name when it is a command people may expect. */
-export const COMMENT_COMMANDS = ["plan"] as const;
+/** The commands. Everything else is refused, by name when it is a command people may expect. */
+export const COMMENT_COMMANDS = ["plan", "apply"] as const;
 
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
-const NEVER = new Set(["apply", "approve", "unlock", "force-unlock", "import", "state", "destroy", "merge"]);
+const NEVER = new Set(["approve", "unlock", "force-unlock", "import", "state", "destroy", "merge"]);
 
 /** A root as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
 const ROOT = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
-const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
-const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-const LOGIN = /^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}$/;
+export const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
+export const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+export const LOGIN = /^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}$/;
 
 export type ParsedComment =
   | { kind: "plan"; root?: string }
+  /** `/terragucci apply [wave-<n>]`: re-run the merged pull request's apply, through wave n when one is named. */
+  | { kind: "apply"; wave?: number }
   | { kind: "refused"; reason: string };
 
 /**
@@ -44,10 +48,11 @@ export function parseComment(body: unknown): ParsedComment | undefined {
   const words = text.split(/[ \t]+/);
   const verb = words[1];
   if (verb === undefined) return { kind: "refused", reason: "the command is `/terragucci plan [root]`" };
+  if (verb === "apply") return parseApply(words);
   if (verb !== "plan") {
     return {
       kind: "refused",
-      reason: NEVER.has(verb) ? `a comment never runs \`${verb}\`: terragucci re-plans on request and nothing more` : "the only command is `/terragucci plan [root]`",
+      reason: NEVER.has(verb) ? `a comment never runs \`${verb}\`: terragucci re-plans, and re-runs an apply already approved, on request and nothing more` : "the commands are `/terragucci plan [root]` and `/terragucci apply [wave-<n>]`",
     };
   }
   if (words.length > 3) return { kind: "refused", reason: "`/terragucci plan` takes one root at most" };
@@ -55,6 +60,16 @@ export function parseComment(body: unknown): ParsedComment | undefined {
   if (root === undefined) return { kind: "plan" };
   if (!ROOT.test(root) || root.split("/").some((s) => s === "" || s === "." || s === "..")) return { kind: "refused", reason: "the root is a path from the repository root, like `envs/dev/orders`" };
   return { kind: "plan", root };
+}
+
+/** `/terragucci apply` with nothing after it, or with one wave: `wave-<n>`, n from 1. */
+function parseApply(words: string[]): ParsedComment {
+  if (words.length > 3) return { kind: "refused", reason: "`/terragucci apply` takes one wave at most, like `wave-2`" };
+  const wave = words[2];
+  if (wave === undefined) return { kind: "apply" };
+  const m = /^wave-([1-9][0-9]{0,2})$/.exec(wave);
+  if (!m) return { kind: "refused", reason: "the wave is written `wave-<n>`, like `wave-2`" };
+  return { kind: "apply", wave: Number(m[1]) };
 }
 
 /** The root a comment named, when it is one of the roots the pipeline was written with. */
@@ -87,7 +102,7 @@ export interface CommentOptions {
 }
 
 /** The forge's API root and the repository, from the job's environment (GitHub's variables, which Forgejo sets too). */
-function apiOf(env: NodeJS.ProcessEnv): { api: string; repo: string; token: string } {
+export function apiOf(env: NodeJS.ProcessEnv): { api: string; repo: string; token: string } {
   const repo = env.GITHUB_REPOSITORY;
   const api = env.GITHUB_API_URL || (env.GITHUB_SERVER_URL ? `${env.GITHUB_SERVER_URL}/api/v1` : undefined);
   const token = env.TG_TOKEN;
@@ -162,6 +177,12 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   if (parsed.kind === "refused") {
     await reply(parsed.reason);
     return stop(parsed.reason);
+  }
+  // A pipeline with the comment-apply job sends `/terragucci apply` there and never here; one without it (a Terragrunt repo's) says so.
+  if (parsed.kind === "apply") {
+    const reason = "this pipeline does not apply on a comment: re-run the apply job on the forge, or push to the default branch again";
+    await reply(reason);
+    return stop(reason);
   }
   if (parsed.root !== undefined && !allowRoot(parsed.root, o.layers)) {
     const reason = `${parsed.root} is not a root of this repository`;

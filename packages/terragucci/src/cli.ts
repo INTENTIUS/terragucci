@@ -14,6 +14,7 @@
  *   terragucci config check [--config <file>]
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
+ *   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge forgejo]   (read a `/terragucci apply [wave-<n>]` comment; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -27,6 +28,7 @@ import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { decideComment, writeDecision } from "./comment";
+import { decideApplyComment } from "./comment-apply";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -60,6 +62,7 @@ const USAGE = `usage:
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo]
+  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump|description [--mode dry-run|apply] [flags]
 
 init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
@@ -250,6 +253,22 @@ export async function main(argv: string[]): Promise<number> {
           return 1;
         }
         console.log(`terragucci comment: ${decision.go ? "" : "no re-plan: "}${decision.reason}`);
+        return 0;
+      }
+      case "comment-apply": {
+        const layers = str(flags, "layers");
+        const out = str(flags, "out");
+        const forge = str(flags, "forge") ?? "github";
+        const canary = str(flags, "canary");
+        if (!layers || !out) throw new ConfigError("comment-apply needs --layers <a,b;c> and --out <file>");
+        if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment-apply's --forge is github or forgejo");
+        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, ...(canary ? { canary: canary.split(",") } : {}) });
+        writeDecision(resolve(cwd, out), decision);
+        if (decision.fail) {
+          console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
+          return 1;
+        }
+        console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
         return 0;
       }
       case "rollout": {

@@ -122,7 +122,8 @@ comment-not-affected|a re-plan comment for a root the pull request does not reac
 drift-attribute|with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue|
 version-bump-job|with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service|
 tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
-oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|'
+oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
+comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2339,7 +2340,7 @@ TF
     [ "$(grep -c '^terragucci: ' <<<"$replies")" -ge 3 ] && break
     sleep 3
   done
-  grep -q 'never runs `apply`' <<<"$replies" || { log "a comment that applies was not refused by name"; rc=1; }
+  grep -q "pull request $pr is not merged" <<<"$replies" || { log "a comment that applies was not refused"; rc=1; }
   grep -q 'envs/nope is not a root' <<<"$replies" || { log "a root outside the configured ones was not refused"; rc=1; }
   grep -q 'the root is a path' <<<"$replies" || { log "a root written as a shell command was not refused"; rc=1; }
   after="$(statuses "$head_sha" terragucci/plan)"
@@ -3422,6 +3423,112 @@ exit "$rc"' oidc "$name" "$provider" "$sa@shop.iam.gserviceaccount.com" "$client
   return $rc
 }
 
+claim_comment_apply() {
+  # The gated fixture (gate always; wave 1 is canary/one, wave 2 fleet/*) on
+  # main, where wave 1 waits. A pull request changes canary/one and is merged;
+  # the merge commit's apply waits at wave 1 for its new digest. An agent then
+  # writes an unsealed approval of that plan to chant/lifecycle. As the repo's
+  # admin, `/terragucci apply` on the merged pull request must be answered that
+  # wave 1 waits, with its set digest and the `chant approve ... --sign`
+  # command, and apply nothing. `/terragucci apply` on an open pull request,
+  # and from a user with no write access, must each be refused with a reply,
+  # and apply nothing. The approver approves wave 1 with a sealed record, and
+  # `/terragucci apply` again must apply canary/one (wave 2 waits at its own
+  # gate) and reply with a link to the run.
+  # BREAK: chant.workspace.json is left out of the pushed tree, so no gate needs
+  # a seal, and the unsealed approval lets the first comment apply wave 1.
+  log() { echo "[smoke comment-apply] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/comment-apply" sha merge pr open_pr applied reply rc=0
+  local stranger="smoke-stranger" pass stoken
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo comment-apply || { drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  grep -q '^  apply-comment:' "$work/tree/.forgejo/workflows/terragucci.yml" || { log "the pipeline has no apply-comment job"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "comment-apply: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  # The pull request, merged by the forge: its merge commit is what the comment applies.
+  echo 2 > "$work/tree/canary/one/rev.txt"
+  push_tree "$work/tree" "$repo" change "comment-apply: change canary/one" >/dev/null || { drop_work "$work"; return 1; }
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"change","base":"main","title":"comment-apply: change canary/one"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "pull request $pr did not merge"; drop_work "$work"; return 1; }
+  merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+  [ -n "$merge" ] || { log "pull request $pr has no merge commit"; drop_work "$work"; return 1; }
+  wait_run "$repo" "$merge" || { drop_work "$work"; return 1; }
+  log "pull request $pr merged as ${merge:0:8}; its apply: $RUN_STATUS, state for: $(gated_applied comment-apply)"
+  # An approval no person sealed, of the plan wave 1 waits on.
+  gated_forge comment-apply 1 unsealed || rc=1
+
+  # reply_count n; comment_as token n text -> the reply terragucci posts on n, once it has.
+  reply_count() { api "$URL/api/v1/repos/$repo/issues/$1/comments?limit=100" | jq '[.[] | select(.body | startswith("terragucci: "))] | length'; }
+  comment_as() {
+    local token="$1" n="$2" before i
+    before="$(reply_count "$n")"
+    curl -fsS -o /dev/null -H "Authorization: token $token" -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$3" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$n/comments" || return 1
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+      [ "$(reply_count "$n")" -gt "$before" ] && break
+      sleep 3
+    done
+    api "$URL/api/v1/repos/$repo/issues/$n/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
+  }
+
+  if [ $rc = 0 ]; then
+    reply="$(comment_as "$TOKEN" "$pr" "/terragucci apply")"
+    applied="$(gated_applied comment-apply)"
+    log "first comment: state for: ${applied:-nothing}; reply: ${reply:-none}"
+    [ -z "$applied" ] || { log "the comment applied a wave with no sealed approval"; rc=1; }
+    if [ $rc = 0 ]; then
+      grep -q "wave 1 waits for an approval of its set digest sha256:" <<<"$reply" || { log "the reply does not say wave 1 waits, with its digest"; rc=1; }
+      grep -q 'chant approve tf-apply wave-1 --plan sha256:[0-9a-f]* --sign' <<<"$reply" || { log "the reply does not give the chant approve --sign command"; rc=1; }
+    fi
+  fi
+
+  # Refused: an open pull request, and a commenter with no write access.
+  if [ $rc = 0 ]; then
+    echo open > "$work/tree/fleet/two/rev.txt"
+    push_tree "$work/tree" "$repo" open-change "comment-apply: an open change" >/dev/null || rc=1
+    open_pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"open-change","base":"main","title":"comment-apply: open"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+    reply="$(comment_as "$TOKEN" "$open_pr" "/terragucci apply")"
+    log "open pull request $open_pr: ${reply:-no reply}"
+    grep -q "pull request $open_pr is not merged" <<<"$reply" || { log "an apply comment on an open pull request was not refused"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    pass="smoke-$RANDOM-$RANDOM-Aa1"
+    api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$stranger?purge=true" 2>/dev/null || true
+    api -o /dev/null -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg u "$stranger" --arg p "$pass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" || rc=1
+    stoken="$(curl -fsS -u "$stranger:$pass" -H 'content-type: application/json' -X POST -d '{"name":"smoke","scopes":["write:issue","read:repository"]}' "$URL/api/v1/users/$stranger/tokens" | jq -r '.sha1 // empty')"
+    [ -n "$stoken" ] || { log "no token for $stranger"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(comment_as "$stoken" "$pr" "/terragucci apply")"
+    log "a commenter with no write access: ${reply:-no reply}"
+    grep -q "$stranger has no write access" <<<"$reply" || { log "an apply comment from a user with no write access was not refused"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    applied="$(gated_applied comment-apply)"
+    [ -z "$applied" ] || { log "a refused comment applied: $applied"; rc=1; }
+  fi
+
+  # Approved with a sealed record: the comment applies wave 1 and links the run.
+  if [ $rc = 0 ]; then
+    gated_approve comment-apply 1 || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(comment_as "$TOKEN" "$pr" "/terragucci apply")"
+    applied="$(gated_applied comment-apply)"
+    log "after the sealed approval: state for: ${applied:-nothing}; reply: ${reply:-none}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting at its own gate"; rc=1; }
+    grep -q "/actions/runs/" <<<"$reply" || { log "the reply does not link the run"; rc=1; }
+    grep -q "wave 2 waits" <<<"$reply" || { log "the reply does not say wave 2 waits"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$stranger?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the comment applied nothing while wave 1 had only an unsealed approval, refused an open pull request and a non-writer, and applied wave 1 once it was sealed"
+  return $rc
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -3553,6 +3660,7 @@ drift-attribute      self! weight=90
 version-bump-job     runner self! weight=150
 tg-spans             tg after=tg-waves weight=450
 oidc-clouds          weight=20
+comment-apply        runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
