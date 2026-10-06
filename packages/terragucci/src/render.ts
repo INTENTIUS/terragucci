@@ -294,9 +294,9 @@ const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
 
 /**
  * Write the job's OIDC token for one audience to `file` (by default
- * `$AWS_WEB_IDENTITY_TOKEN_FILE`), or stop the job: the scripts run without
- * `set -e`, and a job that went on would plan or apply with whatever
- * credentials the runner happens to hold. On GitLab the token is the job's
+ * `$AWS_WEB_IDENTITY_TOKEN_FILE`), or stop the job: the scripts that read a
+ * stage's exit code turn `-e` off (READS_EXIT), and a job that went on would
+ * plan or apply with whatever credentials the runner happens to hold. On GitLab the token is the job's
  * `id_tokens` entry `gitlabVar`, one per audience.
  */
 export function tokenScript(forge: ForgeName, audience = AUDIENCE, file = "$AWS_WEB_IDENTITY_TOKEN_FILE", gitlabVar = "TERRAGUCCI_OIDC"): string {
@@ -435,11 +435,15 @@ export function forgejoLock(standDown = true): string {
 }
 
 /**
- * The first line of a script that reads a stage's exit code. A step with
- * `shell: bash` runs as `bash --noprofile --norc -e -o pipefail {0}` on GitHub
- * and on Forgejo's runner, so without `set +e` a wave that waits (3) or is
- * refused (4) ends the step at the stage, before its status, its response or
- * the comment's reply.
+ * The first line of a script that reads a stage's exit code: the plan and
+ * re-plan, the apply waves, the apply a comment starts, the drift sweep and
+ * the Terragrunt apply. A step with `shell: bash` runs as
+ * `bash --noprofile --norc -e -o pipefail {0}` on GitHub and on Forgejo's
+ * runner, so without `set +e` a stage that fails, a wave that waits (3) or
+ * one that is refused (4) ends the step at the stage, before its status, its
+ * note, its response or the comment's reply. On GitLab these scripts run in
+ * their own `bash` from a heredoc, which starts without `-e`; the line says
+ * the same there.
  */
 export const READS_EXIT = "set +e -uo pipefail";
 
@@ -611,7 +615,7 @@ export function terragruntApplyScript(
   respond?: PipelineInput["respond"],
 ): string {
   return [
-    "set -uo pipefail",
+    READS_EXIT,
     forgeApi(forge),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...terragruntCredentials(forge, "apply", oidc, credentials),
@@ -688,7 +692,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
   return [
-    "set -uo pipefail",
+    READS_EXIT,
     forgeApi(forge),
     ...(replan ? [replanPrelude(layers, forge, report.agentComment)] : []),
     ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
@@ -788,7 +792,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
   return [
-    "set -uo pipefail",
+    READS_EXIT,
     // The stage keeps the issue itself; the forge calls here are only for the OIDC token.
     ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),

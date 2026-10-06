@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
-import { AGENT_COMMAND, agentCommentInput } from "../src/agent-comment";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, planScript, READS_EXIT, renderPipeline } from "../src/render";
+import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
+import { agentRunScript } from "../src/render-agent";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, planScript, READS_EXIT, renderPipeline, terragruntApplyScript } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -372,6 +373,21 @@ describe("the agent comment", () => {
   it("gitlab: refused, since a merge request note starts no pipeline", () => {
     expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent })).toThrow(/GitLab starts none for a merge request note/);
   });
+
+  it("an agent that fails in the step's own shell still writes its exit code and the patch, so the push job can say it stopped", async () => {
+    const work = tmp("tg-agent-work-");
+    git(work, "init", "-q", "-b", "main");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "head");
+    const sha = git(work, "rev-parse", "HEAD").trim();
+    const dir = tmp("tg-agent-dir-");
+    writeFileSync(join(dir, "prompt.md"), "the ask\n");
+    const script = agentRunScript("echo half > half.txt; exit 2").replaceAll(AGENT_DIR, dir);
+    expect(script.split("\n")[0]).toBe(READS_EXIT);
+    const r = await runStep(`cd ${work} && ${script}`, { TG_SHA: sha });
+    expect(r.status, r.out).toBe(0);
+    expect(readFileSync(join(dir, "change", "rc"), "utf-8").trim()).toBe("2");
+    expect(readFileSync(join(dir, "change", "change.patch"), "utf-8")).toContain("half.txt");
+  });
 });
 
 describe("publish job", () => {
@@ -652,11 +668,11 @@ describe("the plan stage", () => {
     }
   });
 
-  it("a root that fails to plan fails the stage and its status, and the note still goes up", async () => {
+  it("a root that fails to plan fails the stage and its status, and the note still goes up, in the step's own shell", async () => {
     const { repo, env } = await planRepo();
     const api = await stubApi(() => []);
     try {
-      const r = await run(`cd ${JSON.stringify(repo)}\n${planScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
+      const r = await runStep(`cd ${JSON.stringify(repo)}\n${planScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
         ...env, FAIL: "app", TG_TOKEN: "t", TG_SHA: "s", TG_PR: "7", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "o/r", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
       });
       expect(r.status).toBe(1);
@@ -665,6 +681,14 @@ describe("the plan stage", () => {
     } finally {
       api.close();
     }
+  });
+
+  it("the plan, re-plan and Terragrunt plan scripts turn off the step's -e, since each reads the stage's exit code", () => {
+    expect(planScript("tofu", layers, "github").split("\n")[0]).toBe(READS_EXIT);
+    expect(planScript("tofu", layers, "forgejo", OIDC, {}, true).split("\n")[0]).toBe(READS_EXIT);
+    expect(planScript("tofu", layers, "github", undefined, { terragrunt: { prelude: "true" } }).split("\n")[0]).toBe(READS_EXIT);
+    // GitLab runs the script in its own bash from a heredoc; the first line is the same there.
+    expect(body(render("gitlab")).plan.script.join("\n")).toContain(`bash <<'PLAN'\n${READS_EXIT}\n`);
   });
 
   it("names the stage's roots, binary and bucket, so it plans what the pipeline names", () => {
@@ -776,6 +800,32 @@ describe("stale plan notes", () => {
       expect(r.status, r.out).toBe(code);
       const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description]);
       expect(s.at(-1)).toEqual([state, outcome]);
+    } finally {
+      api.close();
+    }
+  });
+});
+
+describe("the Terragrunt apply in the step's own shell", () => {
+  it("a wave that fails posts the failure status and runs the apply-failed response before the job fails, and later waves do not run", async () => {
+    const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+      terragrunt: '#!/usr/bin/env bash\necho "$*" >> "$LOG"\necho "Error: apply failed"\nexit 1\n',
+      terragucci: '#!/usr/bin/env bash\necho "terragucci $*" >> "$LOG"\nexit 0\n',
+    });
+    const log = join(dir, "calls.log");
+    const api = await stubApi(() => []);
+    try {
+      const script = terragruntApplyScript([["live/a"], ["live/b"]], "github");
+      expect(script.split("\n")[0]).toBe(READS_EXIT);
+      const r = await runStep(`cd ${dir} && ${script}`, {
+        ...env, LOG: log, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
+      });
+      expect(r.status, r.out).toBe(1);
+      const calls = readFileSync(log, "utf-8").trim().split("\n");
+      expect(calls.filter((c) => c.startsWith("run --all"))).toHaveLength(1);
+      expect(calls.some((c) => c.startsWith("terragucci respond apply-failed --log "))).toBe(true);
+      const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description]);
+      expect(s.at(-1)).toEqual(["failure", "an apply failed"]);
     } finally {
       api.close();
     }
@@ -924,6 +974,24 @@ describe("the drift stage", () => {
     const run = drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
     expect(run).toContain(OIDC.plan_role);
     expect(run).not.toContain(OIDC.apply_role);
+  });
+
+  describe("in the step's own shell", () => {
+    const fake = (code: number) => fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+      terragucci: `#!/usr/bin/env bash\necho "$*" >> "$LOG"\n[ "$1" = stage ] && exit ${code}\nexit 0\n`,
+    });
+
+    it.each([0, 1])("a sweep that ends %i ends the job with it, and only a clean sweep runs the drift response", async (code) => {
+      const { dir, env } = fake(code);
+      const log = join(dir, "terragucci.log");
+      const script = driftScript("tofu", layers, "github", undefined, {}, {});
+      expect(script.split("\n")[0]).toBe(READS_EXIT);
+      const r = await runStep(`cd ${dir} && ${script}`, { ...env, LOG: log, TG_TOKEN: "t" });
+      expect(r.status, r.out).toBe(code);
+      const calls = readFileSync(log, "utf-8").trim().split("\n");
+      expect(calls[0]).toMatch(/^stage tf-drift /);
+      expect(calls.some((c) => c.startsWith("respond drift"))).toBe(code === 0);
+    });
   });
 
   it("gitlab: drift runs for scheduled pipelines only, and check and apply skip them", () => {
