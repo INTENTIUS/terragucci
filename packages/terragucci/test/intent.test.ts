@@ -241,7 +241,18 @@ describe("respond description from the forge API", () => {
       return { ok: true, status: 200, json: async () => payload, text: async () => JSON.stringify(payload) };
     });
 
-  it("a re-plan's comment event has no pull request, so GitHub's pull is read", async () => {
+  it("a re-plan reads the title and body from the comment event, and calls no API", async () => {
+    const { repo, cfg } = repoWithConfig();
+    const event = join(repo, "comment-issue.json");
+    writeFileSync(event, JSON.stringify({ comment: { body: "/terragucci plan" }, issue: { number: 7, pull_request: {}, title: RETAG.title, body: RETAG.description } }));
+    const urls: string[] = [];
+    const env = { GITHUB_EVENT_PATH: event, TG_FORGE: "github", TG_PR: "7", TG_TOKEN: "t", GITHUB_API_URL: "https://api.github.com", GITHUB_REPOSITORY: "o/r" };
+    const r = await respond("description", repo, { config: cfg, mode: "apply", env, fetch: forge({ title: "unused", body: "unused" }, urls), decideFetch: answers(0.93) });
+    expect(urls).toEqual([]);
+    expect((r.data as { flagged: boolean }).flagged).toBe(true);
+  });
+
+  it("a re-plan's comment event with no issue text falls back to GitHub's pull", async () => {
     const { repo, cfg } = repoWithConfig();
     const event = join(repo, "comment.json");
     writeFileSync(event, JSON.stringify({ comment: { body: "/terragucci plan" } }));

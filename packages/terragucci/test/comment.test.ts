@@ -134,6 +134,33 @@ describe("decideComment", () => {
     const d = await decideComment({ layers, env: s.env, fetch: s.fetch });
     expect(d.go).toBe(false);
     expect(d.reason).toContain("answered 403");
+    expect(d.fail).toBe(true);
+  });
+
+  it("a pull request the API will not give fails the job, and one that is merely closed does not", async () => {
+    const s = setup({ comment: "/terragucci plan" });
+    const broken: Fetch = async (url, init) => (url.includes("/pulls/") ? ({ ok: false, status: 403, json: async () => ({}), text: async () => "" } as never) : s.fetch(url, init));
+    const d = await decideComment({ layers, env: s.env, fetch: broken });
+    expect(d).toMatchObject({ go: false, fail: true });
+    expect(d.reason).toContain("answered 403");
+    const closed = setup({ comment: "/terragucci plan", pr: { state: "closed", head: { sha: "a".repeat(40), repo: { full_name: "acme/infra" } }, base: { ref: "main" } } });
+    expect((await decideComment({ layers, env: closed.env, fetch: closed.fetch })).fail).toBeUndefined();
+  });
+
+  it("an event file that cannot be read fails the job with the cause", async () => {
+    const s = setup({ comment: "/terragucci plan" });
+    const bad = join(tmp("tg-comment-"), "event.json");
+    writeFileSync(bad, "{not json");
+    const d = await decideComment({ layers, env: { ...s.env, GITHUB_EVENT_PATH: bad }, fetch: s.fetch });
+    expect(d).toMatchObject({ go: false, fail: true });
+    expect(d.reason).toContain("could not read the event file");
+  });
+
+  it("a comment that asks for nothing is not a failure", async () => {
+    for (const comment of ["/terragucci apply", "looks good"]) {
+      const s = setup({ comment });
+      expect((await decideComment({ layers, env: s.env, fetch: s.fetch })).fail).toBeUndefined();
+    }
   });
 });
 

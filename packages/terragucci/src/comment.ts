@@ -66,6 +66,8 @@ export function allowRoot(root: string, layers: readonly (readonly string[])[]):
 export interface CommentDecision {
   go: boolean;
   reason: string;
+  /** True when the job stopped because something broke (a forge answer, an unreadable event), not because the comment asked for nothing. The command exits non-zero on it. */
+  fail?: boolean;
   pr?: number;
   sha?: string;
   base?: string;
@@ -98,8 +100,16 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   const doFetch: Fetch = o.fetch ?? fetch;
   const eventPath = env.GITHUB_EVENT_PATH;
   if (!eventPath) throw new ConfigError("comment reads the event file; GITHUB_EVENT_PATH is not set");
-  const event = JSON.parse(readFileSync(eventPath, "utf-8")) as any;
   const stop = (reason: string): CommentDecision => ({ go: false, reason });
+  /** An infrastructure error: no re-plan, and the job fails with the cause. */
+  const broke = (reason: string): CommentDecision => ({ go: false, fail: true, reason });
+  let event: any;
+  try {
+    event = JSON.parse(readFileSync(eventPath, "utf-8"));
+  } catch (e) {
+    return broke(`could not read the event file ${eventPath} (${(e as Error).message})`);
+  }
+  if (event === null || typeof event !== "object") return broke(`the event file ${eventPath} is not a JSON object`);
 
   if (event.action !== "created") return stop("not a new comment");
   const parsed = parseComment(event.comment?.body);
@@ -144,7 +154,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     try {
       permission = (await call("GET", `repos/${repo}/collaborators/${encodeURIComponent(user)}/permission`))?.permission;
     } catch (e) {
-      return stop(`could not read ${user}'s permission, so nothing runs (${(e as Error).message})`);
+      return broke(`could not read ${user}'s permission, so nothing runs (${(e as Error).message})`);
     }
     if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the comment is ignored`);
   }
@@ -163,7 +173,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   try {
     pr = await call("GET", `repos/${repo}/pulls/${number}`);
   } catch (e) {
-    return stop(`could not read pull request ${number} (${(e as Error).message})`);
+    return broke(`could not read pull request ${number} (${(e as Error).message})`);
   }
   if (pr?.state !== "open") return stop(`pull request ${number} is not open`);
   // A fork's code never meets the read-only plan role, here or in the plan job.
@@ -174,8 +184,8 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   }
   const sha = pr?.head?.sha;
   const base = pr?.base?.ref;
-  if (typeof sha !== "string" || !SHA.test(sha)) return stop("the pull request's head is not a commit");
-  if (typeof base !== "string" || !BRANCH.test(base) || base.split("/").some((s) => s === ".." || s === "")) return stop("the pull request's base branch has a name this command does not pass on");
+  if (typeof sha !== "string" || !SHA.test(sha)) return broke("the pull request's head is not a commit");
+  if (typeof base !== "string" || !BRANCH.test(base) || base.split("/").some((s) => s === ".." || s === "")) return broke("the pull request's base branch has a name this command does not pass on");
   return { go: true, reason: `re-plan pull request ${number}${parsed.root ? ` at ${parsed.root}` : ""} for ${user}`, pr: number, sha, base, ...(parsed.root ? { root: parsed.root } : {}) };
 }
 

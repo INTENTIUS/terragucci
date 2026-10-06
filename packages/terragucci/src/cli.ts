@@ -228,6 +228,10 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment's --forge is github or forgejo");
         const decision = await decideComment({ layers: parseLayers(layers), forge });
         writeDecision(resolve(cwd, out), decision);
+        if (decision.fail) {
+          console.error(`terragucci comment: failed, no re-plan: ${decision.reason}`);
+          return 1;
+        }
         console.log(`terragucci comment: ${decision.go ? "" : "no re-plan: "}${decision.reason}`);
         return 0;
       }

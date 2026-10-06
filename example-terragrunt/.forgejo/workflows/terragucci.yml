@@ -104,6 +104,8 @@ jobs:
               } else if (cmd === "note") {
                 const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
                 if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "reply") {
+                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
               } else if (cmd === "alive") {
                 const run = await call("GET", repo + "/actions/runs/" + a[0]);
                 console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
@@ -209,6 +211,8 @@ jobs:
               } else if (cmd === "note") {
                 const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
                 if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "reply") {
+                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
               } else if (cmd === "alive") {
                 const run = await call("GET", repo + "/actions/runs/" + a[0]);
                 console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
@@ -241,12 +245,16 @@ jobs:
           if [ "$(git rev-parse FETCH_HEAD)" != "$TG_SHA" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
           git checkout --quiet --detach "$TG_SHA"
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
-          tg status terragucci/plan pending "planning"
+          [ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending "planning"
           terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
           rc=$?
           if [ ! -f terragucci-report/report.json ]; then
             tg status terragucci/plan failure "the plan report was not written"
             exit 1
+          fi
+          if [ -n "$TG_ROOT" ] && [ "$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(r.roots.length===0&&!(r.deferred||[]).length?"yes":"")' terragucci-report/report.json)" = yes ]; then
+            tg reply "$TG_ROOT is not affected by this pull request, so nothing was planned."
+            exit 0
           fi
           counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
           if [ -n "${TG_PR:-}" ]; then
@@ -326,6 +334,8 @@ jobs:
               } else if (cmd === "note") {
                 const body = readFileSync(a[0], "utf-8"), old = await find(e.TG_PR);
                 if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });
+              } else if (cmd === "reply") {
+                await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });
               } else if (cmd === "alive") {
                 const run = await call("GET", repo + "/actions/runs/" + a[0]);
                 console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");

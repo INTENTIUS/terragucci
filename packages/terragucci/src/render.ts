@@ -197,6 +197,8 @@ const FORGE_API_JS = [
   '    } else if (cmd === "note") {',
   "      const body = readFileSync(a[0], \"utf-8\"), old = await find(e.TG_PR);",
   '      if (old) await edit(e.TG_PR, old.id, body); else await call("POST", notes(e.TG_PR), { body });',
+  '    } else if (cmd === "reply") {',
+  '      await call("POST", notes(e.TG_PR), { body: "terragucci: " + a[0] });',
   '    } else if (cmd === "alive") {',
   '      const run = await call("GET", repo + "/actions/runs/" + a[0]);',
   '      console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");',
@@ -442,6 +444,9 @@ const COUNTS_JS =
   'const f=n(["refused"]);' +
   'console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")';
 
+/** "yes" when the plan report planned nothing and held nothing back: the change reaches no root. */
+const UNREACHED_JS = 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(r.roots.length===0&&!(r.deferred||[]).length?"yes":"")';
+
 /** The roots (or units) a plan report planned, comma-separated, for the note's first line. */
 const PLANNED_JS = 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))';
 
@@ -472,13 +477,23 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     ...(replan ? [replanPrelude(layers, forge)] : []),
     ...(oidc ? [oidcScript(forge, oidc.plan_role, "terragucci-plan", oidc.audience)] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
-    'tg status terragucci/plan pending "planning"',
+    // A re-plan of one named root may find the change does not reach it, and then leaves the status as it was.
+    replan ? '[ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending "planning"' : 'tg status terragucci/plan pending "planning"',
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
     `if [ ! -f ${REPORT_DIR}/report.json ]; then`,
     '  tg status terragucci/plan failure "the plan report was not written"',
     "  exit 1",
     "fi",
+    // A re-plan that names a root the change does not reach answers that, and leaves the plan note and the status as they are.
+    ...(replan
+      ? [
+          `if [ -n "$TG_ROOT" ] && [ "$(node -e '${UNREACHED_JS}' ${REPORT_DIR}/report.json)" = yes ]; then`,
+          '  tg reply "$TG_ROOT is not affected by this pull request, so nothing was planned."',
+          '  exit 0',
+          'fi',
+        ]
+      : []),
     `counts="$(node -e '${COUNTS_JS}' ${REPORT_DIR}/report.json)"`,
     'if [ -n "${TG_PR:-}" ]; then',
     ...(report.description ? [`  terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
