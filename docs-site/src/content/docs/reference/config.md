@@ -76,7 +76,7 @@ projects:
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event, none of them an agent | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
-| `agent` | none | `via` (`forge` or `fountain`), `token_env` and an optional read-only `role`: where an event set to `agent` runs |
+| `agent` | none | `via` (`forge` or `fountain`), `token_env` and an optional read-only `role`: where an event set to `agent` runs. `comment` turns on the `/terragucci agent` pull request comment; see [The agent comment](#the-agent-comment) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | off | `true`, or a map of `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait` and `schedule`: `init` and `reconcile` write the dashboards and alert rules next to the pipeline; see [Dashboards and alerts](/terragucci/reference/observability/#dashboards-and-alerts) |
@@ -104,6 +104,32 @@ terragrunt:
 | `credentials` | none | AWS plan and apply roles by unit path glob; GCP and Azure units take `oidc`'s identities or their provider block's. See [Credentials](/terragucci/reference/pipeline/#terragrunt) |
 
 Terragrunt 1.1 or later is required. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers what changes in a Terragrunt repo.
+
+## The agent comment
+
+`agent.comment` lets a person with write access ask a coding agent, in a pull request comment, to change the pull request. It is off unless set, on GitHub and Forgejo only.
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  comment:
+    command: claude -p --max-turns "$TG_AGENT_MAX_TURNS"
+    key_secret: ANTHROPIC_API_KEY
+    max_turns: 30
+    timeout: 30
+```
+
+`comment: true` takes every default. `agent.token_env` names the secret holding the token the change is pushed with; it must be a secret name.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `command` | Claude Code in print mode, with the file tools and two read-only terragucci commands | the agent's command line, run in the pull request's checkout with the prompt on stdin |
+| `key_secret` | `ANTHROPIC_API_KEY` | the secret holding the model's API key, given to the agent's step alone |
+| `max_turns` | 30 | the turn limit, passed to the command as `TG_AGENT_MAX_TURNS` |
+| `timeout` | 30 | minutes before the agent's job is stopped |
+
+The agent's jobs get no cloud credentials, whatever `oidc` and `agent.role` say. GitLab has no agent comment, and `init` refuses `agent.comment` for a GitLab repo. [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) describes the jobs.
 
 ## The decide block
 

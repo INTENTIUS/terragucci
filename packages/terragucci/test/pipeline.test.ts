@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
+import { AGENT_COMMAND, agentCommentInput } from "../src/agent-comment";
 import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, planScript, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
@@ -278,6 +279,96 @@ describe("the comment trigger", () => {
   it("gitlab: no comment trigger", () => {
     expect(render("gitlab")).not.toContain("issue_comment");
     expect(body(render("gitlab")).replan).toBeUndefined();
+  });
+});
+
+describe("the agent comment", () => {
+  const agent = agentCommentInput(validateConfig({ agent: { via: "forge", token_env: "AGENT_FORGE_TOKEN", comment: { max_turns: 12, timeout: 20 } }, policy: { path: "rego" } }, "t"))!;
+  const withAgent = (forge: ForgeName): Record<string, any> =>
+    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, agentComment: agent }).content);
+
+  it("is off unless agent.comment is set: no agent jobs, and the re-plan job reads every /terragucci comment", () => {
+    for (const forge of ["github", "forgejo"] as const) {
+      const doc = body(render(forge, OIDC));
+      expect(doc.jobs.agent).toBeUndefined();
+      expect(doc.jobs["agent-push"]).toBeUndefined();
+      expect(doc.jobs.replan.if).not.toContain("/terragucci agent");
+      expect(JSON.stringify(doc.jobs.replan.steps)).not.toContain("--agent");
+    }
+    expect(agentCommentInput(validateConfig({ agent: { via: "forge", token_env: "T" } }, "t"))).toBeUndefined();
+    expect(agentCommentInput(validateConfig({ agent: { via: "forge", token_env: "T", comment: false } }, "t"))).toBeUndefined();
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: an agent comment starts the agent job, and the re-plan job leaves it alone", (forge) => {
+    const doc = withAgent(forge);
+    expect(doc.jobs.agent.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci agent ')");
+    expect(doc.jobs.replan.if).toContain("&& !startsWith(github.event.comment.body, '/terragucci agent ')");
+    expect(JSON.stringify(doc.jobs.replan.steps)).toContain(" --agent on --out terragucci-comment.json");
+    expect(doc.jobs.agent["timeout-minutes"]).toBe(20);
+    expect(doc.jobs["agent-push"].needs).toBe("agent");
+    expect(doc.jobs["agent-push"].if).toBe("needs.agent.outputs.go == '1'");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: no cloud credentials reach either job, and only the push job holds the push token", (forge) => {
+    const doc = withAgent(forge);
+    for (const name of ["agent", "agent-push"]) {
+      const job = JSON.stringify(doc.jobs[name]);
+      expect(job, name).not.toContain(OIDC.plan_role);
+      expect(job, name).not.toContain(OIDC.apply_role);
+      expect(job, name).not.toContain("tg oidc");
+      expect(job, name).not.toContain("id-token");
+      expect(job, name).not.toContain("enable-openid-connect");
+    }
+    expect(JSON.stringify(doc.jobs.agent)).not.toContain("AGENT_FORGE_TOKEN");
+    expect(doc.jobs["agent-push"].env.TG_TOKEN).toBe("${{ secrets.AGENT_FORGE_TOKEN }}");
+    // The model's key is in the agent's step alone, not the job, and not the push job.
+    const run = doc.jobs.agent.steps.find((s: { name?: string }) => s.name === "Run the agent on the ask");
+    expect(run.env.ANTHROPIC_API_KEY).toBe("${{ secrets.ANTHROPIC_API_KEY }}");
+    expect(run.env.TG_AGENT_MAX_TURNS).toBe("12");
+    expect(run.env.TG_TOKEN).toBeUndefined();
+    expect(doc.jobs.agent.env?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(JSON.stringify(doc.jobs["agent-push"])).not.toContain("ANTHROPIC_API_KEY");
+    // Checkouts keep no credentials for the agent to find.
+    for (const name of ["agent", "agent-push"]) {
+      const checkout = doc.jobs[name].steps.find((s: { uses?: string }) => s.uses?.includes("checkout"));
+      expect(checkout.with["persist-credentials"], name).toBe(false);
+    }
+    if (forge === "github") {
+      expect(doc.jobs.agent.permissions).toEqual({ contents: "read", "pull-requests": "write" });
+      expect(doc.jobs["agent-push"].permissions).toEqual({ contents: "read" });
+    }
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the ask never reaches a shell as an expression", (forge) => {
+    const doc = withAgent(forge);
+    for (const name of ["agent", "agent-push"]) expect(JSON.stringify(doc.jobs[name].steps), name).not.toContain("github.event.comment");
+    const ask = doc.jobs.agent.steps.find((s: { id?: string }) => s.id === "ask").run as string;
+    expect(ask).toContain(`terragucci comment --agent run${forge === "forgejo" ? " --forge forgejo" : ""} --policy-dir 'rego' --out /tmp/terragucci-agent/decision.json --prompt /tmp/terragucci-agent/prompt.md || exit 1`);
+    const run = doc.jobs.agent.steps.find((s: { name?: string }) => s.name === "Run the agent on the ask").run as string;
+    expect(run).toContain(`( ${AGENT_COMMAND} ) <"$TG_AGENT_PROMPT"`);
+    expect(run).toContain('git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >/tmp/terragucci-agent/change/change.patch');
+    const push = doc.jobs["agent-push"].steps.at(-1).run as string;
+    expect(push).toContain("terragucci comment --agent push --change /tmp/terragucci-agent/change --policy-dir 'rego'");
+    expect(doc.jobs.agent.steps.at(-1).uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
+    expect(doc.jobs["agent-push"].steps[1].uses).toMatch(forge === "forgejo" ? /download-artifact@v3$/ : /^actions\/download-artifact@v4$/);
+  });
+
+  it("the default command is Claude Code in print mode with the file tools and no web, MCP or project settings", () => {
+    expect(AGENT_COMMAND).toMatch(/^npx -y @anthropic-ai\/claude-code@\d+\.\d+\.\d+ -p /);
+    for (const flag of ['--max-turns "$TG_AGENT_MAX_TURNS"', "--permission-prompts none", "--setting-sources user", "--strict-mcp-config", '"Edit(.git/**)"', '"WebFetch"']) expect(AGENT_COMMAND).toContain(flag);
+    expect(AGENT_COMMAND).not.toContain("dangerously");
+    expect(AGENT_COMMAND).not.toContain("bypassPermissions");
+    const custom = agentCommentInput(validateConfig({ agent: { via: "forge", token_env: "T", comment: { command: "my-agent --stdin", key_secret: "OPENAI_KEY" } } }, "t"))!;
+    const doc = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: custom }).content);
+    const run = doc.jobs.agent.steps.find((s: { name?: string }) => s.name === "Run the agent on the ask");
+    expect(run.run).toContain('( my-agent --stdin ) <"$TG_AGENT_PROMPT"');
+    expect(run.env.OPENAI_KEY).toBe("${{ secrets.OPENAI_KEY }}");
+    expect(run.env.TG_AGENT_MAX_TURNS).toBe("30");
+    expect(doc.jobs.agent["timeout-minutes"]).toBe(30);
+  });
+
+  it("gitlab: refused, since a merge request note starts no pipeline", () => {
+    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent })).toThrow(/GitLab starts none for a merge request note/);
   });
 });
 

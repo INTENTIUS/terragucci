@@ -67,6 +67,17 @@ Each identity trusts the forge's issuer and checks the token's `sub` claim. [Env
 | GCP | A workload identity pool with an OIDC provider for the issuer that maps `google.subject=assertion.sub` and admits only your repo in its attribute condition. Grant `roles/iam.workloadIdentityUser` on the plan service account to `principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/subject/<pull-request subject>`, and on the apply service account to the principal of the default branch's subject |
 | Azure | A federated identity credential on each app registration or managed identity, for the issuer with audience `api://AzureADTokenExchange` and the exact subject: the pull-request subject for the plan client, the default branch's for the apply client |
 
+### The agent comment
+
+With `agent.comment` set, `/terragucci agent <ask>` on a pull request starts two jobs on GitHub and Forgejo, and neither gets a cloud role.
+
+| Job | Token | Does |
+|---|---|---|
+| `agent` | the job's own, read and comment | reads the comment with the re-plan's checks, checks out the pull request's head without keeping credentials, and runs the agent command with the prompt on stdin and the model's key in that step alone; keeps what changed as a patch |
+| `agent-push` | the secret `agent.token_env` names | in a fresh container, applies the patch to the same head, refuses a change to `.github/`, `.forgejo/`, `.gitea/`, `.gitlab-ci.yml`, `terragucci.yml`, `.chant/` or the policy directory, and otherwise commits it and pushes it to the head branch without force; replies with the commit, or with why nothing was pushed |
+
+The push starts the pull request's plan job, which plans the change with its read-only role. The `replan` job leaves `/terragucci agent` comments to these jobs.
+
 ### Terragrunt
 
 In a Terragrunt repo, each environment can have its own pair of roles, chosen by the unit's path:

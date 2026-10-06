@@ -13,7 +13,9 @@
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
- *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
+ *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
+ *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo]   (read a `/terragucci agent <ask>` comment)
+ *   terragucci comment --agent push --change <dir> [--policy-dir <dir>]   (push the agent's change to the pull request's head branch)
  *   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge forgejo]   (read a `/terragucci apply [wave-<n>]` comment; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
@@ -29,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import { BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { decideComment, writeDecision } from "./comment";
 import { decideApplyComment } from "./comment-apply";
+import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -61,7 +64,9 @@ const USAGE = `usage:
   terragucci install tofu|terraform|terragrunt|choudoufu <version>
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
-  terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo]
+  terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
+  terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
+  terragucci comment --agent push --change <dir> [--policy-dir <dir>]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump|description [--mode dry-run|apply] [flags]
 
@@ -244,15 +249,27 @@ export async function main(argv: string[]): Promise<number> {
         const layers = str(flags, "layers");
         const out = str(flags, "out");
         const forge = str(flags, "forge") ?? "github";
-        if (!layers || !out) throw new ConfigError("comment needs --layers <a,b;c> and --out <file>");
+        const agent = str(flags, "agent") ?? "off";
+        const policyDir = str(flags, "policy-dir") ?? "policy";
+        if (!["off", "on", "run", "push"].includes(agent)) throw new ConfigError("comment's --agent is off, on, run or push");
+        if (agent === "push") {
+          const change = str(flags, "change");
+          if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
+          const pushed = await pushAgentChange({ change: resolve(cwd, change), policyDir });
+          console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
+          return pushed.fail ? 1 : 0;
+        }
+        const prompt = str(flags, "prompt");
+        if (agent === "run" ? !out || !prompt : !layers || !out) throw new ConfigError(agent === "run" ? "comment --agent run needs --out <file> and --prompt <file>" : "comment needs --layers <a,b;c> and --out <file>");
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment's --forge is github or forgejo");
-        const decision = await decideComment({ layers: parseLayers(layers), forge });
-        writeDecision(resolve(cwd, out), decision);
+        const decision = await decideComment({ layers: layers ? parseLayers(layers) : [], forge, agent: agent as "off" | "on" | "run" });
+        writeDecision(resolve(cwd, out!), decision);
+        if (decision.go && decision.ask && prompt) writePrompt(resolve(cwd, prompt), { ask: decision.ask, pr: decision.pr!, head: decision.head!, user: decision.user!, policyDir });
         if (decision.fail) {
           console.error(`terragucci comment: failed, no re-plan: ${decision.reason}`);
           return 1;
         }
-        console.log(`terragucci comment: ${decision.go ? "" : "no re-plan: "}${decision.reason}`);
+        console.log(`terragucci comment: ${decision.go ? "" : agent === "run" ? "no agent: " : "no re-plan: "}${decision.reason}`);
         return 0;
       }
       case "comment-apply": {

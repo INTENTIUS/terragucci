@@ -48,6 +48,8 @@ const forgejoSerializer = {
 };
 import { responseTo, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
+import type { AgentCommentInput } from "./agent-comment";
+import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
 import { applyWaves } from "./apply";
 import { CHECK_DIR } from "./check";
 import type { Tool } from "./install";
@@ -104,6 +106,8 @@ export interface PipelineInput {
   respond?: Partial<Record<RespondEvent, string>>;
   /** `policy:` is set; the check job then runs the policy's tests, which read the policy from the default branch, so it clones with full history. */
   policy?: boolean;
+  /** `agent.comment` is set: `/terragucci agent <ask>` gets the agent and agent-push jobs (render-agent.ts). GitHub and Forgejo only. */
+  agentComment?: AgentCommentInput;
 }
 
 export interface RenderedPipeline {
@@ -621,6 +625,8 @@ export interface PlanReportInput {
   terragrunt?: { prelude: string };
   /** respond.description is on: before the note is posted, flag a pull request whose description does not match its plan. */
   description?: boolean;
+  /** The agent comment is on, so a re-plan leaves `/terragucci agent` comments to the agent job. */
+  agentComment?: boolean;
 }
 
 /** The plan report's directory in the job's workspace. */
@@ -675,7 +681,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
   return [
     "set -uo pipefail",
     forgeApi(forge),
-    ...(replan ? [replanPrelude(layers, forge)] : []),
+    ...(replan ? [replanPrelude(layers, forge, report.agentComment)] : []),
     ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     // A re-plan of one named root may find the change does not reach it, and then leaves the status as it was.
@@ -721,9 +727,9 @@ const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[
  * out the pull request's head: the event's sha is the default branch's, so the
  * head comes from the pull request, fetched by its number.
  */
-function replanPrelude(layers: string[][], forge: ForgeName): string {
+function replanPrelude(layers: string[][], forge: ForgeName, agentComment?: boolean): string {
   return [
-    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-comment.json || exit 1`,
+    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""}${agentComment ? " --agent on" : ""} --out terragucci-comment.json || exit 1`,
     `read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF`,
     `$(node -e '${DECISION_JS}' terragucci-comment.json)`,
     "EOF",
@@ -855,6 +861,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const awsStep = !tg && responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
   if (forge === "gitlab") {
+    if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
     const jobImage = new Image({ name: image });
     const script = (main: string): string[] => (installStep ? [installStep, main] : [main]);
     const bash = (tag: string, body: string): string => `bash <<'${tag}'\n${body}\n${tag}`;
@@ -1063,13 +1070,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')${applyOnComment ? ` && !${APPLY_COMMENT}` : ""}`,
+    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')${applyOnComment ? ` && !${APPLY_COMMENT}` : ""}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
     env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv },
     steps: [
-      ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report, true) }), true, true),
+      ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, { ...report, ...(input.agentComment ? { agentComment: true } : {}) }, true) }), true, true),
       new Step({
         name: "Keep the plan report",
         if: "always()",
@@ -1102,6 +1109,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
+  if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
   for (const [i, job] of applyJobs.entries()) {
     entities.set(job.name, new Job({
       "runs-on": "ubuntu-latest",

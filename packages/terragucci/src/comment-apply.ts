@@ -74,7 +74,7 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
   if (event.action !== "created") return stop("not a new comment");
   const parsed = parseComment(event.comment?.body);
   // A plan comment, or one not addressed to terragucci, belongs to the replan job.
-  if (!parsed || parsed.kind === "plan") return stop("the comment does not ask for an apply");
+  if (!parsed || parsed.kind === "plan" || parsed.kind === "agent") return stop("the comment does not ask for an apply");
   const number = event.issue?.number;
   if (!Number.isInteger(number) || number < 1) return stop("the comment has no issue number");
   if (!event.issue?.pull_request && event.issue?.is_pull !== true) return stop("the comment is not on a pull request");

@@ -12,13 +12,18 @@
  * number, a commit sha, a branch name and a root, each checked against a
  * pattern that has no shell syntax in it, and the root is also an exact member
  * of the roots the pipeline was written with.
+ *
+ * `/terragucci agent <ask>` is the one other command, and only where
+ * `agent.comment` is set in terragucci.yml. Its ask is data: it goes into the
+ * agent's prompt file and its commit message, never into a shell, and the
+ * agent job (agent-comment.ts) gets no cloud credentials.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { ConfigError } from "./config";
 import type { Fetch } from "./forge";
 
-/** The commands. Everything else is refused, by name when it is a command people may expect. */
-export const COMMENT_COMMANDS = ["plan", "apply"] as const;
+/** The commands. Everything else is refused, by name when it is a command people may expect. `agent` runs only where `agent.comment` is set. */
+export const COMMENT_COMMANDS = ["plan", "apply", "agent"] as const;
 
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
 const NEVER = new Set(["approve", "unlock", "force-unlock", "import", "state", "destroy", "merge"]);
@@ -28,11 +33,14 @@ const ROOT = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
 export const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
 export const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 export const LOGIN = /^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}$/;
+/** The longest ask an agent comment may carry. */
+export const ASK_MAX = 2000;
 
 export type ParsedComment =
   | { kind: "plan"; root?: string }
   /** `/terragucci apply [wave-<n>]`: re-run the merged pull request's apply, through wave n when one is named. */
   | { kind: "apply"; wave?: number }
+  | { kind: "agent"; ask: string }
   | { kind: "refused"; reason: string };
 
 /**
@@ -49,6 +57,15 @@ export function parseComment(body: unknown): ParsedComment | undefined {
   const verb = words[1];
   if (verb === undefined) return { kind: "refused", reason: "the command is `/terragucci plan [root]`" };
   if (verb === "apply") return parseApply(words);
+  if (verb === "agent") {
+    // The ask is the rest of the line, as written; it is never split or run.
+    const ask = text.replace(/^\/terragucci[ \t]+agent/, "").trim();
+    if (ask === "") return { kind: "refused", reason: "`/terragucci agent` needs an ask after it, on the same line, such as `/terragucci agent rename the bucket variable to bucket_name`" };
+    if (ask.length > ASK_MAX) return { kind: "refused", reason: `an ask is at most ${ASK_MAX} characters` };
+    // Control characters (escape sequences, NUL) have no place in an ask.
+    if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(ask)) return { kind: "refused", reason: "an ask is plain text, with no control characters" };
+    return { kind: "agent", ask };
+  }
   if (verb !== "plan") {
     return {
       kind: "refused",
@@ -87,6 +104,10 @@ export interface CommentDecision {
   sha?: string;
   base?: string;
   root?: string;
+  /** An agent comment: the pull request's head branch, the ask and who asked. */
+  head?: string;
+  ask?: string;
+  user?: string;
 }
 
 /** Permissions that may ask for a re-plan. A read-only collaborator or a stranger may not. */
@@ -97,6 +118,13 @@ export interface CommentOptions {
   layers: string[][];
   /** Where the job runs, which decides how the commenter's permission is read. GitHub when unset. */
   forge?: "github" | "forgejo";
+  /**
+   * The agent comment. `off` (default): the re-plan job answers an agent
+   * comment that `agent.comment` is not set. `on`: it is set, and the agent job
+   * reads agent comments, so the re-plan job leaves them alone. `run`: this is
+   * the agent job, which reads agent comments only.
+   */
+  agent?: "off" | "on" | "run";
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
 }
@@ -174,6 +202,17 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the comment is ignored`);
   }
 
+  const agent = o.agent ?? "off";
+  if (agent === "run") {
+    // The agent job starts only for `/terragucci agent ` comments; a re-plan is the replan job's.
+    if (parsed.kind !== "agent" && parsed.kind !== "refused") return stop("another job reads this comment");
+  } else if (parsed.kind === "agent") {
+    const reason = agent === "on"
+      ? "write an agent comment as `/terragucci agent <ask>`, with one space after agent"
+      : "the agent command is off in this repository; `agent.comment` in terragucci.yml turns it on";
+    await reply(reason);
+    return stop(reason);
+  }
   if (parsed.kind === "refused") {
     await reply(parsed.reason);
     return stop(parsed.reason);
@@ -184,7 +223,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     await reply(reason);
     return stop(reason);
   }
-  if (parsed.root !== undefined && !allowRoot(parsed.root, o.layers)) {
+  if (parsed.kind === "plan" && parsed.root !== undefined && !allowRoot(parsed.root, o.layers)) {
     const reason = `${parsed.root} is not a root of this repository`;
     await reply(`${reason}. The roots are ${o.layers.flat().sort().map((r) => `\`${r}\``).join(", ")}.`);
     return stop(reason);
@@ -197,6 +236,11 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     return broke(`could not read pull request ${number} (${(e as Error).message})`);
   }
   if (pr?.state !== "open") return stop(`pull request ${number} is not open`);
+  if (parsed.kind === "agent" && pr?.head?.repo?.full_name !== repo) {
+    const reason = "a pull request from a fork gets no agent: its branch is not this repository's to push to";
+    await reply(reason);
+    return stop(reason);
+  }
   // A fork's code never meets the read-only plan role, here or in the plan job.
   if (pr?.head?.repo?.full_name !== repo) {
     const reason = "a pull request from a fork is not re-planned: its code never runs with this repository's credentials";
@@ -207,6 +251,20 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   const base = pr?.base?.ref;
   if (typeof sha !== "string" || !SHA.test(sha)) return broke("the pull request's head is not a commit");
   if (typeof base !== "string" || !BRANCH.test(base) || base.split("/").some((s) => s === ".." || s === "")) return broke("the pull request's base branch has a name this command does not pass on");
+  if (parsed.kind === "agent") {
+    const head = pr?.head?.ref;
+    if (typeof head !== "string" || !BRANCH.test(head) || head.split("/").some((s) => s === ".." || s === "") || head.endsWith(".lock")) {
+      return broke("the pull request's head branch has a name this command does not pass on");
+    }
+    // The agent pushes to the head branch, so a pull request from the default branch gets none.
+    const main = event.repository?.default_branch ?? pr?.base?.repo?.default_branch;
+    if (typeof main !== "string" || head === main) {
+      const reason = "the pull request's head is the default branch, and an agent never pushes there";
+      await reply(reason);
+      return stop(reason);
+    }
+    return { go: true, reason: `run the agent on pull request ${number} (${head}) for ${user}`, pr: number, sha, base, head, ask: parsed.ask, user };
+  }
   return { go: true, reason: `re-plan pull request ${number}${parsed.root ? ` at ${parsed.root}` : ""} for ${user}`, pr: number, sha, base, ...(parsed.root ? { root: parsed.root } : {}) };
 }
 

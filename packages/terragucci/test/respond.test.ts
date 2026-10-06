@@ -43,7 +43,7 @@ describe("respond: the config", () => {
 
   it("checks the integration itself", () => {
     expect(problems({ agent: { token_env: "" , runs: "x" } })).toEqual([
-      "config.agent.runs is not a setting (settings: via, token_env, role)",
+      "config.agent.runs is not a setting (settings: via, token_env, role, comment)",
       "config.agent.via is missing; use forge or fountain",
       "config.agent.token_env must name the variable holding the agent's forge token",
     ]);

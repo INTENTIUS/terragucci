@@ -30,7 +30,7 @@ The generated `replan` job checks the pull request out at its head and runs the 
 
 ## What the command can and cannot do
 
-There are two commands, `plan` and `apply`. `plan` changes nothing. A re-plan changes nothing an approval covers, since an approval binds the digests of the plans it was given for. No comment approves or unlocks.
+There are two commands, `plan` and `apply`. `plan` changes nothing. `agent` is a third command where `agent.comment` is set in `terragucci.yml`. A re-plan changes nothing an approval covers, since an approval binds the digests of the plans it was given for. No comment approves or unlocks.
 
 The text is untrusted. The job never puts it in a script: `terragucci comment` reads it from the event file and accepts one grammar, `/terragucci plan`, `/terragucci plan <root>`, `/terragucci apply` or `/terragucci apply wave-<n>`. The root must be exactly one of the roots the pipeline was written with. Anything else is answered with the reason and plans nothing. Refused cases include `/terragucci approve` and `/terragucci unlock`, a root with a glob, a path trick or shell syntax in it, and text on a second line.
 

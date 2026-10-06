@@ -160,6 +160,26 @@ export interface DashboardSettings {
 export const DASHBOARD_KEYS = ["dir", "prometheus", "tempo", "folder", "path", "drift_age", "wave_wait", "schedule"] as const;
 export const DASHBOARD_DURATION_KEYS = ["drift_age", "wave_wait", "schedule"] as const;
 
+/**
+ * `agent.comment`: the `/terragucci agent <ask>` pull request comment, off
+ * unless set. The comment starts a job that runs a coding agent on the pull
+ * request's head branch and pushes what it changes with `agent.token_env`'s
+ * token. The job gets no cloud credentials: no `oidc` role and not
+ * `agent.role`. `true` takes every default.
+ */
+export interface AgentCommentSettings {
+  /** The agent's command line, run in the checkout with the prompt on stdin. Default: Claude Code in print mode with file tools only (AGENT_COMMAND in agent-comment.ts). */
+  command?: string;
+  /** The secret holding the model's API key, mapped into the agent's step alone. Default `ANTHROPIC_API_KEY`. */
+  key_secret?: string;
+  /** The most turns the agent takes, as `$TG_AGENT_MAX_TURNS`. Default 30. */
+  max_turns?: number;
+  /** Minutes before the agent's job is stopped. Default 30. */
+  timeout?: number;
+}
+
+export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
+
 /** The settings one project (or one repo) can carry. Every key is optional. */
 export interface ProjectSettings {
   /** Globs of root directories. Detected when absent. */
@@ -216,7 +236,7 @@ export interface ProjectSettings {
    * Where an agent response runs, for any event set to `agent`. Its token can
    * comment and open pull requests; its role, when named, is read-only.
    */
-  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string };
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string; comment?: boolean | AgentCommentSettings };
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
   decide?: DecideSettings;
   /** The AWS region whose CloudTrail drift attribution reads. Default: the region the aws CLI already uses. */
@@ -379,11 +399,12 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const a = s.agent;
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
-      for (const k of Object.keys(a)) if (!["via", "token_env", "role"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, role)`);
+      for (const k of Object.keys(a)) if (!["via", "token_env", "role", "comment"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, role, comment)`);
       if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge or fountain`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
       if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
       if (a.role !== undefined && typeof a.role !== "string") problems.push(`${where}.agent.role must name a read-only role`);
+      if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
     }
   }
   if (s.decide !== undefined) checkDecide(s.decide, `${where}.decide`, problems);
@@ -415,6 +436,34 @@ function checkPolicy(p: unknown, where: string, problems: string[]): void {
   }
   if (p.namespace !== undefined && !(typeof p.namespace === "string" && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(p.namespace))) {
     problems.push(`${where}.namespace must be a Rego package name, such as terraform.plan`);
+  }
+}
+
+const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. */
+function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[]): void {
+  if (typeof c === "boolean") {
+    if (!c) return;
+  } else if (!isObject(c)) {
+    problems.push(`${where} must be true, false or a map (settings: ${AGENT_COMMENT_KEYS.join(", ")})`);
+    return;
+  } else {
+    for (const k of Object.keys(c)) {
+      if (!(AGENT_COMMENT_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${AGENT_COMMENT_KEYS.join(", ")})`);
+    }
+    if (c.command !== undefined && (typeof c.command !== "string" || c.command.trim() === "" || /[\r\n]/.test(c.command))) {
+      problems.push(`${where}.command must be one command line, such as claude -p --max-turns "$TG_AGENT_MAX_TURNS"`);
+    }
+    if (c.key_secret !== undefined && !(typeof c.key_secret === "string" && SECRET_NAME.test(c.key_secret))) {
+      problems.push(`${where}.key_secret must name the secret holding the model's API key, such as ANTHROPIC_API_KEY`);
+    }
+    for (const k of ["max_turns", "timeout"] as const) {
+      if (c[k] !== undefined && !(Number.isInteger(c[k]) && (c[k] as number) >= 1)) problems.push(`${where}.${k} must be a whole number of 1 or more`);
+    }
+  }
+  if (typeof tokenEnv === "string" && tokenEnv !== "" && !SECRET_NAME.test(tokenEnv)) {
+    problems.push(`${where} reads agent.token_env as a secret name, so token_env must be one, such as AGENT_FORGE_TOKEN`);
   }
 }
 
