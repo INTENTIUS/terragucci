@@ -1,8 +1,8 @@
 // Terragrunt mode: detection, discovery, waves, the auth provider, init's
 // pipeline and the tf-plan stage. Terragrunt itself is stubbed; the last block
 // runs the real binary when TERRAGUCCI_TERRAGRUNT names one and tofu is on the path.
-import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import { chmodSync, cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
@@ -70,11 +70,17 @@ interface FakeOptions {
   affected?: { selected: string[]; files: string[] };
   /** Each unit's `Started` and `Ended` in the run report, as Terragrunt writes them. */
   times?: Record<string, [string, string]>;
+  /** Run `TG_TF_PATH plan ... -out=<out-dir>/<unit>/tfplan.tfplan` in each unit's directory, as Terragrunt does. */
+  runBinary?: boolean;
 }
+
+/** Run a file and wait for it without blocking, so the stage's span receiver can answer it. */
+const run = (file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<void> =>
+  new Promise((done, fail) => execFile(file, args, { cwd, env }, (err, _out, stderr) => (err ? fail(new Error(`${file}: ${stderr || err.message}`)) : done())));
 
 /** A stand-in for terragrunt 1.1.6 and git: version, find, render, output, a plan that writes each unit's plan and report row, and diff. */
 function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
-  return async (file, args) => {
+  return async (file, args, options) => {
     opts.calls?.push([...args]);
     if (file === "git") return { code: 0, stdout: (opts.affected?.files ?? []).join("\n"), stderr: "" };
     if (args[0] === "--version") return { code: 0, stdout: "terragrunt version v1.1.6\n", stderr: "" };
@@ -97,6 +103,10 @@ function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
     const units = args.flatMap((a, i) => (args[i - 1] === "--filter" && a.startsWith("{./") ? [a.slice(3, -1)] : []));
     const out = argOf(args, "--out-dir")!;
     const json = argOf(args, "--json-out-dir")!;
+    if (opts.runBinary) {
+      const tf = args.slice(args.indexOf("--") + 1);
+      for (const u of units) await run(options.env.TG_TF_PATH, [...tf, "-input=false", `-out=${join(out, u, "tfplan.tfplan")}`], join(options.cwd, u), { ...process.env, ...options.env });
+    }
     const rows = units.map((u) => {
       const at = opts.times?.[u] ? { Started: opts.times[u][0], Ended: opts.times[u][1] } : {};
       if (opts.fail?.includes(u)) return { Name: u, Result: "failed", Reason: "run error", Cause: "Error: boom", ...at };
@@ -344,7 +354,64 @@ describe("terragucci plan in a Terragrunt repo", () => {
 });
 
 describe("terragucci stage tf-plan in a Terragrunt repo", () => {
-  it("lists each unit's time from Terragrunt's run report, the slowest first, with no per-resource timings", async () => {
+  it("a unit's plan waits five minutes for the state lock, unless TF_CLI_ARGS_plan sets a timeout", async () => {
+    const plans = async (env: NodeJS.ProcessEnv): Promise<string[][]> => {
+      const repo = liveRepo();
+      const calls: string[][] = [];
+      await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc"]], terragruntExec: fakeTerragrunt({ calls }), env }, () => {});
+      return calls.filter((c) => c[0] === "run").map((c) => c.slice(c.indexOf("--")));
+    };
+    expect(await plans({})).toEqual([["--", "plan", "-lock-timeout=5m"]]);
+    expect(await plans({ TF_CLI_ARGS_plan: "-lock-timeout=30s" })).toEqual([["--", "plan"]]);
+  });
+
+  it("a unit's plan spans reach the report through the TG_TF_PATH wrapper", { timeout: 60_000 }, async () => {
+    const span = (address: string, ms: number) => ({
+      resourceSpans: [{ scopeSpans: [{ spans: [{
+        traceId: "0af7651916cd43dd8448eb211c80319c", spanId: "00f067aa0ba902b7", name: "Plan resource instance changes", kind: 1,
+        startTimeUnixNano: "1700000000000000000", endTimeUnixNano: String(1_700_000_000_000_000_000n + BigInt(ms) * 1_000_000n),
+        attributes: [{ key: "opentofu.resource_instance.address", value: { stringValue: address } }, { key: "opentofu.resource.type", value: { stringValue: "terraform_data" } }],
+      }] }] }],
+    });
+    const repo = liveRepo({
+      "live/dev/vpc/spans.json": JSON.stringify(span("terraform_data.vpc", 1500)),
+      "live/dev/app/spans.json": JSON.stringify(span("terraform_data.app", 400)),
+    });
+    // A stand-in for the binary: on a plan with -out, it posts spans.json from its directory, as an OTLP exporter would.
+    const bin = join(tmp(), "tofu");
+    writeFileSync(bin, `#!/usr/bin/env node
+const { existsSync, readFileSync } = require("node:fs");
+(async () => {
+  const url = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+  if (process.argv[2] !== "plan" || !url || !existsSync("spans.json")) return;
+  const headers = { "content-type": "application/json" };
+  for (const p of (process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS || "").split(",")) {
+    const i = p.indexOf("=");
+    if (i > 0) headers[p.slice(0, i)] = p.slice(i + 1);
+  }
+  const res = await fetch(url, { method: "POST", headers, body: readFileSync("spans.json") });
+  if (!res.ok) process.exit(3);
+})();
+`);
+    chmodSync(bin, 0o755);
+    const calls: string[][] = [];
+    const r = await runStage("tf-plan", repo, {
+      out: join(repo, "out"), binary: bin, terragrunt: true,
+      layers: [["live/dev/vpc", "live/dev/app"]],
+      terragruntExec: fakeTerragrunt({
+        calls, runBinary: true,
+        times: { "live/dev/vpc": ["2026-10-05T10:00:00Z", "2026-10-05T10:00:03Z"], "live/dev/app": ["2026-10-05T10:00:00Z", "2026-10-05T10:00:01Z"] },
+      }),
+      env: { PATH: process.env.PATH },
+    }, () => {});
+    const unit = (p: string) => r.report.roots.find((u) => u.path === p)!.timings!;
+    expect(unit("live/dev/vpc")).toMatchObject({ seconds: 3, source: "terragrunt", spans: 1, detail: "resources", resources: [{ address: "terraform_data.vpc", ms: 1500 }] });
+    expect(unit("live/dev/vpc").note).toBeUndefined();
+    expect(unit("live/dev/app").resources.map((x) => x.address)).toEqual(["terraform_data.app"]);
+    expect(r.report.timings!.resources.map((x) => [x.root, x.address])).toEqual([["live/dev/vpc", "terraform_data.vpc"], ["live/dev/app", "terraform_data.app"]]);
+  });
+
+  it("lists each unit's time from Terragrunt's run report, the slowest first, and says when its plan sent no spans", async () => {
     const repo = liveRepo();
     const r = await runStage("tf-plan", repo, {
       out: join(repo, "out"), binary: "tofu", terragrunt: true,
@@ -496,6 +563,13 @@ describe("terragucci stage tf-drift in a Terragrunt repo", () => {
     const calls: string[][] = [];
     await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc"]], terragruntExec: fakeTerragrunt({ calls }), env: {} }, () => {});
     expect(calls.flat()).not.toContain("-refresh-only");
+  });
+
+  it("a drift plan takes no lock, so it gets no lock timeout", async () => {
+    const repo = liveRepo();
+    const calls: string[][] = [];
+    await runStage("tf-drift", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc"]], terragruntExec: fakeTerragrunt({ calls }), env: {} }, () => {});
+    expect(calls.flat().filter((a) => a.includes("lock-timeout"))).toEqual([]);
   });
 
   it("a unit whose upstream has no outputs fails the run instead of waiting", async () => {
