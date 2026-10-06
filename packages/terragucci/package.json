@@ -45,11 +45,11 @@
   },
   "devDependencies": {
     "@cdktn/hcl2json": "0.24.0",
-    "@intentius/chant": "0.106.4",
-    "@intentius/chant-lexicon-forgejo": "0.106.4",
-    "@intentius/chant-lexicon-github": "0.106.4",
-    "@intentius/chant-lexicon-gitlab": "0.106.4",
-    "@intentius/chant-lexicon-terraform": "0.106.4",
+    "@intentius/chant": "0.107.1",
+    "@intentius/chant-lexicon-forgejo": "0.107.1",
+    "@intentius/chant-lexicon-github": "0.107.1",
+    "@intentius/chant-lexicon-gitlab": "0.107.1",
+    "@intentius/chant-lexicon-terraform": "0.107.1",
     "@intentius/tsad-reference": "2.1.0"
   }
 }
