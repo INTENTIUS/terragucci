@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, agentCommentInput } from "../src/agent-comment";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, planScript, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, planScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -175,6 +175,8 @@ describe("the comment trigger", () => {
     expect(script).not.toContain("tg stale");
     expect(script).not.toContain("terragucci-apply-lock");
     expect(commentApplyScript("tofu", layers, "github", OIDC, { canary: ["app"] })).toContain("--canary 'app'");
+    // The step runs under bash -e; the script reads each wave's exit code itself, so it turns -e off first.
+    expect(script.split("\n")[0]).toBe(READS_EXIT);
   });
 
   it("forgejo: the apply-comment script takes the lock tag without standing down for the tip, and decides again once it holds it", () => {
@@ -194,7 +196,7 @@ describe("the comment trigger", () => {
         "#!/usr/bin/env bash",
         'if [ "$1" = comment-apply ]; then while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done; printf \'%s\\n\' "$DECISION" > "$out"; exit 0; fi',
         'echo "wave $4 at $(git rev-parse HEAD)" >> "$LOG"',
-        ...(waits ? [`if [ "$4" = ${waits} ]; then echo "wave $4 waits: chant approve tf-apply wave-$4 --plan sha256:abc123 --sign" > "$TG_OUTCOME"; exit 3; fi`] : []),
+        ...(waits ? [`if [ "$4" = ${waits} ]; then echo "wave $4 waits: chant approve tf-apply wave-$4 --plan jcs1-sha256:abc123 --sign" > "$TG_OUTCOME"; exit 3; fi`] : []),
         "exit 0",
       ].join("\n"),
     });
@@ -215,7 +217,7 @@ describe("the comment trigger", () => {
       const { dir, env } = fake();
       const api = await stubApi(() => ({}));
       try {
-        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
         expect(r.status, r.out).toBe(0);
         expect(readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n")).toEqual([`wave 1 at ${sha}`, `wave 2 at ${sha}`]);
         const statuses = api.hits.filter((h) => h.url.startsWith("/repos/acme/infra/statuses/"));
@@ -233,11 +235,11 @@ describe("the comment trigger", () => {
       const { dir, env } = fake(2);
       const api = await stubApi(() => ({}));
       try {
-        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
         expect(r.status).toBe(3);
         const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
-        expect(reply).toContain("wave 2 waits for an approval of its set digest sha256:abc123");
-        expect(reply).toContain("`chant approve tf-apply wave-2 --plan sha256:abc123 --sign`");
+        expect(reply).toContain("wave 2 waits for an approval of its set digest jcs1-sha256:abc123");
+        expect(reply).toContain("`chant approve tf-apply wave-2 --plan jcs1-sha256:abc123 --sign`");
         expect(reply).toContain("(applied: wave 1)");
         expect(reply).toContain("https://forge.test/acme/infra/actions/runs/9");
         expect(api.hits.some((h) => h.url.includes("chant") || h.url.includes("lifecycle"))).toBe(false);
@@ -251,7 +253,7 @@ describe("the comment trigger", () => {
       const { dir, env } = fake();
       const api = await stubApi(() => ({}));
       try {
-        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main", wave: 1 })) });
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github")}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main", wave: 1 })) });
         expect(r.status, r.out).toBe(0);
         expect(readFileSync(join(dir, "stage.log"), "utf-8").trim()).toBe(`wave 1 at ${sha}`);
         expect(api.hits.filter((h) => h.url.includes("/statuses/")).at(-1)?.body.state).toBe("pending");
@@ -265,7 +267,7 @@ describe("the comment trigger", () => {
       const { dir, env } = fake();
       const api = await stubApi(() => ({}));
       try {
-        const r = await run(`cd ${work} && ${commentApplyScript("tofu", layers, "github", OIDC)}`, { ...env, ...envFor(api.url, dir, decision({ go: false, reason: "pull request 7 is not merged" })) });
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github", OIDC)}`, { ...env, ...envFor(api.url, dir, decision({ go: false, reason: "pull request 7 is not merged" })) });
         expect(r.status).toBe(0);
         expect(existsSync(join(dir, "stage.log"))).toBe(false);
         expect(r.out).not.toContain("OIDC");
@@ -544,9 +546,17 @@ async function stubApi(routes: (hit: Hit) => unknown): Promise<{ url: string; hi
   return { url: `http://127.0.0.1:${port}`, hits, close: () => server.close() };
 }
 
-function run(script: string, env: Record<string, string>): Promise<{ status: number | null; out: string }> {
+/** The shell a `shell: bash` step runs in, on GitHub and on Forgejo's runner. */
+const STEP_SHELL = ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"];
+
+/** Runs a script the way its job's step does: with -e and pipefail on. */
+function runStep(script: string, env: Record<string, string>): Promise<{ status: number | null; out: string }> {
+  return run(script, env, STEP_SHELL);
+}
+
+function run(script: string, env: Record<string, string>, shell: string[] = ["-c"]): Promise<{ status: number | null; out: string }> {
   return new Promise((ok) => {
-    const p = spawn("bash", ["-c", script], { env: { ...process.env, ...env } });
+    const p = spawn("bash", [...shell, script], { env: { ...process.env, ...env } });
     let out = "";
     p.stdout.on("data", (c) => (out += c));
     p.stderr.on("data", (c) => (out += c));
@@ -748,6 +758,24 @@ describe("stale plan notes", () => {
         ["terragucci/apply", "pending", "applying"],
         ["terragucci/apply", "success", "3 roots in 2 groups applied"],
       ]);
+    } finally {
+      api.close();
+    }
+  });
+
+  it.each([
+    [3, "pending", "wave 1 waits: chant approve tf-apply wave-1 --plan jcs1-sha256:abc123 --sign"],
+    [4, "failure", "wave 1 was refused: its plans changed since the approval"],
+  ] as const)("a wave that ends %i in the step's own shell still posts its status before the job fails", async (code, state, outcome) => {
+    const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", { terragucci: `#!/usr/bin/env bash\necho ${JSON.stringify(outcome)} > "$TG_OUTCOME"\nexit ${code}\n` });
+    const api = await stubApi(() => []);
+    try {
+      const script = applyScript("tofu", layers, "github", undefined, { wave: 1 });
+      expect(script.split("\n")[0]).toBe(READS_EXIT);
+      const r = await runStep(script, applyEnv(api.url, env));
+      expect(r.status, r.out).toBe(code);
+      const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description]);
+      expect(s.at(-1)).toEqual([state, outcome]);
     } finally {
       api.close();
     }

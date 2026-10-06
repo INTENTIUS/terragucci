@@ -3490,8 +3490,8 @@ claim_comment_apply() {
     log "first comment: state for: ${applied:-nothing}; reply: ${reply:-none}"
     [ -z "$applied" ] || { log "the comment applied a wave with no sealed approval"; rc=1; }
     if [ $rc = 0 ]; then
-      grep -q "wave 1 waits for an approval of its set digest sha256:" <<<"$reply" || { log "the reply does not say wave 1 waits, with its digest"; rc=1; }
-      grep -q 'chant approve tf-apply wave-1 --plan sha256:[0-9a-f]* --sign' <<<"$reply" || { log "the reply does not give the chant approve --sign command"; rc=1; }
+      grep -Eq "wave 1 waits for an approval of its set digest (jcs1-)?sha256:[0-9a-f]+" <<<"$reply" || { log "the reply does not say wave 1 waits, with its digest"; rc=1; }
+      grep -Eq 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+ --sign' <<<"$reply" || { log "the reply does not give the chant approve --sign command"; rc=1; }
     fi
   fi
 
