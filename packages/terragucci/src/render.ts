@@ -136,6 +136,15 @@ export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string):
   return ["set -u", ...respondSetup(forge, tokenEnv), `terragucci respond tips --mode apply --binary ${binary} || true`].join("\n");
 }
 
+/**
+ * The version-bump response: a release pull request per module whose next version the commits do not
+ * settle, from the default branch after the apply. It needs the full history and the tags, and the
+ * decision service's key when `decide:` is set. A response that fails never fails the job.
+ */
+export function versionBumpScript(forge: ForgeName, tokenEnv?: string): string {
+  return ["set -u", ...respondSetup(forge, tokenEnv), "terragucci respond version-bump --mode apply || true"].join("\n");
+}
+
 /** Where `terragucci respond` writes an agent's input, kept with the job when a response is `agent`. */
 const RESPOND_DIR = "terragucci-respond";
 
@@ -620,8 +629,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env };
   // Only the jobs that run a stage send telemetry (plan, apply, drift), so only they get the headers secret; check and publish never see it.
   const headersEnv = headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {};
-  // Only the description check asks the service from the plan jobs.
-  const decideEnv = input.decideTokenEnv && responds(input.respond, "description") ? { [input.decideTokenEnv]: `\${{ secrets.${input.decideTokenEnv} }}` } : {};
+  // The service's key reaches the jobs that ask it: the plan jobs for the description check, the drift job
+  // when it attributes (plain roots only; a Terragrunt drift run does not attribute), and the version-bump job.
+  const decideSecret = input.decideTokenEnv ? { [input.decideTokenEnv]: `\${{ secrets.${input.decideTokenEnv} }}` } : {};
+  const decideEnv = responds(input.respond, "description") ? decideSecret : {};
+  const driftDecideEnv = !tg && responseTo({ respond: input.respond }, "drift") === "attribute" ? decideSecret : {};
+  const bumpOn = responds(input.respond, "version-bump");
   const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
@@ -710,6 +723,18 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
         resource_group: "terragucci-tips",
         script: script(bash("TIPS", tipsScript(binary, forge, tokenEnv))),
+      } as never) as never);
+    }
+    if (bumpOn) {
+      // Runs after the last apply, from the default branch, with the history and tags the commits are counted from.
+      jobs.set("version-bump", new GitLabJob({
+        stage: "version-bump",
+        image: jobImage,
+        needs: [lastApply],
+        variables: { ...gitlabEnv, GIT_DEPTH: "0" },
+        rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        resource_group: "terragucci-version-bump",
+        script: [bash("BUMP", versionBumpScript(forge, tokenEnv))],
       } as never) as never);
     }
     if (input.publish) {
@@ -885,6 +910,22 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
+  if (bumpOn) {
+    // A release pull request per module the commits do not settle, from the default branch once every wave has applied.
+    entities.set("version-bump", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      needs: lastApply,
+      if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
+      permissions: { contents: "write", "pull-requests": "write" },
+      concurrency: { group: "terragucci-version-bump-${{ github.repository }}", "cancel-in-progress": false },
+      env: { TG_TOKEN: "${{ github.token }}", ...decideSecret },
+      steps: [
+        new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
+        new Step({ name: "Suggest the next version of each module that changed", shell: "bash", run: versionBumpScript(forge, tokenEnv) }),
+      ],
+    } as never) as never);
+  }
   if (input.publish) {
     // The only job that sees the registry credentials. It pushes tags, so it is
     // the only one with write access to contents, and it runs after apply.
@@ -918,6 +959,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
         ...headersEnv,
+        ...driftDecideEnv,
       },
       steps: [
         ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true),

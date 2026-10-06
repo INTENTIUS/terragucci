@@ -64,6 +64,8 @@ export const DECIDE_IMAGE = {
   laya: "0.3.28",
   /** The CPU build of torch, from download.pytorch.org/whl/cpu. */
   torch: "2.14.0",
+  /** pip itself, installed from the hash-locked file so the build never takes whatever pip is newest (`venv --upgrade-deps` would). */
+  pip: "26.2.1",
   /** The checkpoint: its Hub repo, Laya's name for it and the reviewed commit in laya/revisions.py. */
   checkpoint: {
     repo: "convaiinnovations/laya",
