@@ -116,7 +116,9 @@ dash-estate|the Estate dashboard init writes shows the roots of a project and th
 dash-runs|the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo|
 dash-slos|the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes|
 drill-down|the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job|
-policy-wave|a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings|'
+policy-wave|a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings|
+check-diagnostics|tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal|
+comment-not-affected|a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2784,6 +2786,316 @@ claim_drill_down() {
   log "note -> $url -> $f -> trace $trace -> back to the report; the dashboards and the index row link down"
 }
 
+# ── tf-check's diagnostics ────────────────────────────────────────────────
+# The check step of a pipeline as it was before tf-check printed diagnostics:
+# validate with its output thrown away, no live-check, no policy tests.
+check_step_unchecked() { # workflow file
+  sed -i.bak -e 's#terragucci check-root "$dir" --binary \([a-z]*\) || failed=1#\1 -chdir="$dir" validate -no-color >/dev/null#' \
+    -e '/terragucci check-policy || failed=1/d' "$1" && rm -f "$1.bak"
+}
+
+# The run: body of a Forgejo workflow's "Format check and validate" step, dedented.
+check_step_body() { # workflow file
+  awk '/name: Format check and validate/ { f = 1; next }
+    f && /run: \|/ { r = 1; next }
+    r && /^      - / { exit }
+    r { sub(/^          /, ""); print }' "$1"
+}
+
+claim_check_diagnostics() {
+  # tf-check fails with the cause in its job log for each of three faults. On
+  # a scratch repo whose main carries a policy (terragucci.yml's policy:, a
+  # Rego rule and its test), main goes green first. Then:
+  #   validate  a branch whose root sets an argument its resource does not
+  #             have: the check job fails and its log names the file, the
+  #             line and column, and "Unsupported argument".
+  #   policy    main gains a policy test that fails, and a branch that
+  #             rewrites the test to pass: the check job reads the test from
+  #             main, fails, and its log says conftest verify failed on the
+  #             policy read from origin/main and names the test.
+  #   live-check a binary: choudoufu repo whose root holds a terraform_data
+  #             resource and no live block: the check step init writes for it,
+  #             run in the tofu CI image with choudoufu built for Linux, fails,
+  #             and its log names the refused resource. The Forgejo runner's
+  #             job image has no choudoufu, so this one runs the job's own
+  #             script in that image rather than on the runner.
+  # BREAK: every pipeline's check step is the one before tf-check printed
+  # diagnostics (validate -no-color >/dev/null, no live-check, no policy
+  # tests), so the validate error is not named, and the failing policy test
+  # and the refusal pass.
+  log() { echo "[smoke check-diagnostics] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/checkdiag" tree wf sha main_sha logs rc=0 image bin bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 body cdir
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  # The check job's own log, whole.
+  check_log() { # run id
+    local job
+    job="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r '.[] | select(.name == "check") | .id' | head -1)"
+    [ -n "$job" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$job/logs" 2>/dev/null
+  }
+  fresh_repo checkdiag || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  mkdir -p "$tree/app" "$tree/policy"
+  cat > "$tree/app/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+resource "terraform_data" "probe" {
+  input = "check-diagnostics"
+}
+TF
+  cat > "$tree/policy/plan.rego" <<'REGO'
+package main
+
+import rego.v1
+
+deny contains msg if {
+  some rc in input.resource_changes
+  rc.type == "aws_instance"
+  msg := sprintf("%s: no instances here", [rc.address])
+}
+REGO
+  policy_test() { # the count the test expects: 1 passes, 0 fails
+    printf 'package main\n\nimport rego.v1\n\ntest_denies_an_instance if {\n  count(deny) == %s with input as {"resource_changes": [{"address": "aws_instance.web", "type": "aws_instance"}]}\n}\n' "$1" > "$tree/policy/plan_test.rego"
+  }
+  policy_test 1
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\npolicy:\n  engine: conftest\n  path: policy\n' > "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  wf="$tree/.forgejo/workflows/terragucci.yml"
+  grep -q 'terragucci check-root' "$wf" || { log "the pipeline's check step runs no terragucci check-root"; return 1; }
+  [ -n "${BREAK:-}" ] && check_step_unchecked "$wf"
+  main_sha="$(push_tree "$tree" "$repo" main "check-diagnostics: clean")" || return 1
+  wait_run "$repo" "$main_sha" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the clean push to main ended '$RUN_STATUS'"; print_logs "$repo" "$RUN_ID" >&2; return 1; }
+
+  # validate: an argument terraform_data does not have.
+  awk '{ print } /^  input = "check-diagnostics"$/ { print "  bogus = 1" }' "$tree/app/main.tf" > "$tree/app/main.tf.new" && mv "$tree/app/main.tf.new" "$tree/app/main.tf"
+  grep -q '^  bogus = 1$' "$tree/app/main.tf" || { log "could not add the bogus argument"; return 1; }
+  sha="$(push_tree "$tree" "$repo" diag-validate "check-diagnostics: unsupported argument")" || return 1
+  wait_run "$repo" "$sha" || return 1
+  logs="$(check_log "$RUN_ID")"
+  if [ "$RUN_STATUS" != failure ]; then
+    log "the push with an unsupported argument ended '$RUN_STATUS'"; rc=1
+  elif grep -Eq 'error: app/main\.tf:[0-9]+:[0-9]+[-0-9:]*: Unsupported argument' <<<"$logs"; then
+    log "validate: $(grep -Eo 'error: app/main\.tf:[0-9]+:[0-9]+[-0-9:]*: Unsupported argument' <<<"$logs" | head -1)"
+  else
+    log "the check failed but its log does not name app/main.tf with a line and column and 'Unsupported argument'"
+    grep -E 'Unsupported|FAILED|valid ' <<<"$logs" | cut -c1-200 | sed 's/^/[smoke check-diagnostics]   /' >&2 || true
+    rc=1
+  fi
+  git -C "$tree" checkout -q main
+
+  # policy: main's test fails; the branch's copy passes, and is not the one read.
+  policy_test 0
+  main_sha="$(push_tree "$tree" "$repo" main "check-diagnostics: a failing policy test")" || return 1
+  git -C "$tree" checkout -q -b diag-policy
+  policy_test 1
+  sha="$(push_tree "$tree" "$repo" diag-policy "check-diagnostics: the branch's policy test passes")" || return 1
+  wait_run "$repo" "$sha" || return 1
+  logs="$(check_log "$RUN_ID")"
+  if [ "$RUN_STATUS" != failure ]; then
+    log "the push under main's failing policy test ended '$RUN_STATUS'"; rc=1
+  elif grep -Eq 'FAILED policy tests: conftest verify exited [0-9]+ \(read from origin/main' <<<"$logs" && grep -q 'test_denies_an_instance' <<<"$logs"; then
+    log "policy: $(grep -Eo 'FAILED policy tests: conftest verify exited [0-9]+ \(read from origin/main[^)]*\)' <<<"$logs" | head -1), naming test_denies_an_instance"
+  else
+    log "the check failed but its log does not say conftest verify failed on main's policy and name test_denies_an_instance"
+    grep -E 'policy|FAIL' <<<"$logs" | cut -c1-200 | sed 's/^/[smoke check-diagnostics]   /' >&2 || true
+    rc=1
+  fi
+  wait_run "$repo" "$main_sha" >/dev/null 2>&1 || true
+
+  # live-check: a choudoufu root that holds a logical resource and no live block.
+  bin="$(choudoufu_linux)" || { log "no choudoufu built for Linux"; return 1; }
+  cdir="$work/choudoufu"
+  mkdir -p "$cdir/app"
+  cp "$tree/app/main.tf" "$cdir/app/main.tf"
+  sed -i.bak '/^  bogus = 1$/d' "$cdir/app/main.tf" && rm -f "$cdir/app/main.tf.bak"
+  printf 'forge: forgejo\nbinary: choudoufu\ngate: never\n' > "$cdir/terragucci.yml"
+  (cd "$cdir" && "$TERRAGUCCI" init >/dev/null) || { log "init failed for the choudoufu repo"; return 1; }
+  [ -n "${BREAK:-}" ] && check_step_unchecked "$cdir/.forgejo/workflows/terragucci.yml"
+  body="$(check_step_body "$cdir/.forgejo/workflows/terragucci.yml")"
+  grep -q '^choudoufu fmt -check' <<<"$body" || { log "no check step for choudoufu in the pipeline init wrote"; return 1; }
+  docker run --rm --network terragucci -v "$cdir:/repo" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$bin:/usr/local/bin/choudoufu:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" sh -c "$body" >"$work/choudoufu.log" 2>&1 || code=$?
+  if [ "$code" = 0 ]; then
+    log "the choudoufu check step passed: nothing refused terraform_data.probe"; rc=1
+  elif grep -q 'refused: app: terraform_data.probe (terraform_data)' "$work/choudoufu.log"; then
+    log "live-check: $(grep -m1 'refused: app: terraform_data.probe' "$work/choudoufu.log" | cut -c1-200)"
+  else
+    log "the choudoufu check step exited $code but its log names no refusal of terraform_data.probe"
+    tail -20 "$work/choudoufu.log" | sed 's/^/[smoke check-diagnostics]   /' >&2
+    rc=1
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] || return 1
+  log "tf-check failed with the cause in its log for a validate error, a failing policy test read from main, and a choudoufu live-check refusal"
+}
+
+# ── comment re-plans that plan nothing ────────────────────────────────────
+claim_comment_not_affected() {
+  # A scratch repo with two roots, app and net, the pipeline init writes for
+  # it, a push to main, and a pull request that changes app only. Then, as
+  # the repo's admin:
+  #   `/terragucci plan net`  the comment's run succeeds, replies "net is not
+  #       affected by this pull request, so nothing was planned.", and the
+  #       pull request's head gains no terragucci/plan status, pending or not.
+  #   `/terragucci plan app`, after main's pipeline gives the re-plan job a
+  #       token the forge refuses: the run fails, and the job's log says it
+  #       could not read the pull request and what the forge answered. On
+  #       Forgejo the commenter's permission comes from the event, not the
+  #       API, so the forge call that fails is the pull request read, not the
+  #       permission read; the token is refused outright (401), not short of
+  #       a permission (403).
+  # BREAK: the pushed pipeline is the re-plan job as it was before: it neither
+  # answers a root the change does not reach nor fails when `terragucci
+  # comment` does (its `|| exit 1` is `|| exit 0`).
+  log() { echo "[smoke comment-not-affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/comment-na" tree wf main_sha head_sha pr i rc=0 before after last root replies logs
+  local wait=$(( TIMEOUT < 240 ? TIMEOUT : 240 ))
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  fresh_repo comment-na || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for root in app net; do
+    mkdir -p "$tree/$root"
+    echo 1 > "$tree/$root/rev.txt"
+    cat > "$tree/$root/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+resource "terraform_data" "rev" {
+  input = file("${path.module}/rev.txt")
+}
+TF
+  done
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\n' > "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; return 1; }
+  wf="$tree/.forgejo/workflows/terragucci.yml"
+  grep -q 'is not affected by this pull request' "$wf" || { log "the pipeline's re-plan job has no not-affected answer"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak -e '/is not affected by this pull request/d' \
+      -e 's#--out terragucci-comment.json || exit 1#--out terragucci-comment.json || exit 0#' "$wf" && rm -f "$wf.bak"
+  fi
+  main_sha="$(push_tree "$tree" "$repo" main "comment-na: first")" || return 1
+  wait_run "$repo" "$main_sha" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the push to main did not go green"; return 1; }
+  echo 2 > "$tree/app/rev.txt"
+  head_sha="$(push_tree "$tree" "$repo" comment-na-change "comment-na: change app")" || return 1
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"comment-na-change","base":"main","title":"comment-na: app"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  log "pull request $pr for ${head_sha:0:8}"
+  statuses() { # sha -> how many terragucci/plan statuses it carries
+    api "$URL/api/v1/repos/$repo/commits/$1/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length'
+  }
+  latest_status() { # sha -> the state of its newest terragucci/plan status
+    api "$URL/api/v1/repos/$repo/commits/$1/statuses?limit=100" | jq -r '[.[] | select(.context == "terragucci/plan")] | max_by(.id) | .status // "none"'
+  }
+  comment() { # text -> posts it as the repo's admin
+    api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$1" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$pr/comments"
+  }
+  last_comment_run() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq '[.workflow_runs[] | select(.event == "issue_comment") | .id] | max // 0'; }
+  # Wait for the first comment run newer than $1 to finish; sets CR_ID and CR_STATUS.
+  wait_comment_run() { # run id
+    local run
+    CR_ID=""; CR_STATUS=""
+    for i in $(seq 1 $(( wait / 3 ))); do
+      run="$(api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq -c --argjson after "$1" '[.workflow_runs[] | select(.event == "issue_comment" and .id > $after)] | min_by(.id) // empty')"
+      if [ -n "$run" ]; then
+        CR_ID="$(jq -r .id <<<"$run")"; CR_STATUS="$(jq -r .status <<<"$run")"
+        case "$CR_STATUS" in success|failure|cancelled|skipped) return 0 ;; esac
+      elif [ $(( i * 3 )) -ge 90 ]; then
+        log "no run started for the comment in 90s"; return 1
+      fi
+      sleep 3
+    done
+    log "the comment's run $CR_ID did not finish in ${wait}s (last status: ${CR_STATUS:-none})"; return 1
+  }
+  replan_log() { # run id
+    local job
+    job="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r '.[] | select(.name == "replan") | .id' | head -1)"
+    [ -n "$job" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$job/logs" 2>/dev/null
+  }
+  # The pull request's own plan runs first; the comments' runs come after it.
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(statuses "$head_sha")" -ge 2 ] && break
+    sleep 3
+  done
+  before="$(statuses "$head_sha")"
+  [ "$before" -ge 2 ] || { log "the pull request's own plan never finished"; return 1; }
+
+  # Not affected: net is a root, and the change does not reach it.
+  last="$(last_comment_run)"
+  comment "/terragucci plan net"
+  if wait_comment_run "$last"; then
+    [ "$CR_STATUS" = success ] || { log "the not-affected comment's run ended '$CR_STATUS', not success"; rc=1; }
+    replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | map(.body) | join("\n")')"
+    grep -Fqx 'terragucci: net is not affected by this pull request, so nothing was planned.' <<<"$replies" \
+      || { log "no reply says net is not affected (replies: ${replies:-none})"; rc=1; }
+    after="$(statuses "$head_sha")"
+    [ "$after" = "$before" ] || { log "the not-affected comment posted terragucci/plan statuses ($before before, $after after)"; rc=1; }
+    [ "$(latest_status "$head_sha")" != pending ] || { log "the head's newest terragucci/plan status is pending"; rc=1; }
+    [ $rc = 0 ] && log "/terragucci plan net: run $CR_ID succeeded, replied that net is not affected, and left the head's $before plan statuses as they were"
+  else
+    rc=1
+  fi
+
+  # An infrastructure error: main's pipeline gives the re-plan job a token the forge refuses.
+  git -C "$tree" checkout -q main
+  sed -i.bak "/^  replan:/,/TG_TOKEN:/s/TG_TOKEN: '\${{ github.token }}'/TG_TOKEN: 'not-a-forgejo-token'/" "$wf" && rm -f "$wf.bak"
+  grep -q "TG_TOKEN: 'not-a-forgejo-token'" "$wf" || { log "could not give the re-plan job a refused token"; return 1; }
+  main_sha="$(push_tree "$tree" "$repo" main "comment-na: the re-plan job's token is refused")" || return 1
+  wait_run "$repo" "$main_sha" >/dev/null 2>&1 || true
+  before="$(statuses "$head_sha")"
+  last="$(last_comment_run)"
+  comment "/terragucci plan app"
+  if wait_comment_run "$last"; then
+    logs="$(replan_log "$CR_ID")"
+    if [ "$CR_STATUS" != failure ]; then
+      log "the re-plan whose forge call was refused ended '$CR_STATUS', not failure"; rc=1
+    elif grep -Eq "could not read pull request $pr \(GET repos/$repo/pulls/$pr answered 40[0-9]\)" <<<"$logs"; then
+      log "/terragucci plan app with a refused token: run $CR_ID failed: $(grep -Eo "could not read pull request $pr \(GET [^)]*\)" <<<"$logs" | head -1)"
+    else
+      log "the run failed but the re-plan job's log does not say the pull request read was refused"
+      grep -E 'terragucci( comment)?:' <<<"$logs" | cut -c1-200 | sed 's/^/[smoke comment-not-affected]   /' >&2 || true
+      rc=1
+    fi
+    after="$(statuses "$head_sha")"
+    [ "$after" = "$before" ] || { log "the refused re-plan posted terragucci/plan statuses ($before before, $after after)"; rc=1; }
+  else
+    rc=1
+  fi
+  drop_work "$work" 2>/dev/null || true
+  [ "$rc" = 0 ] && log "a root the change does not reach was answered not affected and planned nothing, and a re-plan whose forge call was refused failed its job with the cause"
+  return "$rc"
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -2909,6 +3221,8 @@ dash-runs       ex otel after=boot weight=120
 dash-slos       ex otel after=boot weight=120
 drill-down      ex otel after=boot weight=120
 policy-wave     weight=150
+check-diagnostics    runner self! weight=150
+comment-not-affected runner self! weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
