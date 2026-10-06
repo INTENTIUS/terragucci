@@ -81,7 +81,9 @@ describe("the comment trigger", () => {
     // The comment-triggered run takes the plan job's read-only role, never the apply role.
     expect(JSON.stringify(doc.jobs.replan)).toContain(OIDC.plan_role);
     expect(JSON.stringify(doc.jobs.replan)).not.toContain(OIDC.apply_role);
-    expect(doc.jobs.replan.permissions.contents).toBe("read");
+    // Forgejo has no permissions scopes, so only github carries the read-only token.
+    if (forge === "github") expect(doc.jobs.replan.permissions.contents).toBe("read");
+    else expect(doc.jobs.replan.permissions?.contents).toBeUndefined();
     // The check job does not run for a comment (its fork test alone would be true for one), and the apply chain hangs off check.
     expect(doc.jobs.check.if).toContain("github.event_name == 'pull_request'");
     expect(doc.jobs["apply-wave-1"].needs).toBe("check");
@@ -765,7 +767,8 @@ describe("the version-bump job", () => {
   it.each(["github", "forgejo"] as const)("%s: respond.version-bump: suggest adds a job after the last apply that runs the response with the service's key", (forge) => {
     const job = body(render(forge, { "version-bump": "suggest" })).jobs["version-bump"];
     expect(job.needs).toBe("apply-wave-2");
-    expect(job.permissions).toEqual({ contents: "write", "pull-requests": "write" });
+    if (forge === "github") expect(job.permissions).toEqual({ contents: "write", "pull-requests": "write" });
+    else expect(job.permissions?.contents).toBeUndefined();
     expect(job.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
     expect(job.steps[0].with["fetch-depth"]).toBe(0);
     expect(job.steps.at(-1).run).toContain("terragucci respond version-bump --mode apply || true");
