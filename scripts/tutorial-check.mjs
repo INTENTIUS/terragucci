@@ -1,11 +1,12 @@
-// Keeps the tutorial honest. For every tutorial page that is not a draft:
+// Keeps the tutorial and the guides honest. For every tutorial page and every
+// guide that is not a draft:
 //   - every smoke claim it names in `claims:` passes in smoke.json;
 //   - every <Captured step="…"> has a capture, made from the example as it is
 //     now (its source_hash matches example/);
 //   - every <Shot step="…" view="…"> has its light and dark screenshot, each
 //     the one its step's capture recorded (the hash in <step>.json), from a
 //     capture of the example as it is now.
-// Draft pages are skipped; they leave draft when their claims pass. Every
+// Draft pages and guides are skipped; they leave draft when their claims pass. Every
 // other page of the site that embeds a capture or a screenshot is held to the
 // same capture rules.
 import { createHash } from "node:crypto";
@@ -65,27 +66,38 @@ function checkCaptures(label, text) {
   }
 }
 
+// A tutorial page or a guide. A published one names its smoke claims in
+// `claims:`, and each must pass. A guide must carry the line: `claims: []`
+// says that no recorded claim backs it.
 let checked = 0;
-for (const name of existsSync(pages) ? readdirSync(pages).sort() : []) {
-  if (!/\.mdx?$/.test(name)) continue;
-  const text = readFileSync(join(pages, name), "utf8");
-  const front = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
-  if (/^draft:\s*true\s*$/m.test(front)) {
-    console.log(`draft ${name}`);
-    continue;
+const guides = join(root, "docs-site/src/content/docs/guides");
+function checkDir(dir, kind) {
+  for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
+    if (!/\.mdx?$/.test(name)) continue;
+    const label = kind === "guide" ? `guides/${name}` : name;
+    const text = readFileSync(join(dir, name), "utf8");
+    const front = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    if (/^draft:\s*true\s*$/m.test(front)) {
+      console.log(`draft ${label}`);
+      continue;
+    }
+    checked++;
+    const line = front.match(/^claims:\s*\[(.*)\]\s*$/m);
+    if (!line && kind === "guide") problems.push(`${label}: no claims: line; list the smoke claims that back it, or write claims: [] when none does`);
+    const claims = (line?.[1] ?? "")
+      .split(",").map((s) => s.trim().replace(/['"]/g, "")).filter(Boolean);
+    for (const c of claims) {
+      if (verdict[c] !== "pass") problems.push(`${label}: claim ${c} is ${verdict[c] ?? "unknown"}, so the ${kind} must stay a draft`);
+    }
+    checkCaptures(label, text);
+    console.log(`ok    ${label}`);
   }
-  checked++;
-  const claims = (front.match(/^claims:\s*\[(.*)\]\s*$/m)?.[1] ?? "")
-    .split(",").map((s) => s.trim().replace(/['"]/g, "")).filter(Boolean);
-  for (const c of claims) {
-    if (verdict[c] !== "pass") problems.push(`${name}: claim ${c} is ${verdict[c] ?? "unknown"}, so the page must stay a draft`);
-  }
-  checkCaptures(name, text);
-  console.log(`ok    ${name}`);
 }
+checkDir(pages, "page");
+checkDir(guides, "guide");
 // Every other page that embeds a capture or a screenshot.
 const docs = join(root, "docs-site/src/content/docs");
-for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/")).sort()) {
+for (const file of files(docs).filter((p) => p.endsWith(".mdx") && !p.startsWith(pages + "/") && !p.startsWith(guides + "/")).sort()) {
   checkCaptures(relative(docs, file), readFileSync(file, "utf8"));
 }
 if (problems.length) {

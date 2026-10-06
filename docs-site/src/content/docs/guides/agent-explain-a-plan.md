@@ -1,6 +1,7 @@
 ---
 title: Have an agent explain a plan
 description: A Claude Code GitHub Action or a GitLab job reads the plan report and adds a plain-words explanation to the pull request.
+claims: []
 ---
 
 ## What you end up with

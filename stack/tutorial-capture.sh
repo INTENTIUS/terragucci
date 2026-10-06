@@ -16,9 +16,9 @@
 #   docs-site/src/assets/tutorial/<step>-<view>-<theme>.png
 #   docs-site/src/data/tutorial/manifest.json    date, commit and versions
 #
-# A step whose output and screenshots are byte for byte what is committed keeps
-# its files; any difference in either rewrites the step's JSON and its
-# screenshots together. Only the steps that ran are written, so one step's
+# A step whose output and screenshots are what is committed keeps its files (a
+# screenshot differing only by Forgejo's relative times counts as the same); any
+# other difference rewrites the step's JSON and its screenshots together. Only the steps that ran are written, so one step's
 # capture never touches another step's files.
 #
 # The steps run in the order below, and each one starts where the one before it
@@ -171,16 +171,39 @@ png_hash() { shasum -a 256 "$1" | cut -c1-16; }
 # Write a step's files when its output or any of its screenshots differs from
 # what is committed. The JSON records each screenshot's hash, so a screenshot
 # belongs to the capture that took it and `just tutorial-check` can tell.
+#
+# A step that did not take every screenshot it should have (a view in the
+# STEPS table with no picture, because a page was not found) writes nothing:
+# its JSON would claim a capture the screenshots do not back. The step is
+# listed and the capture fails at the end.
+#
+# A screenshot that differs from the committed one only in Forgejo's relative
+# times ("2 minutes ago") is the same screenshot: stack/png-same.mjs compares
+# the pictures with a tolerance, and the committed file and its hash stay.
+INCOMPLETE=""
 commit_step() { # step
   local step="$1"
-  local new="$STAGE/$step.json" old="$DATA/$step.json" shots='{}' v theme png
+  local new="$STAGE/$step.json" old="$DATA/$step.json" shots='{}' v theme png key missing="" same=1 h
   for v in $(field "$step" 4); do
     for theme in light dark; do
       png="$STAGE/$step-$v-$theme.png"
-      [ -f "$png" ] || continue
-      shots="$(jq --arg k "$v-$theme" --arg h "$(png_hash "$png")" '. + {($k): $h}' <<<"$shots")"
+      if [ ! -f "$png" ]; then missing="$missing $v-$theme"; continue; fi
+      key="$v-$theme"
+      h="$(png_hash "$png")"
+      # The committed picture stands when this one is the same within the tolerance.
+      if [ -f "$old" ] && [ -f "$SHOTS/$step-$key.png" ] && [ "$(jq -r --arg k "$key" '.shots[$k] // empty' "$old")" = "$(png_hash "$SHOTS/$step-$key.png")" ] \
+        && node "$HERE/png-same.mjs" "$SHOTS/$step-$key.png" "$png"; then
+        h="$(png_hash "$SHOTS/$step-$key.png")"
+        cp "$SHOTS/$step-$key.png" "$png"
+      fi
+      shots="$(jq --arg k "$key" --arg h "$h" '. + {($k): $h}' <<<"$shots")"
     done
   done
+  if [ -n "$missing" ]; then
+    log "$step: not written, it took no screenshot for:$missing"
+    INCOMPLETE="$INCOMPLETE $step"
+    return
+  fi
   touch "$STAGE/$step.cmds"
   jq -s --arg s "$step" --arg h "$SOURCE_HASH" --argjson shots "$shots" \
     '{step: $s, source_hash: $h, commands: .} + (if ($shots | length) > 0 then {shots: $shots} else {} end)' \
@@ -553,5 +576,6 @@ if [ "$CHANGED" = 1 ] || [ ! -f "$DATA/manifest.json" ]; then
     > "$DATA/manifest.json"
   log "wrote manifest.json"
 fi
+if [ -n "$INCOMPLETE" ]; then fail "not written, a screenshot is missing:$INCOMPLETE"; fi
 if [ -z "$ALL" ] && [ -n "$SKIPPED" ]; then fail "not captured, their claims do not pass:$SKIPPED"; fi
 log "done"

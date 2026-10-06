@@ -1,6 +1,7 @@
 ---
 title: Roll out a new module version
 description: Move a module's pin one wave at a time, as one pull request per wave, across the roots and repos that use it.
+claims: [rollout]
 ---
 
 ## What you end up with

@@ -1,6 +1,7 @@
 ---
 title: Govern many repos from one place
 description: List your projects in a control repo and let terragucci open a pull request in each one that needs a change.
+claims: [reconcile]
 ---
 
 ## What you end up with

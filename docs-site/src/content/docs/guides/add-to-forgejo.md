@@ -1,6 +1,7 @@
 ---
 title: Add terragucci to a Forgejo repo
 description: Write the Forgejo Actions workflow and get a plan note on the next pull request, on Forgejo, Codeberg or Gitea-compatible hosts.
+claims: [boot, check, affected]
 ---
 
 ## What you end up with
