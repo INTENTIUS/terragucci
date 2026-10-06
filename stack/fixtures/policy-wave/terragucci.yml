@@ -1,0 +1,4 @@
+# The policy-wave claim's repo: one root, applied with no gate. The claim
+# appends the policy key (engine, path, input) unless BREAK is set.
+binary: tofu
+gate: never

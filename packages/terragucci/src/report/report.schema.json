@@ -143,7 +143,18 @@
           },
           "fold": { "$ref": "#/$defs/fold" },
           "why": { "type": "array", "items": { "type": "string" } },
-          "timings": { "$ref": "#/$defs/rootTimings" }
+          "timings": { "$ref": "#/$defs/rootTimings" },
+          "policy": {
+            "description": "What the policy found in the root's plan (minor 6). A denied root is failed and keeps its changes.",
+            "type": "object",
+            "required": ["result", "denials", "warnings"],
+            "properties": {
+              "result": { "enum": ["passed", "denied", "error"] },
+              "denials": { "type": "array", "items": { "type": "string" } },
+              "warnings": { "type": "array", "items": { "type": "string" } },
+              "error": { "type": "string" }
+            }
+          }
         }
       }
     },
@@ -192,6 +203,19 @@
           "type": { "type": "string" },
           "reason": { "type": "string" }
         }
+      }
+    },
+    "policy": {
+      "description": "The run's policy check, when policy is on (minor 6).",
+      "type": "object",
+      "required": ["engine", "input", "from", "denied", "warnings"],
+      "properties": {
+        "engine": { "enum": ["conftest", "opa"] },
+        "input": { "enum": ["plan", "hcp"] },
+        "namespace": { "type": "string" },
+        "from": { "enum": ["checkout", "base"] },
+        "denied": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "integer" }
       }
     },
     "intent": {

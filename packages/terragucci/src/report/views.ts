@@ -135,6 +135,13 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     }
     blocks.push({ group: false, units: 0, text: "\n" });
   }
+  const warned = report.roots.filter((r) => r.policy?.warnings.length);
+  if (warned.length > 0) {
+    const count = warned.reduce((n, r) => n + r.policy!.warnings.length, 0);
+    let t = `**Policy warnings (${count}), which fail nothing:**\n\n`;
+    for (const r of warned) for (const w of r.policy!.warnings) t += `- ${to(code(r.path), rootAnchor(r.path))}: ${w.split(/\s+/).join(" ")}\n`;
+    blocks.push({ group: false, units: 0, text: t + "\n" });
+  }
   if (report.deferred?.length) {
     let t = `**Planned after what they wait for applies (${report.deferred.length}):**\n\n`;
     for (const d of report.deferred) t += `- ${code(d.unit)} after ${d.after.map(code).join(", ")}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;

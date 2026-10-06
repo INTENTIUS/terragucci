@@ -71,7 +71,7 @@ projects:
 | `oidc` | none | `plan_role`, `apply_role` and an optional `audience`: the cloud roles the jobs assume over OIDC; see [Credentials](/terragucci/reference/pipeline/#credentials) |
 | `parallelism` | 3 for GitLab-managed state, else 16 | how many roots of one dependency layer `tf-plan` and `tf-drift` plan at once, and of one wave `tf-apply` plans at once; a Terragrunt repo uses `terragrunt.parallelism` |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
-| `policy` | off | `engine` (`conftest` or `opa`), `path` (default `policy`) and `namespace`: run policy over each root's plan, read from the base branch for a pull request, and fail `tf-plan` or refuse a `tf-apply` wave on a denial; see [Policy](/terragucci/reference/policy/) |
+| `policy` | off | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace` and `input` (`plan` or `hcp`): run policy over each root's plan, read from the base branch for a pull request, and fail `tf-plan` or refuse a `tf-apply` wave on a denial; see [Policy](/terragucci/reference/policy/) |
 | `modules.path` | none | where your modules live, such as `modules/*` |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |

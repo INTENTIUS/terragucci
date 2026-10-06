@@ -36,11 +36,11 @@ import { attribute, awsAuditLog, type Attributed, type AuditLog } from "../respo
 import { driftOf } from "../respond/drift";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
-import { checkPlan, describeVerdict, engineBinary, policyPathExists, trustedPolicy, type PolicyOptions, type TrustedOptions } from "./policy";
+import { checkPlans, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportDeferred, ReportMockRead, ReportRun } from "./schema";
+import type { Report, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
 import { bucketReportUrl, uploadReport, writeReportDir, type Uploaded } from "./store";
 import { isArtifactPage, type NoteOptions } from "./views";
 
@@ -926,54 +926,30 @@ export function baseRef(env: NodeJS.ProcessEnv): string | undefined {
  * read or run fails the path too. For a pull request (`base` set) the policy
  * comes from the base branch, so the change under review cannot edit it away.
  * Nothing reads a response or agent setting, so no path waives it.
+ * `checkPlans` (policy.ts) also returns each root's verdict and its warnings.
  */
 export async function checkPolicy(repo: string, policy: PolicySettings, items: { path: string; plan: unknown }[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions, log: (line: string) => void): Promise<Map<string, string>> {
-  const failed = new Map<string, string>();
-  if (items.length === 0) return failed;
-  const engine = policy.engine ?? "conftest";
-  const trusted = await trustedPolicy(repo, policy, base, trust);
-  try {
-    if (trusted.from === "base") log(`policy: read from ${base}, not from this checkout`);
-    let binary: string | undefined;
-    let setup: string | undefined = trusted.error;
-    if (setup === undefined && !policyPathExists(trusted.policy, repo)) setup = `the policy directory ${policy.path ?? "policy"} does not exist`;
-    if (setup === undefined) {
-      try {
-        binary = await engineBinary(trusted.policy, repo, options);
-      } catch (e) {
-        setup = (e as Error).message;
-      }
-    }
-    let denied = 0;
-    for (const item of items) {
-      const verdict = setup !== undefined || binary === undefined
-        ? { violations: [], error: setup ?? "no engine" }
-        : await checkPlan(binary, trusted.policy, repo, JSON.stringify(item.plan), options);
-      if (verdict.error === undefined && verdict.violations.length === 0) {
-        log(`${item.path}: policy passed`);
-        continue;
-      }
-      denied += verdict.violations.length;
-      failed.set(item.path, describeVerdict(engine, verdict));
-      log(`${item.path}: ${verdict.error ? "policy could not be checked" : `policy denied ${verdict.violations.length}`}`);
-      for (const m of verdict.violations) log(`  ${m}`);
-    }
-    if (failed.size > 0) log(`policy: ${failed.size} root${failed.size === 1 ? "" : "s"} failed${denied ? `, ${denied} violation${denied === 1 ? "" : "s"}` : ""}`);
-  } finally {
-    trusted.cleanup();
-  }
-  return failed;
+  return (await checkPlans(repo, policy, items, base, trust, options, log)).failed;
 }
 
-async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void): Promise<RootInput[]> {
+/**
+ * Run the policy over the planned roots. A root the policy denies, or could
+ * not check, fails with the reason as its error, and keeps its plan so the
+ * report still shows what it would change; every checked root carries its
+ * verdict and warnings.
+ */
+async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void, run: Omit<PolicyRunContext, "root"> = {}): Promise<{ inputs: RootInput[]; policy: ReportPolicy }> {
   const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional);
-  const failed = await checkPolicy(repo, policy, checked.map((i) => ({ path: i.path, plan: i.plan })), base, trust, options, log);
-  return inputs.map((i) => {
-    const error = failed.get(i.path);
-    if (error === undefined) return i;
-    const { plan: _plan, ...rest } = i;
-    return { ...rest, error };
-  });
+  const found = await checkPlans(repo, policy, checked.map((i) => ({ path: i.path, plan: i.plan })), base, trust, options, log, run);
+  return {
+    policy: found.policy,
+    inputs: inputs.map((i) => {
+      const verdict = found.roots.get(i.path);
+      if (verdict === undefined) return i;
+      const error = found.failed.get(i.path);
+      return { ...i, policy: verdict, ...(error !== undefined ? { error } : {}) };
+    }),
+  };
 }
 
 async function finish(
@@ -985,10 +961,13 @@ async function finish(
   { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions }: Planned,
 ): Promise<StageResult> {
   let inputs = planned;
+  let policy: ReportPolicy | undefined;
   const drift = stage === "tf-drift";
   if (!drift && settings.policy) {
     const configPath = options.config ?? findConfig(repo);
-    inputs = await applyPolicy(repo, settings.policy, inputs, options.base ?? baseRef(env), { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) }, options.policy, log);
+    const facts = runFacts(repo, env, options.forge ?? settings.forge);
+    const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
+    ({ inputs, policy } = await applyPolicy(repo, settings.policy, inputs, options.base ?? baseRef(env), { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) }, options.policy, log, run));
   }
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
@@ -997,6 +976,7 @@ async function finish(
     redacted,
     ...(mockReads?.length ? { mockReads } : {}),
     ...(deferred?.length ? { deferred } : {}),
+    ...(policy ? { policy } : {}),
   });
   // Tips are advice: they read the repo and the finished report, and change neither.
   if (settings.tips) {
