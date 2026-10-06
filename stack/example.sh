@@ -40,6 +40,16 @@ command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
 
 if [ "$CMD" = down ]; then exec "$HERE/down.sh"; fi
 
+# SMOKE_AWS=1: the real-AWS pilot (stack/smoke-aws.sh). Only up and verify
+# run there, up with no flags, and every name carries the run prefix.
+if [ -n "${SMOKE_AWS:-}" ]; then
+  case "$CMD" in up|verify) ;; *) fail "under SMOKE_AWS=1 only 'up' and 'verify' run" ;; esac
+  [ "$#" = 0 ] || fail "under SMOKE_AWS=1, '$CMD' takes no flags"
+  # shellcheck source=smoke-aws.sh
+  . "$HERE/smoke-aws.sh"
+  smoke_aws_start || fail "the SMOKE_AWS mode did not start"
+fi
+
 FRESH=""; FOUNTAIN=""
 if [ "$CMD" = up ]; then
   for a in "$@"; do
@@ -114,6 +124,7 @@ json() { # target, body
 }
 
 verify_tree() { # dir
+  if [ -n "${SMOKE_AWS:-}" ]; then expected "$1" | smoke_aws_verify; return; fi
   local queues tables missing=0 kind name
   queues="$(json AmazonSQS.ListQueues '{}' | jq -r '.QueueUrls[]? | split("/") | last')"
   tables="$(json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?')"
@@ -200,6 +211,8 @@ assert root in open(p).read() and n, root
 open(p, "w").write(s)
 PY
     fi
+    # SMOKE_AWS: prefixed names and state, and the jobs on the SMOKE_AWS runner.
+    [ -z "${SMOKE_AWS:-}" ] || smoke_aws_overlay_example "$WORK/tree" || fail "the SMOKE_AWS overrides were not written"
     # On a steward, tf-apply is a fountain turn the pipeline starts.
     if [ -n "$FOUNTAIN" ]; then
       "$HERE/steward.sh" declare "$REPO"
@@ -207,7 +220,14 @@ PY
     fi
     # The roots keep their state in this bucket. In a real account it exists
     # before the first pipeline runs; on a fresh floci, make it.
-    curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+    # Under SMOKE_AWS, smoke_aws_start made the prefixed state bucket, and a
+    # runner that carries the keys takes the jobs until this script exits.
+    if [ -n "${SMOKE_AWS:-}" ]; then
+      trap 'rm -rf "$WORK"; smoke_aws_runner_down' EXIT
+      smoke_aws_runner_up example || fail "the SMOKE_AWS runner did not start"
+    else
+      curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+    fi
     # The sha depends only on the example's contents, so a capture can rely on it.
     TG_FIXED_DATE=1 apply_main_tree "The shop's estate"
     log "ready in $(( $(date +%s) - started ))s"

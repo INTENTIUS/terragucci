@@ -212,6 +212,14 @@ smoke claim="":
 smoke-record:
     stack/smoke.sh --record docs-site/src/data/smoke.json
 
+[doc("The real-AWS pilot: list, then delete, every bucket (with its objects), queue and table whose name starts with the run prefix. --list only lists; --all takes every tgsmoke- prefix.")]
+smoke-aws-cleanup *args:
+    stack/smoke-aws.sh cleanup {{args}}
+
+[doc("The real-AWS pilot: a measured run's AWS requests by service and operation, from the provider's debug log (default: the last SMOKE_AWS_MEASURE=1 run).")]
+smoke-aws-count *args:
+    stack/smoke-aws.sh count {{args}}
+
 [doc("Remove the stack's job cache volume (terragucci-job-cache: the OpenTofu binary and every provider version it fetched). The next stack-up makes it again. Stop the stack first: Docker refuses while a container mounts it.")]
 job-cache-prune:
     #!/usr/bin/env bash

@@ -27,6 +27,16 @@ command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
 
 image() { (cd "$HERE/.." && npx tsx scripts/images.ts tags | awk -v n="$1" '$1 == n { print $2 }'); }
 
+# SMOKE_AWS=1: the real-AWS pilot (stack/smoke-aws.sh). Only up and verify
+# run there, up with no flags, and every name carries the run prefix.
+if [ -n "${SMOKE_AWS:-}" ]; then
+  case "$CMD" in up|verify) ;; *) fail "under SMOKE_AWS=1 only 'up' and 'verify' run" ;; esac
+  [ "$#" = 0 ] || fail "under SMOKE_AWS=1, '$CMD' takes no flags"
+  # shellcheck source=smoke-aws.sh
+  . "$HERE/smoke-aws.sh"
+  smoke_aws_start || fail "the SMOKE_AWS mode did not start"
+fi
+
 if [ "$CMD" = up ]; then
   ref="$(image terragrunt)"
   if ! docker image inspect "$ref" >/dev/null 2>&1; then
@@ -79,6 +89,7 @@ expected() { # dir
 json() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: $1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
 
 verify_tree() { # dir
+  if [ -n "${SMOKE_AWS:-}" ]; then expected "$1" | smoke_aws_verify; return; fi
   local queues tables missing=0 kind name total
   queues="$(json AmazonSQS.ListQueues '{}' | jq -r '.QueueUrls[]? | split("/") | last')"
   tables="$(json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?')"
@@ -127,7 +138,15 @@ case "$CMD" in
     # TG_PIPELINE: a pipeline file to push instead of the committed one (smoke BREAKs).
     [ -n "${TG_PIPELINE:-}" ] && cp "$TG_PIPELINE" "$WORK/tree/.forgejo/workflows/terragucci.yml"
     [ -n "${TG_CONFIG:-}" ] && cp "$TG_CONFIG" "$WORK/tree/terragucci.yml"
-    curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+    # SMOKE_AWS: prefixed names and state (smoke_aws_start made the bucket),
+    # and a runner that carries the keys takes the jobs until this script exits.
+    if [ -n "${SMOKE_AWS:-}" ]; then
+      smoke_aws_overlay_tg "$WORK/tree" || fail "the SMOKE_AWS overrides were not written"
+      trap 'rm -rf "$WORK"; smoke_aws_runner_down' EXIT
+      smoke_aws_runner_up example-terragrunt || fail "the SMOKE_AWS runner did not start"
+    else
+      curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+    fi
     TG_FIXED_DATE=1 apply_main_tree "The shop's estate, on Terragrunt"
     log "ready in $(( $(date +%s) - started ))s"
     cat <<OUT
