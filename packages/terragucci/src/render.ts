@@ -159,6 +159,40 @@ export function installScript(binary: Binary | Tool, version: string, forge: For
   return forge === "gitlab" ? `${dir}\nexport PATH="$dir:$PATH"` : `${dir}\necho "$dir" >> "$GITHUB_PATH"`;
 }
 
+/** The AWS CLI v2 release the drift job installs when attribution needs it, with each build's sha256 (the zips also verify against the AWS CLI team's PGP signature). */
+export const AWS_CLI = {
+  version: "2.37.9",
+  sha256: {
+    x86_64: "6b3a6a3d7bb3997928f0bdf7b866914224abf242c2e54e1dcebbe84bee64f356",
+    aarch64: "e7d2cca3622af4765871fe9ce7eeed03acd09dca10a99ebc46e92f79d78765c0",
+  },
+} as const;
+
+/**
+ * The step that installs AWS CLI v2 for drift attribution, skipped when the job
+ * already has `aws`. The CI images carry node but not curl or unzip, so node
+ * downloads the zip and `unzip` comes from apt. The zip must match the pinned
+ * sha256 for the runner's architecture before it is unpacked.
+ */
+export function awsCliScript(forge: ForgeName): string {
+  const url = `https://awscli.amazonaws.com/awscli-exe-linux-$arch-${AWS_CLI.version}.zip`;
+  return [
+    "if ! command -v aws >/dev/null 2>&1; then",
+    '  case "$(uname -m)" in',
+    `    aarch64|arm64) arch=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`,
+    `    *) arch=x86_64; sum=${AWS_CLI.sha256.x86_64} ;;`,
+    "  esac",
+    '  dir="$(mktemp -d)"',
+    "  command -v unzip >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends unzip; }",
+    `  node -e 'fetch(process.argv[1]).then((r) => { if (!r.ok) throw new Error("the AWS CLI download answered " + r.status); return r.arrayBuffer(); }).then((b) => require("fs").writeFileSync(process.argv[2], Buffer.from(b))).catch((e) => { console.error(e.message); process.exit(1); })' "${url}" "$dir/awscliv2.zip"`,
+    '  echo "$sum  $dir/awscliv2.zip" | sha256sum -c -',
+    '  unzip -q "$dir/awscliv2.zip" -d "$dir"',
+    '  "$dir/aws/install" --install-dir "$dir/aws-cli" --bin-dir "$dir/bin"',
+    forge === "gitlab" ? '  export PATH="$dir/bin:$PATH"' : '  echo "$dir/bin" >> "$GITHUB_PATH"',
+    "fi",
+  ].join("\n");
+}
+
 export function checkScript(binary: Binary, roots: string[]): string {
   return [
     "set -eu",
@@ -666,6 +700,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // An agent response writes its input file; the job keeps it as an artifact.
   const agentApply = responseTo({ respond: input.respond }, "apply-failed") === "agent";
   const agentDrift = !tg && responseTo({ respond: input.respond }, "drift") === "agent";
+  // Attribution reads CloudTrail through the aws CLI, which the images do not carry.
+  const awsStep = !tg && responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
   if (forge === "gitlab") {
     const jobImage = new Image({ name: image });
@@ -768,7 +804,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "schedule"' })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
-        script: script(bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))),
+        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))],
         artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
     }
@@ -798,9 +834,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(forge === "forgejo" ? { concurrency: { group: "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false } } : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
-  const steps = (main: InstanceType<typeof Step>, cached = false, history = false): InstanceType<typeof Step>[] => [
+  const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string): InstanceType<typeof Step>[] => [
     new Step({ uses: "actions/checkout@v4", ...(history ? { with: { "fetch-depth": 0 } } : {}) }),
     ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
+    ...(before ? [new Step({ name: `Install the AWS CLI ${AWS_CLI.version} unless the job has it`, shell: "bash", run: before })] : []),
     ...(cached && tg ? [new Step({ name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
     main,
   ];
@@ -981,7 +1018,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...driftDecideEnv,
       },
       steps: [
-        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true),
+        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true, false, awsStep),
         new Step({
           name: "Keep the drift report",
           if: "always()",

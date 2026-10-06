@@ -110,6 +110,12 @@ describe("the audit log", () => {
     expect(calls[0]).toEqual(expect.arrayContaining(["cloudtrail", "lookup-events", "AttributeKey=ResourceName,AttributeValue=jobs", "2026-09-21T00:00:00.000Z"]));
   });
 
+  it("says the aws CLI is not installed when the binary is missing", async () => {
+    const err = Object.assign(new Error("spawnSync aws ENOENT"), { code: "ENOENT" });
+    const log = awsAuditLog({ run: () => ({ status: null, stdout: "", stderr: "", error: err }) });
+    expect(await log.lookup({ type: "aws_sqs_queue", address: "a", ref: "jobs" })).toEqual({ status: "unavailable", reason: "the aws CLI is not installed" });
+  });
+
   it("reports an unreadable log, and has no reader for another cloud", async () => {
     const denied = lookup("", 254, "An error occurred (AccessDeniedException) when calling the LookupEvents operation\nmore");
     expect(await denied.log.lookup({ type: "aws_sqs_queue", address: "a", ref: "jobs" })).toEqual({ status: "unavailable", reason: "An error occurred (AccessDeniedException) when calling the LookupEvents operation" });
