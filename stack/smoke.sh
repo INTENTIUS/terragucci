@@ -65,19 +65,40 @@ trap on_exit EXIT
 # Everything this process makes in $TMPDIR, the CLI's own scratch dirs
 # (terragucci-plan-*, terragucci-apply-*, ...) and the work dirs, goes under one
 # dir of its own that on_exit removes, so a record leaves none behind. A claim
-# process the runner starts makes its own inside the runner's. A kill that
-# skips the trap leaves the dir; the next start removes any whose process is
-# gone, and the stopped run_copied containers of such a process.
+# process the runner starts runs inside the runner's dir and reuses it: it does
+# not make another, and only the process that made the dir removes it, so a
+# claim killed mid-run leaves nothing the runner's exit does not remove. A dir
+# is the runner's when it is named tgs.* and its pid file names a live process
+# (SMOKE_RUN_DIR, exported below, says the same to a child whose TMPDIR a tool
+# changed). A kill that skips the trap leaves the dir; the next outermost start
+# removes any whose process is gone, and the stopped run_copied containers of
+# such a process.
+#
+# The name is short because tsx listens on a Unix socket under $TMPDIR, and
+# macOS caps a socket path at 104 bytes. Worst case, one level deep:
+#   /var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T   49  ($TMPDIR on macOS)
+#   /tgs.XXXXXX                                        11
+#   /tsx-501/                                           9  (tsx-<uid>)
+#   <pid>.pipe                                         12  (7-digit pid)
+#                                                      81
+# Nested under a second dir of the old 23-byte name it was 116: over the limit.
 SMOKE_TMP=""
 if [ "${1:-}" != --list ]; then
-  SMOKE_BASE="${TMPDIR:-/tmp}"; SMOKE_BASE="${SMOKE_BASE%/}"
-  for d in "$SMOKE_BASE"/terragucci-smoke-run.*; do
-    [ -f "$d/pid" ] && ! kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null && rm -rf "$d"
-  done
-  unset d
-  SMOKE_TMP="$(mktemp -d "$SMOKE_BASE/terragucci-smoke-run.XXXXXX")" && echo $$ > "$SMOKE_TMP/pid" && export TMPDIR="$SMOKE_TMP" \
-    || { echo "smoke: no temp dir in $SMOKE_BASE" >&2; exit 1; }
-  reap_run_copied stale
+  SMOKE_OUTER="${SMOKE_RUN_DIR:-}"
+  case "${TMPDIR:-}" in */tgs.??????) SMOKE_OUTER="${TMPDIR%/}" ;; esac
+  if [ -n "$SMOKE_OUTER" ] && [ -f "$SMOKE_OUTER/pid" ] && kill -0 "$(cat "$SMOKE_OUTER/pid" 2>/dev/null)" 2>/dev/null; then
+    export TMPDIR="$SMOKE_OUTER" SMOKE_RUN_DIR="$SMOKE_OUTER"
+  else
+    SMOKE_BASE="${TMPDIR:-/tmp}"; SMOKE_BASE="${SMOKE_BASE%/}"
+    for d in "$SMOKE_BASE"/tgs.* "$SMOKE_BASE"/terragucci-smoke-run.*; do
+      [ -f "$d/pid" ] && ! kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null && rm -rf "$d"
+    done
+    unset d
+    SMOKE_TMP="$(mktemp -d "$SMOKE_BASE/tgs.XXXXXX")" && echo $$ > "$SMOKE_TMP/pid" && export TMPDIR="$SMOKE_TMP" SMOKE_RUN_DIR="$SMOKE_TMP" \
+      || { echo "smoke: no temp dir in $SMOKE_BASE" >&2; exit 1; }
+    reap_run_copied stale
+  fi
+  unset SMOKE_OUTER
 fi
 trap 'cleanup_works; exit 130' INT
 trap 'cleanup_works; exit 143' TERM
