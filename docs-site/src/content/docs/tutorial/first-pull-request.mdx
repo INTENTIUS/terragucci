@@ -19,11 +19,13 @@ Orders in dev should keep jobs nobody has picked up for seven days instead of fo
 
 <Captured step="first-pr" />
 
-Open it in Forgejo. The change is the one line you would have written by hand:
+Pushing the branch and opening the pull request each start a run, so the command waits for both and prints both. The pull request's run plans the change and posts the plan note. The push's run is the check. Forgejo numbers them in whichever order it queues them, so take the numbers from the output.
+
+Open the pull request link in Forgejo. The change is the one line you would have written by hand:
 
 <Shot step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" />
 
-The pipeline runs `tf-check` on every pull request: a format check, then `validate` for every root. Both pass, so the pull request shows a green check:
+The pipeline runs `tf-check` on every pull request: a format check, then `validate` for every root. Both pass, so the pull request shows a green check. Its plan note is a comment in the pull request's conversation:
 
 <Shot step="first-pr" view="pull" alt="The pull request in Forgejo with its check passing and its plan note for the one root" />
 

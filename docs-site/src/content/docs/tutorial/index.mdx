@@ -1,6 +1,6 @@
 ---
 title: Boot the example
-description: Run a 15-root Terraform estate on your laptop, with a local forge and an AWS stand-in, in about two minutes.
+description: Run a 15-root Terraform estate on your laptop, with a local forge and an AWS stand-in, in a few minutes.
 sidebar:
   order: 1
 claims: [boot]
@@ -19,14 +19,15 @@ This tutorial runs terragucci against a small shop's estate on your own machine.
 | [`just`](https://just.systems), `git` and `jq` | the commands below are `just` recipes |
 | about ten minutes | the first boot pulls the images |
 
-Clone terragucci and move into it:
+Clone terragucci and move into its directory:
 
 ```bash
-git clone https://github.com/INTENTIUS/terragucci
-cd terragucci
+git clone https://github.com/INTENTIUS/terragucci && cd terragucci
 ```
 
 ## Boot it
+
+From the `terragucci` directory:
 
 ```bash
 just example up
@@ -36,9 +37,11 @@ It starts three containers. Forgejo is a forge like GitHub that runs on your lap
 
 <Captured step="boot" />
 
+The last line is how long the boot took. This one ran on a machine that already had the images. A first boot pulls them before it starts anything, so expect three to four minutes, more on a slow connection.
+
 ## What you just made
 
-Open the Forgejo link. The repo is the shop's whole estate:
+Open the Forgejo link, at `localhost:3300` unless you changed the port. The repo is the shop's whole estate:
 
 <Shot step="boot" view="repo" alt="The example repo on the local Forgejo, showing envs, modules, changes and terragucci.yml" />
 
@@ -75,6 +78,7 @@ drift: "0 6 * * *"
 | `port is already allocated` | another program has port 3300 or 4580. Set `TERRAGUCCI_FORGEJO_PORT` or `TERRAGUCCI_FLOCI_PORT` to a free one and run `just example up` again. |
 | the pipeline waits and never starts | the runner has not registered. `docker logs terragucci-forgejo-runner` shows why; `just example up` again re-registers it. |
 | containers restart or Docker stops answering | Docker is short of memory. Give it 4 GB in Docker Desktop's settings. |
+| a link to `http://forgejo:3000/...` does not open | that is Forgejo's address on the stack's own Docker network, where the pipeline's jobs reach it, and Forgejo writes it into the links it builds, the plan note's among them. On your laptop the same page is at `http://localhost:3300/...`: change the start of the link. |
 
 ## Stopping and starting again
 
