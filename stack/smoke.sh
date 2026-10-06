@@ -923,30 +923,34 @@ claim_traces() {
 
 claim_metrics() {
   # One plan run. Prometheus, scraping the collector, must hold the run's
-  # metrics (found by the commit, a resource attribute the collector copies
-  # onto each series) with the report's root count and change totals.
+  # metrics with the report's root count and change totals. The metrics carry
+  # no commit (reference/observability.md), so the run is its own project and
+  # its series are found by the project label.
   log() { echo "[smoke metrics] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   collector_up || return 1
-  local work rc=1 commit report i q want got action env="OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
+  local work rc=1 id project report i q want got action env
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  id="$(date +%s)$$${BREAK:+b}"
+  env="GITHUB_SERVER_URL=http://smoke.local GITHUB_REPOSITORY=metrics/run-$id OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT"
   # BREAK: metrics off, so nothing reaches Prometheus.
   [ -n "${BREAK:-}" ] && env="$env OTEL_METRICS_EXPORTER=none"
   mkdir -p "$work/run"
   REPORT_ENV="$env" report_run "$work/run" module-bump destroy || true
-  commit="$(git -C "$work/run" rev-parse HEAD)"
   report="$work/run/terragucci-report/report.json"
   [ -f "$report" ] || { log "the run wrote no report"; drop_work "$work"; return 1; }
+  project="$(jq -r '.run.project' "$report")"
+  [ "$project" = "smoke.local/metrics/run-$id" ] || { log "the run's project is $project, want smoke.local/metrics/run-$id"; drop_work "$work"; return 1; }
   value() { curl -fsS -G "$PROMETHEUS/api/v1/query" --data-urlencode "query=$1" | jq -r '.data.result[0].value[1] // empty'; }
   for i in $(seq 1 12); do   # Prometheus scrapes every 5s
     rc=0
     want="$(jq '.roots | length' "$report")"
-    got="$(value "terragucci_roots_planned{vcs_ref_head_revision=\"$commit\"}")"
+    got="$(value "terragucci_roots_planned{project=\"$project\"}")"
     [ "$got" = "$want" ] || { rc=1; q="roots_planned: $got, want $want"; }
     for action in create update replace delete; do
       want="$(jq --arg a "$action" '.totals[$a] // 0' "$report")"
-      got="$(value "terragucci_plan_changes{vcs_ref_head_revision=\"$commit\",action=\"$action\"}")"
+      got="$(value "terragucci_plan_changes{project=\"$project\",action=\"$action\"}")"
       [ "$got" = "$want" ] || { rc=1; q="plan_changes $action: $got, want $want"; }
     done
     [ $rc = 0 ] && break
@@ -954,7 +958,7 @@ claim_metrics() {
   done
   drop_work "$work"
   [ $rc = 0 ] || { log "Prometheus does not hold the run's metrics ($q)"; return 1; }
-  log "Prometheus holds commit $commit's roots planned and changes by action, equal to the report"
+  log "Prometheus holds project $project's roots planned and changes by action, equal to the report"
 }
 
 claim_highlight() {
