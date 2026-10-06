@@ -59,9 +59,9 @@ export interface OidcSettings {
   /** The AWS token's audience. Default `sts.amazonaws.com`. */
   audience?: string;
   /** GCP Workload Identity Federation: the provider's resource name and a service account per stage. */
-  gcp?: { workload_identity_provider: string; plan_service_account: string; apply_service_account: string };
+  gcp?: { workload_identity_provider: string; plan_service_account: string; apply_service_account: string; /** Default `https://sts.googleapis.com/v1/token`; a regional endpoint such as `https://sts.europe-west3.rep.googleapis.com/v1/token`. */ token_url?: string };
   /** An Entra app registration or managed identity per stage, with a federated credential for the forge. */
-  azure?: { tenant_id: string; subscription_id: string; plan_client_id: string; apply_client_id: string };
+  azure?: { tenant_id: string; subscription_id: string; plan_client_id: string; apply_client_id: string; /** The token's audience. Default `api://AzureADTokenExchange`; `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China. */ audience?: string };
 }
 
 /** A plan role and an apply role, for the units under one path. */
@@ -594,12 +594,14 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
       problems.push(`${where}.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
     }
   }
-  const pair = (cloud: string, c: unknown, keys: string[], stages: [string, string], what: string): Record<string, unknown> | undefined => {
+  const pair = (cloud: string, c: unknown, keys: string[], stages: [string, string], what: string, optional: string[] = []): Record<string, unknown> | undefined => {
     if (!isObject(c)) {
       problems.push(`${where}.${cloud} must be a map with ${keys.join(", ")}`);
       return undefined;
     }
-    for (const k of Object.keys(c)) if (!keys.includes(k)) problems.push(`${where}.${cloud}.${k} is not a setting (settings: ${keys.join(", ")})`);
+    const all = [...keys, ...optional];
+    for (const k of Object.keys(c)) if (!all.includes(k)) problems.push(`${where}.${cloud}.${k} is not a setting (settings: ${all.join(", ")})`);
+    for (const k of optional) if (c[k] !== undefined && (typeof c[k] !== "string" || c[k] === "")) problems.push(`${where}.${cloud}.${k} must be a non-empty string`);
     for (const k of keys) if (typeof c[k] !== "string" || c[k] === "") problems.push(`${where}.${cloud}.${k} must be set`);
     if (typeof c[stages[0]] === "string" && c[stages[0]] !== "" && c[stages[0]] === c[stages[1]]) {
       problems.push(`${where}.${cloud}.${stages[0]} and ${stages[1]} are the same ${what}; plan runs pull-request code, so give it a read-only ${what} of its own`);
@@ -607,7 +609,8 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
     return c;
   };
   if (o.gcp !== undefined) {
-    const g = pair("gcp", o.gcp, ["workload_identity_provider", "plan_service_account", "apply_service_account"], ["plan_service_account", "apply_service_account"], "service account");
+    const g = pair("gcp", o.gcp, ["workload_identity_provider", "plan_service_account", "apply_service_account"], ["plan_service_account", "apply_service_account"], "service account", ["token_url"]);
+    if (g && typeof g.token_url === "string" && g.token_url !== "" && !/^https:\/\/[^\s/]+\/\S*$/.test(g.token_url)) problems.push(`${where}.gcp.token_url must be an https URL, such as https://sts.googleapis.com/v1/token`);
     if (g && typeof g.workload_identity_provider === "string" && g.workload_identity_provider !== "" && !WIF_PROVIDER.test(g.workload_identity_provider)) {
       problems.push(`${where}.gcp.workload_identity_provider must be the provider's resource name, projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`);
     }
@@ -615,7 +618,7 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
       if (g && typeof g[k] === "string" && g[k] !== "" && !/^[^@\s]+@[^@\s]+$/.test(g[k] as string)) problems.push(`${where}.gcp.${k} must be a service account's email`);
     }
   }
-  if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client");
+  if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client", ["audience"]);
 }
 
 function checkAgent(s: Record<string, unknown>, where: string, problems: string[]): void {

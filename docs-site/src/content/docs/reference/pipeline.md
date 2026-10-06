@@ -37,12 +37,14 @@ oidc:
     workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
     plan_service_account: terragucci-plan@shop.iam.gserviceaccount.com
     apply_service_account: terragucci-apply@shop.iam.gserviceaccount.com
+    # token_url: https://sts.europe-west3.rep.googleapis.com/v1/token   # a regional STS endpoint
   # Azure: an app registration or user-assigned managed identity per stage
   azure:
     tenant_id: 00000000-0000-0000-0000-000000000001
     subscription_id: 00000000-0000-0000-0000-000000000002
     plan_client_id: 00000000-0000-0000-0000-000000000003
     apply_client_id: 00000000-0000-0000-0000-000000000004
+    # audience: api://AzureADTokenExchangeUSGov   # a sovereign cloud's audience
 ```
 
 Plan runs the pull request's code, so it gets the read-only identity on every cloud. The config rejects the same identity for both stages. Apply gets the write identity and runs only on the default branch, for a push or for a comment on a merged pull request, at its merge commit. Forks get no plan job, so nothing reaches their pull requests. The drift job takes the plan identities.
@@ -52,8 +54,10 @@ The job asks the forge for one token per cloud, with the audience that cloud exp
 | Cloud | Token audience | What the job sets for the provider |
 |---|---|---|
 | AWS | `sts.amazonaws.com`, or `oidc.audience` | `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` |
-| GCP | `https://iam.googleapis.com/` followed by `workload_identity_provider` | `GOOGLE_APPLICATION_CREDENTIALS`, an `external_account` file that reads the token from `credential_source.file` and impersonates the stage's service account |
-| Azure | `api://AzureADTokenExchange` | `ARM_USE_OIDC=true` with `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` and `ARM_OIDC_TOKEN_FILE_PATH` |
+| GCP | `https://iam.googleapis.com/` followed by `workload_identity_provider` | `GOOGLE_APPLICATION_CREDENTIALS`, an `external_account` file that reads the token from `credential_source.file`, exchanges it at `gcp.token_url` and impersonates the stage's service account |
+| Azure | `api://AzureADTokenExchange`, or `azure.audience` | `ARM_USE_OIDC=true` with `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` and `ARM_OIDC_TOKEN_FILE_PATH` |
+
+`gcp.token_url` defaults to Google's global STS endpoint, `https://sts.googleapis.com/v1/token`; set it to a regional endpoint such as `https://sts.europe-west3.rep.googleapis.com/v1/token` to keep the exchange in one region. `azure.audience` is the audience of the federated credential. Azure US Government uses `api://AzureADTokenExchangeUSGov` and Azure China uses `api://AzureADTokenExchangeChina`; any other string is passed through as written, and it must match the audience on the federated credential.
 
 The state backend of each cloud reads the same settings as its provider.
 
@@ -65,7 +69,7 @@ Each identity trusts the forge's issuer and checks the token's `sub` claim. [Env
 |---|---|
 | AWS | An IAM OIDC identity provider for the issuer. Each role's trust policy allows `sts:AssumeRoleWithWebIdentity` with conditions on `aud` and `sub`: the pull-request subject for the plan role, the default branch's subject for the apply role |
 | GCP | A workload identity pool with an OIDC provider for the issuer that maps `google.subject=assertion.sub` and admits only your repo in its attribute condition. Grant `roles/iam.workloadIdentityUser` on the plan service account to `principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/subject/<pull-request subject>`, and on the apply service account to the principal of the default branch's subject |
-| Azure | A federated identity credential on each app registration or managed identity, for the issuer with audience `api://AzureADTokenExchange` and the exact subject: the pull-request subject for the plan client, the default branch's for the apply client |
+| Azure | A federated identity credential on each app registration or managed identity, for the issuer with audience `api://AzureADTokenExchange` (or the sovereign cloud's, the same as `azure.audience`) and the exact subject: the pull-request subject for the plan client, the default branch's for the apply client |
 
 ### The agent comment
 

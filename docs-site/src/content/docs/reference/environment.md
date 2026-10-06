@@ -56,6 +56,8 @@ oidc:
 | `audience` | the AWS token's audience; `sts.amazonaws.com` when omitted |
 | `gcp.workload_identity_provider` | the GCP workload identity pool provider's resource name, `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
 | `gcp.plan_service_account`, `gcp.apply_service_account` | the service accounts the plan and apply jobs impersonate |
+| `gcp.token_url` | the STS endpoint that exchanges the token; `https://sts.googleapis.com/v1/token` when omitted, or a regional endpoint |
+| `azure.audience` | the token's audience; `api://AzureADTokenExchange` when omitted, `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China |
 | `azure.tenant_id`, `azure.subscription_id` | the Entra ID tenant and the subscription the jobs work in |
 | `azure.plan_client_id`, `azure.apply_client_id` | the client IDs of the app registrations or managed identities the plan and apply jobs sign in as |
 
