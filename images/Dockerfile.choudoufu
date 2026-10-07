@@ -12,7 +12,7 @@ COPY --from=fetch /out/ /usr/local/bin/
 COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci
 LABEL org.opencontainers.image.title="terragucci-choudoufu"
 LABEL org.opencontainers.image.description="choudoufu 0.22.0 and the terragucci engine"
-LABEL org.opencontainers.image.version="0.3.0"
+LABEL org.opencontainers.image.version="0.3.1"
 LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 CMD ["bash"]
