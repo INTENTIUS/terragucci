@@ -17,7 +17,8 @@
  *        approval applies nothing. A root that reads another's state applies
  *        after it. One apply per project at a time; posts one
  *        terragucci/apply status and marks plan notes the push made stale.
- *        A Terragrunt repo applies every wave in one job.
+ *        A Terragrunt repo's waves are the same jobs over its units, each
+ *        behind the same gate.
  * apply-comment  `/terragucci apply [wave-<n>]` on a merged pull request
  *        (GitHub and Forgejo, plain roots): the same stage at its merge commit,
  *        under the same lock, approving nothing.
@@ -57,7 +58,6 @@ import {
   cacheExports,
   credentialsScript,
   forgeCache,
-  terragruntApplyBody,
   terragruntCheckScript,
   terragruntJobEnv,
   type TerragruntPipelineInput,
@@ -98,9 +98,9 @@ export interface PipelineInput {
   publish?: boolean;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
-  /** Globs for the canary wave, which applies first. Plain roots only. */
+  /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
   canary?: string[];
-  /** When a wave waits for an approval. Default on-destroy. Plain roots only. */
+  /** When a wave waits for an approval. Default on-destroy. */
   gate?: Gate;
   /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
   respond?: Partial<Record<RespondEvent, string>>;
@@ -472,8 +472,8 @@ export function applyConcurrency(forge: ForgeName): Record<string, unknown> {
 
 /**
  * The first line of a script that reads a stage's exit code: the plan and
- * re-plan, the apply waves, the apply a comment starts, the drift sweep and
- * the Terragrunt apply. A step with `shell: bash` runs as
+ * re-plan, the apply waves (a Terragrunt repo's too), the apply a comment
+ * starts and the drift sweep. A step with `shell: bash` runs as
  * `bash --noprofile --norc -e -o pipefail {0}` on GitHub and on Forgejo's
  * runner, so without `set +e` a stage that fails, a wave that waits (3) or
  * one that is refused (4) ends the step at the stage, before its status, its
@@ -492,6 +492,8 @@ export interface ApplyWaveInput {
   gate?: Gate;
   /** The response to each event; apply-failed and wave-refused are called from the wave's exit code. */
   respond?: PipelineInput["respond"];
+  /** A Terragrunt repo: the layers are its waves of units, and the stage runs Terragrunt after this shell (credentials, caches). */
+  terragrunt?: { prelude: string };
 }
 
 /**
@@ -513,6 +515,7 @@ export function applyScript(
   const total = layers.flat().length;
   const gate = input.gate ?? "on-destroy";
   const count = applyWaves(layers, input.canary).length;
+  const tg = input.terragrunt;
   const first = input.wave === 1;
   const last = input.wave === count;
   const triage = responds(input.respond, "apply-failed");
@@ -523,11 +526,13 @@ export function applyScript(
     ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []),
     "--binary", binary,
     "--gate", gate,
+    ...(tg ? ["--terragrunt"] : []),
   ];
   return [
     READS_EXIT,
     forgeApi(forge),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
+    ...(tg ? [tg.prelude] : []),
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
       : []),
@@ -547,7 +552,9 @@ export function applyScript(
     `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}exit 1 ;;`,
     "esac",
     ...(last
-      ? [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
+      ? tg
+        ? [`tg status terragucci/apply success "${total} units in ${count} wave${count === 1 ? "" : "s"} applied"`, 'echo "all units applied"']
+        : [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
       : [`echo "wave ${input.wave} of ${count} applied"`]),
   ].join("\n");
 }
@@ -648,28 +655,6 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
 function terragruntCredentials(forge: ForgeName, phase: "plan" | "apply", oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>): string[] {
   if (!credentials || Object.keys(credentials).length === 0) return [];
   return [credentialsScript(credentials, phase, hasAws(oidc) ? undefined : tokenScript(forge, AUDIENCE, undefined, undefined, !(oidc?.gcp || oidc?.azure)))];
-}
-
-/** A Terragrunt repo's apply: the stale notes, the lock and status as for roots, then one `run --all` per wave. */
-export function terragruntApplyScript(
-  waves: string[][],
-  forge: ForgeName = "github",
-  oidc?: PipelineInput["oidc"],
-  credentials?: Record<string, RolePair>,
-  respond?: PipelineInput["respond"],
-): string {
-  return [
-    READS_EXIT,
-    forgeApi(forge),
-    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
-    ...terragruntCredentials(forge, "apply", oidc, credentials),
-    movedRoots(waves.flat().sort()),
-    '# The base branch moved under these units: plan notes that cover them are stale.',
-    'tg stale "$moved" "${TG_BRANCH:-}"',
-    ...(forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
-    'tg status terragucci/apply pending "applying"',
-    ...terragruntApplyBody(waves, responds(respond, "apply-failed")),
-  ].join("\n");
 }
 
 /** Where a plan job's report is kept, and what the stage needs beyond the roots. */
@@ -907,16 +892,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots);
-  // Plain roots apply a wave per job, each behind its gate; a Terragrunt repo applies in one job.
+  // A wave per job, each behind its gate. A Terragrunt repo's layers are its waves of units, canary first.
   const gate = input.gate ?? "on-destroy";
-  const waveCount = tg ? 1 : applyWaves(layers, input.canary).length;
+  const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
+  const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
-    name: tg ? "apply" : `apply-wave-${i + 1}`,
-    body: tg ? terragruntApplyScript(layers, forge, oidc, credentials, input.respond) : applyScript(binary, layers, forge, oidc, { wave: i + 1, canary: input.canary, gate, respond: input.respond }),
+    name: `apply-wave-${i + 1}`,
+    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, respond: input.respond, ...tgApply }),
   }));
   const lastApply = applyJobs[applyJobs.length - 1].name;
   // A wave that waits records its plan on the chant/lifecycle branch.
-  const writesLedger = !tg && gate !== "never";
+  const writesLedger = gate !== "never";
   const what = tg ? "unit" : "root";
   // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
   const fmtOn = !tg && responds(input.respond, "fmt");
@@ -1132,7 +1118,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       }),
     ],
   } as never);
-  // `/terragucci apply` goes to its own job, which a Terragrunt repo, applying in one job with no gates, does not get.
+  // `/terragucci apply` goes to its own job, for plain roots; a Terragrunt repo's waves run on a push.
   const applyOnComment = !tg;
   const APPLY_COMMENT = "startsWith(github.event.comment.body, '/terragucci apply')";
   // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
@@ -1200,7 +1186,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...headersEnv,
       },
       steps: [
-        ...steps(new Step({ name: tg ? `Apply every ${what}` : `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
+        ...steps(new Step({ name: `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
         new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-${job.name}`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ...(agentApply
           ? [new Step({ name: "Keep the agent input", if: "failure()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${RESPOND_DIR}-${job.name}`, path: `${RESPOND_DIR}/`, "if-no-files-found": "ignore" } })]

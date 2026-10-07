@@ -7,7 +7,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, movedRoots, planScript, READS_EXIT, renderPipeline, terragruntApplyScript } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, movedRoots, planScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -75,7 +75,7 @@ describe("apply concurrency", () => {
     // The other groups keep the default queue: a newer run of tips, version-bump or a re-plan replacing an older waiting one is wanted.
     expect(doc.jobs.replan.concurrency.queue).toBeUndefined();
     const tg = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content);
-    expect(tg.jobs.apply.concurrency).toEqual({ group: GROUP, "cancel-in-progress": false, queue: "max" });
+    expect(tg.jobs["apply-wave-1"].concurrency).toEqual({ group: GROUP, "cancel-in-progress": false, queue: "max" });
   });
 
   it("forgejo: no queue key, since Forgejo runs a workflow's jobs whatever their concurrency says and the lock tag holds the apply", () => {
@@ -87,7 +87,7 @@ describe("apply concurrency", () => {
 
   it("github: a push's wave stands down when the branch moved past it, because nothing cancels it any more; the comment's apply does not", () => {
     for (const wave of [1, 2]) expect(applyScript("tofu", layers, "github", undefined, { wave })).toContain("standing down");
-    expect(terragruntApplyScript([["live/a"]], "github")).toContain("standing down");
+    expect(applyScript("tofu", [["live/a"]], "github", undefined, { wave: 1, terragrunt: { prelude: "true" } })).toContain("standing down");
     expect(applyScript("tofu", layers, "gitlab", undefined, { wave: 1 })).not.toContain("standing down");
     expect(commentApplyScript("tofu", layers, "github", OIDC)).not.toContain("standing down");
     // It stands down before the pending status and before the stage.
@@ -192,7 +192,7 @@ describe("the comment trigger", () => {
     expect(doc.jobs["apply-wave-1"].if).toBe("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
   });
 
-  it("a Terragrunt repo, which applies in one job with no gates, gets no apply-comment job, and its re-plan job answers the comment", () => {
+  it("a Terragrunt repo, whose waves apply on a push, gets no apply-comment job, and its re-plan job answers the comment", () => {
     const text = renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content;
     const doc = body(text);
     expect(doc.jobs["apply-comment"]).toBeUndefined();
@@ -918,29 +918,42 @@ describe("stale plan notes", () => {
   });
 });
 
-describe("the Terragrunt apply in the step's own shell", () => {
-  it("a wave that fails posts the failure status and runs the apply-failed response before the job fails, and later waves do not run", async () => {
+describe("a Terragrunt wave in the step's own shell", () => {
+  it("runs the stage with --terragrunt after the prelude, and a wave that fails posts the failure status and runs the apply-failed response before the job fails", async () => {
     const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", {
-      terragrunt: '#!/usr/bin/env bash\necho "$*" >> "$LOG"\necho "Error: apply failed"\nexit 1\n',
-      terragucci: '#!/usr/bin/env bash\necho "terragucci $*" >> "$LOG"\nexit 0\n',
+      terragucci: '#!/usr/bin/env bash\necho "terragucci $*" >> "$LOG"\ncase "$1" in stage) echo "Error: apply failed"; exit 1 ;; esac\nexit 0\n',
     });
     const log = join(dir, "calls.log");
     const api = await stubApi(() => []);
     try {
-      const script = terragruntApplyScript([["live/a"], ["live/b"]], "github");
+      const script = applyScript("tofu", [["live/a"], ["live/b"]], "github", undefined, { wave: 1, terragrunt: { prelude: 'echo prelude >> "$LOG"' }, respond: { "apply-failed": "triage" } });
       expect(script.split("\n")[0]).toBe(READS_EXIT);
+      expect(script).not.toContain("--canary");
       const r = await runStep(`cd ${dir} && ${script}`, {
         ...env, LOG: log, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", GITHUB_REF_NAME: "", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
       });
       expect(r.status, r.out).toBe(1);
       const calls = readFileSync(log, "utf-8").trim().split("\n");
-      expect(calls.filter((c) => c.startsWith("run --all"))).toHaveLength(1);
+      expect(calls[0]).toBe("prelude");
+      expect(calls.find((c) => c.startsWith("terragucci stage tf-apply"))).toBe("terragucci stage tf-apply --wave 1 --layers live/a;live/b --binary tofu --gate on-destroy --terragrunt");
       expect(calls.some((c) => c.startsWith("terragucci respond apply-failed --log "))).toBe(true);
       const s = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => [h.body.state, h.body.description]);
       expect(s.at(-1)).toEqual(["failure", "an apply failed"]);
     } finally {
       api.close();
     }
+  });
+
+  it("a Terragrunt repo gets one apply job per wave, each running the stage with --terragrunt, and the gate it is given", () => {
+    const doc = body(renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/a"], ["live/prod/a", "live/prod/b"]], env: {}, gate: "always", terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content);
+    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-wave-1", "apply-wave-2"]);
+    expect(doc.jobs["apply-wave-2"].needs).toBe("apply-wave-1");
+    const run = (j: string): string => doc.jobs[j].steps.map((st: { run?: string }) => st.run ?? "").join("\n");
+    expect(run("apply-wave-1")).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt");
+    expect(run("apply-wave-2")).toContain('tg status terragucci/apply success "3 units in 2 waves applied"');
+    expect(run("apply-wave-1")).not.toContain("-auto-approve");
+    // A waiting wave records its plan on chant/lifecycle.
+    expect(doc.jobs["apply-wave-1"].permissions.contents).toBe("write");
   });
 });
 

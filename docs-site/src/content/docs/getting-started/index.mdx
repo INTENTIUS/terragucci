@@ -64,7 +64,7 @@ no terragucci.yml needed (defaults fit)
 
 The file differs by forge. On GitLab it is `.gitlab-ci.yml`, and on Forgejo it is `.forgejo/workflows/terragucci.yml`. Open the file and read it once. Every job runs in terragucci's CI image for your binary. A job downloads a tool only if you pin a version the image lacks, which makes it run `terragucci install` first, or if you set a policy, which fetches conftest on first use.
 
-[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) declares the approval gate of each wave. Commit it with the pipeline: the apply job reads it from the default branch. A Terragrunt repo gets no such file.
+[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) declares the approval gate of each wave. Commit it with the pipeline: the apply job reads it from the default branch.
 
 Most repos need no `terragucci.yml`. When you do want one, [Your config file](/terragucci/reference/config/) lists every key.
 

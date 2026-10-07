@@ -4,7 +4,10 @@
  *
  * check  `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs`.
  * plan   `terragucci stage tf-plan --terragrunt`: one `run --all` per wave.
- * apply  one `terragrunt run --all` per wave, over exactly that wave's units.
+ * apply  `terragucci stage tf-apply --terragrunt`, one job per wave: the
+ *        wave's units planned with one `run --all`, each plan saved, the
+ *        wave's gate decided on their set digest, then the saved plans
+ *        applied with one `run --all` over exactly those units.
  *
  * Every job runs Terragrunt with `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, the
  * project's binary as `TG_TF_PATH`, and Terragrunt's provider cache. Sources
@@ -18,7 +21,7 @@
  * `iam_role` keeps it, and Terragrunt gets the token to assume it with.
  * terragucci never sets `TG_IAM_ASSUME_ROLE`.
  */
-import { excludeFilter, TERRAGRUNT_DISCOVERY_EXCLUDES, unitPathFilter } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { excludeFilter, TERRAGRUNT_DISCOVERY_EXCLUDES } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import type { Binary, ForgeName, RolePair } from "./config";
 import type { Tool } from "./install";
 import { ROLES_ENV, rolesFor } from "./terragrunt";
@@ -99,39 +102,6 @@ export function credentialsScript(
     'export TG_AUTH_PROVIDER_CMD="terragucci auth-provider"',
     'export TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN="$AWS_WEB_IDENTITY_TOKEN_FILE"',
   ].join("\n");
-}
-
-/** The `--filter` arguments that select exactly these units. */
-export function waveFilters(units: string[]): string {
-  return units.map((u) => `--filter ${sh(unitPathFilter(u))}`).join(" ");
-}
-
-/** The default `-lock-timeout` of an apply, and the shell that adds it to `TF_CLI_ARGS_apply` when no setting names one. */
-export const LOCK_TIMEOUT = "5m";
-const LOCK_TIMEOUT_SH = `case "\${TF_CLI_ARGS:-} \${TF_CLI_ARGS_apply:-}" in *-lock-timeout*) ;; *) export TF_CLI_ARGS_apply="-lock-timeout=${LOCK_TIMEOUT} \${TF_CLI_ARGS_apply:-}" ;; esac`;
-
-/**
- * The apply job's body after the forge calls and credentials are set up:
- * one `run --all` per wave, waves in order, a failed wave stopping the rest.
- * With `triage`, the output is kept and a failed wave gets `respond apply-failed`.
- */
-export function terragruntApplyBody(waves: string[][], triage = false): string[] {
-  const total = waves.flat().length;
-  const run = 'terragrunt run --all --no-color --no-filters-file "$@" -- apply -auto-approve -input=false';
-  return [
-    cacheExports(),
-    // A wave waits for a state lock for five minutes unless the job set its own -lock-timeout.
-    LOCK_TIMEOUT_SH,
-    ...(triage ? ['log="$(mktemp)"'] : []),
-    "apply_wave() {",
-    // The job's pipefail keeps the apply's exit code through tee.
-    `  ${run}${triage ? ' 2>&1 | tee -a "$log"' : ""}`,
-    "}",
-    `failed() { tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}exit 1; }`,
-    ...waves.map((w, i) => `echo "wave ${i + 1}: ${w.length} unit${w.length === 1 ? "" : "s"}"\napply_wave ${waveFilters(w)} || failed`),
-    `tg status terragucci/apply success "${total} units in ${waves.length} wave${waves.length === 1 ? "" : "s"} applied"`,
-    'echo "all units applied"',
-  ];
 }
 
 /** The forge's cache for sources and providers, keyed by every `.hcl` file, lock files included. */
