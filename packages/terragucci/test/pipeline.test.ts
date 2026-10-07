@@ -952,8 +952,9 @@ describe("a Terragrunt wave in the step's own shell", () => {
     expect(run("apply-wave-1")).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt");
     expect(run("apply-wave-2")).toContain('tg status terragucci/apply success "3 units in 2 waves applied"');
     expect(run("apply-wave-1")).not.toContain("-auto-approve");
-    // A waiting wave records its plan on chant/lifecycle.
-    expect(doc.jobs["apply-wave-1"].permissions.contents).toBe("write");
+    // A waiting wave records its plan on chant/lifecycle. Forgejo ignores permissions:, so GitHub's job carries them.
+    const gh = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/a"], ["live/prod/a", "live/prod/b"]], env: {}, gate: "always", terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content);
+    expect(gh.jobs["apply-wave-1"].permissions.contents).toBe("write");
   });
 });
 
