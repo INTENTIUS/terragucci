@@ -3,7 +3,7 @@ title: Why plans are grouped
 description: What grouping does to two hundred plans, what it never folds away, and why no approval is bound to it.
 ---
 
-Nobody reads two hundred plan logs. A change to a shared module can reach two hundred roots. Almost all the plans are identical, and the odd one out matters most. A reviewer who has to find it by scrolling will skim, and a destroy can slip through a skim.
+A shared module change can reach two hundred roots with near-identical plans, and a reviewer scrolling for the odd one out can miss a destroy.
 
 ## What grouping does
 
@@ -20,17 +20,28 @@ A hundred and eighty identical updates become one line with a count. The reviewe
 
 ## What it never folds
 
-Destroys, replacements and refusals are listed by name. None is ever part of a group, so a destroy cannot hide inside "180 roots". Imports and forgets are named on their own too, and a forget is not counted as a destroy.
+Destroys, replacements, refusals, imports and forgets are always named, never grouped; a forget is not counted as a destroy.
 
-The report opens on those. Roots that differ from every group stay open too, along with IAM, security group, KMS and DNS changes, where one wrong value reaches far. The rest is folded away. That covers groups of identical changes and updates that touch only tags or descriptions. It also covers values known after apply and roots with no changes.
+The report opens on those and on:
+
+- roots that differ from every group
+- IAM and security group changes
+- KMS and DNS changes
+
+It folds:
+
+- groups of identical changes
+- updates to tags or descriptions only
+- values known after apply
+- roots with no changes
 
 ## Nothing is summarized away
 
-Grouping decides what to read first. It does not replace the plans. Every root's full plan is kept beside the report, both as the binary printed it and as JSON. The report links each group, root and named change to that plan. The summary sends a reviewer to the right plan.
+Each root and group in the report links to its full plan, which is kept as printed and as JSON.
 
 ## No approval is bound to the summary
 
-The summary is a view. Approvals bind the plan digests underneath it. Those are taken inside the job before anything is redacted or rendered. Two different summaries of the same plans therefore sit under the same approval, and a change to how the summary reads never changes what a person approved.
+Approvals bind the plan digests, taken before redaction or rendering, so changing how the summary reads never changes what was approved.
 
 ## Where to go next
 
