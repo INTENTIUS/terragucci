@@ -148,6 +148,7 @@ The renderers write these into a job's steps. They are internal: nothing needs s
 
 | Variable | Set for |
 |---|---|
+| `TG_MERGE_TOKEN` | the apply-comment job sets it from the secret `apply.merge_token_env` names; `apply.merge: auto` merges with it on GitHub and Forgejo, and falls back to `TG_TOKEN` when it is empty |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME` | the forge helper and the steps that name a pull request, wave or root; `TG_OPEN` says the pull request is open and applies from its head; `TG_OUTCOME` is the file that carries a job's one-line status |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES` | Terragrunt repos: how Terragrunt runs the binary, where it caches, and the roles it assumes per unit; `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` carries the web identity token, and terragucci never sets `TG_IAM_ASSUME_ROLE` |
