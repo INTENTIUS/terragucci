@@ -1,0 +1,218 @@
+---
+title: Add terragucci to a repo
+description: Write the pipeline for GitHub, GitLab or Forgejo, give it a token and cloud roles, require its status, and get a plan note on the next pull request.
+claims: [boot, check, affected]
+prompt: |
+  Read https://intentius.io/terragucci/guides/add-to-a-repo/ and https://intentius.io/terragucci/getting-started/agents/.
+  Set up terragucci in this repository for its forge.
+  Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
+  Then run `npx terragucci init` and open a pull request with the pipeline file, chant.workspace.json, package.json and package-lock.json only.
+  List the token, OIDC roles and required status I must set in the forge settings.
+  Do not create secrets, variables or branch protection yourself.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
+
+## What you end up with
+
+A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch. Pick your forge in any tab; the other forge tabs on the site follow.
+
+<Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green, with the check report and each wave's report as artifacts" />
+
+## Per forge
+
+| | GitHub | GitLab | Forgejo |
+|---|---|---|---|
+| Pipeline file | `.github/workflows/terragucci.yml` | `.gitlab-ci.yml` | `.forgejo/workflows/terragucci.yml` |
+| Hosts `init` knows | github.com | gitlab.com, `gitlab.*` | codeberg.org, `forgejo.*`, `gitea.*` |
+| Runner | Actions enabled | one that runs Docker images | Actions enabled, a runner labelled `docker` |
+| Token | the run's `github.token` | `GITLAB_TOKEN` variable, `api` scope | the run's own token |
+| Cloud roles over OIDC | GitHub's identity token | `id_tokens` | Forgejo 15 and Runner 12.5 or later |
+| Require | `terragucci/plan` in branch protection | "Pipelines must succeed" | `terragucci/plan` in branch protection |
+| Report | `terragucci-report` artifact of the run the note links | a job artifact the note links, plus the merge-request widget | `terragucci-report` artifact of the run the note links |
+| Applies wait in | a concurrency group | a resource group | a named group and a lock |
+
+Self-managed GitLab works the same. See [one apply at a time](/terragucci/reference/pipeline/#one-apply-at-a-time) for the queue.
+
+## Before you start
+
+| You need | For |
+|---|---|
+| Terraform, OpenTofu or Terragrunt roots | what `init` finds |
+| Node.js 22 or later on your machine | running `init` |
+| admin on the repo or project | the token, the cloud roles and the required status |
+
+## Steps
+
+<Steps>
+
+1. Install terragucci and run `init` from the root of the repo.
+
+   ```bash
+   npm i -D @intentius/terragucci
+   npx terragucci init
+   ```
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   wrote .github/workflows/terragucci.yml
+   wrote chant.workspace.json
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
+   wrote .gitlab-ci.yml
+   wrote chant.workspace.json
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   `init` writes the whole `.gitlab-ci.yml`. If you have one, merge the generated jobs into it.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge forgejo (the origin remote (codeberg.org))
+   wrote .forgejo/workflows/terragucci.yml
+   wrote chant.workspace.json
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   `url` in `terragucci.yml` names a host on another scheme or port.
+
+   </TabItem>
+   </Tabs>
+
+   On a host the table does not list, pass `--forge` once and `init` records it in `terragucci.yml`. Commit [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) with the pipeline.
+
+2. Give the pipeline a token.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   The jobs use the run's `github.token`. The plan job adds `statuses: write` and `pull-requests: write` and runs only for pull requests from branches in the same repo, so a fork reaches no job with them.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   Add `GITLAB_TOKEN` under Settings, CI/CD, Variables: a masked project access token with the `api` scope. `token_env` in `terragucci.yml` names another variable.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   Each run brings its own token; there is no secret to add.
+
+   </TabItem>
+   </Tabs>
+
+3. Give the jobs cloud access. Set `oidc` in `terragucci.yml` and run `npx terragucci init` again:
+
+   ```yaml
+   oidc:
+     plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+     apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+   ```
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   Each role's trust policy must accept your repo.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   The jobs get the roles through `id_tokens`. GitLab-managed Terraform state limits concurrent inits, so fewer Terragrunt units run at once.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   The jobs set `enable-openid-connect: true`, which needs Forgejo 15 and Forgejo Runner 12.5 or later. The issuer is your Forgejo URL plus `/api/actions`. Older versions serve no token; give their runner static credentials instead.
+
+   </TabItem>
+   </Tabs>
+
+   [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) has the trust policies.
+
+4. Commit, push and open a pull request.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   ```bash
+   git switch -c add-terragucci
+   git add .github chant.workspace.json package.json package-lock.json
+   git commit -m "Add terragucci"
+   git push -u origin add-terragucci
+   ```
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   ```bash
+   git switch -c add-terragucci
+   git add .gitlab-ci.yml chant.workspace.json package.json package-lock.json
+   git commit -m "Add terragucci"
+   git push -u origin add-terragucci
+   ```
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   ```bash
+   git switch -c add-terragucci
+   git add .forgejo chant.workspace.json package.json package-lock.json
+   git commit -m "Add terragucci"
+   git push -u origin add-terragucci
+   ```
+
+   <Shot step="first-pr" view="pull" alt="A pull request in Forgejo with its check passing and its plan note for the one root" />
+
+   </TabItem>
+   </Tabs>
+
+   Then change a line in one root and push again, since a change that touches no root has nothing to plan.
+
+5. Require the status so that a failed plan blocks the merge.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   Add `terragucci/plan` to the default branch's protection rule as a required status.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   Turn on "Pipelines must succeed" under Settings, Merge requests.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   Turn on status checks in the default branch's protection rule, with `terragucci/plan` as the pattern.
+
+   <Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" />
+
+   A failed check shows as a red cross on the commit:
+
+   <Shot step="check" view="pull" alt="A pull request in Forgejo whose commit carries a red cross from its failed check, above its plan note" />
+
+   </TabItem>
+   </Tabs>
+
+6. Make approval possible. A waiting wave needs your key in `.chant/allowed_signers` on the default branch and [chant](/terragucci/concepts/glossary/#chant) installed: [both steps](/terragucci/getting-started/#before-your-first-approval).
+
+</Steps>
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/)
+- [The tutorial](/terragucci/tutorial/) runs all of this on a local Forgejo with a 15-root example.
