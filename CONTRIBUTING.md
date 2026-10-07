@@ -3,7 +3,8 @@
 ```bash
 npm install
 just check      # what CI runs: typecheck, lint, tests, the docs' prose and the tutorial
-just site-dev   # serve the docs locally
+just docs       # serve the docs locally with hot reload and open them
+just docs-preview  # build the docs as CI does and open that build
 ```
 
 ## The package
