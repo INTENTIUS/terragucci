@@ -88,5 +88,6 @@ A fork of OpenTofu that keeps no state file. Each resource it manages carries ta
 | `chant.workspace.json` | chant's file that lists the gates | a Terraform CLI workspace or an HCP Terraform workspace. terragucci selects no Terraform workspace; each root plans in the one the binary picks, `default` unless `TF_WORKSPACE` says otherwise |
 | `--mode apply` on `rollout`, `respond` and `reconcile` | push the commit or open the pull request that the dry run described | `terraform apply`, which none of the three runs |
 | layer | a step of the dependency order | a wave, which is an apply batch built from layers, canary roots first |
-| `/terragucci apply` | run `tf-apply` again at a merged pull request's merge commit; a gated wave still needs its sealed approval | an Atlantis `apply` comment, which applies the pull request's plan before the merge |
+| `/terragucci apply` | run `tf-apply` again at a merged pull request's merge commit; with `apply.when: pull-request`, also run it from an open pull request's head. A gated wave still needs its sealed approval either way | an Atlantis `apply` comment, which applies the plan Atlantis made of the pull request; here each wave plans again and applies only what its approval covers |
+| `/terragucci unlock` | with `apply.when: pull-request`, release the root locks a pull request took when it applied | Atlantis `unlock`, which discards the pull request's plans too; here no plan is kept between runs |
 | run | a forge pipeline run, with its jobs | an HCP Terraform run, which is one plan and apply in one workspace |

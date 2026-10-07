@@ -170,7 +170,10 @@ policy-delete-key|a pull request that deletes the policy key from terragucci.yml
 report-oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
 tg-gate-wait|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
 tg-gate-refuse|a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved|
-tg-sealed|a Terragrunt wave counts only an approval sealed by a key the signers file lists|'
+tg-sealed|a Terragrunt wave counts only an approval sealed by a key the signers file lists|
+pr-apply|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto, and with apply.when: merge it applies nothing|
+pr-apply-lock|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
+pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -3700,6 +3703,195 @@ claim_comment_apply() {
   return $rc
 }
 
+# ── apply before merge (apply.when: pull-request) ──
+# Each of the three claims below runs on a repo of its own made by gated_repo:
+# the five roots, gate never (so no wave waits and the claim is about the pull
+# request, not the gate), and apply.when: pull-request. A user of its own, a
+# collaborator with write access, approves the pull requests: Forgejo counts no
+# approval from the author of a pull request, who is the admin here.
+
+pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, its pipeline written for apply before merge (or after, with a third argument)
+  gated_repo "$1" || return 1
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  [ -n "${3:-}" ] || printf 'apply:\n  when: pull-request\n  merge: %s\n' "$2" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+}
+
+pr_reviewer() { # repo, user -> sets PR_REVIEWER_TOKEN, for a new user with write access to the repo
+  local pass="smoke-$RANDOM-$RANDOM-Aa1" who="$2"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$who?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg u "$who" --arg p "$pass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"write"}' "$URL/api/v1/repos/$1/collaborators/$who" || return 1
+  PR_REVIEWER_TOKEN="$(curl -fsS -u "$who:$pass" -H 'content-type: application/json' -X POST -d '{"name":"smoke","scopes":["write:repository","write:issue"]}' "$URL/api/v1/users/$who/tokens" | jq -r '.sha1 // empty')"
+  [ -n "$PR_REVIEWER_TOKEN" ] || { log "no token for $who"; return 1; }
+}
+
+pr_open() { # repo, branch, title -> prints the number of the pull request into main
+  api -H 'content-type: application/json' -X POST -d "$(jq -cn --arg h "$2" --arg t "$3" '{head: $h, base: "main", title: $t}')" "$URL/api/v1/repos/$1/pulls" | jq -r .number
+}
+
+pr_ready() { # repo, number, head sha -> waits for the runs on the head, then the reviewer approves it
+  wait_run "$1" "$3" push || return 1
+  wait_run "$1" "$3" pull_request || return 1
+  curl -fsS -o /dev/null -H "Authorization: token $PR_REVIEWER_TOKEN" -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg c "$3" '{event: "APPROVED", body: "looks right", commit_id: $c}')" "$URL/api/v1/repos/$1/pulls/$2/reviews" || { log "the reviewer could not approve pull request $2"; return 1; }
+}
+
+pr_replies() { # repo, number -> how many replies terragucci posted on it
+  api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq '[.[] | select(.body | startswith("terragucci: "))] | length'
+}
+
+pr_say() { # repo, number, text -> prints the reply terragucci posts, once it has
+  local before i
+  before="$(pr_replies "$1" "$2")"
+  api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$3" '{body: $b}')" "$URL/api/v1/repos/$1/issues/$2/comments" || return 1
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(pr_replies "$1" "$2")" -gt "$before" ] && break
+    sleep 3
+  done
+  api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
+}
+
+pr_state_input() { # name, root -> the input its terraform_data holds in the state, empty when it has none
+  curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty' 2>/dev/null || true
+}
+
+claim_pr_apply() {
+  # A repo with apply.when: pull-request and apply.merge: auto. A pull request
+  # changes canary/one; once its runs finished, a reviewer approves its
+  # head and the admin comments /terragucci apply on it while it is open. The
+  # reply must say both waves applied from the head and the pull request was
+  # merged; the forge must show it merged; every root must have state, and
+  # canary/one must hold the value of the pull request.
+  # BREAK: the pipeline is written without apply.when, so it applies after
+  # merge only: the comment on the open pull request is refused, nothing has
+  # state and nothing is merged.
+  log() { echo "[smoke pr-apply] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-apply" head pr reply applied merged rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  pr_repo pr-apply auto ${BREAK:+merge} || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-apply: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-pr-apply || { drop_work "$work"; return 1; }
+  echo opened > "$work/tree/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" change "pr-apply: change canary/one")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" change "pr-apply: change canary/one")"
+  pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
+  applied="$(gated_applied pr-apply)"
+  merged="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merged)"
+  log "reply: ${reply:-none}; state for: ${applied:-nothing}; merged: $merged"
+  grep -q "applied wave 1, 2 of pull request $pr at ${head:0:8}, and merged pull request $pr" <<<"$reply" || { log "the reply does not say both waves applied from the head and the pull request merged"; rc=1; }
+  [ "$merged" = true ] || { log "pull request $pr was not merged"; rc=1; }
+  [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "not every root has state"; rc=1; }
+  [ "$(pr_state_input pr-apply canary/one)" = opened ] || { log "canary/one does not hold the value of the pull request"; rc=1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-apply?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the open pull request applied from its head in both waves and was merged after the last one"
+  return $rc
+}
+
+claim_pr_apply_lock() {
+  # A repo with apply.when: pull-request and apply.merge: manual. Pull requests
+  # A and B each change canary/one (to a and to b). A is applied on a comment
+  # and stays open, holding the lock on canary/one. /terragucci apply on B must
+  # be refused, naming canary/one and pull request A, and canary/one must
+  # still hold a. /terragucci unlock on A must say it released canary/one, and
+  # /terragucci apply on B must then apply it: canary/one holds b.
+  # BREAK: the lock file is deleted from chant/lifecycle after A applied, so
+  # nothing holds canary/one and the first comment on B applies it.
+  log() { echo "[smoke pr-apply-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-apply-lock" head_a head_b pr_a pr_b reply clone rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  pr_repo pr-apply-lock manual || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-apply-lock: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-pr-apply-lock || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" change-a "pr-apply-lock: a")" || { drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q main
+  echo b > "$work/tree/canary/one/rev.txt"
+  head_b="$(push_tree "$work/tree" "$repo" change-b "pr-apply-lock: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "pr-apply-lock: a")"
+  pr_b="$(pr_open "$repo" change-b "pr-apply-lock: b")"
+  { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
+  log "A ($pr_a): ${reply:-no reply}; canary/one holds $(pr_state_input pr-apply-lock canary/one)"
+  grep -q "Merge it when you are ready" <<<"$reply" || { log "A did not apply"; rc=1; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    clone="$work/lifecycle"
+    { git clone -q --branch chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" \
+      && git -C "$clone" rm -q _locks/tf-apply.json \
+      && git -C "$clone" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -qm "drop the locks" \
+      && git -C "$clone" push -q origin chant/lifecycle; } || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
+    log "B ($pr_b) while A holds the lock: ${reply:-no reply}; canary/one holds $(pr_state_input pr-apply-lock canary/one)"
+    grep -q "\`canary/one\` is locked by pull request $pr_a" <<<"$reply" || { log "B was not refused for the lock A holds"; rc=1; }
+    [ "$(pr_state_input pr-apply-lock canary/one)" = a ] || { log "canary/one moved while A held it"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_a" "/terragucci unlock")"
+    log "unlock on A: ${reply:-no reply}"
+    grep -q "released the locks pull request $pr_a held on .*canary/one" <<<"$reply" || { log "the unlock did not release canary/one"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
+    log "B after the unlock: ${reply:-no reply}; canary/one holds $(pr_state_input pr-apply-lock canary/one)"
+    [ "$(pr_state_input pr-apply-lock canary/one)" = b ] || { log "B did not apply canary/one after the unlock"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-apply-lock?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "B was refused while A held canary/one, and applied once A was unlocked"
+  return $rc
+}
+
+claim_pr_apply_stale() {
+  # A repo with apply.when: pull-request. A pull request changes canary/one
+  # and is approved; then main moves (fleet/two changes on it). The comment
+  # /terragucci apply must be refused as not up to date with main, and no
+  # root may have state.
+  # BREAK: main is merged into the pull request and its new head approved
+  # before the comment, so the head is up to date and the comment applies.
+  log() { echo "[smoke pr-apply-stale] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-apply-stale" head moved pr reply applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  pr_repo pr-apply-stale manual || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-apply-stale: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-pr-apply-stale || { drop_work "$work"; return 1; }
+  echo stale > "$work/tree/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" change "pr-apply-stale: change canary/one")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" change "pr-apply-stale: change canary/one")"
+  pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
+  # main moves on under the pull request.
+  git -C "$work/tree" checkout -q main
+  echo moved > "$work/tree/fleet/two/rev.txt"
+  moved="$(push_tree "$work/tree" "$repo" main "pr-apply-stale: main moves")" || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    git -C "$work/tree" checkout -q change || rc=1
+    git -C "$work/tree" -c user.name=t -c user.email=t@terragucci.local -c commit.gpgsign=false merge -q --no-edit main || rc=1
+    head="$(push_tree "$work/tree" "$repo" change "pr-apply-stale: main merged in")" || rc=1
+    [ $rc != 0 ] || pr_ready "$repo" "$pr" "$head" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
+    applied="$(gated_applied pr-apply-stale)"
+    log "main is at ${moved:0:8}; reply: ${reply:-none}; state for: ${applied:-nothing}"
+    grep -q "pull request $pr is not up to date with main" <<<"$reply" || { log "the stale head was not refused as not up to date"; rc=1; }
+    [ -z "$applied" ] || { log "a refused comment applied: $applied"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-apply-stale?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the comment on a head behind main was refused and applied nothing"
+  return $rc
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -4249,6 +4441,9 @@ report-oidc          ex after=boot weight=150
 tg-gate-wait         runner self! weight=200
 tg-gate-refuse       runner self! weight=200
 tg-sealed            runner self! weight=200
+pr-apply             runner self! weight=250
+pr-apply-lock        runner self! weight=300
+pr-apply-stale       runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

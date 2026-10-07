@@ -6,7 +6,7 @@
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
- *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt] [--base <ref>]
  *   terragucci check-root <dir> [--binary <b>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu <version>   (Linux builds, for a CI job)
@@ -19,7 +19,8 @@
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo]   (read a `/terragucci agent <ask>` comment)
  *   terragucci comment --agent push --change <dir> [--policy-dir <dir>]   (push the agent's change to the pull request's head branch)
- *   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge forgejo]   (read a `/terragucci apply [wave-<n>]` comment; run by the generated pipeline)
+ *   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge forgejo|gitlab] [--when merge|pull-request] [--unlock]   (read a `/terragucci apply [wave-<n>]` or `/terragucci unlock` comment, or a GitLab merge request's manual apply; run by the generated pipeline)
+ *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -33,7 +34,7 @@ import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveRepo, responseTo, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { decideComment, writeDecision } from "./comment";
-import { decideApplyComment } from "./comment-apply";
+import { decideApplyComment, decideMergeRequestApply, mergePullRequest } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
@@ -59,7 +60,7 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
-  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt] [--base <ref>]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>]
@@ -71,7 +72,8 @@ const USAGE = `usage:
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
   terragucci comment --agent push --change <dir> [--policy-dir <dir>]
-  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
+  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--unlock]
+  terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
@@ -173,6 +175,7 @@ export async function main(argv: string[]): Promise<number> {
             ...(str(flags, "config") ? { config: str(flags, "config") } : {}),
             ...(str(flags, "parallelism") ? { parallelism: parallelismFlag(str(flags, "parallelism")!) } : {}),
             ...(flags.terragrunt === true ? { terragrunt: true } : {}),
+            ...(str(flags, "base") ? { base: str(flags, "base") } : {}),
           });
         }
         const result = await runStage(args[0] ?? "", cwd, {
@@ -284,9 +287,14 @@ export async function main(argv: string[]): Promise<number> {
         const out = str(flags, "out");
         const forge = str(flags, "forge") ?? "github";
         const canary = str(flags, "canary");
+        const when = str(flags, "when") ?? "merge";
         if (!layers || !out) throw new ConfigError("comment-apply needs --layers <a,b;c> and --out <file>");
-        if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment-apply's --forge is github or forgejo");
-        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, ...(canary ? { canary: canary.split(",") } : {}) });
+        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("comment-apply's --forge is github, forgejo or gitlab");
+        if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment-apply's --when is merge or pull-request");
+        if (forge === "gitlab" && when !== "pull-request") throw new ConfigError("comment-apply on gitlab runs a merge request's manual apply job, which only --when pull-request has");
+        const decision = forge === "gitlab"
+          ? await decideMergeRequestApply({ layers: parseLayers(layers), ...(flags.unlock ? { unlock: true } : {}) })
+          : await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}) });
         writeDecision(resolve(cwd, out), decision);
         if (decision.fail) {
           console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
@@ -294,6 +302,21 @@ export async function main(argv: string[]): Promise<number> {
         }
         console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
         return 0;
+      }
+      case "pr-merge": {
+        const pr = Number(str(flags, "pr"));
+        const sha = str(flags, "sha");
+        const forge = str(flags, "forge") ?? "github";
+        if (!Number.isInteger(pr) || pr < 1 || !sha) throw new ConfigError("pr-merge needs --pr <n> and --sha <sha>");
+        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("pr-merge's --forge is github, forgejo or gitlab");
+        try {
+          console.log(`terragucci pr-merge: ${await mergePullRequest({ pr, sha, forge })}`);
+          return 0;
+        } catch (e) {
+          if (e instanceof ConfigError) throw e;
+          console.error(`terragucci pr-merge: not merged: ${(e as Error).message}`);
+          return 1;
+        }
       }
       case "rollout": {
         const result = await rollout(cwd, rolloutArgs(args, flags));

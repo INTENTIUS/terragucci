@@ -3,8 +3,10 @@
  * `/terragucci plan [root]` re-plans what the pull request changes, read-only.
  * Nothing here applies, approves or unlocks, and a re-plan changes nothing an
  * approval covers, since approvals bind digests. `/terragucci apply [wave-<n>]`
- * parses here too, and is decided by `terragucci comment-apply`
- * (comment-apply.ts), which re-runs an already approved apply after the merge.
+ * and `/terragucci unlock` parse here too, and are decided by `terragucci
+ * comment-apply` (comment-apply.ts): it re-runs an already approved apply
+ * after the merge, or, with `apply.when: pull-request`, applies an open pull
+ * request and releases its root locks.
  *
  * The comment is untrusted input. It is read from the event file, never from
  * an expression in a script, and it is parsed against one strict grammar. The
@@ -26,7 +28,7 @@ import type { Fetch } from "./forge";
 export const COMMENT_COMMANDS = ["plan", "apply", "agent"] as const;
 
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
-const NEVER = new Set(["approve", "unlock", "force-unlock", "import", "state", "destroy", "merge"]);
+const NEVER = new Set(["approve", "force-unlock", "import", "state", "destroy", "merge"]);
 
 /** A root as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
 const ROOT = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
@@ -40,6 +42,8 @@ export type ParsedComment =
   | { kind: "plan"; root?: string }
   /** `/terragucci apply [wave-<n>]`: re-run the merged pull request's apply, through wave n when one is named. */
   | { kind: "apply"; wave?: number }
+  /** `/terragucci unlock`: release the root locks the pull request holds (`apply.when: pull-request`). */
+  | { kind: "unlock" }
   | { kind: "agent"; ask: string }
   | { kind: "refused"; reason: string };
 
@@ -57,6 +61,7 @@ export function parseComment(body: unknown): ParsedComment | undefined {
   const verb = words[1];
   if (verb === undefined) return { kind: "refused", reason: "the command is `/terragucci plan [root]`" };
   if (verb === "apply") return parseApply(words);
+  if (verb === "unlock") return words.length === 2 ? { kind: "unlock" } : { kind: "refused", reason: "`/terragucci unlock` takes nothing after it: it releases every lock the pull request holds" };
   if (verb === "agent") {
     // The ask is the rest of the line, as written; it is never split or run.
     const ask = text.replace(/^\/terragucci[ \t]+agent/, "").trim();
@@ -220,6 +225,12 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   // A pipeline with the comment-apply job sends `/terragucci apply` there and never here; one without it (a Terragrunt repo's) says so.
   if (parsed.kind === "apply") {
     const reason = "this pipeline does not apply on a comment: re-run the apply job on the forge, or push to the default branch again";
+    await reply(reason);
+    return stop(reason);
+  }
+  // With `apply.when: pull-request` the comment-apply job reads `/terragucci unlock`; any other pipeline takes no locks.
+  if (parsed.kind === "unlock") {
+    const reason = "this repository applies after merge, so no pull request holds a lock and there is nothing to unlock";
     await reply(reason);
     return stop(reason);
   }

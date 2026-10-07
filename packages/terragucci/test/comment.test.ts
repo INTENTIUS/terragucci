@@ -18,8 +18,13 @@ describe("parseComment", () => {
     for (const c of ["looks good", "please /terragucci plan", "/terragucci-plan", "/terraguccix plan", 5, undefined, null]) expect(parseComment(c)).toBeUndefined();
   });
 
-  it("refuses approve and unlock by name, and anything else with the usage", () => {
-    for (const v of ["approve", "unlock", "force-unlock"]) {
+  it("reads unlock with nothing after it, and refuses it with anything after", () => {
+    expect(parseComment("/terragucci unlock")).toEqual({ kind: "unlock" });
+    expect(parseComment("/terragucci unlock envs/dev/app")).toMatchObject({ kind: "refused" });
+  });
+
+  it("refuses approve and force-unlock by name, and anything else with the usage", () => {
+    for (const v of ["approve", "force-unlock"]) {
       const r = parseComment(`/terragucci ${v} envs/dev/app`);
       expect(r).toMatchObject({ kind: "refused" });
       expect((r as { reason: string }).reason).toContain("never runs");

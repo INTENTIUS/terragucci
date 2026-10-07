@@ -70,7 +70,7 @@ oidc:
 | Key | Meaning |
 |---|---|
 | `plan_role` | the read-only role the plan job assumes |
-| `apply_role` | the write role, assumed only by the apply job on the default branch |
+| `apply_role` | the write role, assumed only by the apply jobs: on the default branch, and with `apply.when: pull-request` the job that applies a pull request ([Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) has its trust) |
 | `audience` | the AWS token's audience; `sts.amazonaws.com` when omitted |
 | `gcp.workload_identity_provider` | the GCP workload identity pool provider's resource name, `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
 | `gcp.plan_service_account`, `gcp.apply_service_account` | the service accounts the plan and apply jobs impersonate |
@@ -139,7 +139,7 @@ terragucci reads these from the job's environment to find the project, the run a
 |---|---|
 | GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo also sets `FORGEJO_ACTIONS` and `GITEA_ACTIONS`, which tell the two apart |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
-| GitLab | `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_STATUS`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+| GitLab | `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_STATUS`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`, and for the `apply-mr` and `unlock-mr` jobs `GITLAB_USER_LOGIN` and `GITLAB_USER_ID`, who started the job |
 
 ## Variables the generated jobs set
 
@@ -147,7 +147,7 @@ The renderers write these into a job's steps. They are internal: nothing needs s
 
 | Variable | Set for |
 |---|---|
-| `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OUTCOME` | the forge helper and the steps that name a pull request, wave or root; `TG_OUTCOME` is the file that carries a job's one-line status |
+| `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME` | the forge helper and the steps that name a pull request, wave or root; `TG_OPEN` says the pull request is open and applies from its head; `TG_OUTCOME` is the file that carries a job's one-line status |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES` | Terragrunt repos: how Terragrunt runs the binary, where it caches, and the roles it assumes per unit; `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` carries the web identity token, and terragucci never sets `TG_IAM_ASSUME_ROLE` |
 | `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc`: the token files and the identities the binary's providers read |

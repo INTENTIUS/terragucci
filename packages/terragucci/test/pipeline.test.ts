@@ -7,7 +7,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, driftScript, forgeApi, movedRoots, planScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, mergeRequestApplyScript, movedRoots, planScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -377,6 +377,145 @@ describe("the comment trigger", () => {
   it("gitlab: no comment trigger", () => {
     expect(render("gitlab")).not.toContain("issue_comment");
     expect(body(render("gitlab")).replan).toBeUndefined();
+  });
+});
+
+describe("apply before merge (apply.when: pull-request)", () => {
+  const renderPr = (forge: ForgeName, merge?: "auto" | "manual"): Record<string, any> =>
+    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, applyWhen: "pull-request", ...(merge ? { applyMerge: merge } : {}) }).content);
+
+  it.each(["github", "forgejo"] as const)("%s: the comment job takes apply and unlock, and the push after the merge confirms instead of applying", (forge) => {
+    const doc = renderPr(forge);
+    const job = doc.jobs["apply-comment"];
+    expect(job.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    expect(doc.jobs.replan.if).toContain("!(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    expect(job.permissions.contents).toBe("write");
+    if (forge === "github") expect(job.permissions.checks).toBe("read");
+    const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
+    expect(run).toContain("--when pull-request");
+    expect(doc.jobs["apply-wave-1"]).toBeUndefined();
+    const confirm = doc.jobs.confirm;
+    expect(confirm.needs).toBe("check");
+    expect(confirm.if).toBe("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
+    expect(confirm.permissions.contents).toBe("read");
+    const plan = confirm.steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-plan")).run as string;
+    expect(plan).toContain(OIDC.plan_role);
+    expect(plan).not.toContain(OIDC.apply_role);
+    expect(plan).not.toContain("tf-apply");
+    expect(doc.jobs.tips.needs).toBe("confirm");
+  });
+
+  it("apply after merge is unchanged when apply.when is unset", () => {
+    const doc = body(render("github", OIDC));
+    expect(doc.jobs.confirm).toBeUndefined();
+    expect(doc.jobs["apply-wave-1"]).toBeDefined();
+    expect(doc.jobs["apply-comment"].permissions.checks).toBeUndefined();
+  });
+
+  it("an open pull request's waves read the gate rule from its base, and only apply.merge auto merges", () => {
+    const manual = commentApplyScript("tofu", layers, "github", OIDC, { when: "pull-request" });
+    expect(manual).toContain('if [ "$TG_OPEN" = 1 ]; then what="the head"; tf_base="--base origin/$TG_BASE"; fi');
+    expect(manual).toContain('terragucci stage tf-apply --wave "$wave" --layers');
+    expect(manual).toMatch(/--gate on-destroy \$tf_base/);
+    expect(manual).not.toContain("pr-merge");
+    expect(manual).toContain("Merge it when you are ready");
+    const auto = commentApplyScript("tofu", layers, "forgejo", OIDC, { when: "pull-request", merge: "auto" });
+    expect(auto).toContain('terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA" --forge forgejo');
+    // The merge comes after the loop, which exits at the first wave that does not apply.
+    expect(auto.indexOf("terragucci pr-merge")).toBeGreaterThan(auto.indexOf("done\n"));
+  });
+
+  it("gitlab: a manual apply-mr job after the plan, in the terragucci-apply environment, an unlock-mr job, and confirm on the default branch", () => {
+    const doc = renderPr("gitlab", "auto");
+    const job = doc["apply-mr"];
+    expect(job.needs).toEqual(["plan"]);
+    expect(job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH', when: "manual" }]);
+    expect(job.environment).toEqual({ name: "terragucci-apply" });
+    expect(job.resource_group).toBe("terragucci-apply");
+    expect(job.script.join("\n")).toContain("--forge gitlab --when pull-request");
+    expect(job.script.join("\n")).toContain('--base "origin/$TG_BASE"');
+    expect(job.script.join("\n")).toContain("terragucci pr-merge");
+    expect(doc["unlock-mr"].rules[0].when).toBe("manual");
+    expect(doc["unlock-mr"].script.join("\n")).toContain("--unlock");
+    expect(doc["apply-wave-1"]).toBeUndefined();
+    expect(doc.confirm.rules).toEqual([{ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" }]);
+    expect(mergeRequestApplyScript("tofu", layers, OIDC, { when: "pull-request" })).toContain("run the apply-mr job of this merge request again");
+  });
+
+  it("a Terragrunt repo refuses apply.when pull-request", () => {
+    expect(() => renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] }, applyWhen: "pull-request" })).toThrow(/needs plain roots/);
+  });
+
+  describe("in the step's own shell", () => {
+    const fake = () => fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+      terragucci: [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = comment-apply ]; then while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done; printf \'%s\\n\' "$DECISION" > "$out"; exit 0; fi',
+        'if [ "$1" = pr-merge ]; then echo "$*" >> "$LOG"; echo "terragucci pr-merge: merged pull request 7 at abcdef12"; exit 0; fi',
+        'if [ "$1" = stage ] && [ "$2" = tf-plan ]; then mkdir -p terragucci-report; printf \'%s\' "$REPORT" > terragucci-report/report.json; exit 0; fi',
+        'echo "$*" >> "$LOG"',
+        "exit 0",
+      ].join("\n"),
+    });
+    const head = (): { work: string; sha: string } => {
+      const work = tmp("tg-work-");
+      git(work, "init", "-q", "-b", "main");
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "head");
+      return { work, sha: git(work, "rev-parse", "HEAD").trim() };
+    };
+    const envFor = (api: string, dir: string, d: Record<string, unknown>): Record<string, string> => ({
+      LOG: join(dir, "stage.log"), DECISION: JSON.stringify(d), TG_TOKEN: "t", GITHUB_API_URL: api, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "https://forge.test", GITHUB_RUN_ID: "9",
+    });
+
+    it("applies an open pull request's head with --base, merges it with apply.merge auto, and says so", async () => {
+      const { work, sha } = head();
+      const { dir, env } = fake();
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github", undefined, { when: "pull-request", merge: "auto" })}`, { ...env, ...envFor(api.url, dir, { go: true, open: true, pr: 7, sha, base: "main" }) });
+        expect(r.status, r.out).toBe(0);
+        const log = readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n");
+        expect(log.filter((l) => l.startsWith("stage tf-apply")).every((l) => l.endsWith("--base origin/main"))).toBe(true);
+        expect(log.at(-1)).toBe(`pr-merge --pr 7 --sha ${sha}`);
+        const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
+        expect(reply).toBe(`terragucci: applied wave 1, 2 of pull request 7 at ${sha.slice(0, 8)}, and merged pull request 7 at abcdef12. https://forge.test/acme/infra/actions/runs/9`);
+      } finally {
+        api.close();
+      }
+    });
+
+    it("a merged pull request applies its merge commit without --base and is not merged again", async () => {
+      const { work, sha } = head();
+      const { dir, env } = fake();
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github", undefined, { when: "pull-request", merge: "auto" })}`, { ...env, ...envFor(api.url, dir, { go: true, pr: 7, sha, base: "main" }) });
+        expect(r.status, r.out).toBe(0);
+        const log = readFileSync(join(dir, "stage.log"), "utf-8");
+        expect(log).not.toContain("--base");
+        expect(log).not.toContain("pr-merge");
+      } finally {
+        api.close();
+      }
+    });
+
+    it("the confirm job fails naming the roots that still plan a change, and passes when none does", async () => {
+      const { work } = head();
+      const { env } = fake();
+      const api = await stubApi(() => ({}));
+      const report = (changes: unknown[]) => JSON.stringify({ roots: [{ path: "network", changes }, { path: "app", changes: [{ action: "read" }] }] });
+      try {
+        const base = { TG_TOKEN: "t", TG_SHA: "a".repeat(40), GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "https://forge.test", GITHUB_RUN_ID: "9" };
+        const moved = await runStep(`cd ${work} && ${confirmScript("tofu", layers, "github")}`, { ...env, ...base, REPORT: report([{ action: "update" }]) });
+        expect(moved.status).toBe(1);
+        expect(api.hits.filter((h) => h.url.includes("/statuses/")).at(-1)?.body).toMatchObject({ context: "terragucci/apply", state: "failure", description: "roots still plan a change after the merge: network" });
+        const still = await runStep(`cd ${work} && ${confirmScript("tofu", layers, "github")}`, { ...env, ...base, REPORT: report([]) });
+        expect(still.status, still.out).toBe(0);
+        expect(api.hits.filter((h) => h.url.includes("/statuses/")).at(-1)?.body.state).toBe("success");
+      } finally {
+        api.close();
+      }
+    });
   });
 });
 

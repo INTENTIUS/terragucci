@@ -22,8 +22,8 @@ describe("parseComment: apply", () => {
     }
   });
 
-  it("approve and unlock stay refused by name", () => {
-    for (const v of ["approve", "unlock", "force-unlock"]) expect((parseComment(`/terragucci ${v} wave-1`) as { reason: string }).reason).toContain(`never runs \`${v}\``);
+  it("approve and force-unlock stay refused by name", () => {
+    for (const v of ["approve", "force-unlock"]) expect((parseComment(`/terragucci ${v} wave-1`) as { reason: string }).reason).toContain(`never runs \`${v}\``);
   });
 });
 

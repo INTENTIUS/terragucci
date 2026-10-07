@@ -15,7 +15,8 @@ description: Every terragucci command, its flags and its exit codes.
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, and pushes an agent's change; the generated pipeline runs it |
-| `comment-apply` | reads a `/terragucci apply [wave-<n>]` comment on a merged pull request; the generated pipeline runs it |
+| `comment-apply` | reads a `/terragucci apply [wave-<n>]` or `/terragucci unlock` comment, or decides a GitLab merge request's manual apply; the generated pipeline runs it |
+| `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
@@ -56,7 +57,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
     [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
-    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt]
+    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt] [--base <ref>]
 ```
 
 | Flag | Meaning |
@@ -75,7 +76,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 
 `stage tf-plan` and `stage tf-drift` exit 1 when a root refuses to plan, and still write the report. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Its flags are `--wave`, `--layers`, `--canary`, `--binary`, `--gate` (`always`, `on-destroy` or `never`, default `on-destroy`), `--config`, `--parallelism` and `--terragrunt`. Exit 3 means the wave waits for an approval, and exit 4 that its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Its flags are `--wave`, `--layers`, `--canary`, `--binary`, `--gate` (`always`, `on-destroy` or `never`, default `on-destroy`), `--config`, `--parallelism`, `--terragrunt` and `--base`. `--base` names the ref the wave reads its policy, its gate rule and its signers file from; the job that applies an open pull request passes `origin/<default branch>`, and without it the gate rule comes from the commit before the one applied. Exit 3 means the wave waits for an approval, and exit 4 that its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
 
 ## publish
 
@@ -136,10 +137,21 @@ The `agent-push` job runs `--agent push`. This mode applies the patch in `--chan
 ## comment-apply
 
 ```text
-terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
+terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab]
+    [--when merge|pull-request] [--unlock]
 ```
 
 Reads a `/terragucci apply [wave-<n>]` comment from the event file, checks the commenter's permission as `comment` does, and writes a decision to `--out`. The decision names the pull request, its merge commit and the last wave, or why nothing applies; refusals get a reply. The generated `apply-comment` job runs it before any credential, and on Forgejo again once it holds the apply lock. See [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request).
+
+With `--when pull-request` (written when `apply.when` is `pull-request`), an open pull request applies from its head once the checks in [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) pass, and the command takes its root locks; the decision then names the head. `/terragucci unlock` releases the pull request's locks. With `--forge gitlab` it decides the merge request pipeline's manual `apply-mr` job from the job's variables instead of a comment, and with `--unlock` the `unlock-mr` job.
+
+## pr-merge
+
+```text
+terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
+```
+
+Merges the pull request while its head is still `--sha`, then releases its root locks. The generated job runs it after the last wave of a pull request applied before merge, with `apply.merge: auto`. It exits 1 when the forge refuses the merge, and the job replies that the pull request was applied and not merged.
 
 ## config check
 

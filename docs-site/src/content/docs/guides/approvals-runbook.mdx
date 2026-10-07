@@ -32,7 +32,7 @@ A waiting wave exits with code 3 and prints the command. Read the wave's plans i
 npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
 ```
 
-`--plan` is the wave's set digest. The sign-off covers those plans only. Then run the wave's job again, or comment `/terragucci apply` on the merged pull request on GitHub or Forgejo. The job finds the approval and the wave goes out.
+`--plan` is the wave's set digest. The sign-off covers those plans only. Then run the wave's job again, or comment `/terragucci apply` on the merged pull request on GitHub or Forgejo (on the open pull request with `apply.when: pull-request`, and on GitLab run its `apply-mr` job again). The job finds the approval and the wave goes out.
 
 ## List the waves waiting for an approval
 

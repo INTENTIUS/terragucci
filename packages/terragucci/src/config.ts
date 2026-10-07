@@ -24,6 +24,10 @@ export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
 export const POLICY_ENGINES = ["conftest", "opa"] as const;
 export const POLICY_INPUTS = ["plan", "hcp"] as const;
+/** When a change applies: after it merges (default), or from its open pull request before it merges. */
+export const APPLY_WHEN = ["merge", "pull-request"] as const;
+/** With `apply.when: pull-request`, who merges once every wave applied: a person (default), or terragucci. */
+export const APPLY_MERGE = ["manual", "auto"] as const;
 
 export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
@@ -32,6 +36,21 @@ export type Runtime = (typeof RUNTIMES)[number];
 export type Dependents = (typeof DEPENDENTS)[number];
 export type PolicyEngine = (typeof POLICY_ENGINES)[number];
 export type PolicyInput = (typeof POLICY_INPUTS)[number];
+export type ApplyWhen = (typeof APPLY_WHEN)[number];
+export type ApplyMerge = (typeof APPLY_MERGE)[number];
+
+/**
+ * `apply:`: when a change applies. `when: merge` (the default) applies the
+ * default branch after a merge. `when: pull-request` applies an open pull
+ * request's head on `/terragucci apply` (a manual job on GitLab), under the
+ * same waves and gates, and the push after the merge plans and reports drift
+ * without applying. `merge: auto` merges the pull request once every wave
+ * applied. Plain roots only.
+ */
+export interface ApplySettings {
+  when?: ApplyWhen;
+  merge?: ApplyMerge;
+}
 
 /**
  * Policy as code, off unless set. `tf-plan` runs the engine over each planned
@@ -192,6 +211,8 @@ export interface ProjectSettings {
   url?: string;
   /** When a wave waits for an approval. */
   gate?: Gate;
+  /** When a change applies; see ApplySettings. */
+  apply?: ApplySettings;
   waves?: { canary?: string[] };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
@@ -299,7 +320,7 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
+  "roots", "binary", "version", "forge", "url", "gate", "apply", "waves", "drift", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
 ]);
 
@@ -333,6 +354,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
+  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
   else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
   for (const k of ["version", "url", "token_env"] as const) {
@@ -425,6 +447,17 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       }
     }
   }
+}
+
+function checkApply(a: unknown, where: string, problems: string[]): void {
+  if (!isObject(a)) {
+    problems.push(`${where} must be a map (settings: when, merge)`);
+    return;
+  }
+  for (const k of Object.keys(a)) if (k !== "when" && k !== "merge") problems.push(`${where}.${k} is not a setting (settings: when, merge)`);
+  oneOf(a.when, APPLY_WHEN, `${where}.when`, problems);
+  oneOf(a.merge, APPLY_MERGE, `${where}.merge`, problems);
+  if (a.merge !== undefined && a.when !== "pull-request") problems.push(`${where}.merge is set, and only a pull request applied before it merges is merged by terragucci; set ${where}.when to pull-request or drop merge`);
 }
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
@@ -800,5 +833,6 @@ function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings 
   if (base.respond || settings.respond) out.respond = { ...base.respond, ...settings.respond };
   if (base.policy || settings.policy) out.policy = { ...base.policy, ...settings.policy };
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
+  if (base.apply || settings.apply) out.apply = { ...base.apply, ...settings.apply };
   return out;
 }
