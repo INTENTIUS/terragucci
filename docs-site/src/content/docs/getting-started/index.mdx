@@ -47,7 +47,7 @@ no terragucci.yml needed (defaults fit)
 dry run: nothing was written
 ```
 
-Roots are the directories that declare a backend or a `cloud` block, or configure a provider; [root](/terragucci/concepts/glossary/#root) covers HCP Terraform remote execution. Layers are the dependency order, and `tf-apply` builds its [waves](/terragucci/concepts/glossary/#wave) from them, canary first. If the binary or the forge is wrong, pass `--binary` or `--forge`. `--json` lists the reason for every root.
+A root is any directory that declares a backend or a `cloud` block, or configures a provider; [root](/terragucci/concepts/glossary/#root) covers HCP Terraform remote execution. `tf-apply` builds its [waves](/terragucci/concepts/glossary/#wave) from the layers, the dependency order, canary first. If the binary or the forge is wrong, pass `--binary` or `--forge`. `--json` lists the reason for every root.
 
 ### 3. Write the pipeline
 
@@ -62,9 +62,9 @@ wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
-On GitLab the file is `.gitlab-ci.yml`, and on Forgejo `.forgejo/workflows/terragucci.yml`. Every job runs in terragucci's CI image. A job downloads a tool only if you pin a version the image lacks (it runs `terragucci install` first) or set a policy (conftest is fetched on first use).
+On GitLab the file is `.gitlab-ci.yml`, and on Forgejo `.forgejo/workflows/terragucci.yml`. Every job runs in terragucci's CI image, and downloads a tool only for a pinned version the image lacks (`terragucci install`) or a policy (conftest, on first use).
 
-[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) declares each wave's approval gate. Commit it: the apply job reads it from the default branch. [Your config file](/terragucci/reference/config/) lists every `terragucci.yml` key.
+[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) declares each wave's approval gate. Commit it with the pipeline, since the apply job reads it from the default branch. [Your config file](/terragucci/reference/config/) lists every `terragucci.yml` key.
 
 ### 4. Give the pipeline a token
 
@@ -82,11 +82,11 @@ git push -u origin add-terragucci
 
 `git status` should show the pipeline file, `chant.workspace.json`, `package.json` and `package-lock.json`; add anything else, such as `node_modules`, to `.gitignore`.
 
-Open the pull request. The check and plan jobs start on their own. If it touches no root there is nothing to plan, so change a line in one root and push again.
+Open the pull request. The check and plan jobs start on their own. A change that touches no root has nothing to plan; change a line in one root and push again.
 
 ### 6. Read the plan note
 
-When the plan job finishes, the pull request gets one comment and a `terragucci/plan` status. The note looks like this:
+The finished plan job leaves one comment and a `terragucci/plan` status on the pull request. The note looks like this:
 
 <PlanNote />
 
