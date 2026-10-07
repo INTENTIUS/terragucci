@@ -1,0 +1,67 @@
+---
+title: How terragucci works
+description: The path of a change from pull request to plan note, merge, waves, approval, apply and drift, and what runs where.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
+
+`npx terragucci init` writes a pipeline file for your forge; its CI runs everything in terragucci's image. It needs no server or hosted service and keeps state in your backend. The package is Apache-2.0.
+
+The pipeline is made of [chant](/terragucci/concepts/glossary/#chant) stages. chant renders them into your forge's format, and its command line records approvals.
+
+## A change, start to finish
+
+| Step | Stage | Identity | Forges |
+|---|---|---|---|
+| 1 The pull request | `tf-check`, `tf-plan` | plan, read-only | all |
+| 2 The plan note | `tf-plan` | plan | all; `/terragucci plan` on GitHub and Forgejo |
+| 3 The merge | `tf-apply` | apply | all; applying before merge on GitHub and Forgejo |
+| 4 The waves | `tf-apply` | apply | all |
+| 5 The approval | none; a person runs `chant approve` | the approver's signing key | all |
+| 6 The apply | `tf-apply` | apply | all; `/terragucci apply` on GitHub and Forgejo |
+| 7 Drift | `tf-drift` | plan | all |
+
+<Steps>
+
+1. `tf-check` formats and validates every root on the branch push (on a pull request only from a fork). `tf-plan` plans only the roots the change reaches, one [layer](/terragucci/concepts/glossary/#layer) at a time.
+
+2. `tf-plan` posts one grouped comment naming every destroy and replacement, and sets `terragucci/plan`.
+
+   <Shot step="one-note" view="pull" alt="The plan note on a module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" />
+
+3. Any push to the default branch runs `tf-apply` with the apply identity, one push at a time. Under the default `on-destroy` gate only a wave that destroys or replaces waits. With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), a writer's `/terragucci apply` comment applies the open head instead. The [guide](/terragucci/guides/apply-before-merge/) lists what it refuses.
+
+4. `tf-apply` runs one job per [wave](/terragucci/concepts/glossary/#wave): `waves.canary` roots first, then dependency order. Each wave plans after the one before it applied.
+
+5. A waiting job exits 3 and prints `chant approve` for its [set digest](/terragucci/concepts/glossary/#set-digest). A person runs it to seal an approval onto [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle); the seal must verify against `.chant/allowed_signers` from the commit before the applied one.
+
+   <Shot step="wave-waiting" view="log" alt="Wave 4's apply job stopped with exit code 3, printing the chant approve command with the wave's set digest" />
+
+6. Rerun the job, push, or comment `/terragucci apply`. The wave re-plans and refuses on a changed digest. It never applies a root twice.
+
+7. With `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only` under the plan identity and keeps one issue updated, closing it when drift is gone. It never applies.
+
+   <Shot step="drift" view="issue" alt="The open issue titled terragucci: drift found, listing the root that drifted and the queue that no longer exists" />
+
+</Steps>
+
+## What runs where
+
+| Where | What |
+|---|---|
+| your machine | `npx terragucci init`, once and after a config change; `chant approve`, to approve a wave |
+| your forge's CI | every stage: check and plan on pull requests, apply on the default branch or the pull request, drift on schedule, comment jobs |
+| your repository | the pipeline file, an optional `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), the signers file and the `chant/lifecycle` branch |
+| your cloud | your state (with [choudoufu](/terragucci/concepts/glossary/#choudoufu), a tag on each resource in its place), and the plan and apply identities the jobs assume over OIDC |
+| your bucket, if you set one | the reports, with an index across runs |
+
+The plan identity is read-only because pull request code runs with it. Applying before merge gives the apply identity to unmerged code, so it is opt-in.
+
+## Where to go next
+
+- [Get your first plan note](/terragucci/getting-started/) sets it up on your repository.
+- [The tutorial](/terragucci/tutorial/) runs each step above on a 15-root example on your laptop.
+- [How waves and approvals work](/terragucci/concepts/waves-and-approvals/) explains the waves and the gate.
+- [The approvals runbook](/terragucci/guides/approvals-runbook/) has the commands for signers, pending waves and refusals.
+- [The glossary](/terragucci/concepts/glossary/) defines the chant words and lists the ones that mean something else in Terraform.

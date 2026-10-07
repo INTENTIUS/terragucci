@@ -4,6 +4,10 @@ description: Merge the module change and watch it go out a wave at a time, each 
 sidebar:
   order: 4
 claims: [waves]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/waves/.
+  In the terragucci clone with the example booted, run `just example change destroy` and read the plan note. Then stop and print the `just example merge destroy` and `just example approve` commands for me. Do not run either of them.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 import Captured from '../../../components/Captured.astro';
@@ -13,7 +17,14 @@ import Shot from '../../../components/Shot.astro';
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-The apply is one job per wave, canary first. Wave 1 is the dev platform root and wave 2 the four dev services. Wave 3 holds the staging and prod platform roots and wave 4 their eight services.
+The apply is one job per wave, canary first.
+
+| Wave | Roots |
+|---|---|
+| 1 | the dev platform root |
+| 2 | the four dev services |
+| 3 | the staging and prod platform roots |
+| 4 | their eight services |
 
 The gate is `on-destroy`, the default. A wave waits only when its plans destroy or replace something. Make one do that:
 

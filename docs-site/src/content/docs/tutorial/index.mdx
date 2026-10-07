@@ -4,6 +4,10 @@ description: Run a 15-root Terraform estate on your laptop, with a local forge a
 sidebar:
   order: 1
 claims: [boot]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/.
+  Clone github.com/INTENTIUS/terragucci, run `npm ci` and `just example up` as the page says (the example applies only to its local AWS stand-in), and report the Forgejo URL and the boot time. If it fails, match the error to "When something looks wrong" and tell me the fix.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 import Captured from '../../../components/Captured.astro';
@@ -49,14 +53,13 @@ Open the Forgejo link, at `localhost:3300` unless you changed the port. The repo
 
 <Shot step="boot" view="repo" alt="The example repo on the local Forgejo, showing envs, modules, changes and terragucci.yml" />
 
-```
-modules/service/     one service: a bucket, a jobs queue, a records table
-envs/dev/platform    each environment's logs bucket
-envs/dev/orders      orders, payments, search and email, each calling modules/service
-envs/staging/...     the same five roots
-envs/prod/...        the same five roots
-terragucci.yml       the whole terragucci config
-```
+| Path | What |
+|---|---|
+| `modules/service/` | one service: a bucket, a jobs queue, a records table |
+| `envs/dev/platform` | each environment's logs bucket |
+| `envs/dev/orders` | orders, payments, search and email, each calling `modules/service` |
+| `envs/staging/...`, `envs/prod/...` | the same five roots each |
+| `terragucci.yml` | the whole terragucci config |
 
 That is three environments of five roots, fifteen in all. A change to `modules/service` reaches twelve roots. Prod payments differs because its jobs queue has a dead-letter queue.
 

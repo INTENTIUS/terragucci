@@ -1,8 +1,13 @@
 ---
 title: Policy
 description: Opt-in policy checks that run conftest or OPA over each plan and fail tf-plan on a denial.
+prompt: |
+  Read https://intentius.io/terragucci/reference/policy/.
+  Write a Rego policy under the policy directory that denies the rule I name, with tests, and open a pull request.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
 Add `policy` to `terragucci.yml` to turn policy checks on; `tf-plan` then fails each planned root whose plan JSON your Rego denies.
@@ -41,13 +46,24 @@ deny contains msg if {
 
 `input` is the unredacted `show -json` of one root. Before a denial or warning reaches the report, note or log, every sensitive value in it, short ones such as `1` included, becomes `(sensitive, redacted by terragucci)`.
 
-HCP Terraform and Spacelift policies read other paths and deny nothing as written: set `input: hcp` for HCP Terraform, and change `input.terraform` to `input` for Spacelift.
+Where the policy came from sets what to change:
+
+| Policy source | Setting |
+|---|---|
+| written for terragucci | `input: plan`, the default |
+| HCP Terraform OPA policy set | `input: hcp`, with `engine: opa` ([below](#hcp-terraform-policy-sets)) |
+| Spacelift | `input: plan`, and change `input.terraform` to `input` in the policy |
+
+HCP Terraform and Spacelift policies read other paths and deny nothing as written.
 
 ### Which rules count
 
-`deny`, `violation`, `deny_<name>` and `violation_<name>` fail the root; `warn` and `warn_<name>` warn. A message is the rule's string or its object's `msg`.
+| Rule | Effect |
+|---|---|
+| `deny`, `violation`, `deny_<name>`, `violation_<name>` | fail the root |
+| `warn`, `warn_<name>` | warn |
 
-Both engines give the same verdict; conftest reads every package and opa reads `main`, unless `namespace` names one.
+A message is the rule's string or its object's `msg`. Both engines give the same verdict.
 
 ### Namespace matching
 
@@ -57,7 +73,11 @@ If no Rego file outside the tests declares the namespace and has a `deny`, `viol
 
 <Shot step="policy" view="pull" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
 
-A denied root fails and the job exits 1; the denials go to the report's `roots[].policy`. A root also fails when its policy cannot run, as with no engine or Rego that does not compile. Warnings never block.
+| Case | Result |
+|---|---|
+| a root's policy denies it | the root fails and the job exits 1; the denials go to `roots[].policy` in the report |
+| the policy cannot run (no engine, Rego that does not compile) | the root fails |
+| a warning | never blocks |
 
 ### No override
 
@@ -77,7 +97,25 @@ A base `terragucci.ts` is folded to a value without running it.
 
 ### Finding the base branch
 
-terragucci reads `origin/<branch>` from `GITHUB_BASE_REF` (GitHub, Forgejo) or `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` (GitLab); `TG_BASE` wins over both. The checkout needs that ref fetched.
+terragucci reads `origin/<branch>`, and the checkout needs that ref fetched. `TG_BASE` wins on every forge.
+
+<Tabs syncKey="forge">
+  <TabItem label="GitHub">
+
+`GITHUB_BASE_REF`
+
+  </TabItem>
+  <TabItem label="GitLab">
+
+`CI_MERGE_REQUEST_TARGET_BRANCH_NAME`
+
+  </TabItem>
+  <TabItem label="Forgejo">
+
+`GITHUB_BASE_REF`
+
+  </TabItem>
+</Tabs>
 
 ## Tests and the apply check
 
@@ -93,7 +131,14 @@ terragucci reads `origin/<branch>` from `GITHUB_BASE_REF` (GitHub, Forgejo) or `
 
 ### The engines
 
-terragucci downloads a missing engine once per job, conftest 0.71.0 or OPA 1.21.1, and refuses one whose SHA-256 differs from the pinned one. Offline jobs need the engine installed; drift runs and provisional Terragrunt previews skip the check.
+terragucci downloads a missing engine once per job and refuses one whose SHA-256 differs from the pinned one.
+
+| Engine | Packages read | Pinned version | `tf-check` runs |
+|---|---|---|---|
+| `conftest` | every package, unless `namespace` names one | 0.71.0 | `conftest verify` |
+| `opa` | `main`, or every package under `terraform.policies` with `input: hcp`, unless `namespace` names one | 1.21.1 | `opa test` |
+
+Offline jobs need the engine installed; drift runs and provisional Terragrunt previews skip the check.
 
 ## HCP Terraform policy sets
 

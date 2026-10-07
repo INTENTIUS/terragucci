@@ -1,6 +1,10 @@
 ---
 title: Traces and metrics
 description: Each stage run as one trace, and the pipeline's numbers as metrics, sent over OTLP to your collector.
+prompt: |
+  Read https://intentius.io/terragucci/reference/observability/.
+  Add the OTLP variables and `dashboards: true` to terragucci.yml as the page says, run `npx terragucci init`, and open a pull request. List the secrets I must add; do not create them.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 import Shot from '../../../components/Shot.astro';
@@ -30,7 +34,13 @@ env:
 
 ### Headers and secrets
 
-terragucci sends OTLP/JSON over HTTP, so use the collector's port 4318, not gRPC. Keep keys in a CI secret named by `telemetry: { headers_secret: OTLP_HEADERS }`; the generated workflows set `OTEL_EXPORTER_OTLP_HEADERS` from it on the plan, apply and drift jobs. A fork's pull request gets no secrets, and on GitLab you mark the variable masked. An unreachable collector never fails a stage.
+| Setting | Value |
+|---|---|
+| protocol | OTLP/JSON over HTTP, so the collector's port 4318, not gRPC |
+| keys | a CI secret named by `telemetry: { headers_secret: OTLP_HEADERS }`; the generated workflows set `OTEL_EXPORTER_OTLP_HEADERS` from it on the plan, apply and drift jobs |
+| a fork's pull request | gets no secrets |
+| GitLab | mark the variable masked |
+| an unreachable collector | never fails a stage |
 
 ## The trace
 
@@ -74,9 +84,13 @@ Two of these timings come only from choudoufu:
 
 OpenTofu sends neither, so a root it plans lists no provider calls and no sums.
 
-### Terragrunt and binaries that time nothing
+### Timings by binary
 
-Terraform exports no traces, and the report says so. OpenTofu sends a span for each resource instance it plans or applies, so its report lists the slowest resources. A Terragrunt unit's time comes from Terragrunt's run report, and a `TG_TF_PATH` wrapper points each plan at the receiver.
+| Binary | What the report gets |
+|---|---|
+| Terraform | no traces; the report says so |
+| OpenTofu | a span for each resource instance it plans or applies, so the report lists the slowest resources |
+| Terragrunt | a unit's time from Terragrunt's run report; a `TG_TF_PATH` wrapper points each plan at the receiver |
 
 ### State lock waits
 
@@ -84,7 +98,12 @@ Terraform exports no traces, and the report says so. OpenTofu sends a span for e
 [choudoufu](/terragucci/concepts/glossary/#choudoufu) is the OpenTofu fork from the team behind terragucci; Terraform and OpenTofu send no lock-wait span. Set `binary: choudoufu` on a root whose backend locks (S3 with `use_lockfile`, say). Each wait then shows as a `State lock wait` span with its attempts. The report lists it and `terragucci_lock_wait_seconds` carries it.
 :::
 
-A Terragrunt plan and a `tf-apply` wave's plan and apply wait up to five minutes for a state lock (`-lock-timeout=5m`) unless `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` sets one. A wave writes its report to `terragucci-report/` and the `reports` bucket when set.
+| Run | State lock wait |
+|---|---|
+| a Terragrunt plan | up to five minutes (`-lock-timeout=5m`) |
+| a `tf-apply` wave's plan and apply | up to five minutes (`-lock-timeout=5m`) |
+
+`TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` set a different wait. A wave writes its report to `terragucci-report/` and the `reports` bucket when set.
 
 The HTML report shows them under "Where the time went", and `report.json` carries `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 

@@ -21,9 +21,15 @@ just see-runs
 
 <Captured step="see-runs" />
 
-It runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set: a plan of the module-bump change, a drift run after deleting staging orders' jobs queue from [floci](/terragucci/concepts/glossary/#floci) as on the [Drift](/terragucci/tutorial/drift/) page, and the apply's waves with the gate set to `always`.
+It runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set:
 
-Wave 1 has nothing to change and passes. Wave 2 waits for an approval. The ledger goes to a scratch repo, so the Forgejo example stays as it was.
+| Stage | Run | Result |
+|---|---|---|
+| `tf-plan` | the module-bump change | success |
+| `tf-drift` | after deleting staging orders' jobs queue from [floci](/terragucci/concepts/glossary/#floci), as on the [Drift](/terragucci/tutorial/drift/) page | success |
+| `tf-apply` | the waves, with the gate set to `always` | wave 1 has nothing to change and passes; wave 2 waits for an approval |
+
+The ledger goes to a scratch repo, so the Forgejo example stays as it was.
 
 Open Grafana at [localhost:3310](http://localhost:3310) and look in the `terragucci` folder. The pictures below show the last hour.
 
