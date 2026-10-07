@@ -1,0 +1,9 @@
+{
+  "step": "trace",
+  "source_hash": "85567b0527d95e8b",
+  "commands": [],
+  "shots": {
+    "trace-light": "268ac5c66487164e",
+    "trace-dark": "80413b55b1241c07"
+  }
+}
