@@ -183,3 +183,37 @@ Wipes and checks use the aws CLI and match only prefixed names. boot's wipe dele
 `just smoke-aws-cleanup` lists every bucket (with its object count), queue and table whose name starts with `<prefix>-`, then deletes them, the state bucket and every key in it included, and lists again: anything still there is printed and the command fails. It also removes a SMOKE_AWS runner a crashed run left and the prefix's debug logs. `--list` only lists. `--all` takes every name starting with `tgsmoke-`, for prefixes a lost `stack/.state` no longer names. Cleanup never makes a prefix. A custom `SMOKE_AWS_PREFIX` needs the same variable set when you clean up.
 
 `SMOKE_AWS_MEASURE=1` sets `TF_LOG=debug` on the SMOKE_AWS runner, with `TF_LOG_PATH` pointing every job's log at `/cache/smoke-aws-logs/<prefix>/<example>-<time>.log` in the job cache volume, out of the job logs. `just smoke-aws-count` reads the newest of those, and `just smoke-aws-count <file>` any log on disk. `stack/smoke-aws-count.py` counts each "HTTP Request Sent" line from the provider and the S3 backend, retries included, by service and operation, and prices them at the us-east-1 list prices of the research (S3 PUT, COPY, POST and LIST at $0.005 per 1,000, other S3 requests at $0.0004 per 1,000, SQS at $0.40 per million, DynamoDB's control plane, IAM and STS free). It prints nothing else from the log. Only the pipeline's jobs are measured; the claims' own `docker run` plans and the CLI's wipes and checks are not, so the spend delta from Cost Explorer, a day later, is the full figure.
+
+### The GitHub sandbox
+
+The docs' GitHub screenshots come from [INTENTIUS/terragucci-sandbox](https://github.com/INTENTIUS/terragucci-sandbox), a public repo on github.com run by `stack/sandbox-github.sh`. It needs no stack, no cloud account and no secret in the repo. It needs `gh`, `jq`, Python 3, Docker (for the roots' state and the screenshots) and `npm ci` (for chant).
+
+```bash
+just sandbox up                    # push the first commit if the repo is empty; --fresh replaces it
+just sandbox change one-root       # a pull request with a scenario, and its plan note
+just sandbox plan-comment one-root # comment /terragucci plan on it and wait for the re-plan
+just sandbox merge one-root        # merge it; a green apply commits the state it left
+just sandbox change destroy
+just sandbox merge destroy         # wave 4 waits, with its approve command
+just sandbox approve               # chant approve --plan ... --sign, then re-run the stopped jobs
+just sandbox approve --hold        # approve only; then change and merge module-bump: wave 4 is refused
+just sandbox shot list             # the pages the steps recorded
+just sandbox shot all              # each one logged out, light and dark
+just sandbox reset                 # close the pull requests, delete the branches, main back to its first commit
+just sandbox minutes 2026-10-07T00:00:00Z   # Actions run time since then
+```
+
+| Piece | How |
+|---|---|
+| Roots | `example/` with each AWS resource made a `terraform_data` whose `input` holds its arguments and whose `triggers_replace` holds the ones that replace it. A scenario is `example/changes/<s>.patch` applied to the example and converted the same way, so `example/` stays the only source. `float`, `drift` and `pin` have no plan-only form. |
+| State | `local`, in each root's `terraform.tfstate`, committed. The only store a GitHub-hosted job reaches without an account is the repo. `main.tf` keeps its `s3` backend and `state_override.tf` replaces it, so `init` finds the same four waves as on the example. The runner's disk is gone after a job, so after a green apply the script applies the same tree in the pipeline's image and commits the state with `[skip ci]`. |
+| Pipeline | `npx @intentius/terragucci@0.3.0 init` (`TERRAGUCCI_SANDBOX_RELEASE`), pinned by digest to the published images. The sandbox's `terragucci.yml` adds an `env` that marks the checkout safe for git: 0.3.0's container jobs run git as root in a checkout the runner's user owns, and without it a comment re-plan stops and a plan covers every root. `TERRAGUCCI_SANDBOX_SAFE_DIRECTORY=0` leaves it out. |
+| Signer | an ed25519 key made by `up` and `reset` in the scratch directory, listed as `sandbox-signer` in `.chant/allowed_signers` on main by the first `merge`. Its private half never leaves the scratch directory. |
+| Token | `TERRAGUCCI_SANDBOX_TOKEN`, else `gh auth token`, read at run time and handed to `gh` (`GH_TOKEN`) and to git (a credential helper in `GIT_CONFIG_*` that reads the variable) in the script's own environment. It is never written to a file, a git config or a log. |
+| Screenshots | `stack/shot.mjs` in `mcr.microsoft.com/playwright` (`TERRAGUCCI_SHOT_IMAGE`) with a fresh profile, so the page is the one a logged-out reader sees, in `prefers-color-scheme` light and dark. |
+
+Scratch files go in `TERRAGUCCI_SANDBOX_DIR` (default `$TMPDIR/terragucci-sandbox`): `signer`, `views/` (one file per recorded page), `logs/` and `shots/<view>-<light|dark>.png`.
+
+GitHub shows a job's log only to a signed-in reader. A logged-out job page lists the job's steps, with the failed one marked, and "Sign in to view logs". So a job's log is saved as text, from `gh run view --log`, beside the picture: `logs/waiting.log`, `logs/refused.log` and `logs/applied.log`. A pull request's merge box is also hidden when logged out; the `checks` view is the pull request's Checks tab. The comment re-plan posts no reply of its own: it edits the plan note, so the `reply` view is the note above the `/terragucci plan` comment.
+
+The repo is public, so its Actions minutes on GitHub-hosted runners are free. A pull request costs two runs and a merge one run of seven jobs.
