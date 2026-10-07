@@ -3,24 +3,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { applyWave, changesOutputs, heldUnits, parseLedger } from "../src/apply";
+import { applyWave, changesOutputs, parseLedger } from "../src/apply";
 import { git, tmp, write } from "./helpers";
 
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
-
-describe("heldUnits", () => {
-  const deps = new Map([["b", ["a"]], ["c", ["b"]], ["d", []], ["e", ["x"]]]);
-  it("holds a unit that reads a unit of the pass whose outputs change, and every unit after it", () => {
-    expect([...heldUnits(["a", "b", "c", "d"], deps, new Set(), new Set(["a"]))].sort()).toEqual(["b", "c"]);
-  });
-  it("holds a unit after one that waits for its upstream, and none when nothing upstream changes its outputs", () => {
-    expect([...heldUnits(["a", "b", "c"], deps, new Set(["a"]), new Set())].sort()).toEqual(["b", "c"]);
-    expect([...heldUnits(["a", "b", "c", "d"], deps, new Set(), new Set())]).toEqual([]);
-  });
-  it("ignores a dependency outside the pass: it applied in an earlier wave", () => {
-    expect([...heldUnits(["e"], deps, new Set(), new Set(["x"]))]).toEqual([]);
-  });
-});
 
 describe("changesOutputs", () => {
   it("is true when an output is created, updated or deleted, and false for no-op outputs or none", () => {
@@ -31,9 +17,9 @@ describe("changesOutputs", () => {
 });
 
 /**
- * A Terragrunt that knows two units: live/a, and live/b, which reads it. A
- * unit plans a create until it applied, and live/a's create makes its output.
- * `calls` keeps every `run --all` it was asked for.
+ * A Terragrunt that knows two units: live/a, and live/b, which reads it, so
+ * two dependency layers. A unit plans a create until it applied, and live/a's
+ * create makes its output. `calls` keeps every `run --all` it was asked for.
  */
 function fakeTerragrunt(): { exec: TerragruntExec; applied: Set<string>; calls: string[][] } {
   const applied = new Set<string>();
@@ -103,34 +89,38 @@ describe("a Terragrunt wave behind its gate", () => {
 
   const ledger = (origin: string) => parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
 
-  it("waits for an approval of the units that can apply now, applies their saved plans, then waits again for the unit that reads them", async () => {
+  const opts = (tg: ReturnType<typeof fakeTerragrunt>, gate: "always" | "never" = "always") =>
+    ({ layers: [["live/a"], ["live/b"]], binary: "tofu", gate, env: {}, terragrunt: true, terragruntExec: tg.exec });
+  /** The units each `run --all` was asked to plan or apply, in order. */
+  const runs = (tg: ReturnType<typeof fakeTerragrunt>): string[] =>
+    tg.calls.map((c) => `${c[c.indexOf("--") + 1]} ${c.flatMap((a, i) => (c[i - 1] === "--filter" ? [/^\{\.\/(.+)\}$/.exec(a)![1]] : [])).join(",")}`);
+
+  it("cuts a wave per dependency layer: each waits for an approval of its own set digest at its own gate and applies its saved plans", async () => {
     const { work, origin } = setup();
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     const tg = fakeTerragrunt();
-    const opts = { wave: 1, layers: [["live/a", "live/b"]], binary: "tofu", gate: "always" as const, env: {}, terragrunt: true, terragruntExec: tg.exec };
 
-    // live/b reads live/a, whose plan creates its output: live/b sits the pass out, and live/a waits for its approval.
-    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    // Wave 1 is live/a alone: live/b reads it, so it is the next layer and is not planned yet.
+    expect(await applyWave(work, { ...opts(tg), wave: 1, now: T(1) })).toBe(3);
     expect(tg.applied.size).toBe(0);
-    expect(ledger(origin).pending.map((p) => p.members!.map((m) => m.member))).toEqual([["live/a"]]);
-    expect(out.mock.calls.flat().join("\n")).toContain("live/b reads a unit whose outputs this pass changes");
-    const first = ledger(origin).pending[0].planDigest!;
+    expect(runs(tg)).toEqual(["plan live/a"]);
+    expect(out.mock.calls.flat().join("\n")).toContain("wave 1 of 2: planning live/a");
+    expect(ledger(origin).pending.map((p) => [p.gate, p.members!.map((m) => m.member)])).toEqual([["wave-1", ["live/a"]]]);
 
-    // Approved, live/a applies from its saved plan; live/b plans again against the applied outputs and waits for its own approval.
-    approve(origin, "wave-1", first, T(2));
-    expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
+    // Approved, live/a applies from its saved plan.
+    approve(origin, "wave-1", ledger(origin).pending[0].planDigest!, T(2));
+    expect(await applyWave(work, { ...opts(tg), wave: 1, now: T(3) })).toBe(0);
     expect([...tg.applied]).toEqual(["live/a"]);
-    const pend = ledger(origin).pending;
-    expect(pend.map((p) => p.members!.map((m) => m.member))).toEqual([["live/a"], ["live/b"]]);
-    const second = pend[1].planDigest!;
-    expect(second).not.toBe(first);
 
-    // The digest a re-run takes covers the units that change, so the approval of live/b's plan lets it apply.
-    approve(origin, "wave-1", second, T(4));
-    expect(await applyWave(work, { ...opts, now: T(5) })).toBe(0);
-    expect([...tg.applied].sort()).toEqual(["live/a", "live/b"]);
+    // Wave 2 plans live/b against what wave 1 applied and waits at its own gate.
+    expect(await applyWave(work, { ...opts(tg), wave: 2, now: T(4) })).toBe(3);
+    const pend = ledger(origin).pending;
+    expect(pend.map((p) => [p.gate, p.members!.map((m) => m.member)])).toEqual([["wave-1", ["live/a"]], ["wave-2", ["live/b"]]]);
+    approve(origin, "wave-2", pend[1].planDigest!, T(5));
+    expect(await applyWave(work, { ...opts(tg), wave: 2, now: T(6) })).toBe(0);
+    expect([...tg.applied]).toEqual(["live/a", "live/b"]);
     const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
-    expect(report.waves[0]).toMatchObject({ number: 1, roots: ["live/a", "live/b"], approval: "approved" });
+    expect(report.waves[0]).toMatchObject({ number: 2, roots: ["live/b"], approval: "approved" });
 
     // Every apply ran saved plans: no -auto-approve, and the out dir the plan wrote.
     const applies = tg.calls.filter((c) => c[c.indexOf("--") + 1] === "apply");
@@ -146,18 +136,54 @@ describe("a Terragrunt wave behind its gate", () => {
     const { work, origin } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});
     const tg = fakeTerragrunt();
-    const opts = { wave: 1, layers: [["live/a", "live/b"]], binary: "tofu", gate: "always" as const, env: {}, terragrunt: true, terragruntExec: tg.exec };
-    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    expect(await applyWave(work, { ...opts(tg), wave: 1, now: T(1) })).toBe(3);
     approve(origin, "wave-1", "jcs1-sha256:" + "0".repeat(64), T(2));
-    expect(await applyWave(work, { ...opts, now: T(3) })).toBe(4);
+    expect(await applyWave(work, { ...opts(tg), wave: 1, now: T(3) })).toBe(4);
     expect(tg.applied.size).toBe(0);
   });
 
-  it("with gate never, applies the wave pass by pass in one run", async () => {
+  it("with --rest, runs every wave from its own in order, and stops at the first that waits", async () => {
     const { work } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});
+    const never = fakeTerragrunt();
+    expect(await applyWave(work, { ...opts(never, "never"), wave: 1, rest: true, now: T(1) })).toBe(0);
+    expect(runs(never)).toEqual(["plan live/a", "apply live/a", "plan live/b", "apply live/b"]);
+
+    const { work: work2, origin } = setup();
+    const always = fakeTerragrunt();
+    expect(await applyWave(work2, { ...opts(always), wave: 1, rest: true, now: T(1) })).toBe(3);
+    expect(runs(always)).toEqual(["plan live/a"]);
+    expect(ledger(origin).pending.map((p) => p.gate)).toEqual(["wave-1"]);
+  });
+
+  it("splits a pipeline wave by the edges terragrunt find gives: a pipeline that lists one wave still applies live/a before live/b", async () => {
+    const { work } = setup();
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
     const tg = fakeTerragrunt();
-    expect(await applyWave(work, { wave: 1, layers: [["live/a", "live/b"]], binary: "tofu", gate: "never", env: {}, terragrunt: true, terragruntExec: tg.exec, now: T(1) })).toBe(0);
-    expect([...tg.applied]).toEqual(["live/a", "live/b"]);
+    expect(await applyWave(work, { ...opts(tg, "never"), layers: [["live/a", "live/b"]], wave: 1, rest: true, now: T(1) })).toBe(0);
+    expect(runs(tg)).toEqual(["plan live/a", "apply live/a", "plan live/b", "apply live/b"]);
+    expect(out.mock.calls.flat().join("\n")).toContain("Terragrunt's edges cut the pipeline's 1 wave into 2");
+  });
+
+  it("refuses a pipeline that applies a unit before what it reads, and applies nothing", async () => {
+    const { work } = setup();
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const tg = fakeTerragrunt();
+    expect(await applyWave(work, { ...opts(tg, "never"), layers: [["live/b"], ["live/a"]], wave: 1, rest: true, now: T(1) })).toBe(1);
+    expect(tg.calls).toHaveLength(0);
+    expect(out.mock.calls.flat().join("\n")).toContain("live/b reads live/a, which the pipeline applies in a later wave; run terragucci init");
+  });
+
+  it("a wave past the last one has nothing to apply", async () => {
+    const { work } = setup();
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const tg = fakeTerragrunt();
+    expect(await applyWave(work, { ...opts(tg), wave: 3, now: T(1) })).toBe(0);
+    expect(tg.calls).toHaveLength(0);
+    expect(out.mock.calls.flat().join("\n")).toContain("wave 3: this repo has 2 waves, so there is nothing to apply");
+  });
+
+  it("--rest needs --terragrunt", async () => {
+    await expect(applyWave(tmp(), { wave: 1, layers: [["a"]], binary: "tofu", gate: "never", rest: true })).rejects.toThrow(/needs --terragrunt/);
   });
 });

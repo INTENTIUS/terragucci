@@ -6,7 +6,10 @@
   "identity": {
     "gates": {
       "wave-1": {},
-      "wave-2": {}
+      "wave-2": {},
+      "wave-3": {},
+      "wave-4": {},
+      "wave-5": {}
     }
   }
 }

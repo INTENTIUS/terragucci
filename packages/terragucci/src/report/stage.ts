@@ -26,7 +26,7 @@ import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs } from "../apply";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
-import { detectTerragrunt, discoverUnits, unitWaves } from "../terragrunt";
+import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terragrunt";
 import { findIssue, ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
@@ -809,12 +809,16 @@ async function runTerragruntStage(
   const base = drift ? undefined : (options.base ?? baseRef(env));
   // Discovery gives the edges that dependents and the canary wave need.
   let units: TerragruntUnit[] | undefined;
+  let discovered = false;
   if (!options.layers || base) {
     const found = await discoverUnits(repo, { exclude: settings.terragrunt?.exclude, binary, ...tool });
     found.notes.forEach((n) => log(`note: ${n}`));
     units = found.units;
+    discovered = found.source === "terragrunt find";
   }
   let waves = options.layers ?? unitWaves(units!, canary);
+  // The pipeline's waves split by the edges terragrunt find gives now, as the apply jobs split them.
+  if (options.layers && discovered) waves = refineWaves(waves, units!);
   waves = waves.map((w) => (options.root ? w.filter((u) => globMatch(options.root!, u)) : w)).filter((w) => w.length > 0);
   if (waves.length === 0) throw new ConfigError(options.root ? `no unit matches ${options.root}` : "found no Terragrunt units");
 

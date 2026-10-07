@@ -32,20 +32,23 @@ modules/service          the module every service uses; it reads policy.json wit
 There is no `roots:` setting. `init` sees `root.hcl`, asks Terragrunt for the units and writes the pipeline; the example already has it. In your own repo run `npx terragucci init` at the root, and it prints:
 
 ```
-found Terragrunt (root.hcl): 15 units in 2 waves from terragrunt find, terragrunt 1.1.6 (the image)
+found Terragrunt (root.hcl): 15 units in 5 waves from terragrunt find, terragrunt 1.1.6 (the image)
 calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
 ```
 
-Each job plans with one `terragrunt run --all`, and a second `run --all` applies the saved plans once the gate lets it.
+Each wave is one dependency layer, the dev canary's first. Its job plans with one `terragrunt run --all`, and a second `run --all` applies the saved plans once the gate lets it.
 
 | Wave | Units | Job |
 |---|---|---|
-| 1 | the five dev units, the canary | `apply-wave-1` |
-| 2 | the other ten | `apply-wave-2` |
+| 1 | dev platform | `apply-wave-1` |
+| 2 | the four dev services, which read it | `apply-wave-2` |
+| 3 | staging and prod platform | `apply-wave-3` |
+| 4 | the staging and prod services, but prod search | `apply-wave-4` |
+| 5 | prod search, which goes out after prod orders | `apply-wave-5` |
 
-With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the two gates.
+With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the five gates.
 
-A platform applies before the services that read it. When its plan changes its outputs, its services plan again once it has applied.
+A service plans only after its platform applied, so it reads the platform's real outputs.
 
 ## The check stage
 
@@ -79,7 +82,7 @@ The `new-service` scenario adds `ledger`, which makes a bucket, and `billing`, w
 just example-terragrunt change new-service
 ```
 
-The plan job plans ledger. Billing is listed under the units planned later, because its `ledger` dependency has no outputs. Merged, wave 1 applies ledger first, then plans billing.
+The plan job plans ledger. Billing is listed under the units planned later, because its `ledger` dependency has no outputs. Merged, wave 1 applies ledger, and wave 2 plans billing on its real outputs.
 
 Billing's dependency block has no allow-list, so its mocks could stand in for `apply`. The report's tips name it `TF041`, as for `live/prod/email`.
 

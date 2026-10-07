@@ -129,7 +129,7 @@ reconcile|a control repo opens one pull request per project that changes, and th
 traces|each plan run is one trace, with a span per root and the binary spans inside it|
 metrics|the metrics of a plan run reach Prometheus with the counts in its report|
 tg-zero-config|init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits|
-tg-waves|the Terragrunt example boots, applying the canary wave before the rest with one run --all each|
+tg-waves|the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all|
 tg-check|tf-check fails an unformatted Terragrunt file and names it|
 tg-affected|only the units a change reaches are planned, including a file a module reads that Terragrunt misses|
 tg-mock-lint|a dependency whose mock_outputs can stand in for apply is named by a tip|
@@ -177,7 +177,8 @@ pr-apply-stale|a comment on an approved pull request whose head is behind the de
 tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request|
 provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
 summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
-foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|'
+foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
+tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for a sealed approval of its own set digest before it applies|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1750,13 +1751,16 @@ claim_tg_zero_config() {
 
 claim_tg_waves() {
   # Boot the example: every resource the units declare reaches floci, and the
-  # pipeline runs two wave jobs: apply-wave-1 plans and applies the 5 dev units
-  # and no other, apply-wave-2 the other 10, after it. A unit already applied
-  # plans no change and applies nothing, so the claim reads which units each
-  # wave job planned, and example-terragrunt.sh verifies the resources.
-  # BREAK: the pipeline is written with no canary, so everything is one wave.
+  # pipeline runs one job per wave, each wave a dependency layer: the dev
+  # platform, the other dev units, then the staging and prod platforms, the
+  # services that read them, and last prod search, which goes out after prod
+  # orders. A unit already applied plans no change and applies nothing, so the
+  # claim reads which units each wave job planned, and example-terragrunt.sh
+  # verifies the resources.
+  # BREAK: the pipeline is written with no canary, so dev no longer goes first
+  # and there are three waves, not five.
   log() { echo "[smoke tg-waves] $*" >&2; }
-  local work="" rc=0 logs1 logs2 w1 w2
+  local work="" rc=0 want k n pat logs line got bad
   if [ -n "${BREAK:-}" ]; then
     work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
     cp -R "$TG_EXAMPLE/." "$work/"
@@ -1769,16 +1773,24 @@ claim_tg_waves() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   if [ $rc = 0 ]; then
-    logs1="$(tg_main_job_log apply-wave-1)"
-    logs2="$(tg_main_job_log apply-wave-2)"
-    # The first line of each wave job names every unit of its wave.
-    w1="$(grep -m1 'wave 1 of 2: planning ' <<<"$logs1" | sed 's/.*: planning //' || true)"
-    w2="$(grep -m1 'wave 2 of 2: planning ' <<<"$logs2" | sed 's/.*: planning //' || true)"
-    [ "$(grep -o 'live/dev/' <<<"$w1" | wc -l | tr -d ' ')" = 5 ] && ! grep -qE 'live/(staging|prod)/' <<<"$w1" \
-      || { log "apply-wave-1 did not run the 5 dev units alone (${w1:-no wave 1 of 2})"; rc=1; }
-    [ "$(grep -oE 'live/(staging|prod)/' <<<"$w2" | wc -l | tr -d ' ')" = 10 ] && ! grep -q 'live/dev/' <<<"$w2" \
-      || { log "apply-wave-2 did not run the 10 staging and prod units (${w2:-no wave 2 of 2})"; rc=1; }
-    grep -q 'wave 1 of 2 applied' <<<"$logs1" && grep -q 'wave 2 of 2 applied' <<<"$logs2" || { log "a wave job did not end applied"; rc=1; }
+    # Each line: the wave, how many units it plans, and the pattern every one of them matches.
+    while read -r k n pat; do
+      logs="$(tg_main_job_log "apply-wave-$k")"
+      # The first line of each wave job names every unit of its wave.
+      line="$(grep -m1 "wave $k of 5: planning " <<<"$logs" | sed 's/.*: planning //' || true)"
+      got="$(tr ',' '\n' <<<"$line" | sed 's/^ *//' | grep -c . || true)"
+      bad="$(tr ',' '\n' <<<"$line" | sed 's/^ *//' | grep . | grep -vcE "^($pat)\$" || true)"
+      if [ "$got" != "$n" ] || [ "$bad" != 0 ]; then
+        log "apply-wave-$k did not plan its $n units alone (${line:-no wave $k of 5})"; rc=1
+      fi
+      grep -q "wave $k of 5 applied" <<<"$logs" || { log "apply-wave-$k did not end applied"; rc=1; }
+    done <<'WAVES'
+1 1 live/dev/platform
+2 4 live/dev/(email|orders|payments|search)
+3 2 live/(staging|prod)/platform
+4 7 live/(staging|prod)/(email|orders|payments)|live/staging/search
+5 1 live/prod/search
+WAVES
   fi
   # The BREAK run left every unit applied and main carrying the no-canary
   # pipeline: put main back. The runner runs this claim's BREAK before its plain
@@ -1788,7 +1800,7 @@ claim_tg_waves() {
     drop_work "$work"
     [ -n "${SMOKE_PLAIN_NEXT:-}" ] || tg_restore_main || true
   fi
-  [ $rc = 0 ] && log "15 units applied to floci, wave 1 the 5 dev units, then wave 2 the other 10"
+  [ $rc = 0 ] && log "15 units applied to floci in five waves, one job each: dev platform, dev services, staging and prod platforms, their services, prod search"
   return $rc
 }
 
@@ -1895,9 +1907,9 @@ claim_tg_refuse() {
 }
 
 claim_tg_mock_trap() {
-  # Merge new-service to main. Wave 1 applies ledger before billing: billing
-  # waits while ledger has no outputs and plans once ledger applied, so its
-  # state holds ledger's real bucket and no mock value. BREAK: wave 1 of the
+  # Merge new-service to main. Wave 1 applies ledger with the dev platform;
+  # billing reads ledger, so it is in wave 2 and plans once ledger applied, and
+  # its state holds ledger's real bucket and no mock value. BREAK: wave 1 of the
   # pushed pipeline applies billing and ledger with -auto-approve in place of
   # the stage, ignoring Terragrunt's order, so billing takes the mock.
   log() { echo "[smoke tg-mock-trap] $*" >&2; }
@@ -4483,6 +4495,62 @@ claim_tg_sealed() {
   return $rc
 }
 
+claim_tg_layers() {
+  # stack/fixtures/tg-three-layers: live/net, live/app after it and live/edge
+  # after app, gate: always. init writes three wave jobs and three gates. Push,
+  # then approve each wave with a sealed approval and push again: every push
+  # applies exactly one more layer, and the wave after it waits at its own
+  # gate, until all three have state and the run succeeds.
+  # BREAK: edge no longer names app, so the repo has two layers and edge goes
+  # out with app.
+  log() { echo "[smoke tg-layers] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-layers" sha applied logs rc=0 k want wf
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo tg-layers tg-three-layers || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak '/dependencies {/,/^}/d' "$work/tree/live/edge/terragrunt.hcl"
+    rm -f "$work/tree/live/edge/terragrunt.hcl.bak"
+    (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  fi
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  sha="$(push_tree "$work/tree" "$repo" main "tg-layers: first")"
+  wait_run "$repo" "$sha"
+  applied="$(tg_gated_applied tg-layers)"
+  logs="$(print_logs "$repo" "$RUN_ID")"
+  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+  [ -z "$applied" ] || { log "a unit applied before any wave was approved"; rc=1; }
+  grep -q "wave 1 of 3: planning live/net" <<<"$logs" || { log "wave 1 of 3 did not plan live/net alone"; rc=1; }
+  for k in 1 2 3; do
+    [ $rc = 0 ] || break
+    gated_approve tg-layers "$k" || { rc=1; break; }
+    sha="$(push_tree "$work/tree" "$repo" main "tg-layers: after wave $k was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(tg_gated_applied tg-layers)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after approving wave $k: run $RUN_STATUS, state for: ${applied:-nothing}"
+    case "$k" in
+      1) want="live/net " ;;
+      2) want="live/app live/net " ;;
+      3) want="live/app live/edge live/net " ;;
+    esac
+    [ "$applied" = "$want" ] || { log "expected state for $want after approving wave $k"; rc=1; }
+    if [ "$k" -lt 3 ]; then
+      grep -q "chant approve tf-apply wave-$((k + 1)) --plan" <<<"$logs" || { log "wave $((k + 1)) did not wait at its own gate"; rc=1; }
+    else
+      [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS' once every wave was approved"; rc=1; }
+    fi
+  done
+  grep -q -- "-auto-approve" <<<"$logs" && { log "a job ran an apply with -auto-approve"; rc=1; }
+  for k in 1 2 3; do
+    grep -q "^  apply-wave-$k:" "$wf" || { log "init wrote no apply-wave-$k job"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "live/net, live/app and live/edge went out in three waves, each after a sealed approval of its own digest"
+  return $rc
+}
+
 claim_tg_comment_apply() {
   # The Terragrunt gated fixture on main, where wave 1 (live/canary/one) waits.
   # A pull request changes live/canary/one and is merged; the merge commit's
@@ -4690,6 +4758,7 @@ tg-comment-apply     runner self! weight=200
 provider-calls       weight=90
 summed-timings       weight=90
 foreign-checkout     ex after=boot weight=150
+tg-layers            runner self! weight=300
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

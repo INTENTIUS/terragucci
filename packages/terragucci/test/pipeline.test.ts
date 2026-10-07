@@ -211,14 +211,16 @@ describe("the comment trigger", () => {
     const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
     expect(run).toMatch(/terragucci comment-apply --layers 'live\/dev\/a;live\/prod\/a,live\/prod\/b'( --forge forgejo)? --out /);
     expect(run).not.toContain("--canary");
-    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/dev/a;live/prod/a,live/prod/b\' --binary tofu --gate always --terragrunt');
+    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/dev/a;live/prod/a,live/prod/b\' --binary tofu --gate always --terragrunt $rest');
+    // A comment that asks for every wave runs the last with --rest, so the waves past the pipeline's jobs apply too.
+    expect(run).toContain('rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi');
     expect(run).not.toContain("-auto-approve");
     // The apply jobs' prelude: the caches and the auth provider with the apply roles, after the decision and the checkout.
     expect(run).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
     expect(run).toContain("TERRAGUCCI_PHASE=apply");
     expect(run).not.toContain("TERRAGUCCI_PHASE=plan");
     expect(run.indexOf('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(run.indexOf("TERRAGUCCI_PHASE=apply"));
-    expect(run).toContain('tg status terragucci/apply success "3 units in 2 waves applied"');
+    expect(run).toContain('tg status terragucci/apply success "every wave of units applied"');
     expect(job.steps.find((s: { uses?: string }) => s.uses?.endsWith("actions/cache@v4"))?.with.path).toBe(".terragrunt-cache");
     if (forge === "github") expect(job.permissions).toMatchObject({ contents: "write", "id-token": "write" });
   });
@@ -345,6 +347,31 @@ describe("the comment trigger", () => {
         expect(calls).toEqual(["wave 1", "wave 2", "respond wave-refused --wave 2 --approved terragucci-report/approved --current terragucci-report/current"]);
         expect(api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body).toContain("wave 2 was refused");
         expect(api.hits.filter((h) => h.url.includes("/statuses/")).at(-1)?.body.state).toBe("failure");
+      } finally {
+        api.close();
+      }
+    });
+
+    it("in a Terragrunt repo the last wave runs with --rest, and a refusal past it is answered for the wave that stopped", async () => {
+      const { work, sha } = repo();
+      const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+        terragucci: [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = comment-apply ]; then while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done; printf \'%s\\n\' "$DECISION" > "$out"; exit 0; fi',
+          'if [ "$1" = respond ]; then echo "respond ${*:2}" >> "$LOG"; exit 0; fi',
+          'echo "wave $4${*: -1:1}" | sed "s/--terragrunt$//" >> "$LOG"',
+          'if [ "$4" = 2 ]; then echo "wave 3 changed after approval: live/c" > "$TG_OUTCOME"; exit 4; fi',
+          "exit 0",
+        ].join("\n"),
+      });
+      const api = await stubApi(() => ({}));
+      try {
+        const script = commentApplyScript("tofu", [["live/a"], ["live/b"]], "github", undefined, { terragrunt: { prelude: "true" } });
+        const r = await runStep(`cd ${work} && ${script}`, { ...env, ...envFor(api.url, dir, decision({ go: true, pr: 7, sha, base: "main" })) });
+        expect(r.status, r.out).toBe(4);
+        const calls = readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n");
+        expect(calls).toEqual(["wave 1", "wave 2--rest", "respond wave-refused --wave 3 --approved terragucci-report/approved --current terragucci-report/current"]);
+        expect(api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body).toContain("wave 3 was refused");
       } finally {
         api.close();
       }
@@ -1308,8 +1335,10 @@ describe("a Terragrunt wave in the step's own shell", () => {
     expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply-wave"))).toEqual(["apply-wave-1", "apply-wave-2"]);
     expect(doc.jobs["apply-wave-2"].needs).toBe("apply-wave-1");
     const run = (j: string): string => doc.jobs[j].steps.map((st: { run?: string }) => st.run ?? "").join("\n");
-    expect(run("apply-wave-1")).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt");
-    expect(run("apply-wave-2")).toContain('tg status terragucci/apply success "3 units in 2 waves applied"');
+    expect(run("apply-wave-1")).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt 2>&1");
+    // The last job also runs any wave the repo has past the jobs, and a refusal names the wave that stopped.
+    expect(run("apply-wave-2")).toContain("terragucci stage tf-apply --wave 2 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt --rest");
+    expect(run("apply-wave-2")).toContain('tg status terragucci/apply success "every wave of units applied"');
     expect(run("apply-wave-1")).not.toContain("-auto-approve");
     // A waiting wave records its plan on chant/lifecycle. Forgejo ignores permissions:, so GitHub's job carries them.
     const gh = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/a"], ["live/prod/a", "live/prod/b"]], env: {}, gate: "always", terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content);

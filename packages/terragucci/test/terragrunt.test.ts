@@ -16,6 +16,8 @@ import {
   discoverUnits,
   parallelism,
   pinnedTerragrunt,
+  literalDependencies,
+  refineWaves,
   unitWaves,
   walkUnits,
 } from "../src/terragrunt";
@@ -162,11 +164,34 @@ describe("discovery", () => {
     expect(find).toEqual(expect.arrayContaining(["--dag", "--dependencies", "!./catalog/**", "!./live/sandbox/**"]));
   });
 
-  it("without terragrunt, the units are the terragrunt.hcl directories, with no edges, and a note says why", async () => {
+  it("without terragrunt, the units are the terragrunt.hcl directories, with the edges their files name, and a note says why", async () => {
     const found = await discoverUnits(liveRepo(), { exec: missing });
     expect(found.source).toBe("terragrunt.hcl files");
-    expect(found.units).toEqual(["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"].map((path) => ({ path, dependencies: [] })));
+    expect(found.units).toEqual([
+      { path: "live/dev/app", dependencies: ["live/dev/vpc"] },
+      { path: "live/dev/vpc", dependencies: [] },
+      { path: "live/prod/app", dependencies: ["live/prod/vpc"] },
+      { path: "live/prod/vpc", dependencies: [] },
+    ]);
     expect(found.notes[0]).toMatch(/Terragrunt discovery did not run \(.*ENOENT/);
+  });
+
+  it("reads plain-string dependency paths only: a path built with a function, a comment and a non-unit are left out", () => {
+    expect(literalDependencies([
+      'dependency "vpc" {',
+      '  config_path  = "../vpc"',
+      '  mock_outputs = { id = "mock" }',
+      "}",
+      'dependency "dns" {',
+      '  config_path = find_in_parent_folders("dns")',
+      "}",
+      '# dependency "old" { config_path = "../old" }',
+      "dependencies {",
+      '  paths = ["../iam", "${get_terragrunt_dir()}/../kms"]',
+      "}",
+    ].join("\n"))).toEqual(["../vpc", "../iam"]);
+    const repo = liveRepo({ "live/dev/app/terragrunt.hcl": unit(["vpc", "gone"]) });
+    expect(walkUnits(repo).find((u) => u.path === "live/dev/app")?.dependencies).toEqual(["live/dev/vpc"]);
   });
 
   it("a Terragrunt older than 1.1 falls back too", async () => {
@@ -187,12 +212,18 @@ describe("waves", () => {
     { path: "live/prod/app", dependencies: ["live/prod/vpc"] },
   ];
 
-  it("one wave without canaries: Terragrunt orders the units inside the run", () => {
-    expect(unitWaves(units)).toEqual([["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]]);
+  it("a wave per dependency layer: no unit of a wave reads another unit of it", () => {
+    expect(unitWaves(units)).toEqual([["live/dev/vpc", "live/prod/vpc"], ["live/dev/app", "live/prod/app"]]);
   });
 
-  it("canaries first, then the rest", () => {
-    expect(unitWaves(units, ["live/dev/**"])).toEqual([["live/dev/app", "live/dev/vpc"], ["live/prod/app", "live/prod/vpc"]]);
+  it("the canaries' layers first, then the layers of the rest", () => {
+    expect(unitWaves(units, ["live/dev/**"])).toEqual([["live/dev/vpc"], ["live/dev/app"], ["live/prod/vpc"], ["live/prod/app"]]);
+  });
+
+  it("a pipeline's waves are split by the edges discovery gives, kept in order, and refused when one reads a later wave", () => {
+    expect(refineWaves([["live/dev/vpc"], ["live/dev/app"]], units)).toEqual([["live/dev/vpc"], ["live/dev/app"]]);
+    expect(refineWaves([["live/dev/app", "live/dev/vpc"], ["live/prod/app", "live/prod/vpc"]], units)).toEqual([["live/dev/vpc"], ["live/dev/app"], ["live/prod/vpc"], ["live/prod/app"]]);
+    expect(() => refineWaves([["live/dev/app"], ["live/dev/vpc"]], units)).toThrow(/live\/dev\/app reads live\/dev\/vpc, which the pipeline applies in a later wave; run terragucci init/);
   });
 
   it("a canary that reads a unit outside the canary wave is refused", () => {
@@ -265,7 +296,7 @@ describe("init in a Terragrunt repo", () => {
     expect(r.notes.join("\n")).toMatch(/Terragrunt discovery did not run/);
   });
 
-  it("writes a pipeline that checks with hcl fmt and validate, plans through the stage, and applies each wave in its own job behind the gate", async () => {
+  it("writes a pipeline that checks with hcl fmt and validate, plans through the stage, and applies each dependency layer in its own job behind the gate", async () => {
     const repo = liveRepo({ "terragucci.yml": "binary: tofu\nwaves:\n  canary: [\"live/dev/**\"]\n" });
     const r = await init(repo, { terragrunt: "/nonexistent/terragrunt" });
     const text = r.files[0].content;
@@ -276,19 +307,24 @@ describe("init in a Terragrunt repo", () => {
     expect(check).toContain("terragrunt hcl validate --inputs --no-color --filter '!./catalog/**'");
     expect(check).toContain("terragucci check-policy");
     const plan = doc.jobs.plan.steps.at(-2).run as string;
-    expect(plan).toMatch(/terragucci stage tf-plan .*--layers 'live\/dev\/app,live\/dev\/vpc;live\/prod\/app,live\/prod\/vpc' .*--terragrunt/);
-    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2"]);
-    const apply = doc.jobs["apply-wave-1"].steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-apply")).run as string;
-    expect(apply).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/app,live/dev/vpc;live/prod/app,live/prod/vpc' --binary tofu --gate on-destroy --terragrunt");
+    const layers = "'live/dev/vpc;live/dev/app;live/prod/vpc;live/prod/app'";
+    expect(plan).toContain(`--layers ${layers}`);
+    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "apply-wave-3", "apply-wave-4"]);
+    const applyRun = (job: string): string => doc.jobs[job].steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-apply")).run as string;
+    const apply = applyRun("apply-wave-1");
+    expect(apply).toContain(`terragucci stage tf-apply --wave 1 --layers ${layers} --binary tofu --gate on-destroy --terragrunt 2>&1`);
+    expect(apply).not.toContain("--rest");
+    // The last job also runs any wave past the ones init found.
+    expect(applyRun("apply-wave-4")).toContain(`terragucci stage tf-apply --wave 4 --layers ${layers} --binary tofu --gate on-destroy --terragrunt --rest`);
     expect(apply).not.toContain("-auto-approve");
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
     // Each wave's gate is declared, so an approval of it counts only when sealed.
-    expect(JSON.parse(r.files.find((f) => f.path.endsWith("chant.workspace.json"))!.content).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
-    for (const job of ["plan", "apply-wave-1", "apply-wave-2", "apply-comment"]) {
+    expect(JSON.parse(r.files.find((f) => f.path.endsWith("chant.workspace.json"))!.content).identity.gates).toEqual({ "wave-1": {}, "wave-2": {}, "wave-3": {}, "wave-4": {} });
+    for (const job of ["plan", "apply-wave-1", "apply-wave-4", "apply-comment"]) {
       expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === "actions/cache@v4")?.with.path).toBe(".terragrunt-cache");
     }
     expect(text).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
-    expect(r.notes.join("\n")).toMatch(/canary units apply first/);
+    expect(r.notes.join("\n")).toMatch(/canary units' layers apply first/);
   });
 
   it("credentials: the jobs ask for an OIDC token and run the generated auth-provider-cmd, plan roles in plan and apply roles in apply", async () => {
@@ -491,10 +527,10 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(r.failed).toBe(true);
   });
 
-  it("with no --layers, discovery decides the units and the canary wave", async () => {
+  it("with no --layers, discovery decides the units and the waves, the canary layers first", async () => {
     const repo = liveRepo({ "terragucci.yml": 'waves:\n  canary: ["live/dev/**"]\n' });
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragruntExec: fakeTerragrunt(), env: {} }, () => {});
-    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/app", "live/dev/vpc"], ["live/prod/app", "live/prod/vpc"]]);
+    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc"], ["live/dev/app"], ["live/prod/vpc"], ["live/prod/app"]]);
     expect(r.failed).toBe(false);
   });
 
@@ -534,6 +570,14 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(r.report.roots.map((u) => u.path)).toEqual(["live/dev/vpc"]);
     expect(r.report.roots[0].terragrunt?.selection).toMatch(/live\/dev\/vpc\/terragrunt\.hcl/);
     expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: false }]);
+  });
+
+  it("against a base, the pipeline's waves are split by the edges discovery gives, as the apply jobs split them", async () => {
+    const repo = liveRepo();
+    const all = ["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"];
+    const exec = fakeTerragrunt({ affected: { selected: all, files: all.map((u) => `${u}/terragrunt.hcl`) } });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", layers: [all], terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc", "live/prod/vpc"], ["live/dev/app", "live/prod/app"]]);
   });
 });
 
@@ -639,7 +683,7 @@ describe("the Terragrunt example", () => {
     cpSync(EXAMPLE, repo, { recursive: true });
     const r = await init(repo, { dryRun: true });
     expect(r.roots).toHaveLength(15);
-    expect(r.layers.map((w) => w.length)).toEqual([5, 10]);
+    expect(r.layers.map((w) => w.length)).toEqual([1, 4, 2, 7, 1]);
     expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 
