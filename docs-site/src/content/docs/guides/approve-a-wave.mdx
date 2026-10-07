@@ -31,9 +31,9 @@ chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --sign
 
 The plan note on the pull request does not carry it. The note is made before the merge, and the digest a wave waits on is made by the job after it.
 
-In the example, merging the pull request that stops keeping records for staging email shows it. The wave that holds the destroy waits, and the run prints the command:
+In the example, `just example change destroy` opens the pull request that stops keeping records for staging email. `just example merge destroy` merges it and shows the wave waiting. The wave that holds the destroy waits, and the run prints the command:
 
-<Captured step="wave-waiting" cmd="just example merge" optional />
+<Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
 Open the wave's roots in the report linked from the run. Its Waves table lists each wave's set digest, whether it is waiting, approved or not required, and the ledger that holds its record.
 

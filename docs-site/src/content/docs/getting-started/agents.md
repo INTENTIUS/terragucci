@@ -32,7 +32,7 @@ Every page is true as written. A key that `terragucci config check` refuses is n
 3. Decide whether the repo needs a config file. With one binary and no canary preference, it needs none. Otherwise write the smallest `terragucci.yml` that corrects the defaults; [terragucci.yml keys](/terragucci/reference/config/) lists every key and its default.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
 5. Open a pull request with the config, the generated pipeline and `chant.workspace.json`, which declares the wave gates. Check `git status` first so the commit holds nothing else. The default branch is the user's to change. Applying and approving are theirs too, so the agent runs no `apply`, [`chant approve`](/terragucci/concepts/glossary/#chant) or `--mode apply`.
-6. Tell the user what they do before their first approval: install chant and add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#before-your-first-approval)). Do not add a key yourself.
+6. Tell the user what they do before their first approval: install chant and add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#before-your-first-approval)). Do not add a key yourself. The signers file has to be on the default branch before the first merge that destroys something, because the apply reads it from before the merge.
 
 ## Rules for the agent
 

@@ -23,13 +23,21 @@ That pull request drops the records table of staging email. Its note names the d
 
 <Shot step="wave-waiting" view="pull" alt="The destroy pull request's plan note, with the records table of staging email named as a destroy above everything else" optional />
 
-Open it in Forgejo and merge it, signed in with the account `just example up` printed, or merge it from the terminal. Waves 1 to 3 have nothing to change or apply on their own, and wave 4 plans the destroy and stops. Its job exits with code 3 and prints the command that approves it:
+Merge it from the terminal with `just example merge destroy`, or open it in Forgejo and merge it signed in with the account `just example up` printed. The first merge from the terminal also commits your key to `.chant/allowed_signers` on main, the file that says who may approve. `just example merge` generates that key, so the example has a signer without you setting one up. Waves 1 to 3 have nothing to change or apply on their own, and wave 4 plans the destroy and stops. Its job exits with code 3 and prints the command that approves it:
 
-<Captured step="wave-waiting" cmd="just example merge" optional />
+<Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
 <Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing chant approve tf-apply wave-4 with the plan's digest" optional />
 
-Read the wave's plans in the report first. The destroy is named on its own at the top. Then run the command the job printed from a checkout of the repo. It carries the digest the wave planned, so the approval covers those plans and no others. If `$GITHUB_ACTOR`, `$GITLAB_USER_LOGIN` and `$USER` are not your principal in the signers file, add `--actor <principal>`. `--sign` seals it with your ssh key. The approval is sealed, and the wave counts it only when your key is listed in `.chant/allowed_signers` on the default branch as it was before the merge being applied. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets that up once per repo.
+Read the wave's plans in the report first. The destroy is named on its own at the top. The job printed a [`chant approve`](/terragucci/concepts/glossary/#chant) command that carries the digest the wave planned, so the approval covers those plans and no others. In your own repo you run that command with your own key, which your team has listed in `.chant/allowed_signers`. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets that up once per repo.
+
+In the example, the listed key is the one `just example merge` generated, so run the recipe that uses it:
+
+```bash
+just example approve
+```
+
+It finds the wave the last run asked for, runs `chant approve tf-apply wave-4` from a clone of the example with that key, and prints the wave and the name it signed as. The approval is sealed, and the wave counts it only when the key is listed in `.chant/allowed_signers` on the default branch as it was before the merge being applied.
 
 Run the wave's job again on the forge. Wave 4 finds your approval and applies. The approval names the set digest of the plans you read. A plan that changes afterwards is not covered, which is the next page.
 

@@ -101,11 +101,11 @@ The plan note works without this. Approving a wave needs it, and a change that d
 1. Install [chant](/terragucci/concepts/glossary/#chant) where you approve: `npm i -D @intentius/chant`.
 2. Add your public key to `.chant/allowed_signers` through a reviewed pull request to the default branch, one line per person who approves. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) gives the format and the branch protection to set.
 
-Without a listed key, a waiting wave has nobody who can approve it.
+Without a listed key, a waiting wave has nobody who can approve it. A merge counts only the keys listed before it, so merge the signers file before the first change that destroys something.
 
 ## Next
 
-- Merge the pull request. The apply job then applies your roots in dependency order on the default branch.
+- Merge the signers file first, then this change. The apply job then runs on the default branch, in dependency order.
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/) when a change destroys something.
 - [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) to find changes made outside Terraform.
 - [Govern many repos from one place](/terragucci/guides/govern-many-repos/) once one repo works.

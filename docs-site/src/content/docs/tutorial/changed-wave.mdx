@@ -13,7 +13,7 @@ import Shot from '../../../components/Shot.astro';
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-An approval covers the plans you read and no others. To see that, start from a waiting wave. Merge `just example change destroy` so that wave 4 waits for staging email's destroy, then approve it with [chant](/terragucci/concepts/glossary/#chant) as on the previous page, `chant approve tf-apply wave-4 --plan <digest> --sign` with the digest the job printed. Before you run the wave's job again, merge `just example change module-bump`. It changes the shared module, so every root in wave 4 plans again.
+An approval covers the plans you read and no others. To see that, start from a waiting wave. Merge `just example change destroy` so that wave 4 waits for staging email's destroy, then approve it with `just example approve`, which runs [chant](/terragucci/concepts/glossary/#chant) with the example's key as on the previous page. Before you run the wave's job again, run `just example change module-bump` and `just example merge module-bump`. It changes the shared module, so every root in wave 4 plans again.
 
 <Captured step="wave-refused" optional />
 

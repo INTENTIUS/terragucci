@@ -11,7 +11,7 @@ The pipeline is made of [chant](/terragucci/concepts/glossary/#chant) stages. ch
 
 ### 1. The pull request
 
-Opening a pull request, or pushing to one, starts two jobs. `tf-check` formats and validates every root. `tf-plan` plans only the roots the change reaches, a [layer](/terragucci/concepts/glossary/#layer) at a time, with a read-only cloud identity.
+A pull request starts two jobs. `tf-check` formats and validates every root; it runs on the branch push, and on a pull request only when the pull request comes from a fork. `tf-plan` runs for the pull request itself and plans only the roots the change reaches, a [layer](/terragucci/concepts/glossary/#layer) at a time, with a read-only cloud identity.
 
 ### 2. The plan note
 
