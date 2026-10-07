@@ -408,3 +408,50 @@ describe("terragucci respond on the command line", () => {
     expect(JSON.parse(out).results.skipped).toBe("respond.rollout is off");
   });
 });
+
+describe("respond with --base: an open pull request's responses read the default branch's settings", () => {
+  const log = "Error: creating the bucket: AccessDenied\n";
+  const pr = (baseYml: string, headYml: string) => {
+    const dir = tmp();
+    git(dir, "init", "-q", "-b", "main");
+    write(dir, { "terragucci.yml": baseYml });
+    git(dir, "add", "-A");
+    git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
+    git(dir, "checkout", "-q", "-b", "pr");
+    write(dir, { "terragucci.yml": headYml });
+    git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "the pull request turns the response off");
+    return dir;
+  };
+
+  it("a pull request that turns apply-failed off still gets the base's response, and without --base its own setting holds", async () => {
+    const dir = pr("binary: tofu\n", "respond:\n  apply-failed: off\n");
+    const withBase = await respond("apply-failed", dir, { log, base: "main" });
+    expect(withBase.skipped).toBeUndefined();
+    expect(withBase.response).toBe("triage");
+    const after = await respond("apply-failed", dir, { log });
+    expect(after.skipped).toBe("respond.apply-failed is off");
+  });
+
+  it("a base the checkout does not have gives no response and says why", async () => {
+    const dir = pr("binary: tofu\n", "binary: tofu\n");
+    const r = await respond("apply-failed", dir, { log, base: "origin/gone" });
+    expect(r.skipped).toContain("origin/gone");
+    expect(r.skipped).toContain("no response");
+    expect(r.response).toBe("off");
+  });
+
+  it("the CLI takes --base", async () => {
+    const dir = pr("binary: tofu\n", "respond:\n  apply-failed: off\n");
+    writeFileSync(join(dir, "apply.log"), log);
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const prev = process.cwd();
+    process.chdir(dir);
+    try {
+      expect(await main(["respond", "apply-failed", "--log", "apply.log", "--base", "main"])).toBe(0);
+      expect(out.mock.calls.flat().join("\n")).not.toContain("respond.apply-failed is off");
+    } finally {
+      process.chdir(prev);
+      out.mockRestore();
+    }
+  });
+});
