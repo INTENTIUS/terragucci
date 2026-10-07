@@ -138,6 +138,14 @@ site:
 site-dev:
     cd docs-site && npm install && npm run dev
 
+[doc("Serve the docs with hot reload and open them in the browser, at /terragucci/ as on Pages.")]
+docs:
+    cd docs-site && npm install && npm run dev -- --open
+
+[doc("Build the docs the way CI does, then serve that build and open it: the site as Pages serves it.")]
+docs-preview: site
+    cd docs-site && npm run preview -- --open
+
 # ── local validation ───────────────────────────────────────────────────────
 # A real forge, a real runner and floci on one Docker network; see
 # stack/README.md. Each target skips with a message when Docker is not there.
