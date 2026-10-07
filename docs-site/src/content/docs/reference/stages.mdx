@@ -18,13 +18,7 @@ Every stage takes the root directories and the binary.
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | done |
-| 1 | one or more projects or roots failed |
-| 2 | a usage or config error |
-| 3 | waiting on an approval, or on a rollout's pull request |
-| 4 | a wave's plans changed after its approval, so `tf-apply` applied nothing |
+Stages exit with the codes on [the CLI page](/terragucci/reference/cli/#exit-codes). A stage exits 3 while a wave waits for an approval and 4 when a wave's plans changed after its approval, so it applied nothing.
 
 ## Check
 
