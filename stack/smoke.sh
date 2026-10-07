@@ -165,7 +165,8 @@ tg-spans|the plan of each Terragrunt unit sends its spans to the report through 
 oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
 comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
 comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|
-wave-report|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|'
+wave-report|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|
+policy-delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -3904,6 +3905,57 @@ YML
   return "$rc"
 }
 
+claim_policy_delete_key() {
+  # The base turns policy on: a Rego rule denying terraform_data, and the
+  # policy key in terragucci.yml. The change under test adds a root planning a
+  # terraform_data resource and deletes the policy key, so the checkout has no
+  # policy at all. tf-plan must still exit 1 and fail that root, because the
+  # base branch decides whether policy runs, and the report must say the
+  # policy was read from the base. BREAK: the base never turns policy on (the
+  # directory is there, the key is not), so nothing checks the plan and it
+  # passes.
+  log() { echo "[smoke policy-delete-key] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work tree rc=0 run=0 r root=envs/dev/policy-unkeyed edit
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  cp -R "$EXAMPLE/." "$tree/"
+  mkdir -p "$tree/policy"
+  printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  some rc in input.resource_changes\n  rc.type == "terraform_data"\n  msg := sprintf("%%s: terraform_data is not allowed here", [rc.address])\n}\n' > "$tree/policy/plan.rego"
+  [ -z "${BREAK:-}" ] && printf 'policy:\n  engine: conftest\n  path: policy\n' >> "$tree/terragucci.yml"
+  edit="mkdir -p $root
+cat > $root/main.tf <<'TF'
+terraform {
+  required_version = \"~> 1.13.0\"
+
+  backend \"s3\" {
+    bucket         = \"shop-terraform-state\"
+    key            = \"envs/dev/policy-unkeyed.tfstate\"
+    region         = \"us-east-1\"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+resource \"terraform_data\" \"probe\" {
+  input = 1
+}
+TF
+awk '/^policy:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv terragucci.yml.new terragucci.yml"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  REPORT_TREE="$tree" REPORT_BASE=1 REPORT_EDIT="$edit" report_run "$work" || run=$?
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; drop_work "$tree"; return 1; }
+  if grep -q '^policy:' "$work/terragucci.yml"; then log "the change did not delete the policy key"; rc=1; fi
+  [ "$run" = 1 ] || { log "the plan job exited $run, not 1: deleting the policy key waived the check"; rc=1; }
+  jq -e --arg n "$root" '.roots[] | select(.path == $n and .status == "failed" and .policy.result == "denied")' "$r" >/dev/null || { log "$root is not failed with policy.result denied in the report"; rc=1; }
+  jq -e '.policy.from == "base"' "$r" >/dev/null || { log "the report does not say the policy was read from the base"; rc=1; }
+  grep -q "terraform_data.probe: terraform_data is not allowed here" "$work/terragucci-report/note.md" || { log "the note does not name the violation"; rc=1; }
+  drop_work "$work"; drop_work "$tree"
+  [ $rc = 0 ] && log "the change deleted the policy key, yet conftest denied terraform_data under the base policy and $root failed the plan job"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -4017,6 +4069,7 @@ oidc-clouds          weight=20
 comment-apply        runner self! weight=200
 comment-agent        runner self! weight=200
 wave-report     weight=120
+policy-delete-key    ex after=boot weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

@@ -49,7 +49,7 @@ import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { S3Client, s3FromEnv } from "./report/s3";
-import { checkPlans, type PolicyOptions } from "./report/policy";
+import { checkPlans, governingPolicy, type PolicyOptions } from "./report/policy";
 import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
 import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
@@ -496,11 +496,14 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     return EXIT.failed;
   }
   // Policy is opt-in. A wave whose plans the policy denies, or that it cannot check, applies nothing and records no approval to wait for.
-  if (settings.policy) {
-    const env = options.env ?? process.env;
-    const base = options.base ?? (env.TG_BASE || undefined);
-    const runAt = runFacts(repo, env, settings.forge);
-    const found = await checkPlans(repo, settings.policy, planned.map((p) => ({ path: p.root, plan: p.plan })), base, configPath ? { config: configPath } : {}, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
+  // With a base, the base's policy key decides whether it runs, as in tf-plan.
+  const policyEnv = options.env ?? process.env;
+  const policyBaseRef = options.base ?? (policyEnv.TG_BASE || undefined);
+  const governing = await governingPolicy(repo, settings.policy, policyBaseRef, configPath ? { config: configPath } : {});
+  if (governing.note) console.log(governing.note);
+  if (governing.policy) {
+    const runAt = runFacts(repo, policyEnv, settings.forge);
+    const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
     const denied = found.failed;
     w.policy = found.policy;
     for (const p of planned) {

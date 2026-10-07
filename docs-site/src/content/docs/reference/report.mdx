@@ -107,7 +107,7 @@ Approvals stay on your repo's `chant/lifecycle` branch. The report links to each
 
 ## Sensitive values
 
-`show -json` prints sensitive values in plain text. Before a plan is kept, every value the plan marks sensitive is replaced with `(sensitive, redacted by terragucci)`, and so is the default of every sensitive variable. The report page says how many were replaced. Plan digests are taken before that, inside the job, so an approval binds the plan as it was planned.
+`show -json` prints sensitive values in plain text. Before a plan is kept, every value the plan marks sensitive is replaced with `(sensitive, redacted by terragucci)`, and so is the default of every sensitive variable. The report page says how many were replaced. A [policy](/terragucci/reference/policy/) reads the unredacted plan, and the same values are replaced in its denials and warnings before they reach the report, the note or the log. Plan digests are taken before that, inside the job, so an approval binds the plan as it was planned.
 
 A change to a write-only attribute's version (`*_wo_version`) is labelled as such, since the value itself is never in the plan. Ephemeral values last only as long as the run and are not reported as changes. Imports and forgets are named on their own and never counted as destroys; a forget leaves the resource running.
 

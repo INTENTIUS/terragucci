@@ -40,7 +40,7 @@ Warnings print and fail nothing. A failing root does not stop the next, so one r
 
 With `binary: choudoufu`, `choudoufu live-check -json` runs after `validate`. Each refusal prints with its rule, reason, resource types and sites, and a non-zero exit fails the check.
 
-With [`policy`](/terragucci/reference/policy/) set, the last step runs the policy's own tests: `conftest verify` for the `conftest` engine, `opa test` for `opa`. A failing test fails the check and its output is in the log. A policy directory with no `*_test.rego` file is skipped with a note. The tests come from the default branch, or from the pull request's target, so a change cannot edit its own tests away.
+With [`policy`](/terragucci/reference/policy/) set, the last step runs the policy's own tests: `conftest verify` for the `conftest` engine, `opa test` for `opa`. A failing test fails the check and its output is in the log. A policy directory with no `*_test.rego` file is skipped with a note. The tests, and the `policy` key that turns them on, come from the default branch, or from the pull request's target, so a change cannot edit its own tests away or skip them by deleting the key.
 
 The log is also written to `terragucci-check/report.md`. The job keeps that file as an artifact, and GitHub and Forgejo show it in the run summary. A Terragrunt repo runs `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs` in place of the per-root steps.
 

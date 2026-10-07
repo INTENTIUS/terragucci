@@ -10,17 +10,25 @@
  * respond mode or an agent setting, and a policy that cannot run (no engine,
  * a policy that does not compile) fails the root too, so no path waives it.
  * A pull request's plan reads the policy, and the `policy:` key (a `.ts`
- * config folded at the base), from the base branch (`trustedPolicy`), so a change that edits the policy cannot
+ * config folded at the base), from the base branch (`governingPolicy`,
+ * `trustedPolicy`), so a change that edits or deletes the policy cannot
  * waive its own violation. `tf-apply` applies the same check to a wave's
  * plans, with the policy of the checkout it runs from (main) or of TG_BASE.
+ *
+ * A namespace that names no package fails the root by name. Denial and
+ * warning messages have the plan's sensitive values replaced, as the stored
+ * plan does. With `input: hcp`, a `policies.hcl` in the policy directory is
+ * read as HCP Terraform reads it: each policy's query, and its enforcement
+ * level (advisory policies warn, mandatory ones deny).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { loadConfig, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings } from "../config";
-import type { ReportPolicy, ReportRootPolicy } from "./schema";
+import { CONFIG_NAMES, loadConfig, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings } from "../config";
+import { redactPlan } from "./redact";
+import { REDACTED, type ReportPolicy, type ReportRootPolicy } from "./schema";
 
 /** What one run of an engine printed and how it exited. */
 export interface PolicyRun {
@@ -180,9 +188,17 @@ function packageFindings(doc: Record<string, unknown>, out: PolicyFindings, nest
  * (`data.<namespace>`), so its value holds every rule: `deny`, `violation`
  * and `deny_*` fail the root, `warn` and `warn_*` are advice, as conftest
  * counts them. An array value is read as a deny set. No result means the
- * package is empty: no denial.
+ * package has no rule that holds: no denial. `checkPlans` has already
+ * failed the root when the namespace names no package at all.
  */
 export function opaFindings(stdout: string, nested = false): PolicyFindings | undefined {
+  const answer = opaAnswer(stdout);
+  if (answer === undefined) return undefined;
+  return answer.value === undefined ? { violations: [], warnings: [] } : findingsOf(answer.value, nested);
+}
+
+/** The value of an `opa eval` JSON result's query: `{}` when the query is undefined, `undefined` when the output is not a result. */
+export function opaAnswer(stdout: string): { value?: unknown } | undefined {
   let parsed: { result?: { expressions?: { value?: unknown }[] }[]; errors?: unknown };
   try {
     parsed = JSON.parse(stdout);
@@ -191,7 +207,11 @@ export function opaFindings(stdout: string, nested = false): PolicyFindings | un
   }
   if (parsed === null || typeof parsed !== "object" || parsed.errors !== undefined) return undefined;
   const value = parsed.result?.[0]?.expressions?.[0]?.value;
-  if (value === undefined) return { violations: [], warnings: [] };
+  return value === undefined ? {} : { value };
+}
+
+/** The findings in a query's value: an array is a deny set, an object is a package's rules. */
+function findingsOf(value: unknown, nested: boolean): PolicyFindings | undefined {
   if (Array.isArray(value)) return { violations: value.map(messageOf), warnings: [] };
   if (value === null || typeof value !== "object") return undefined;
   const out: PolicyFindings = { violations: [], warnings: [] };
@@ -271,6 +291,65 @@ export function opaNamespace(policy: PolicySettings): string {
   return policy.namespace ?? (policy.input === "hcp" ? "terraform.policies" : "main");
 }
 
+/** One `policy` block of an HCP Terraform `policies.hcl`. */
+export interface HcpPolicy {
+  name: string;
+  /** The Rego query, such as `data.terraform.policies.public_buckets.deny`. */
+  query: string;
+  /** `advisory` (HCP's default) warns; `mandatory` denies. */
+  level: "advisory" | "mandatory";
+}
+
+/** The file HCP Terraform reads a policy set's policies and enforcement levels from. */
+export const HCP_POLICY_FILE = "policies.hcl";
+
+/**
+ * The policies an HCP Terraform `policies.hcl` declares: each `policy "<name>"`
+ * block's `query` and `enforcement_level`. A string is the reason the file
+ * cannot be read, which fails the root; `undefined` means there is no file.
+ */
+export function hcpPolicySet(dir: string): HcpPolicy[] | string | undefined {
+  const file = join(dir, HCP_POLICY_FILE);
+  if (!existsSync(file)) return undefined;
+  const text = readFileSync(file, "utf-8").replace(/^\s*(#|\/\/).*$/gm, "");
+  const out: HcpPolicy[] = [];
+  for (const m of text.matchAll(/policy\s+"([^"]+)"\s*\{([^}]*)\}/g)) {
+    const attrs = Object.fromEntries([...m[2].matchAll(/([A-Za-z_]+)\s*=\s*"((?:[^"\\]|\\.)*)"/g)].map((a) => [a[1], a[2].replace(/\\(.)/g, "$1")]));
+    if (!attrs.query) return `${HCP_POLICY_FILE}: policy "${m[1]}" has no query`;
+    const level = attrs.enforcement_level ?? "advisory";
+    if (level !== "advisory" && level !== "mandatory") return `${HCP_POLICY_FILE}: policy "${m[1]}" has enforcement_level ${level}; HCP Terraform reads advisory or mandatory`;
+    out.push({ name: m[1], query: attrs.query, level });
+  }
+  if (out.length === 0) return `${HCP_POLICY_FILE} declares no policy block`;
+  return out;
+}
+
+/** The policies of a `policies.hcl` that a check runs: every one, or those whose query is inside `namespace`. */
+function hcpPoliciesToRun(set: HcpPolicy[], namespace: string | undefined): HcpPolicy[] {
+  if (namespace === undefined) return set;
+  const prefix = `data.${namespace}`;
+  return set.filter((p) => p.query === prefix || p.query.startsWith(`${prefix}.`));
+}
+
+/** Run each policy of a `policies.hcl` by its own query: a mandatory policy's messages deny, an advisory one's warn. */
+async function checkHcpSet(binary: string, set: HcpPolicy[], policy: PolicySettings, path: string, file: string, repo: string, exec: PolicyExec): Promise<PolicyVerdict> {
+  const run = hcpPoliciesToRun(set, policy.namespace);
+  if (run.length === 0) return { violations: [], error: `no policy in ${HCP_POLICY_FILE} has a query under data.${policy.namespace}` };
+  const out: PolicyFindings = { violations: [], warnings: [] };
+  for (const p of run) {
+    const r = await exec(binary, ["eval", "--format", "json", "--data", path, "--input", file, p.query], repo);
+    const answer = opaAnswer(r.stdout);
+    if (answer === undefined) return { violations: [], error: `opa gave no verdict for policy ${p.name} (exit ${r.status}): ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ")}` };
+    if (answer.value === undefined) return { violations: [], error: `policy ${p.name}: its query ${p.query} matches no rule` };
+    const found = findingsOf(answer.value, true);
+    if (found === undefined) return { violations: [], error: `policy ${p.name}: its query ${p.query} gives ${JSON.stringify(answer.value)}, not a set of messages` };
+    // HCP reads the query's messages as the policy's result, whatever the rule is named; the level decides what they do.
+    const messages = [...found.violations, ...found.warnings].map((m) => `${p.name}: ${m}`);
+    (p.level === "mandatory" ? out.violations : out.warnings).push(...messages);
+  }
+  return { violations: out.violations, ...(out.warnings.length > 0 ? { warnings: out.warnings } : {}) };
+}
+
 /** Check one plan. `planJson` is the unredacted `show -json` text; `context` fills `input.run` with `input: hcp`. */
 export async function checkPlan(binary: string, policy: PolicySettings, repo: string, planJson: string, options: PolicyOptions = {}, context?: PolicyRunContext): Promise<PolicyVerdict> {
   const exec = options.exec ?? defaultPolicyExec;
@@ -281,6 +360,12 @@ export async function checkPlan(binary: string, policy: PolicySettings, repo: st
   try {
     writeFileSync(file, policyInput(policy, planJson, context));
     const opa = engine === "opa";
+    // An HCP policy set's policies.hcl names each policy's query and enforcement level; opa runs them as HCP does.
+    if (opa && policy.input === "hcp") {
+      const set = hcpPolicySet(path);
+      if (typeof set === "string") return { violations: [], error: set };
+      if (set) return await checkHcpSet(binary, set, policy, path, file, repo, exec);
+    }
     const r = await exec(binary, policyArgs(policy, path, file), repo);
     // With input: hcp and no namespace, every package under terraform.policies is one policy of the set.
     const found = opa ? opaFindings(r.stdout, policy.input === "hcp" && policy.namespace === undefined) : conftestFindings(r.stdout);
@@ -303,6 +388,93 @@ export function describeVerdict(engine: string, v: PolicyVerdict): string {
 export function rootPolicy(v: PolicyVerdict): ReportRootPolicy {
   const result = v.error !== undefined ? "error" : v.violations.length > 0 ? "denied" : "passed";
   return { result, denials: v.violations, warnings: v.warnings ?? [], ...(v.error !== undefined ? { error: v.error } : {}) };
+}
+
+/** Every `.rego` file under `dir` that is not a test, with its text. */
+function regoFiles(dir: string): { file: string; text: string }[] {
+  const out: { file: string; text: string }[] = [];
+  const walk = (d: string) => {
+    for (const name of readdirSync(d).sort()) {
+      const p = join(d, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (name.endsWith(".rego") && !name.endsWith("_test.rego")) out.push({ file: p, text: readFileSync(p, "utf-8") });
+    }
+  };
+  if (existsSync(dir) && statSync(dir).isDirectory()) walk(dir);
+  return out;
+}
+
+/** A rule head that counts: `deny`, `violation`, `warn` and their `_<name>` forms, at the start of a line. */
+const COUNTED_HEAD = /^\s*(?:default\s+)?(deny|violation|warn)(_[A-Za-z0-9]+)*\b/m;
+
+/**
+ * Why the namespace the engine reads matches nothing: no Rego file under
+ * `dir` declares that package (a child package too, for opa's HCP default),
+ * or none of its files has a `deny`, `violation` or `warn` rule. Undefined
+ * when it matches, when conftest reads every namespace, or when a package
+ * name is written in a form this does not parse. `shown` names the
+ * directory in the message.
+ */
+export function namespaceProblem(policy: PolicySettings, dir: string, shown: string): string | undefined {
+  const engine = policy.engine ?? "conftest";
+  if (engine === "conftest" && policy.namespace === undefined) return undefined;
+  if (engine === "opa" && policy.input === "hcp" && existsSync(join(dir, HCP_POLICY_FILE))) return undefined;
+  const target = engine === "opa" ? opaNamespace(policy) : policy.namespace!;
+  const nested = engine === "opa" && policy.input === "hcp" && policy.namespace === undefined;
+  const packages = new Map<string, boolean>();
+  for (const { text } of regoFiles(dir)) {
+    const m = /^\s*package\s+(\S+)/m.exec(text);
+    if (!m) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(m[1])) return undefined;
+    packages.set(m[1], (packages.get(m[1]) ?? false) || COUNTED_HEAD.test(text));
+  }
+  const matched = [...packages.keys()].filter((p) => p === target || (nested && p.startsWith(`${target}.`)));
+  const named = nested ? `package ${target} or a package under it` : `package ${target}`;
+  const known = packages.size > 0 ? ` (the packages there: ${[...packages.keys()].sort().join(", ")})` : "";
+  if (matched.length === 0) return `the namespace ${target} matches no policy: no Rego file in ${shown} declares ${named}${known}`;
+  if (!matched.some((p) => packages.get(p))) return `the namespace ${target} matches no rule: ${named} in ${shown} has no deny, violation or warn rule`;
+  return undefined;
+}
+
+/** Every sensitive value in a plan, as text, longest first: what `redactPlan` replaces. */
+export function sensitiveTexts(plan: unknown): string[] {
+  const found = new Set<string>();
+  const leaves = (v: unknown) => {
+    if (typeof v === "string") {
+      if (v !== "") found.add(v);
+    } else if (typeof v === "number") {
+      found.add(String(v));
+    } else if (v !== null && typeof v === "object") {
+      found.add(JSON.stringify(v));
+      for (const c of Object.values(v)) leaves(c);
+    }
+  };
+  const walk = (orig: unknown, red: unknown) => {
+    if (red === REDACTED && orig !== REDACTED) return leaves(orig);
+    if (orig === null || typeof orig !== "object" || red === null || typeof red !== "object") return;
+    for (const k of Object.keys(orig)) walk((orig as Record<string, unknown>)[k], (red as Record<string, unknown>)[k]);
+  };
+  walk(plan, redactPlan(plan).plan);
+  return [...found].sort((a, b) => b.length - a.length);
+}
+
+/** `text` with every sensitive value replaced, as the stored plan has it. */
+export function redactText(text: string, secrets: string[]): string {
+  let out = text;
+  for (const s of secrets) if (out.includes(s)) out = out.split(s).join(REDACTED);
+  return out;
+}
+
+/** A verdict whose messages carry no sensitive value of the plan it judged. */
+export function redactVerdict(v: PolicyVerdict, plan: unknown): PolicyVerdict {
+  const secrets = sensitiveTexts(plan);
+  if (secrets.length === 0) return v;
+  const clean = (m: string) => redactText(m, secrets);
+  return {
+    violations: v.violations.map(clean),
+    ...(v.warnings ? { warnings: v.warnings.map(clean) } : {}),
+    ...(v.error !== undefined ? { error: clean(v.error) } : {}),
+  };
 }
 
 /** Whether the policy path exists in the repo, so a typo fails loudly and not as a pass. */
@@ -373,6 +545,94 @@ export interface TrustedOptions {
   project?: string;
 }
 
+/** What the base branch's config says about policy. */
+type BaseConfig =
+  /** The base has no config file (or no ref by that name, `missing`): nothing was in force there that terragucci can read. */
+  | { kind: "none"; missing?: string }
+  /** The config at the base, read: its `policy:` key, if any. */
+  | { kind: "read"; policy?: PolicySettings }
+  /** The config is there and cannot be read. `mentions` is whether its text names `policy` at all. */
+  | { kind: "error"; error: string; mentions: boolean };
+
+/**
+ * The config file's path at the base: the one the run reads, else the first
+ * of CONFIG_NAMES beside it that the base has, since a pull request may
+ * delete or rename it. Undefined when the base has none.
+ */
+function baseConfigPath(repo: string, base: string, options: TrustedOptions): string | undefined {
+  const rel = options.config ? relative(repo, options.config) : undefined;
+  const dir = rel ? dirname(rel) : ".";
+  const candidates = [...(rel ? [rel] : []), ...CONFIG_NAMES.map((n) => (dir === "." ? n : `${dir}/${n}`))];
+  return candidates.find((c) => gitOut(repo, ["cat-file", "-e", `${base}:./${c}`]).status === 0);
+}
+
+/** Read the config at `base` and take its `policy:` key, folding a `.ts` config from the base's own files. */
+async function readBaseConfig(repo: string, base: string, options: TrustedOptions): Promise<BaseConfig> {
+  if (gitOut(repo, ["rev-parse", "--verify", "--quiet", `${base}^{commit}`]).status !== 0) return { kind: "none", missing: `${base} is not a commit in this checkout` };
+  const rel = baseConfigPath(repo, base, options);
+  if (rel === undefined) return { kind: "none" };
+  const shown = gitOut(repo, ["show", `${base}:./${rel}`]);
+  if (shown.status !== 0) {
+    // No config file at the base: nothing was in force there.
+    if (/exists on disk, but not in|does not exist in|path .* does not exist/.test(shown.stderr)) return { kind: "none" };
+    return { kind: "error", error: `could not read ${rel} at ${base}: ${shown.stderr.trim().split("\n")[0]}`, mentions: true };
+  }
+  const dir = mkdtempSync(join(tmpdir(), "terragucci-baseconfig-"));
+  let text = shown.stdout;
+  try {
+    const file = join(dir, rel.split("/").pop()!);
+    if (/\.ts$/.test(rel)) {
+      // A TypeScript config is folded, never run, from the base's own files: every .ts file beside it, as the folder reads them at the checkout.
+      const copied = exportSiblingsTs(repo, base, rel, dir);
+      if (typeof copied === "string") return { kind: "error", error: `could not read ${rel} at ${base}: ${copied}`, mentions: true };
+      text = readdirSync(dir).map((f) => readFileSync(join(dir, f), "utf-8")).join("\n");
+    } else {
+      writeFileSync(file, shown.stdout);
+    }
+    const config = await loadConfig(file);
+    return { kind: "read", policy: (options.project ? resolveProject(config, options.project) : resolveRepo(config)).policy };
+  } catch (e) {
+    return { kind: "error", error: `could not read the config at ${base}: ${(e as Error).message}`, mentions: /\bpolicy\b/.test(text) };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Which `policy:` key governs a run, and the trust options that read it again for the check. */
+export interface GoverningPolicy {
+  /** The settings to check with; undefined when no policy is in force. */
+  policy?: PolicySettings;
+  /** Where the key came from. */
+  from: "checkout" | "base";
+  /** The options for `checkPlans` and `trustedPolicy`: the config path at the base, when the checkout has none. */
+  trust: TrustedOptions;
+  /** A line for the log, when the base was not read. */
+  note?: string;
+}
+
+/**
+ * Whether policy runs, and with which `policy:` key. Without a base that is
+ * the checkout's key. With one, the base's key governs: a pull request that
+ * deletes or edits `policy:` is checked against the base's. A base with no
+ * key leaves the checkout's in force, since there is nothing to waive. A base
+ * whose config cannot be read keeps the check on (and `trustedPolicy` then
+ * fails every root), unless the checkout has no key and the base's config
+ * never names `policy`. A base ref the checkout does not have leaves the
+ * checkout's key, as affected-root selection does; with a key there,
+ * `trustedPolicy` fails closed on it.
+ */
+export async function governingPolicy(repo: string, checkout: PolicySettings | undefined, base: string | undefined, options: TrustedOptions = {}): Promise<GoverningPolicy> {
+  if (!base) return { ...(checkout ? { policy: checkout } : {}), from: "checkout", trust: options };
+  const rel = baseConfigPath(repo, base, options);
+  const trust = rel ? { ...options, config: join(repo, rel) } : options;
+  const read = await readBaseConfig(repo, base, trust);
+  const own = { ...(checkout ? { policy: checkout } : {}), from: "checkout" as const, trust };
+  if (read.kind === "none") return read.missing && !checkout ? { ...own, note: `policy: ${read.missing}, so the policy key is read from this checkout` } : own;
+  if (read.kind === "read") return read.policy ? { policy: read.policy, from: "base", trust } : own;
+  if (checkout || read.mentions) return { policy: checkout ?? {}, from: "checkout", trust };
+  return { ...own, note: `policy: ${read.error}; it never names policy, so no policy was in force there` };
+}
+
 /**
  * The policy a plan is checked against. Without a base (a push to main, a
  * schedule) that is the checkout's. With one (a pull request's target branch)
@@ -387,30 +647,11 @@ export async function trustedPolicy(repo: string, checkout: PolicySettings, base
   if (!base) return own;
   let atBase: PolicySettings | undefined = checkout;
   if (options.config) {
-    const rel = relative(repo, options.config);
-    const shown = gitOut(repo, ["show", `${base}:./${rel}`]);
-    if (shown.status !== 0) {
-      // No config file at the base: nothing was in force there.
-      if (/exists on disk, but not in|does not exist in|path .* does not exist/.test(shown.stderr)) return own;
-      return { ...own, error: `could not read ${rel} at ${base}: ${shown.stderr.trim().split("\n")[0]}` };
-    }
-    const dir = mkdtempSync(join(tmpdir(), "terragucci-baseconfig-"));
-    try {
-      const file = join(dir, rel.split("/").pop()!);
-      if (/\.ts$/.test(rel)) {
-        // A TypeScript config is folded, never run, from the base's own files: every .ts file beside it, as the folder reads them at the checkout.
-        const copied = exportSiblingsTs(repo, base, rel, dir);
-        if (typeof copied === "string") return { ...own, error: `could not read ${rel} at ${base}: ${copied}` };
-      } else {
-        writeFileSync(file, shown.stdout);
-      }
-      const config = await loadConfig(file);
-      atBase = (options.project ? resolveProject(config, options.project) : resolveRepo(config)).policy;
-    } catch (e) {
-      return { ...own, error: `could not read the config at ${base}: ${(e as Error).message}` };
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const read = await readBaseConfig(repo, base, options);
+    if (read.kind === "none" && !read.missing) return own;
+    if (read.kind === "none") return { ...own, error: `could not read the policy at ${base}: ${read.missing}` };
+    if (read.kind === "error") return { ...own, error: read.error };
+    atBase = read.policy;
   }
   if (!atBase) return own;
   const path = atBase.path ?? "policy";
@@ -476,10 +717,12 @@ export interface PolicyCheck {
 
 /**
  * Check each plan against the project's policy. A denial fails the root and
- * lists the messages; a policy that cannot be read or run fails it too;
- * warnings fail nothing. For a pull request (`base` set) the policy comes
- * from the base branch, so the change under review cannot edit it away.
- * Nothing reads a response or agent setting, so no path waives it.
+ * lists the messages; a policy that cannot be read or run fails it too, as
+ * does a namespace that names no package; warnings fail nothing.
+ * For a pull request (`base` set) the policy comes from the base branch, so
+ * the change under review cannot edit it away; `governingPolicy` decides
+ * whether it runs at all. Messages have the plan's sensitive values
+ * replaced. Nothing reads a response or agent setting, so no path waives it.
  */
 export async function checkPlans(
   repo: string,
@@ -507,7 +750,10 @@ export async function checkPlans(
   try {
     if (resolved.from === "base") log(`policy: read from ${base}, not from this checkout`);
     let binary: string | undefined;
-    let setup: string | undefined = resolved.error;
+    let setup: string | undefined = resolved.error ?? namespaceProblem(resolved.settings, resolved.dir, policy.path ?? "policy");
+    if (setup === undefined && resolved.engine === "conftest" && resolved.input === "hcp" && existsSync(join(resolved.dir, HCP_POLICY_FILE))) {
+      log(`policy: conftest does not read ${HCP_POLICY_FILE}, so every policy is mandatory; set engine: opa for its enforcement levels`);
+    }
     if (setup === undefined) {
       try {
         binary = await engineBinary(resolved.settings, repo, options);
@@ -517,9 +763,10 @@ export async function checkPlans(
     }
     let denied = 0;
     for (const item of items) {
+      // The engine reads the unredacted plan; what it prints back is redacted as the stored plan is.
       const verdict: PolicyVerdict = setup !== undefined || binary === undefined
         ? { violations: [], error: setup ?? "no engine" }
-        : await checkPlan(binary, resolved.settings, repo, JSON.stringify(item.plan), options, { ...run, root: item.path });
+        : redactVerdict(await checkPlan(binary, resolved.settings, repo, JSON.stringify(item.plan), options, { ...run, root: item.path }), item.plan);
       roots.set(item.path, rootPolicy(verdict));
       for (const w of verdict.warnings ?? []) log(`${item.path}: policy warns: ${w}`);
       if (verdict.error === undefined && verdict.violations.length === 0) {

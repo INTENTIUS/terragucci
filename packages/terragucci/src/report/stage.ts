@@ -36,7 +36,7 @@ import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditL
 import { driftOf } from "../respond/drift";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
-import { checkPlans, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
+import { checkPlans, governingPolicy, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
 import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
@@ -952,6 +952,12 @@ async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInp
   };
 }
 
+/** Where the policy key is read: the config file and the project the run reads. */
+function policyTrust(repo: string, options: StageOptions): TrustedOptions {
+  const configPath = options.config ?? findConfig(repo);
+  return { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) };
+}
+
 async function finish(
   repo: string,
   settings: ReturnType<typeof resolveRepo>,
@@ -963,11 +969,13 @@ async function finish(
   let inputs = planned;
   let policy: ReportPolicy | undefined;
   const drift = stage === "tf-drift";
-  if (!drift && settings.policy) {
-    const configPath = options.config ?? findConfig(repo);
+  // The base's policy key decides whether policy runs, so a pull request that deletes it is still checked.
+  const governing = drift ? undefined : await governingPolicy(repo, settings.policy, options.base ?? baseRef(env), policyTrust(repo, options));
+  if (governing?.note) log(governing.note);
+  if (governing?.policy) {
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
     const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
-    ({ inputs, policy } = await applyPolicy(repo, settings.policy, inputs, options.base ?? baseRef(env), { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) }, options.policy, log, run));
+    ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run));
   }
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
