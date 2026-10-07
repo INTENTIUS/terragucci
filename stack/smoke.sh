@@ -2208,6 +2208,9 @@ HCL
   fi
   if [ $rc = 0 ]; then
     digest="$(jq -rs '[.[] | select(.kind == "pending" and .gate == "wave-1")] | last | .planDigest' "$clone/_gates/tf-apply.jsonl")"
+    # The approval is stamped to the second and must be newer than the pending
+    # fact, which carries milliseconds; a person reading the plan takes longer.
+    sleep 1
     printf '%s\n' "$(jq -cn --arg d "$digest" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "smoke-approver", timestamp: $t, planDigest: $d}')" >> "$clone/_gates/tf-apply.jsonl"
     git -C "$clone" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "approve wave-1" && git -C "$clone" push -q origin chant/lifecycle || rc=1
   fi
