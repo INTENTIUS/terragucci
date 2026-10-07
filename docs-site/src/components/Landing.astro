@@ -1,9 +1,12 @@
 ---
 // The home page's two ends. `part="top"` (the default) is the wordmark, the
 // tagline, what terragucci is and the three ways in. `part="agent"` is the
-// prompt to hand a coding agent, further down the page. The prompt is the same
-// one the agents page and the README carry. The tagline is the one the README
-// and the site description use.
+// prompt to hand a coding agent, further down the page: the setup prompt from
+// src/prompts.ts, which the agents page and the README carry too. The tagline
+// is the one the README and the site description use.
+import AgentPrompt from './AgentPrompt.astro';
+import { setupPrompt } from '../prompts';
+
 interface Props {
 	part?: 'top' | 'agent';
 }
@@ -14,12 +17,6 @@ const paths = [
 	{ href: `${base}/getting-started/`, label: 'Set it up in your repo', detail: 'npm i -D @intentius/terragucci, npx terragucci init, and a plan note on your next pull request.' },
 	{ href: `${base}/getting-started/agents/`, label: 'Let your agent do it', detail: 'A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies or approves.' },
 ];
-const prompt = [
-	'Set up terragucci in this repository.',
-	'Read https://intentius.io/terragucci/llms.txt first, then',
-	'https://intentius.io/terragucci/getting-started/agents/ and follow it.',
-	'Do not apply anything. Open a pull request with the result.',
-].join('\n');
 ---
 {part === 'top' ? (
 	<section class="tg-landing not-content">
@@ -45,32 +42,9 @@ const prompt = [
 	</section>
 ) : (
 	<section class="tg-landing tg-agent not-content">
-		<figure class="agent">
-			<figcaption>
-				<span>Paste into your coding agent</span>
-				<button type="button" class="copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
-			</figcaption>
-			<pre><code>{prompt}</code></pre>
-		</figure>
+		<AgentPrompt text={setupPrompt} />
 	</section>
 )}
-
-<script>
-	for (const button of document.querySelectorAll<HTMLButtonElement>('.tg-landing .copy')) {
-		button.addEventListener('click', async () => {
-			const text = button.dataset.copy ?? '';
-			try {
-				await navigator.clipboard.writeText(text);
-				button.textContent = 'Copied';
-			} catch {
-				const code = button.closest('figure')?.querySelector('code');
-				if (code) window.getSelection()?.selectAllChildren(code);
-				button.textContent = 'Selected';
-			}
-			setTimeout(() => (button.textContent = 'Copy'), 1600);
-		});
-	}
-</script>
 
 <style>
 	.tg-landing {
@@ -90,54 +64,6 @@ const prompt = [
 		color: var(--sl-color-white);
 		/* Optical centre: the tracking adds space after the last letter. */
 		padding-left: 0.14em;
-	}
-	.agent {
-		margin: 0;
-		width: min(100%, 44rem);
-		text-align: left;
-		border: 1px solid var(--tg-rule);
-		border-radius: 0.75rem;
-		background: var(--tg-panel);
-		overflow: hidden;
-	}
-	figcaption {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 1rem;
-		padding: 0.6rem 0.9rem;
-		border-bottom: 1px solid var(--tg-rule);
-		font-size: 0.8rem;
-		color: var(--sl-color-gray-3);
-	}
-	.copy {
-		font: inherit;
-		font-weight: 500;
-		color: var(--sl-color-white);
-		background: var(--sl-color-gray-6);
-		border: 1px solid var(--tg-rule);
-		border-radius: 0.4rem;
-		padding: 0.2rem 0.7rem;
-		cursor: pointer;
-	}
-	.copy:hover {
-		border-color: var(--tg-accent);
-	}
-	pre {
-		margin: 0;
-		padding: 1rem 1.1rem;
-		overflow-x: auto;
-		font-family: var(--sl-font-mono);
-		font-size: 0.85rem;
-		line-height: 1.65;
-		color: var(--sl-color-gray-1);
-		white-space: pre;
-	}
-	@media (max-width: 40rem) {
-		pre {
-			white-space: pre-wrap;
-			overflow-wrap: anywhere;
-		}
 	}
 	.claim {
 		margin: 0;

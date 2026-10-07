@@ -2,6 +2,12 @@
 title: Approve a waiting wave
 description: Read what a wave will do, record your approval, and let the apply carry on.
 claims: [waves, sealed, comment-apply, wave-report]
+prompt: |
+  Read https://intentius.io/terragucci/guides/approve-a-wave/.
+  Find the waiting wave, summarize its report (destroys, replacements, roots)
+  and print the exact `chant approve` command with its digest for me.
+  Never run it, never sign, and never touch .chant/allowed_signers.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 import Captured from '../../../components/Captured.astro';

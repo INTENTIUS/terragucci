@@ -48,6 +48,9 @@ export default defineConfig({
 			title: 'terragucci',
 			expressiveCode: { plugins: [newlinesBetweenLines] },
 			customCss: ['./src/styles/terragucci.css'],
+			// The title gets a "Copy page as Markdown" button, an llms.txt pointer and
+			// the page's agent prompt.
+			components: { PageTitle: './src/components/PageTitle.astro' },
 			description: 'CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
