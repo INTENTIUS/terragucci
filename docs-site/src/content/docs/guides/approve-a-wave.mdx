@@ -12,7 +12,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 ## Before you start
 
-- A merge that reached the default branch, so `tf-apply` has started.
+- A wave that ran: after a merge reached the default branch, or, with [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), after `/terragucci apply` on the open pull request (on GitLab, its `apply-mr` job).
 - `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits, and the apply runs unattended. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
 - [chant](/terragucci/concepts/glossary/#chant) installed where you approve: `npm i -D @intentius/chant`.
 - Write access to the repo. What you record is a commit on its `chant/lifecycle` branch, which `chant approve` pushes from your machine with your own git credentials. [Who can push to `chant/lifecycle`](#who-can-push-to-chantlifecycle) covers how to protect that branch.
@@ -23,7 +23,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 ### 1. Find the waiting wave
 
-After a merge, each wave runs in its own job. A wave that has to wait for you stops its job with exit code 3 and prints the command to run, with the digest it planned, for example:
+After a merge, each wave runs in its own job. A wave that has to wait for you stops its job with exit code 3 and prints the command to run, with the digest it planned. When the waves run from a comment, the reply on the pull request carries the same command. For example:
 
 ```text
 chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --sign
@@ -59,13 +59,15 @@ The command writes a record that names the wave's set digest, a hash over the pl
 
 ### 4. Run the stage again
 
-Comment `/terragucci apply` on the merged pull request, on GitHub or Forgejo. The `apply-comment` job runs `tf-apply` at the merge commit and replies with a link to the run. Add `wave-2` to stop after that wave. You need write access.
+How you run it depends on [`apply.when`](/terragucci/reference/config/#apply-before-merge).
 
-The comment approves nothing. A wave with no sealed approval of the plans it makes now stays put, and the reply gives its set digest and the `chant approve ... --plan <digest> --sign` command. A wave whose plans changed since you approved is refused.
+Under the default `apply.when: merge`, comment `/terragucci apply` on the merged pull request on GitHub or Forgejo. The `apply-comment` job runs `tf-apply` at the merge commit and replies with a link to the run. Add `wave-2` to stop after that wave. You need write access. Re-running the wave's job does the same, and so does another push to the default branch. On GitLab, retry the job.
 
-Re-running the wave's job, or pushing to the default branch again, does the same; on GitLab, retry the job. The stage finds your approval and the wave goes out. It starts where it stopped and never touches a root twice. A later wave that also has to wait stops at exit code 3 with its own command.
+With `apply.when: pull-request`, comment `/terragucci apply` on the open pull request again. On GitLab, run its `apply-mr` job again. The job checks the pull request as it did the first time and runs `tf-apply` from its head. Each wave reads the gate rule and the signers file from the default branch, so a pull request cannot add a signer who approves its own apply.
 
-Tools that apply before the merge run the pull request's code with the apply role, and the comment is the approval. Here only merged code applies, and the approval is your signature over the plans' digests, so the comment can only re-run a wave you already approved. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) lists what it refuses.
+Either way the comment approves nothing. A wave with no sealed approval of the plans it makes now stays put, and the reply gives its set digest and the `chant approve ... --plan <digest> --sign` command. A wave whose plans changed since you approved is refused. Otherwise the stage finds your approval and the wave goes out. It starts where it stopped and never touches a root twice. A later wave that also has to wait stops at exit code 3 with its own command.
+
+Under `merge`, the apply role meets only merged code. Under `pull-request` it runs code nobody has merged yet, so the job also wants the forge's review. Your signature over the digests is the approval in both. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
 
 The report now shows each cleared wave as approved and links it to its record.
 

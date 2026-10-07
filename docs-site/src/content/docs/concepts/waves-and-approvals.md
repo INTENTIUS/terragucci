@@ -35,7 +35,7 @@ A waiting wave exits with code 3 and prints the approval command. A person runs 
 
 ## One apply at a time
 
-A project applies one push at a time, so waves from different pushes never interleave. [The generated pipeline](/terragucci/reference/pipeline/#one-apply-at-a-time) shows how each forge does it.
+A project applies one push at a time, so waves from different pushes never interleave. With `apply.when: pull-request`, a pull request that applies before it merges also locks each root it reaches until it merges or closes, so two open pull requests never apply the same root in turn. [The generated pipeline](/terragucci/reference/pipeline/#one-apply-at-a-time) shows how each forge does it.
 
 ## Where to go next
 

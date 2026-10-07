@@ -259,6 +259,26 @@ describe("a wave behind its gate", () => {
       expect(existsSync(log)).toBe(false);
     });
 
+    it("applied from an open pull request with --base, a signer the pull request adds does not count", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const mallory = sshKey();
+      const s = setup(base);
+      // The pull request adds mallory's key in one commit and goes on in another, so its head's first parent has the key.
+      git(s.work, "checkout", "-q", "-b", "pr");
+      write(s.work, { ".chant/allowed_signers": `${signerLine("alice", alice)}\n${signerLine("mallory", mallory)}\n` });
+      git(s.work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "add a signer");
+      git(s.work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "more");
+      const opts = { wave: 1, layers: [["a"]], binary: s.bin, gate: "always" as const, env: {}, base: "main" };
+      expect(await applyWave(s.work, { ...opts, now: T(1) })).toBe(3);
+      const digest = parseLedger(git(s.origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+      approve(s.origin, sealed(digest, "mallory", mallory));
+      expect(await applyWave(s.work, { ...opts, now: T(3) })).toBe(3);
+      expect(existsSync(s.log)).toBe(false);
+      // Read from the pull request's own history instead, the rule would take mallory's key.
+      const { base: _base, ...fromHead } = opts;
+      expect(await applyWave(s.work, { ...fromHead, now: T(3) })).toBe(0);
+    });
+
     it("a wave added after init, which identity.gates does not list, counts only a sealed approval too", async () => {
       const lines: string[] = [];
       vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
