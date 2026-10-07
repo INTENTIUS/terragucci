@@ -192,7 +192,7 @@ What differs from the Forgejo example:
 | Pin | `change pin` | not on GitLab |
 | Project | `terragucci-admin/example` | `root/example`, public, with the CI variable `GITLAB_TOKEN` |
 
-The generated jobs push to `${CI_SERVER_PROTOCOL}://oauth2:...@${CI_SERVER_FQDN}/<project>.git`, the server's own protocol, host and port. The stack's GitLab serves plain http on `gitlab:8929`; `up` also sets `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0` as project variables, a rewrite from the old https address that the jobs no longer need. The apply jobs post a commit status, `terragucci/apply`, which GitLab counts as part of the pipeline, so a pipeline whose wave waits stays "running" until the wave is retried. The script waits on the jobs, not on the pipeline's status.
+The generated jobs push to `${CI_SERVER_PROTOCOL}://oauth2:...@${CI_SERVER_FQDN}/<project>.git`, the server's own protocol, host and port. The stack's GitLab serves plain http on `gitlab:8929`, which those variables carry, so the jobs need no address rewrite. A waiting wave fails its job with exit code 3 and fails `terragucci/apply`, so the pipeline ends.
 
 #### GitLab screenshots
 
