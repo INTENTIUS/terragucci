@@ -1,18 +1,26 @@
 ---
 title: How terragucci compares
-description: terragucci beside Atlantis, HCP Terraform, Spacelift and OpenTaco, row by row, with every other product's mark sourced from its own docs.
+description: terragucci beside Atlantis, HCP Terraform, Spacelift and OpenTaco, with every other product's line sourced from its own docs.
 ---
 
-import Scorecard from '../../components/Scorecard.astro';
+import Compare from '../../components/Compare.astro';
 
-The grid sets terragucci beside the four tools teams most use to run Terraform or OpenTofu from pull requests, in three bands: review, apply and operate.
+terragucci runs as jobs in the CI you already have. This page sets it beside the four tools teams most use to run Terraform or OpenTofu from pull requests. Open an entry for what each product does; every other product's line has a numbered note linking its own docs.
 
-Other products' marks link their own docs, taking the lower mark where docs are silent; terragucci's name in their text where a forge or Terragrunt gets less.
+## Where terragucci is different
 
-<Scorecard />
+<Compare section="different" />
 
-## Reading the grid
+## What everyone does
 
-Atlantis is a server you host that applies before merge. OpenTaco runs in your CI with an orchestrator, and holds state only if you choose its state service. HCP Terraform and Spacelift are services; both put drift checks and git-kept policy on paid tiers.
+<Compare section="everyone" />
 
-terragucci adds no server; its strongest rows are the grouped note and digest-bound wave approvals. Partial rows say what it does instead.
+## Where others go further
+
+<Compare section="further" />
+
+## Notes
+
+Where a product's docs say nothing about an entry, its line says so.
+
+<Compare section="notes" />
