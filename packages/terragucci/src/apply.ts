@@ -49,7 +49,7 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { S3Client, s3FromEnv } from "./report/s3";
 import { checkPlans, type PolicyOptions } from "./report/policy";
-import type { ReportPolicy, ReportRootPolicy } from "./report/schema";
+import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
 import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
@@ -400,6 +400,9 @@ interface WaveRun {
   started?: string;
   /** The wave's policy check, when `policy` is on. */
   policy?: ReportPolicy;
+  /** The wave's gate state and the ledger that holds its record, as the report's wave row shows them. */
+  approval?: ReportWave["approval"];
+  gate?: ReportWave["gate"];
 }
 
 /**
@@ -428,7 +431,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
       return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
     }),
-    waves: [{ number: wave, roots: w.roots }],
+    waves: [{ number: wave, roots: w.roots, ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -525,7 +528,9 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   if (changes === 0) facts.nothing = true;
   // A wave with nothing to change has nothing to approve.
   const gated = changes > 0 && (gate === "always" || (gate === "on-destroy" && destroys > 0));
+  w.approval = gated ? "waiting" : "not-required";
   if (gated) {
+    w.gate = { branch: LIFECYCLE, path: LEDGER_PATH };
     const name = waveGate(wave);
     const now = options.now ?? new Date().toISOString();
     const ledger = readLedger(repo);
@@ -542,6 +547,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     const decision = decideGate(ledger, name, digest, now);
     if (decision.status === "approved") {
       console.log(`${label}: approved by ${decision.by} for this digest`);
+      w.approval = "approved";
     } else {
       const env = options.env ?? process.env;
       facts.waitingSince = decision.standing?.timestamp ?? now;

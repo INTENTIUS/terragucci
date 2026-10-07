@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 6;
+export const REPORT_MINOR = 7;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -286,8 +286,9 @@ export interface ReportWave {
   roots: string[];
   /** chant's set digest over the wave's roots' plan digests. Null when a root of it failed to plan. */
   set_digest: string | null;
+  /** A `tf-apply` wave reports its gate (minor 7): waiting until an approval of its digest stands, approved once one does, not-required when no gate binds it. Other stages say not-requested. */
   approval: "not-requested" | "waiting" | "approved" | "not-required";
-  /** Where the approval record lives. The report points at it and never copies it. */
+  /** Where the approval record lives (minor 7, on a gated `tf-apply` wave). The report points at it and never copies it. */
   gate?: { branch: string; path: string };
 }
 

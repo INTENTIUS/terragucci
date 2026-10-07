@@ -164,7 +164,8 @@ version-bump-job|with respond.version-bump: suggest, the version-bump job of the
 tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
 oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
 comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
-comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|'
+comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|
+wave-report|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2120,6 +2121,73 @@ claim_policy_wave() {
   return $rc
 }
 
+claim_wave_report() {
+  # One root that creates something, --gate always, and a bare repo for origin.
+  # The first run waits (exit 3): its report.json says the wave is waiting and
+  # names the chant/lifecycle ledger that holds the record, and report.html
+  # shows both. An approval of the pending digest is appended to the ledger, as
+  # chant approve writes it; the second run applies (exit 0) and the report
+  # says approved.
+  # BREAK: the run uses --gate never, so no wave waits and nothing is recorded.
+  log() { echo "[smoke wave-report] $*" >&2; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" gate=always code=0 rc=0 r digest clone
+  [ -n "${BREAK:-}" ] && gate=never
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/wave/gate"
+  cat >"$work/wave/gate/main.tf" <<'HCL'
+terraform {
+  backend "local" {}
+}
+
+resource "terraform_data" "report" {
+  input = "wave-report"
+}
+HCL
+  git init -q --bare "$work/origin.git"
+  git -C "$work/wave" init -q -b main
+  git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke wave-report"
+  git -C "$work/wave" remote add origin /origin.git
+  wave_run() {
+    run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage tf-apply --wave 1 --layers gate --binary tofu --gate "$gate" >&2
+  }
+  r="$work/wave/terragucci-report/report.json"
+  wave_run || code=$?
+  clean_mounted "$work/wave" "$image"
+  [ "$code" = 3 ] || { log "the first run exited $code, not 3: the wave did not wait for an approval"; rc=1; }
+  if [ $rc = 0 ]; then
+    jq -e '.waves[0] | .approval == "waiting" and .gate.branch == "chant/lifecycle" and .gate.path == "_gates/tf-apply.jsonl"' "$r" >/dev/null \
+      || { log "the waiting wave's report does not say waiting with its ledger: $(jq -c '.waves[0]' "$r")"; rc=1; }
+    grep -q "_gates/tf-apply.jsonl" "$work/wave/terragucci-report/report.html" || { log "report.html does not show the record"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    clone="$work/ledger"
+    git clone -q -b chant/lifecycle "$work/origin.git" "$clone" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    digest="$(jq -rs '[.[] | select(.kind == "pending" and .gate == "wave-1")] | last | .planDigest' "$clone/_gates/tf-apply.jsonl")"
+    printf '%s\n' "$(jq -cn --arg d "$digest" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "smoke-approver", timestamp: $t, planDigest: $d}')" >> "$clone/_gates/tf-apply.jsonl"
+    git -C "$clone" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "approve wave-1" && git -C "$clone" push -q origin chant/lifecycle || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    wave_run || code=$?
+    clean_mounted "$work/wave" "$image"
+    [ "$code" = 0 ] || { log "the second run exited $code, not 0: the approval did not let the wave apply"; rc=1; }
+    jq -e '.waves[0] | .approval == "approved" and .gate.path == "_gates/tf-apply.jsonl"' "$r" >/dev/null \
+      || { log "the applied wave's report does not say approved: $(jq -c '.waves[0]' "$r")"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the report said waiting with its ledger, then approved once the digest was approved"
+  return $rc
+}
+
 claim_forgejo_oidc() {
   # A scratch repo whose one root reads a data source that runs a probe in the
   # job: it reads the token the job wrote to $AWS_WEB_IDENTITY_TOKEN_FILE,
@@ -3948,6 +4016,7 @@ tg-spans             tg after=tg-waves weight=450
 oidc-clouds          weight=20
 comment-apply        runner self! weight=200
 comment-agent        runner self! weight=200
+wave-report     weight=120
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

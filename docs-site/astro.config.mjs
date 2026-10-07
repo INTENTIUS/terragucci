@@ -74,6 +74,7 @@ export default defineConfig({
 							items: [
 								{ label: 'Approve a waiting wave', slug: 'guides/approve-a-wave' },
 								{ label: 'Fix a refused wave', slug: 'guides/fix-a-refused-wave' },
+								{ label: 'Approvals runbook', slug: 'guides/approvals-runbook' },
 								{ label: 'Roll out a new module version', slug: 'guides/roll-out-a-module-version' },
 								{ label: 'Publish your modules', slug: 'guides/publish-modules' },
 								{ label: 'Re-plan from a comment', slug: 'guides/re-plan-from-a-comment' },
