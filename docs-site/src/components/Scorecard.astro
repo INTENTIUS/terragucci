@@ -26,17 +26,13 @@ for (const row of rows) {
 	for (const p of products) {
 		for (const source of row.cells[p.id].sources) {
 			if (!noteOf.has(source.url)) {
-				notes.push({ ...source, product: label(p) });
+				notes.push({ ...source, product: p.name });
 				noteOf.set(source.url, notes.length);
 			}
 		}
 	}
 }
 const columns = products.length + 1;
-// A product's short label, where it has one, past the column heading's title.
-function label(p: (typeof products)[number]) {
-	return p.short ?? p.name;
-}
 ---
 <section class="scorecard not-content" aria-label="How terragucci compares" style={`--sc-columns: ${columns}`}>
 	<div class="sc-bands">
@@ -56,7 +52,7 @@ function label(p: (typeof products)[number]) {
 		<div class="sc-head" aria-hidden="true">
 			<span class="sc-corner"></span>
 			<span class="sc-tool own">terragucci</span>
-			{products.map((p) => <span class="sc-tool" title={p.name}>{label(p)}</span>)}
+			{products.map((p) => <span class="sc-tool">{p.short ?? p.name}</span>)}
 		</div>
 
 		{bands.map((b) => (
@@ -75,9 +71,9 @@ function label(p: (typeof products)[number]) {
 								{products.map((p) => {
 									const c = row.cells[p.id];
 									return (
-										<span class={`sc-cell ${c.mark}`} title={`${label(p)}: ${c.text}`}>
+										<span class={`sc-cell ${c.mark}`} title={`${p.name}: ${c.text}`}>
 											<span aria-hidden="true">{glyph[c.mark]}</span>
-											<span class="sc-sr">{label(p)} {said[c.mark]};</span>
+											<span class="sc-sr">{p.name} {said[c.mark]};</span>
 										</span>
 									);
 								})}
@@ -93,7 +89,7 @@ function label(p: (typeof products)[number]) {
 									const ns = c.sources.map((s) => noteOf.get(s.url));
 									return (
 										<p>
-											<b>{label(p)}</b>
+											<b>{p.name}</b>
 											<span><span class={`sc-dot ${c.mark}`} aria-hidden="true">{glyph[c.mark]}</span> {c.text}.<sup>{ns.map((n, i) => <Fragment>{i > 0 && ','}<a href={`#note-${n}`} aria-label={`Note ${n}`}>{n}</a></Fragment>)}</sup></span>
 										</p>
 									);

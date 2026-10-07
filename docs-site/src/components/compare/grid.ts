@@ -8,7 +8,7 @@ export const products: Product[] = [
 	{ id: 'atlantis', name: 'Atlantis' },
 	{ id: 'hcp', name: 'HCP Terraform' },
 	{ id: 'spacelift', name: 'Spacelift' },
-	{ id: 'opentaco', name: 'OpenTaco (formerly Digger)', short: 'OpenTaco' },
+	{ id: 'opentaco', name: 'OpenTaco' },
 ];
 
 export const bands = [
@@ -77,9 +77,8 @@ const spacelift = {
 	pricing: { title: 'Pricing', url: 'https://spacelift.io/pricing' },
 };
 
-// OpenTaco, the project Digger became. Its pages are on docs.opentaco.dev;
-// the GitLab and Buildkite pages and the enterprise licence are only in its
-// repository.
+// OpenTaco's pages are on docs.opentaco.dev; the GitLab and Buildkite pages
+// and the enterprise licence are only in its repository.
 const opentaco = {
 	noise: { title: 'Reducing PR noise', url: 'https://docs.opentaco.dev/ce/howto/noise-reduction' },
 	include: { title: 'Include and exclude patterns', url: 'https://docs.opentaco.dev/ce/howto/include-exclude-patterns' },
