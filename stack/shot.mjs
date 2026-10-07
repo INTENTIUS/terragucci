@@ -19,6 +19,8 @@
 //        [--fit 1]           with --scroll, the picture is the element's own
 //                            height, plus 16px above and below, not --height
 //        [--style CSS]       add this CSS to the page first
+//        [--cookie NAME=VALUE] send this cookie to the page's site, such as a
+//                            signed-in session (example-gitlab.sh shot)
 //
 // It exits 0 with the picture taken even when a hook finds nothing (the step
 // or the line), and says so on stderr; it exits 1 when there is no picture.
@@ -87,6 +89,11 @@ try {
   await page("Page.enable");
   await page("Emulation.setDeviceMetricsOverride", { width: +opts.width, height: +opts.height, deviceScaleFactor: 1, mobile: false });
   await page("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: opts.scheme }] });
+  if (opts.cookie) {
+    const eq = opts.cookie.indexOf("=");
+    if (eq < 1) die("--cookie takes NAME=VALUE");
+    await page("Network.setCookie", { name: opts.cookie.slice(0, eq), value: opts.cookie.slice(eq + 1), url: opts.url });
+  }
   const loaded = event("Page.loadEventFired");
   await page("Page.navigate", { url: opts.url });
   await loaded;
@@ -103,6 +110,16 @@ try {
     // A Forgejo job page renders its jobs and steps after the load event.
     if (document.getElementById("repo-action-view")) {
       await until(() => document.querySelector(".job-step-summary, .action-view-body"));
+      await wait(500);
+    }
+    // A GitLab page (its body names the page) fills its widgets, notes and
+    // job log after the load event, each behind a spinner or a skeleton.
+    if (document.body.dataset.page) {
+      const busy = () => [...document.querySelectorAll(".gl-spinner, .gl-skeleton-loader, .animation-container")]
+        .some((e) => e.offsetParent !== null);
+      await wait(1000);
+      await until(() => !busy(), 30000);
+      if (busy()) notes.push("a GitLab widget was still loading");
       await wait(500);
     }
     if (hide || style) {
