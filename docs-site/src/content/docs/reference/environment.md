@@ -124,6 +124,7 @@ terragucci reads the standard OpenTelemetry variables, and `TRACEPARENT` to join
 | `TG_BASE` | the ref a pull request's policy is read from, such as `origin/main`; set it to read the policy from another ref when you run `check` or `stage tf-apply` by hand. Otherwise the pull request's target branch is used |
 | `TG_BRANCH` | the default branch's name; the generated jobs set it, and a push to any other branch reads its policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` | the pull request number, the commit, and the pull request's head branch; the generated jobs set them, and the same commands take them from your environment when you run them by hand |
+| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` | read by `chant approve` on the approver's machine, in that order, to name the approver when `--actor` is not given; a waiting wave's log says so. The name must be a principal in `.chant/allowed_signers` for the seal to count |
 | `env:` in the config | variables every job gets; values only, never secrets |
 
 ## Variables the forge provides
