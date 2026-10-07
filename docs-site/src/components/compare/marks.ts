@@ -31,8 +31,8 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	'apply-when': {
 		mark: 'warn',
-		text: 'Applies after merge, from the push to the default branch or a /terragucci apply comment on the merged pull request',
-		page: 'reference/pipeline/',
+		text: 'Both, set per project: apply.when merge (the default) applies from the push to the default branch or a /terragucci apply comment on the merged pull request, and pull-request applies the open pull request, which apply.merge auto then merges. Before merge covers plain roots; a Terragrunt repo applies after merge',
+		page: 'reference/config/#apply-before-merge',
 	},
 	'approval-binds': {
 		mark: 'good',
@@ -51,12 +51,12 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	locks: {
 		mark: 'warn',
-		text: 'A project applies one push at a time, queued on each forge; pull requests take no locks on roots',
-		page: 'reference/pipeline/',
+		text: 'A pull request applied before merge locks the roots it reaches until it merges or closes, and /terragucci unlock releases them; a project applies one push at a time, queued on each forge. Plain roots only: a Terragrunt repo applies after merge and takes no per-root locks',
+		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {
-		mark: 'warn',
-		text: 'Waves follow the dependency graph, one terragrunt run --all per wave, and no unit plans against mock outputs; a Terragrunt wave applies without an approval gate',
+		mark: 'good',
+		text: 'Waves follow the dependency graph, one terragrunt run --all per wave, and no unit plans against mock outputs; each wave is planned, gated by policy and applied under a sealed approval of its set digest, as plain roots are, and a wave whose plans changed applies nothing. /terragucci apply on a merged pull request re-runs the waves behind the same gate',
 		page: 'guides/use-terragrunt/',
 	},
 	drift: {
