@@ -19,10 +19,10 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 | | Terraform | OpenTofu | Terragrunt | choudoufu |
 |---|---|---|---|---|
 | State | your backend | your backend | each unit's backend | no state file: a tag on each resource |
-| What `tf-check` runs | `fmt -check`, `validate` | `fmt -check`, `validate` | `terragrunt hcl fmt --check`, `hcl validate --inputs` | `fmt -check`, `validate`, then [`live-check`](/terragucci/reference/stages/#check) with no cloud credentials |
-| What the report times | nothing: Terraform exports no traces | each resource it plans or applies | each unit, from Terragrunt's run report | each resource, and [state lock waits](/terragucci/reference/observability/#state-lock-waits) on a backend that locks |
+| What `tf-check` runs | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) |
+| What the report times | nothing (no traces) | each resource | each unit, from Terragrunt's run report | each resource; [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend |
 | CI image | `terragucci-terraform`, Terraform 1.14.0 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 | `terragucci-choudoufu`, choudoufu 0.22.0 |
-| Version pin | `version`, or the `required_version` every root pins exactly | `version`, or the `required_version` every root pins exactly | `terragrunt.version`, or the `terragrunt_version_constraint` it pins exactly; `version` for the tool it calls | `version` only |
+| Version pin | `version`, or an exact `required_version` | `version`, or an exact `required_version` | `terragrunt.version`, or an exact `terragrunt_version_constraint` | `version` only |
 
 A pin the image does not carry is installed in the job, checked against the release's SHA256SUMS. Images are pinned by digest.
 
@@ -37,7 +37,7 @@ A pin the image does not carry is installed in the job, checked against the rele
 binary: terraform
 ```
 
-`init` picks it from a `.terraform-version` file, or from `terraform` on the path when `tofu` is not there.
+A `.terraform-version` file makes `init` pick it; the table in step 1 below has the full order.
 
 </TabItem>
 <TabItem label="OpenTofu">
@@ -46,7 +46,7 @@ binary: terraform
 binary: tofu
 ```
 
-`init` picks it from a `.opentofu-version` file, `.tofu` files, `tofu` on the path, or when it finds nothing else.
+`init` picks it for a `.opentofu-version` file or `.tofu` files, and when nothing points elsewhere.
 
 </TabItem>
 <TabItem label="Terragrunt">
@@ -74,7 +74,7 @@ binary: choudoufu
 
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
-A refusal from `live-check` fails `tf-check`, with its rule, resource types and sites in the log. terragucci does not read a root's `required_version` as a choudoufu release.
+A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
 
 </TabItem>
 </Tabs>
