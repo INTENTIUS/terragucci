@@ -71,7 +71,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	state: {
 		mark: 'good',
-		text: 'In the backend your roots already name; terragucci never holds it',
+		text: 'In the backend your roots already name; terragucci never holds it. With choudoufu there is no state file: each resource carries its own tag',
 		page: 'reference/pipeline/',
 	},
 	credentials: {
@@ -81,7 +81,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	telemetry: {
 		mark: 'good',
-		text: 'One trace per stage run and the pipeline\'s metrics over OTLP to your collector, with Grafana dashboards',
+		text: 'One trace per stage run and the pipeline\'s metrics over OTLP to your collector, with Grafana dashboards; with choudoufu, each wave\'s state lock waits and their attempts',
 		page: 'reference/observability/',
 	},
 	modules: {

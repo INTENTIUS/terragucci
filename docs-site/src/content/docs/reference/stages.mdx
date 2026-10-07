@@ -9,7 +9,7 @@ Every stage takes the root directories and the binary.
 
 | Stage | What it does | Forge permissions | Outputs |
 |---|---|---|---|
-| `tf-check` | format, `validate`, and for a [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) repo `live-check`; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the log, and the check report |
+| `tf-check` | format, `validate`, and with [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) a [live check](#check) that needs no cloud credentials; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the log, and the check report |
 | `tf-plan` | plans the affected roots in one run and posts the grouped summary; with [`policy`](/terragucci/reference/policy/) set, fails a denied root | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
 | `tf-apply` | applies one job per wave, each behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch | per wave, whether it waited and its approval command |
 | `tf-drift` | plans every root `-refresh-only` on a schedule and groups what changed outside Terraform | read the repository, write issues | the plan report, and one drift issue |
@@ -22,6 +22,10 @@ Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 whi
 
 ## Check
 
+:::tip[choudoufu's live check]
+[choudoufu](/terragucci/concepts/glossary/#choudoufu) is the OpenTofu fork from the team behind terragucci, and its live check runs here. Set `binary: choudoufu` and every pull request learns, before any plan and with no cloud credentials, whether choudoufu can track each resource without a state file.
+:::
+
 `tf-check` runs on every push and fork pull request: `fmt -check`, which stops the job on a difference, then `init -backend=false` and `validate -json` per root:
 
 ```text
@@ -32,7 +36,7 @@ FAILED envs/dev/orders: validate found 1 error(s)
 
 Warnings print and fail nothing. A failing root does not stop the next, so one run shows every diagnostic.
 
-With `binary: choudoufu`, `choudoufu live-check -json` runs after `validate`. Each refusal prints with its rule, reason, resource types and sites, and a non-zero exit fails the check.
+With `binary: choudoufu`, `choudoufu live-check -json` runs after `validate` and makes no cloud calls. Each refusal prints with its rule, reason, resource types and sites, and a non-zero exit fails the check.
 
 With [`policy`](/terragucci/reference/policy/) set, the last step runs `conftest verify` or `opa test`, with the tests and key read from the default branch or the pull request's target.
 

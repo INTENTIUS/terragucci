@@ -60,17 +60,22 @@ Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where t
 - the slowest roots, with each root's wall time, its plan's and, in a wave, its apply's;
 - in each root, the slowest resource instances and their refresh time;
 - the slowest provider calls, and the resource each was for;
-- provider start-up and state lock waits.
+- provider start-up;
+- state lock waits, from [choudoufu](#state-lock-waits) on a backend that locks.
 
 Past a span budget (`CHOUDOUFU_TRACE_DETAIL`, `CHOUDOUFU_TRACE_SPAN_BUDGET`) choudoufu sums timings by resource type or provider method, and the report says so.
 
 ### Terragrunt and binaries that time nothing
 
-Terraform exports no traces and OpenTofu's stop above the resource; the report says so. A Terragrunt unit's time comes from Terragrunt's run report, and a `TG_TF_PATH` wrapper points each plan at the receiver.
+Terraform exports no traces, and the report says so. OpenTofu sends a span for each resource instance it plans or applies, so its report lists the slowest resources. A Terragrunt unit's time comes from Terragrunt's run report, and a `TG_TF_PATH` wrapper points each plan at the receiver.
 
 ### State lock waits
 
-A Terragrunt plan and a `tf-apply` wave's plan and apply wait up to five minutes for a state lock (`-lock-timeout=5m`) unless `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` sets one. With choudoufu a wait shows as a `State lock wait` span. A wave writes its report to `terragucci-report/` and the `reports` bucket when set.
+:::tip[Lock waits come from choudoufu]
+[choudoufu](/terragucci/concepts/glossary/#choudoufu) is the OpenTofu fork from the team behind terragucci; Terraform and OpenTofu send no lock-wait span. Set `binary: choudoufu` on a root whose backend locks (S3 with `use_lockfile`, say). Each wait then shows as a `State lock wait` span with its attempts. The report lists it and `terragucci_lock_wait_seconds` carries it.
+:::
+
+A Terragrunt plan and a `tf-apply` wave's plan and apply wait up to five minutes for a state lock (`-lock-timeout=5m`) unless `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` sets one. A wave writes its report to `terragucci-report/` and the `reports` bucket when set.
 
 The HTML report shows them under "Where the time went", and `report.json` carries `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 
