@@ -16,7 +16,7 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { esc, renderHtml } from "./html";
-import type { S3Client } from "./s3";
+import { S3Conflict, S3Error, type S3Client } from "./s3";
 import type { Report } from "./schema";
 import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
 
@@ -142,8 +142,8 @@ export function indexEntry(report: Report, path: string): IndexEntry {
   };
 }
 
-/** The index with `entry` added. A row at the same path is replaced, so a rerun does not list twice. Newest first. */
-export function addToIndex(existing: string | undefined, entry: IndexEntry): ReportIndex {
+/** The index with `entry` added (or as it is, without one). A row at the same path is replaced, so a rerun does not list twice. Newest first. */
+export function addToIndex(existing: string | undefined, entry?: IndexEntry): ReportIndex {
   let reports: IndexEntry[] = [];
   if (existing) {
     try {
@@ -153,8 +153,7 @@ export function addToIndex(existing: string | undefined, entry: IndexEntry): Rep
       // An unreadable index is rebuilt from this run on.
     }
   }
-  reports = reports.filter((r) => r.path !== entry.path);
-  reports.push(entry);
+  if (entry) reports = [...reports.filter((r) => r.path !== entry.path), entry];
   reports.sort((a, b) => (a.finished < b.finished ? 1 : a.finished > b.finished ? -1 : a.path < b.path ? -1 : 1));
   return { schema: INDEX_SCHEMA, reports };
 }
@@ -202,13 +201,61 @@ export interface Uploaded {
   indexes: string[];
 }
 
+/** How many times an index is read and written again when another run wrote it in between. */
+export const INDEX_TRIES = 8;
+
+/** Between tries: a growing, jittered pause, so runs that collided do not collide again in step. */
+const backoff = (attempt: number): Promise<void> => new Promise((r) => setTimeout(r, Math.round((50 + Math.random() * 100) * 2 ** Math.min(attempt, 5))));
+
+export type Wait = (attempt: number) => Promise<void>;
+
 /**
- * Copy a run's report directory to the bucket, then rewrite the index at
- * the project's path and at the top of the prefix. Two runs finishing at
- * the same moment can race on an index; the later write wins, and the next
- * upload's row is added to it.
+ * Add `entry` to the index at `key`. The write is conditional on the copy
+ * read: If-Match its ETag, or If-None-Match `*` when there was none. When
+ * another run wrote the index in between, the write is refused, and the
+ * index is read and the row added again, up to INDEX_TRIES times. A store
+ * that sends no ETag gets an unconditional write, the last one winning.
  */
-export async function uploadReport(s3: S3Client, dir: string, report: Report, prefix = ""): Promise<Uploaded> {
+export async function updateIndex(s3: S3Client, key: string, entry: IndexEntry, wait: Wait = backoff): Promise<{ index: ReportIndex; etag?: string }> {
+  for (let attempt = 1; ; attempt++) {
+    const read = await s3.read(key);
+    const index = addToIndex(read.body, entry);
+    const when = read.etag ? { ifMatch: read.etag } : read.body === undefined ? { ifNoneMatch: "*" as const } : undefined;
+    try {
+      const put = await s3.put(key, JSON.stringify(index, null, 2) + "\n", TYPES.json, when);
+      return { index, ...(put.etag ? { etag: put.etag } : {}) };
+    } catch (e) {
+      if (!(e instanceof S3Conflict)) throw e;
+      if (attempt >= INDEX_TRIES) throw new S3Error(`${key} changed under this run ${INDEX_TRIES} times in a row; its row was not added`);
+      await wait(attempt);
+    }
+  }
+}
+
+/**
+ * Write index.html from the index this run wrote, then check index.json
+ * still has that ETag. When a later run has written it since, its page may
+ * have gone up before this one, so the page is written again from the newer
+ * index. Without ETags the page is written once.
+ */
+async function writeIndexHtml(s3: S3Client, at: string, title: string, index: ReportIndex, etag: string | undefined): Promise<void> {
+  const join2 = (...p: string[]) => p.filter(Boolean).join("/");
+  for (let attempt = 1; ; attempt++) {
+    await s3.put(join2(at, "index.html"), renderIndexHtml(index, title), TYPES.html);
+    if (!etag || attempt >= INDEX_TRIES) return;
+    const now = await s3.read(join2(at, "index.json"));
+    if (!now.etag || now.etag === etag || now.body === undefined) return;
+    etag = now.etag;
+    index = addToIndex(now.body, undefined);
+  }
+}
+
+/**
+ * Copy a run's report directory to the bucket, then add its row to the index
+ * at the project's path and at the top of the prefix. Runs that finish at
+ * the same moment each keep their row: see updateIndex.
+ */
+export async function uploadReport(s3: S3Client, dir: string, report: Report, prefix = "", wait: Wait = backoff): Promise<Uploaded> {
   const top = trim(prefix);
   const join2 = (...p: string[]) => p.filter(Boolean).join("/");
   const project = report.run.project;
@@ -223,9 +270,8 @@ export async function uploadReport(s3: S3Client, dir: string, report: Report, pr
     [top, join2(project, run), "Plan reports"],
   ] as const) {
     const key = join2(at, "index.json");
-    const index = addToIndex(await s3.get(key), indexEntry(report, path));
-    await s3.put(key, JSON.stringify(index, null, 2) + "\n", TYPES.json);
-    await s3.put(join2(at, "index.html"), renderIndexHtml(index, title), TYPES.html);
+    const { index, etag } = await updateIndex(s3, key, indexEntry(report, path), wait);
+    await writeIndexHtml(s3, at, title, index, etag);
     indexes.push(key);
   }
   return { prefix: key, files: files.length, indexes };

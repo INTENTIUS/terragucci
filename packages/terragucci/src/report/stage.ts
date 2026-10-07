@@ -1003,8 +1003,9 @@ async function finish(
   const dir = resolve(repo, options.out ?? "terragucci-report");
   // The bucket's address comes from the config when the pipeline names the same bucket without it.
   const named = options.reports;
-  const configured = named && !named.url && settings.reports?.bucket === named.bucket ? settings.reports.url : undefined;
-  const reports = named ? { ...named, ...(configured ? { url: configured } : {}) } : settings.reports;
+  const same = named && settings.reports?.bucket === named.bucket ? settings.reports : undefined;
+  const configured = named && !named.url ? same?.url : undefined;
+  const reports = named ? { ...named, ...(configured ? { url: configured } : {}), ...(same?.role ? { role: same.role } : {}) } : settings.reports;
   const links = reportLinks(report, { reports, given: options.reportUrl, traceId: observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url });
   Object.assign(report.run, links.run);
   observer.reportUrl = links.run.report_url;

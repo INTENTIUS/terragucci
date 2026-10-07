@@ -23,10 +23,14 @@ Set these on the plan job when `reports.bucket` is set.
 
 | Variable | Meaning |
 |---|---|
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | credentials that can write to the bucket |
+| `AWS_WEB_IDENTITY_TOKEN_FILE` | the job's OIDC token, which a job with `oidc` writes; with `reports.role` the job assumes that role with it |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | credentials that can write to the bucket, used when `reports.role` is not set |
 | `AWS_SESSION_TOKEN` | for temporary credentials, when set |
+| `AWS_ROLE_ARN` | with no `reports.role` and no keys, the role assumed with the token to write the bucket; a job with `oidc` sets it to its own role |
+| `AWS_ROLE_SESSION_NAME` | the session name of an assumed role; `terragucci-report` when not set |
 | `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL` | a store that is not AWS; `reports.endpoint` takes precedence |
-| `AWS_REGION`, `AWS_DEFAULT_REGION` | the bucket's region; `AWS_REGION` first, then `AWS_DEFAULT_REGION`, then `us-east-1` |
+| `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL` | the STS that answers `AssumeRoleWithWebIdentity`; `https://sts.<region>.amazonaws.com` when neither is set |
+| `AWS_REGION`, `AWS_DEFAULT_REGION` | the bucket's region, which requests are signed for; `AWS_REGION` first, then `AWS_DEFAULT_REGION`, then `us-east-1`, so a bucket elsewhere needs one of them |
 
 ## Secrets the config names
 
