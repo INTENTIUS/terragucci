@@ -192,11 +192,26 @@ describe("the comment trigger", () => {
     expect(doc.jobs["apply-wave-1"].if).toBe("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
   });
 
-  it("a Terragrunt repo, whose waves apply on a push, gets no apply-comment job, and its re-plan job answers the comment", () => {
-    const text = renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content;
-    const doc = body(text);
-    expect(doc.jobs["apply-comment"]).toBeUndefined();
-    expect(doc.jobs.replan.if).not.toContain("/terragucci apply");
+  it.each(["github", "forgejo"] as const)("%s: a Terragrunt repo gets the apply-comment job, which runs its waves of units with --terragrunt after the apply prelude, and no canary", (forge) => {
+    const credentials = { "live/prod/**": { plan: "arn:aws:iam::1:role/p", apply: "arn:aws:iam::1:role/a" } };
+    const doc = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/a"], ["live/prod/a", "live/prod/b"]], env: {}, gate: "always", canary: ["live/dev/**"], terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [], credentials } }).content);
+    const job = doc.jobs["apply-comment"];
+    expect(job.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')");
+    expect(doc.jobs.replan.if).toContain("!startsWith(github.event.comment.body, '/terragucci apply')");
+    expect(job.concurrency).toEqual(doc.jobs["apply-wave-1"].concurrency);
+    const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
+    expect(run).toMatch(/terragucci comment-apply --layers 'live\/dev\/a;live\/prod\/a,live\/prod\/b'( --forge forgejo)? --out /);
+    expect(run).not.toContain("--canary");
+    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/dev/a;live/prod/a,live/prod/b\' --binary tofu --gate always --terragrunt');
+    expect(run).not.toContain("-auto-approve");
+    // The apply jobs' prelude: the caches and the auth provider with the apply roles, after the decision and the checkout.
+    expect(run).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
+    expect(run).toContain("TERRAGUCCI_PHASE=apply");
+    expect(run).not.toContain("TERRAGUCCI_PHASE=plan");
+    expect(run.indexOf('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(run.indexOf("TERRAGUCCI_PHASE=apply"));
+    expect(run).toContain('tg status terragucci/apply success "3 units in 2 waves applied"');
+    expect(job.steps.find((s: { uses?: string }) => s.uses?.endsWith("actions/cache@v4"))?.with.path).toBe(".terragrunt-cache");
+    if (forge === "github") expect(job.permissions).toMatchObject({ contents: "write", "id-token": "write" });
   });
 
   it("the apply-comment script decides before any credential, checks out the merge commit, and runs the waves in order", () => {

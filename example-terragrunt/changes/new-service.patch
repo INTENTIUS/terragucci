@@ -1,5 +1,5 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 6d3e038..5d80673 100644
+index b80f5be..1ac5531 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
 @@ -132,7 +132,7 @@ jobs:
@@ -29,7 +29,43 @@ index 6d3e038..5d80673 100644
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              tg status terragucci/plan failure "the plan report was not written"
-@@ -359,7 +359,7 @@ jobs:
+@@ -350,7 +350,7 @@ jobs:
+             console.log("terragucci: " + cmd + " failed: " + err.message);
+             if (cmd === "oidc") process.exit(1);
+           }' -- "$@"; }
+-          terragucci comment-apply --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
++          terragucci comment-apply --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
+           read -r TG_PR TG_SHA TG_WAVE <<EOF
+           $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
+           EOF
+@@ -377,7 +377,7 @@ jobs:
+             sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
+           done
+           trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
+-          terragucci comment-apply --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
++          terragucci comment-apply --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
+           read -r again _ _ <<EOF
+           $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
+           EOF
+@@ -390,7 +390,7 @@ jobs:
+           done_waves=""
+           for wave in $(seq 1 "$last"); do
+             : >"$outcome"
+-            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
++            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
+             rc=${PIPESTATUS[0]}
+             case "$rc" in
+               0) done_waves="${done_waves:+$done_waves, }$wave" ;;
+@@ -414,7 +414,7 @@ jobs:
+             esac
+           done
+           if [ "$last" = 2 ]; then
+-            tg status terragucci/apply success "15 units in 2 waves applied"
++            tg status terragucci/apply success "17 units in 2 waves applied"
+           else
+             tg status terragucci/apply pending "wave $last of 2 applied"
+           fi
+@@ -514,7 +514,7 @@ jobs:
              changed=
            fi
            moved=""
@@ -38,7 +74,7 @@ index 6d3e038..5d80673 100644
              if [ -z "$changed" ] || printf '%s\n' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these roots: plan notes that cover them are stale.
-@@ -391,7 +391,7 @@ jobs:
+@@ -546,7 +546,7 @@ jobs:
            tg status terragucci/apply pending "applying"
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -47,7 +83,7 @@ index 6d3e038..5d80673 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -515,7 +515,7 @@ jobs:
+@@ -670,7 +670,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -56,7 +92,7 @@ index 6d3e038..5d80673 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -523,7 +523,7 @@ jobs:
+@@ -678,7 +678,7 @@ jobs:
              4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 2 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
              *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
            esac

@@ -222,7 +222,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     await reply(parsed.reason);
     return stop(parsed.reason);
   }
-  // A pipeline with the comment-apply job sends `/terragucci apply` there and never here; one without it (a Terragrunt repo's) says so.
+  // A pipeline with the comment-apply job sends `/terragucci apply` there and never here; one written before it had the job says so.
   if (parsed.kind === "apply") {
     const reason = "this pipeline does not apply on a comment: re-run the apply job on the forge, or push to the default branch again";
     await reply(reason);

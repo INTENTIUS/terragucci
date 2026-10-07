@@ -62,6 +62,8 @@ Commit the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#
 | Each wave | one apply job: the canary units are wave 1 and the rest wave 2. The job plans the wave's units with one `terragrunt run --all`, saving each plan, and applies the saved plans with a second one |
 | The gate | `gate` works as for plain roots, and an approval is sealed the same way. The set digest covers the units whose plan changes something. A unit that reads another unit of its wave, whose plan changes its outputs, plans and goes through the gate in a second pass, after that unit applied |
 | Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
+| `/terragucci apply` | on GitHub and Forgejo, a comment on a merged pull request runs its waves of units again from the merge commit, behind the same gate and with the refusals [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) lists. It approves nothing |
+| When a change applies | after it merges. [Apply before merge](/terragucci/reference/config/#apply-before-merge) is for plain roots, and `init` stops with an error when `apply.when` is `pull-request` in a Terragrunt repo |
 
 ## Next
 
