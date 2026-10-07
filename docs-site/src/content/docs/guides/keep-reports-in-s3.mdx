@@ -2,9 +2,16 @@
 title: Keep reports in S3
 description: Copy every plan report to a bucket, so they outlive your CI's artifact retention and share one index.
 claims: [report, drill-down, report-oidc]
+prompt: |
+  Read https://intentius.io/terragucci/guides/keep-reports-in-s3/.
+  Add the `reports:` block for bucket <bucket>, rerun `npx terragucci init`, write
+  the IAM policy the page gives as a file for me to review, and open a pull request.
+  Do not create the role, the bucket or any secret.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 import Shot from '../../../components/Shot.astro';
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
@@ -17,85 +24,111 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
 ## Steps
 
-### 1. Name the bucket
+<Steps>
 
-Put it in `terragucci.yml`.
+1. Name the bucket in `terragucci.yml`.
 
-```yaml
-reports:
-  bucket: s3://acme-terragucci
-  prefix: reports
-  url: https://reports.acme.example
-  role: arn:aws:iam::123456789012:role/terragucci-reports
-```
+   ```yaml
+   reports:
+     bucket: s3://acme-terragucci
+     prefix: reports
+     url: https://reports.acme.example
+     role: arn:aws:iam::123456789012:role/terragucci-reports
+   ```
 
-For a store that is not AWS, add `endpoint`. When it is absent, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
+   For a store that is not AWS, add `endpoint`. When it is absent, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
 
-Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`. For a bucket in another region, set it in the config's `env`:
+   Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`. For a bucket in another region, set it in the config's `env`:
 
-```yaml
-env:
-  AWS_REGION: eu-west-2
-```
+   ```yaml
+   env:
+     AWS_REGION: eu-west-2
+   ```
 
-`url` is where a browser reads the reports (step 5). The plan note links `report.html` there instead of the CI run, whose artifact on GitHub and Forgejo is a download.
+   `url` is where a browser reads the reports (step 5). The plan note links `report.html` there instead of the CI run. On GitHub and Forgejo that run's artifact is a download.
 
-### 2. Write the pipeline again
+2. Write the pipeline again, and commit the result.
 
-```bash
-npx terragucci init
-```
+   ```bash
+   npx terragucci init
+   ```
 
-Commit the result.
+3. <span id="3-give-the-job-an-identity-that-writes-only-reports"></span>Give the job an identity that writes only reports.
 
-### 3. Give the job an identity that writes only reports
+   The plan job runs the pull request's code, which can read its credentials. Write reports with an identity allowed only `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::acme-terragucci/reports/*`.
 
-The plan job runs the pull request's code, which can read its credentials. Write reports with an identity allowed only `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::acme-terragucci/reports/*`.
+   With `oidc` set, `reports.role` is that identity, assumed through STS `AssumeRoleWithWebIdentity` under a trust policy like your plan role's. `config check` refuses a `reports.role` that is the plan or apply role.
 
-With `oidc` set, `reports.role` is that identity, assumed through STS `AssumeRoleWithWebIdentity` with a trust policy like your plan role's. `config check` refuses a `reports.role` that is the plan or apply role.
+   Without `oidc`, give an IAM user the same policy and store its keys as below. `init` passes them to the plan, re-plan and drift jobs only, where OpenTofu sees them too.
 
-Without `oidc`, give an IAM user the same policy and store its keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` if temporary) as secrets, or unprotected CI/CD variables on GitLab. `init` passes them to the plan, re-plan and drift jobs only. OpenTofu sees them too, so in those jobs they are also the plan's identity.
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       Repository secrets.
+     </TabItem>
+     <TabItem label="GitLab">
+       Unprotected CI/CD variables.
+     </TabItem>
+     <TabItem label="Forgejo">
+       Repository secrets, as on GitHub.
+     </TabItem>
+   </Tabs>
 
-The job uses the first of these that is set:
+   | Variable | Needed |
+   |---|---|
+   | `AWS_ACCESS_KEY_ID` | always |
+   | `AWS_SECRET_ACCESS_KEY` | always |
+   | `AWS_SESSION_TOKEN` | when the keys are temporary |
 
-1. `reports.role`
-2. `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
-3. `AWS_ROLE_ARN`, which a job with `oidc` sets to its own role; that role then needs write access to the reports
+   The job uses the first of these that is set:
 
-A role is assumed with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`; `AWS_ENDPOINT_URL_STS` or `AWS_ENDPOINT_URL` sets the STS address. When STS refuses it, the job fails with STS's error.
+   | Order | Identity |
+   |---|---|
+   | 1 | `reports.role` |
+   | 2 | `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` |
+   | 3 | `AWS_ROLE_ARN`, which a job with `oidc` sets to its own role; that role then needs write access to the reports |
 
-Even so, a pull request's plan can overwrite any object under the prefix, other reports and the index among them. The apply job's CI artifact is the record of what was applied.
+   A role is assumed with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`; `AWS_ENDPOINT_URL_STS` or `AWS_ENDPOINT_URL` sets the STS address. When STS refuses it, the job fails with STS's error.
 
-### 4. Open a pull request
+   Even so, a pull request's plan can overwrite any object under the prefix, including other reports and the index. The apply job's CI artifact is the record of what was applied.
 
-When the plan job finishes, its log says where the report went:
+4. Open a pull request. When the plan job finishes, its log says where the report went:
 
-```text
-report: terragucci-report/report.html
-copied to the bucket under reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan; index rewritten at reports/github.com/acme/infra/index.json and reports/index.json
-served at https://reports.acme.example/reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
-```
+   ```text
+   report: terragucci-report/report.html
+   copied to the bucket under reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan; index rewritten at reports/github.com/acme/infra/index.json and reports/index.json
+   served at https://reports.acme.example/reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
+   ```
 
-Each run gets one path holding the commit's full SHA. Links inside a report are relative:
+   Each run gets one path holding the commit's full SHA. Links inside a report are relative:
 
-```text
-reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
-reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-apply-wave-2/report.json
-```
+   ```text
+   reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
+   reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-apply-wave-2/report.json
+   ```
 
-The commit is `GITHUB_SHA` on GitHub and Forgejo and `CI_COMMIT_SHA` on GitLab. On a GitHub pull request that is the merge commit.
+   | Forge | Commit in the path |
+   |---|---|
+   | GitHub | `GITHUB_SHA`, the merge commit on a pull request |
+   | GitLab | `CI_COMMIT_SHA` |
+   | Forgejo | `GITHUB_SHA` |
 
-### 5. Serve the index
+5. <span id="5-serve-the-index"></span>Serve the index.
 
-Every upload adds the run's row to two `index.json` files and writes `index.html` from each: one at the project's path, one at the top of the prefix for every project.
+   Every upload adds the run's row to two `index.json` files, one at the project's path and one at the top of the prefix, and writes `index.html` from each. Writes are retried up to 8 times:
 
-Index writes are conditional on the ETag read (`If-Match`, or `If-None-Match: *`) and retried up to 8 times. A store with no ETag gets a plain write, last run wins; on `501 Not Implemented` the condition is dropped.
+   | Store | Index write |
+   |---|---|
+   | Returns an ETag | conditional: `If-Match`, or `If-None-Match: *` |
+   | No ETag | plain write, last run wins |
+   | `501 Not Implemented` | the condition is dropped |
 
-A served bucket publishes every plan, including each attribute value not marked sensitive. Put it behind your identity provider (CloudFront signed cookies, Cloudflare Access, IAP) and never make it public. `url` is that front door.
+   A served bucket publishes every plan, including each attribute value not marked sensitive. Put it behind your identity provider (CloudFront signed cookies, Cloudflare Access, IAP); never make it public. `url` is that front door.
 
-A run that sent a trace also gets `traces/<trace id>.html` under the prefix, forwarding to its report. With `dashboards: true`, the Runs dashboard links it.
+   A run that sent a trace also gets `traces/<trace id>.html` under the prefix, forwarding to its report. With `dashboards: true`, the Runs dashboard links it.
 
-<Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
+   <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
+
+</Steps>
 
 Retention is your bucket's lifecycle rule.
 

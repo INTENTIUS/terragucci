@@ -1,0 +1,91 @@
+---
+title: Turn on drift checks
+description: Plan every root on a schedule and get a grouped report of what changed outside Terraform.
+claims: [drift]
+prompt: |
+  Read https://intentius.io/terragucci/guides/turn-on-drift-checks/.
+  Add a `drift:` cron to terragucci.yml, run `npx terragucci config check --json`
+  and `npx terragucci init`, and open a pull request. Tell me the GitLab schedule
+  or token scope I must set.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
+---
+
+import Shot from '../../../components/Shot.astro';
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A scheduled `tf-drift` run that plans every root and one issue reporting the drift, grouped like a pull-request plan.
+
+## Before you start
+
+- A repo with the pipeline from [Get your first plan note](/terragucci/getting-started/).
+- A plan role that can read your cloud; drift plans use the same read-only role as pull requests.
+- Terraform or OpenTofu roots, or Terragrunt units (the issue then names units).
+- A cron expression in UTC.
+
+## Steps
+
+<Steps>
+
+1. Set a schedule in `terragucci.yml`. Pick an odd minute; forge schedulers are busiest on the hour.
+
+   ```yaml
+   drift: "17 4 * * *"
+   ```
+
+2. Check the file.
+
+   ```bash
+   npx terragucci config check
+   ```
+
+   ```text
+   terragucci.yml: ok
+   ```
+
+   A bad value is listed as a problem, and the command exits 2.
+
+3. Write the pipeline again and merge it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       `init` adds a `drift` job with the cron and a `workflow_dispatch` trigger.
+     </TabItem>
+     <TabItem label="GitLab">
+       Set the same cron under CI/CD, Schedules. `GITLAB_TOKEN` (or the `token_env` variable) needs the `api` scope.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The same job and trigger as GitHub.
+     </TabItem>
+   </Tabs>
+
+4. Wait for the first run, or start one.
+
+   `terragucci stage tf-drift` plans each root with `-refresh-only`, comparing state with real objects. Only an object changed or deleted outside Terraform counts as drift, and a merged but unapplied change does not.
+
+5. Read the issue.
+
+   Each project has at most one open issue, `terragucci: drift found`, updated on each run. The job never applies. A root that cannot be refreshed fails it; drift alone does not.
+
+   | Event | The issue |
+   |---|---|
+   | Drift found | opened, or updated if one is open |
+   | Every root clean | closed |
+   | A root could not be planned | left as it is |
+
+   <Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
+
+6. Correct the drift.
+
+   Apply the code to put the object back, or read and merge the pull request that writes the live value into a literal attribute. [Responses](/terragucci/reference/responses/#drift) lists what is only reported.
+
+</Steps>
+
+## Next
+
+- [Stages](/terragucci/reference/stages/) lists what `tf-drift` reads and writes.
