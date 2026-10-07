@@ -1,4 +1,4 @@
-// The comparison grid's rows and every other product's marks. Each mark was
+// The comparison's rows and every other product's marks. Each mark was
 // read from the page its source names, in that product's own docs; where a
 // product's docs say nothing about a row, the text says so and the mark is
 // the conservative one. terragucci's own column is in ./marks.ts.
@@ -11,18 +11,12 @@ export const products: Product[] = [
 	{ id: 'opentaco', name: 'OpenTaco' },
 ];
 
-export const bands = [
-	{ id: 'review', label: 'Review', summary: 'What a reviewer sees on the pull request, and what the policy checks.' },
-	{ id: 'apply', label: 'Apply', summary: 'When a change goes out, what an approval covers, and what stops a stale plan.' },
-	{ id: 'operate', label: 'Operate', summary: 'What runs where, who holds state and credentials, and what you see afterwards.' },
-] as const;
-
 const atlantis = {
 	server: { title: 'Server configuration', url: 'https://www.runatlantis.io/docs/server-configuration' },
 	api: { title: 'API endpoints', url: 'https://www.runatlantis.io/docs/api-endpoints' },
 	policy: { title: 'Policy checking', url: 'https://www.runatlantis.io/docs/policy-checking' },
 	automerge: { title: 'Automerging', url: 'https://www.runatlantis.io/docs/automerging' },
-	requirements: { title: 'Command requirements', url: 'https://www.runatlantis.io/docs/command-requirements' },
+	commandRequirements: { title: 'Command requirements', url: 'https://www.runatlantis.io/docs/command-requirements' },
 	repoYaml: { title: 'Repo level atlantis.yaml', url: 'https://www.runatlantis.io/docs/repo-level-atlantis-yaml' },
 	locking: { title: 'Locking', url: 'https://www.runatlantis.io/docs/locking' },
 	workflows: { title: 'Custom workflows', url: 'https://www.runatlantis.io/docs/custom-workflows' },
@@ -31,27 +25,37 @@ const atlantis = {
 	credentials: { title: 'Provider credentials', url: 'https://www.runatlantis.io/docs/provider-credentials' },
 	stats: { title: 'Metrics', url: 'https://www.runatlantis.io/docs/stats' },
 	licence: { title: 'LICENSE', url: 'https://github.com/runatlantis/atlantis/blob/main/LICENSE' },
+	home: { title: 'Atlantis home page', url: 'https://www.runatlantis.io/' },
+	logs: { title: 'Real-time logs', url: 'https://www.runatlantis.io/docs/streaming-logs' },
+	introducing: { title: 'Introducing Atlantis', url: 'https://www.runatlantis.io/blog/2017/introducing-atlantis' },
+	cncf: { title: 'CNCF project page', url: 'https://www.cncf.io/projects/atlantis/' },
+	requirements: { title: 'Requirements', url: 'https://www.runatlantis.io/docs/requirements' },
+	using: { title: 'Using Atlantis', url: 'https://www.runatlantis.io/docs/using-atlantis' },
 };
 
 const hcp = {
-	ui: { title: 'The UI- and VCS-driven run workflow', url: 'https://developer.hashicorp.com/terraform/cloud-docs/run/ui' },
+	ui: { title: 'The UI- and VCS-driven run workflow', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/run/ui' },
 	vcs: { title: 'Workspace VCS settings', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings/vcs' },
 	plans: { title: 'Plans API', url: 'https://developer.hashicorp.com/terraform/cloud-docs/api-docs/plans' },
 	policySets: { title: 'Manage policy sets', url: 'https://developer.hashicorp.com/terraform/cloud-docs/policy-enforcement/manage-policy-sets' },
 	policyResults: { title: 'View policy results', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/policy-enforcement/view-results' },
-	remote: { title: 'Remote operations', url: 'https://developer.hashicorp.com/terraform/cloud-docs/run/remote-operations' },
-	stacks: { title: 'Stacks deployment conditions', url: 'https://developer.hashicorp.com/terraform/cloud-docs/stacks/deploy/conditions' },
-	cli: { title: 'The CLI-driven run workflow', url: 'https://developer.hashicorp.com/terraform/cloud-docs/run/cli' },
+	remote: { title: 'Remote operations', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/run/remote-operations' },
+	stacks: { title: 'Stacks deployment conditions', url: 'https://developer.hashicorp.com/terraform/language/stacks/deploy/conditions' },
+	cli: { title: 'The CLI-driven run workflow', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/run/cli' },
 	runTriggers: { title: 'Run triggers', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings/run-triggers' },
 	auditTrails: { title: 'Audit trails API', url: 'https://developer.hashicorp.com/terraform/cloud-docs/api-docs/audit-trails' },
 	settings: { title: 'Workspace settings', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings' },
 	runEnv: { title: 'Run environment', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/run/run-environment' },
 	health: { title: 'Health assessments', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/health' },
 	cloudSettings: { title: 'HCP Terraform settings', url: 'https://developer.hashicorp.com/terraform/cli/cloud/settings' },
-	dynamic: { title: 'Dynamic provider credentials', url: 'https://developer.hashicorp.com/terraform/cloud-docs/workspaces/dynamic-provider-credentials' },
+	dynamic: { title: 'Dynamic provider credentials', url: 'https://developer.hashicorp.com/terraform/cloud-docs/dynamic-provider-credentials' },
 	telemetry: { title: 'Agent telemetry', url: 'https://developer.hashicorp.com/terraform/cloud-docs/agents/telemetry' },
 	registry: { title: 'Publish modules', url: 'https://developer.hashicorp.com/terraform/cloud-docs/registry/publish-modules' },
 	overview: { title: 'HCP Terraform overview', url: 'https://developer.hashicorp.com/terraform/cloud-docs/overview' },
+	announce: { title: 'Announcing Terraform Cloud', url: 'https://www.hashicorp.com/en/blog/announcing-terraform-cloud' },
+	product: { title: 'Terraform product page', url: 'https://www.hashicorp.com/en/products/terraform' },
+	signUp: { title: 'Sign up for HCP Terraform', url: 'https://developer.hashicorp.com/terraform/tutorials/cloud-get-started/cloud-sign-up' },
+	vcsProviders: { title: 'Connecting VCS providers', url: 'https://developer.hashicorp.com/terraform/cloud-docs/vcs' },
 };
 
 const spacelift = {
@@ -75,6 +79,13 @@ const spacelift = {
 	datadog: { title: 'Datadog integration', url: 'https://docs.spacelift.io/integrations/observability/datadog' },
 	registry: { title: 'Module registry', url: 'https://docs.spacelift.io/vendors/terraform/module-registry' },
 	pricing: { title: 'Pricing', url: 'https://spacelift.io/pricing' },
+	start: { title: 'Getting started', url: 'https://docs.spacelift.io/getting-started' },
+	home: { title: 'Getting started with Spacelift Deploy', url: 'https://docs.spacelift.io/' },
+	selfHosted: { title: 'Spacelift Self-Hosted', url: 'https://docs.spacelift.io/self-hosted' },
+	careers: { title: 'Careers at Spacelift', url: 'https://careers.spacelift.io/' },
+	customers: { title: 'Customer success stories', url: 'https://spacelift.io/customers' },
+	tgVendor: { title: 'Terragrunt', url: 'https://docs.spacelift.io/vendors/terragrunt' },
+	gitlab: { title: 'GitLab integration', url: 'https://docs.spacelift.io/integrations/source-control/gitlab' },
 };
 
 // OpenTaco's pages are on docs.opentaco.dev; the GitLab and Buildkite pages
@@ -101,12 +112,18 @@ const opentaco = {
 	buildkite: { title: 'Buildkite', url: 'https://github.com/diggerhq/digger/blob/develop/docs/ce/features/buildkite.mdx' },
 	fips: { title: 'FIPS 140 standard', url: 'https://docs.opentaco.dev/ce/features/fips-140' },
 	licence: { title: 'Enterprise LICENSE', url: 'https://github.com/diggerhq/digger/blob/develop/ee/LICENSE' },
+	account: { title: 'Set up your OpenTaco account', url: 'https://docs.opentaco.dev/onboarding/account-setup' },
+	remoteJobs: { title: 'Onboarding: Remote Runs', url: 'https://docs.opentaco.dev/onboarding/remote-jobs' },
+	architecture: { title: 'System architecture', url: 'https://docs.opentaco.dev/self-host-and-develop/system-architecture' },
+	workos: { title: 'WorkOS setup', url: 'https://docs.opentaco.dev/self-hosting/workos-setup' },
+	usingTerragrunt: { title: 'Using Terragrunt', url: 'https://docs.opentaco.dev/ce/howto/using-terragrunt' },
+	readme: { title: 'README', url: 'https://github.com/diggerhq/digger#readme' },
+	releases: { title: 'Releases', url: 'https://github.com/diggerhq/digger/releases' },
 };
 
 export const rows: Row[] = [
 	{
 		id: 'grouped-note',
-		band: 'review',
 		label: 'One plan note across many roots',
 		statement: 'A single note on the pull request covers every root the change reaches, and roots taking the same change are read once.',
 		cells: {
@@ -118,7 +135,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'affected-only',
-		band: 'review',
 		label: 'Plans only what a change affects',
 		statement: 'Only the roots a change reaches are planned, including every root that uses a changed local module.',
 		cells: {
@@ -130,7 +146,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'json-report',
-		band: 'review',
 		label: 'Plan report as JSON',
 		statement: 'The run\'s plans, for every root, as one documented JSON report a script can read.',
 		cells: {
@@ -142,31 +157,28 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'policy',
-		band: 'review',
 		label: 'Policy checks on the plan',
 		statement: 'Policy runs on every plan as part of the product, and the policies live in git where your team reviews them.',
 		cells: {
 			atlantis: { mark: 'warn', text: 'Conftest policies run on each plan and block apply; policy sets are local paths in the server\'s config, and keeping them in git means mounting them or pulling with conftest --update', sources: [atlantis.policy] },
-			hcp: { mark: 'warn', text: 'Sentinel and OPA policy sets; the Free edition has one set of up to five policies, and sets kept in git need Standard or Premium', sources: [hcp.policySets] },
+			hcp: { mark: 'warn', text: 'Sentinel and OPA policy sets; the plan table lists policy enforcement in Standard and Premium only, where sets can also be kept in git', sources: [hcp.overview, hcp.policySets] },
 			spacelift: { mark: 'warn', text: 'OPA plan, approval and push policies, managed by Spacelift admins; the pricing page lists the policy engine from Starter+', sources: [spacelift.policy] },
-			opentaco: { mark: 'warn', text: 'Conftest runs over Rego in your repo as a workflow step you add; OPA access policies are set through the orchestrator\'s API', sources: [opentaco.conftest] },
+			opentaco: { mark: 'warn', text: 'Conftest runs over Rego in your repo as a workflow step you add; OPA access policies are set through the orchestrator\'s API', sources: [opentaco.conftest, opentaco.api] },
 		},
 	},
 	{
 		id: 'override',
-		band: 'review',
 		label: 'Policy override',
 		statement: 'Named people can let a plan through a failed policy, and the override is recorded.',
 		cells: {
 			atlantis: { mark: 'good', text: 'Owners named per policy set approve a failure with atlantis approve_policies, and self-approval can be blocked', sources: [atlantis.policy] },
-			hcp: { mark: 'warn', text: 'Teams given the manage policy overrides permission can override; audit trails record the override in the Standard and Premium editions', sources: [hcp.policyResults, hcp.auditTrails] },
+			hcp: { mark: 'warn', text: 'Teams given the manage policy overrides permission can override; audit trails record the override on paid editions, Standard and Premium by the audit trails page and Premium by the plan table', sources: [hcp.policyResults, hcp.auditTrails, hcp.overview] },
 			spacelift: { mark: 'warn', text: 'Deny rules fail the run with no override; a warning only flags a tracked run on an autodeploy stack for human review', sources: [spacelift.planPolicy] },
 			opentaco: { mark: 'bad', text: 'The docs describe no override of a failed policy check', sources: [opentaco.conftest] },
 		},
 	},
 	{
 		id: 'apply-when',
-		band: 'apply',
 		label: 'Apply before or after merge',
 		statement: 'Each project chooses whether a change applies on the open pull request or after merge.',
 		cells: {
@@ -178,11 +190,10 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'approval-binds',
-		band: 'apply',
 		label: 'What an approval binds to',
 		statement: 'An approval covers the exact saved plan that applies, and nothing else can apply under it.',
 		cells: {
-			atlantis: { mark: 'warn', text: 'The approved requirement asks for a pull request approval; apply uses the saved plan file, but the approval is not bound to it', sources: [atlantis.requirements, atlantis.workflows] },
+			atlantis: { mark: 'warn', text: 'The approved requirement asks for a pull request approval; apply uses the saved plan file, and the approval does not name it', sources: [atlantis.commandRequirements, atlantis.workflows] },
 			hcp: { mark: 'good', text: 'Confirming a run applies that run\'s own plan', sources: [hcp.remote] },
 			spacelift: { mark: 'warn', text: 'A review is stored on the run and read by the approval policy; the docs do not say the apply reuses the reviewed plan', sources: [spacelift.approval] },
 			opentaco: { mark: 'warn', text: 'The approved requirement checks for a pull request approval, not a particular plan', sources: [opentaco.requirements] },
@@ -190,7 +201,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'waves',
-		band: 'apply',
 		label: 'Staged rollout in waves',
 		statement: 'Changed roots go out in ordered groups, and each group waits for its own approval.',
 		cells: {
@@ -202,11 +212,10 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'refuse-changed',
-		band: 'apply',
 		label: 'Refuses a plan that changed after approval',
 		statement: 'If what would apply is not what was approved, nothing applies until someone approves again.',
 		cells: {
-			atlantis: { mark: 'warn', text: 'The undiverged requirement, with the merge checkout strategy only, blocks apply when the base branch changed since the last plan; the docs do not say an approval resets', sources: [atlantis.requirements] },
+			atlantis: { mark: 'warn', text: 'The undiverged requirement, with the merge checkout strategy only, blocks apply when the base branch changed since the last plan; --discard-approval-on-plan, off by default, clears the approval when a new plan runs', sources: [atlantis.commandRequirements, atlantis.server] },
 			hcp: { mark: 'good', text: 'A saved plan whose state changed under it is detected as stale and discarded', sources: [hcp.cli] },
 			spacelift: { mark: 'warn', text: 'Proposed runs stop when newer code is pushed; the docs do not say a tracked run\'s approval is dropped', sources: [spacelift.run] },
 			opentaco: { mark: 'warn', text: 'The undiverged requirement blocks apply when the base branch changed; nothing compares the plan with the approved one', sources: [opentaco.requirements] },
@@ -214,7 +223,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'locks',
-		band: 'apply',
 		label: 'Root locks',
 		statement: 'A root is held by one pull request or run at a time, with a documented way to release it.',
 		cells: {
@@ -226,7 +234,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'terragrunt',
-		band: 'apply',
 		label: 'Terragrunt waves with gates',
 		statement: 'Terragrunt units go out in dependency order, in groups that each wait for an approval.',
 		cells: {
@@ -238,7 +245,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'drift',
-		band: 'operate',
 		label: 'Drift detection',
 		statement: 'A scheduled check plans every root and reports drift where the team will see it.',
 		cells: {
@@ -250,19 +256,17 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'hosting',
-		band: 'operate',
 		label: 'Nothing new to host',
 		statement: 'It runs on the CI runners you already have, with no server or service of its own.',
 		cells: {
 			atlantis: { mark: 'warn', text: 'You run the Atlantis server, a Go app or container, on Kubernetes, a VM or similar', sources: [atlantis.deployment] },
 			hcp: { mark: 'warn', text: 'A service HashiCorp runs; agents in your network are optional and a paid feature', sources: [hcp.remote] },
-			spacelift: { mark: 'warn', text: 'A service Spacelift runs, on its workers or on private workers in your infrastructure', sources: [spacelift.workers] },
+			spacelift: { mark: 'warn', text: 'A service Spacelift runs, on its workers or on private workers in your infrastructure; a self-hosted install comes with Enterprise+', sources: [spacelift.workers, spacelift.selfHosted, spacelift.pricing] },
 			opentaco: { mark: 'warn', text: 'Jobs run in your CI; full features need an orchestrator backend, the hosted app or one you run', sources: [opentaco.backendless] },
 		},
 	},
 	{
 		id: 'state',
-		band: 'operate',
 		label: 'State stays in your backend',
 		statement: 'State stays in the backend your roots already use, and the tool never has to hold it.',
 		cells: {
@@ -274,7 +278,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'credentials',
-		band: 'operate',
 		label: 'Cloud credentials stay with you',
 		statement: 'Cloud access comes from your own runners\' identity, and the product never holds a credential.',
 		cells: {
@@ -286,7 +289,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'telemetry',
-		band: 'operate',
 		label: 'Traces and metrics',
 		statement: 'Each run sends traces and metrics to a backend you choose.',
 		cells: {
@@ -298,7 +300,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'modules',
-		band: 'operate',
 		label: 'Module publishing and pinned rollouts',
 		statement: 'Modules are published as versions, and a new version is rolled out to the roots that pin it.',
 		cells: {
@@ -310,7 +311,6 @@ export const rows: Row[] = [
 	},
 	{
 		id: 'licence',
-		band: 'operate',
 		label: 'Licence and cost',
 		statement: 'Open source and free to run, with no paid tier holding a feature back.',
 		cells: {
@@ -318,6 +318,61 @@ export const rows: Row[] = [
 			hcp: { mark: 'warn', text: 'A proprietary service priced per managed resource; the Free plan caps at 500 managed resources, policy enforcement and cost estimation need Standard or Premium, and audit logging needs Premium', sources: [hcp.overview] },
 			spacelift: { mark: 'warn', text: 'A proprietary service; the Free plan has 2 users and 1 public worker, and drift detection, the policy engine and a private worker come with Starter+, an annual plan at $20,000', sources: [spacelift.pricing] },
 			opentaco: { mark: 'warn', text: 'The core is MIT; GitLab and Buildkite support and FIPS builds need the enterprise edition and its licence key', sources: [opentaco.gitlab, opentaco.buildkite, opentaco.fips, opentaco.licence] },
+		},
+	},
+	{
+		id: 'account',
+		label: 'No account or sign-in',
+		statement: 'Nothing to sign up for: no account with the vendor, and no sign-in to see a plan or approve a run.',
+		cells: {
+			atlantis: { mark: 'good', text: 'No vendor account; plans and approvals are on the pull request, and the server\'s web UI can be put behind basic auth', sources: [atlantis.server] },
+			hcp: { mark: 'bad', text: 'Starts with an HCP Terraform account and organization; the full plan opens in its web app for members who can read runs', sources: [hcp.signUp, hcp.ui] },
+			spacelift: { mark: 'bad', text: 'Starts with a Spacelift account; runs are triggered, viewed and confirmed in its web app', sources: [spacelift.home, spacelift.start] },
+			opentaco: { mark: 'warn', text: 'Onboarding starts with a sign-up at otaco.app, and a self-hosted install signs users in through WorkOS; backendless mode runs as a GitHub Action with no backend and the basic features', sources: [opentaco.account, opentaco.workos, opentaco.backendless] },
+		},
+	},
+	{
+		id: 'hosted',
+		label: 'A hosted web app',
+		statement: 'A web app shows runs and plans, and the vendor can host everything for you.',
+		cells: {
+			atlantis: { mark: 'bad', text: 'No hosted service; the server you run has a web page of locks and live plan and apply logs, kept until the pull request closes', sources: [atlantis.locking, atlantis.logs, atlantis.home] },
+			hcp: { mark: 'good', text: 'A web app shows runs, plans and history, and HashiCorp runs Terraform on its own machines by default', sources: [hcp.overview, hcp.ui] },
+			spacelift: { mark: 'good', text: 'A web app where runs are triggered, viewed and confirmed; Spacelift hosts it as SaaS, and Enterprise+ adds a self-hosted install', sources: [spacelift.start, spacelift.selfHosted] },
+			opentaco: { mark: 'warn', text: 'A hosted app at otaco.app runs the orchestrator, state and Remote Runs, with a run page in the browser; pull request plans run in your GitHub Actions and show in comments', sources: [opentaco.account, opentaco.remoteJobs, opentaco.architecture] },
+		},
+	},
+	{
+		id: 'maturity',
+		label: 'Years in production',
+		statement: 'Years in production use and a wide base of users.',
+		cells: {
+			atlantis: { mark: 'good', text: 'In production since 2017, and a CNCF Sandbox project since June 2024', sources: [atlantis.home, atlantis.introducing, atlantis.cncf] },
+			hcp: { mark: 'good', text: 'Released as Terraform Cloud in September 2019; the Terraform product page names customers such as Deutsche Bank, GitHub and Skechers', sources: [hcp.announce, hcp.product] },
+			spacelift: { mark: 'good', text: 'Founded in 2020; the customers page has stories from 1Password, Figma and Duolingo', sources: [spacelift.careers, spacelift.customers] },
+			opentaco: { mark: 'warn', text: 'Releases since March 2023, under the name Digger until November 2025; the README links write-ups from teams at Converge Bio and Brevo', sources: [opentaco.releases, opentaco.readme] },
+		},
+	},
+	{
+		id: 'tg-before-merge',
+		label: 'Apply before merge in a Terragrunt repo',
+		statement: 'In a Terragrunt repo, a change can apply from the open pull request before it merges.',
+		cells: {
+			atlantis: { mark: 'good', text: 'Terragrunt runs through a custom workflow the docs give, and applies run on the open pull request before merge', sources: [atlantis.workflows, atlantis.locking] },
+			hcp: { mark: 'bad', text: 'No page mentions Terragrunt, and a VCS-connected workspace applies only after merge', sources: [hcp.runEnv, hcp.cli] },
+			spacelift: { mark: 'warn', text: 'Terragrunt stacks are supported, and run promotion or a push policy can deploy a pull request\'s commit before merge; the Terragrunt pages do not mention it, and the apply does not use the plan files', sources: [spacelift.promotion, spacelift.tgVendor, spacelift.terragrunt] },
+			opentaco: { mark: 'good', text: 'Terragrunt projects apply from a digger apply comment on the open pull request, which is the default', sources: [opentaco.usingTerragrunt, opentaco.applyOnMerge] },
+		},
+	},
+	{
+		id: 'gitlab-comments',
+		label: 'Comment commands on GitLab',
+		statement: 'On GitLab, a merge request comment re-plans or applies.',
+		cells: {
+			atlantis: { mark: 'good', text: 'GitLab, self-managed included, is supported, and merge request comments run plan and apply', sources: [atlantis.requirements, atlantis.using] },
+			hcp: { mark: 'bad', text: 'GitLab merge requests get a speculative plan and a link to it; no comment command is documented', sources: [hcp.vcsProviders] },
+			spacelift: { mark: 'bad', text: 'GitLab merge requests get a comment showing the change; comment commands are documented for GitHub\'s comment events, and the GitLab webhook setup does not subscribe to comments', sources: [spacelift.gitlab, spacelift.prComments] },
+			opentaco: { mark: 'warn', text: 'A digger plan comment on a merge request starts a plan, with the enterprise edition and its licence key; the page shows no apply by comment', sources: [opentaco.gitlab] },
 		},
 	},
 ];

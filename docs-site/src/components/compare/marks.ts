@@ -55,8 +55,8 @@ export const terragucci: Record<RowId, OwnCell> = {
 		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {
-		mark: 'warn',
-		text: 'Two waves, canary units then the rest, each one terragrunt run --all, gated and sealed like plain roots; a changed wave applies nothing',
+		mark: 'good',
+		text: 'One wave per dependency layer of units, canary layers first, each in its own job with its own gate and sealed approval, as for plain roots; a wave whose plans changed applies nothing',
 		page: 'guides/use-terragrunt/',
 	},
 	drift: {
@@ -93,5 +93,30 @@ export const terragucci: Record<RowId, OwnCell> = {
 		mark: 'good',
 		text: 'Apache 2.0, free to run',
 		page: 'https://github.com/INTENTIUS/terragucci/blob/main/LICENSE',
+	},
+	account: {
+		mark: 'good',
+		text: 'No account and no sign-in: the plan note is on the pull request, the report is a CI artifact or a file in your bucket, and an approval is a commit to your chant/lifecycle branch',
+		page: 'concepts/approvals-as-records/',
+	},
+	hosted: {
+		mark: 'bad',
+		text: 'No web app; the plan note, the HTML report and the Grafana dashboards init writes are where runs are read',
+		page: 'reference/report/',
+	},
+	maturity: {
+		mark: 'bad',
+		text: 'First released in October 2026',
+		page: 'https://github.com/INTENTIUS/terragucci/releases',
+	},
+	'tg-before-merge': {
+		mark: 'bad',
+		text: 'A Terragrunt repo applies after merge; init refuses apply.when: pull-request there',
+		page: 'guides/use-terragrunt/',
+	},
+	'gitlab-comments': {
+		mark: 'bad',
+		text: 'GitLab starts no pipeline for a merge request note, so there are no comment commands; push again or retry the plan job',
+		page: 'guides/re-plan-from-a-comment/',
 	},
 };

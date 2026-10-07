@@ -1,6 +1,7 @@
-// The shapes behind the comparison grid. A competitor's cell cannot be
+// The shapes behind the comparison page. A competitor's cell cannot be
 // written without a source: the type asks for at least one page of that
-// product's own docs the mark was read from.
+// product's own docs the mark was read from. The marks are not drawn; they
+// decide which section a row may sit in (./sections.ts).
 
 /** good meets by design, warn is partial or by hand, bad misses, na is out of scope. */
 export type Mark = 'good' | 'warn' | 'bad' | 'na';
@@ -23,9 +24,14 @@ export type RowId =
 	| 'credentials'
 	| 'telemetry'
 	| 'modules'
-	| 'licence';
+	| 'licence'
+	| 'account'
+	| 'hosted'
+	| 'maturity'
+	| 'tg-before-merge'
+	| 'gitlab-comments';
 
-export type ProductId = 'atlantis' | 'hcp' | 'spacelift' | 'opentaco' | 'terramate';
+export type ProductId = 'atlantis' | 'hcp' | 'spacelift' | 'opentaco';
 
 /** A page of a product's own documentation, pricing or licence. */
 export interface Source {
@@ -57,7 +63,6 @@ export interface Product {
 
 export interface Row {
 	id: RowId;
-	band: 'review' | 'apply' | 'operate';
 	label: string;
 	/** What a full mark means, shown when the row is opened. */
 	statement: string;
