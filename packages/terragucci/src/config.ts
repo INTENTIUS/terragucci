@@ -222,8 +222,6 @@ export interface ProjectSettings {
    * write one. The two must differ, on every cloud set.
    */
   oidc?: OidcSettings;
-  /** Whether removing the project from a control repo removes its generated files. */
-  owned?: boolean;
   /** How many roots of one dependency layer plan at once. Default: from the state backend. */
   parallelism?: number;
   /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
@@ -262,7 +260,6 @@ export interface ResolvedSettings extends ProjectSettings {
   drift: string | false;
   runtime: Runtime;
   tips: boolean;
-  owned: boolean;
   env: Record<string, string>;
 }
 
@@ -271,7 +268,6 @@ export const BUILT_IN: ResolvedSettings = {
   drift: false,
   runtime: "forge",
   tips: true,
-  owned: false,
   env: {},
 };
 
@@ -304,7 +300,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "waves", "drift", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "owned", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -347,9 +343,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
     problems.push(`${where}.drift must be a cron schedule or false`);
   }
-  for (const k of ["tips", "owned"] as const) {
-    if (s[k] !== undefined && typeof s[k] !== "boolean") problems.push(`${where}.${k} must be true or false`);
-  }
+  if (s.tips !== undefined && typeof s.tips !== "boolean") problems.push(`${where}.tips must be true or false`);
   if (s.waves !== undefined) {
     if (!isObject(s.waves)) problems.push(`${where}.waves must be a map`);
     else stringList(s.waves.canary, `${where}.waves.canary`, problems);
