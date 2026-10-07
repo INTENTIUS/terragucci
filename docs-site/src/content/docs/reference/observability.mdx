@@ -5,7 +5,7 @@ description: Each stage run as one trace, and the pipeline's numbers as metrics,
 
 import Shot from '../../../components/Shot.astro';
 
-Each stage run sends one trace and a set of metrics over OTLP to the collector you run. Tempo, Honeycomb, Datadog and any other backend with an OTLP endpoint work too. Nothing is sent unless an endpoint is set.
+Each stage run sends one trace and a set of metrics over OTLP to your collector or any backend with an OTLP endpoint. Nothing is sent unless an endpoint is set.
 
 ## Turning it on
 
@@ -30,7 +30,7 @@ env:
 
 ### Headers and secrets
 
-terragucci sends OTLP/JSON over HTTP, so point it at the collector's HTTP port (4318), not gRPC. Keep header values that hold a key in a CI secret rather than in `env`. Name the secret in `terragucci.yml` with `telemetry: { headers_secret: OTLP_HEADERS }` and the generated GitHub and Forgejo workflows set `OTEL_EXPORTER_OTLP_HEADERS` from `${{ secrets.OTLP_HEADERS }}` on the plan, apply and drift jobs, the ones that run a stage and send telemetry. The check and publish jobs do not get it. The plan job reads it too, so it runs only for pull requests from the same repo; a fork's pull request gets no secrets. On GitLab the generated plan, apply and drift jobs set it from the CI/CD variable of that name, and GitLab itself hands project variables to every job, so mark the variable masked. A collector that cannot be reached never fails a stage. The job log says what was sent and what was not.
+terragucci sends OTLP/JSON over HTTP, so use the collector's port 4318, not gRPC. Keep keys in a CI secret named by `telemetry: { headers_secret: OTLP_HEADERS }`; the generated workflows set `OTEL_EXPORTER_OTLP_HEADERS` from it on the plan, apply and drift jobs. A fork's pull request gets no secrets, and on GitLab you mark the variable masked. An unreachable collector never fails a stage.
 
 ## The trace
 
@@ -45,40 +45,40 @@ terragucci tf-plan          project, commit, binary, change set, totals
 
 ### Spans from the binary
 
-Every run of the binary is a span, and the binary gets that span as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) read it, so their own spans land inside the trace. Terraform ignores it and starts a trace of its own. Its spans carry the resource attributes `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`, so a query on them finds the span that ran it.
+Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) nest theirs in it; Terraform starts its own, tagged `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`.
 
 <Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
 
-terragucci also turns the binary's OTLP trace exporter on and points it at a receiver of its own, on a loopback port, for as long as the run lasts. With an endpoint set, each batch the binary sends is passed on to your collector unchanged. The receiver takes OTLP over HTTP only. A collector reached only over gRPC gets nothing from terragucci or the binary.
+The binary's exporter goes to a loopback receiver that forwards batches to your collector. It takes OTLP over HTTP only.
 
 ## Where the time went
 
 ### What the report lists
 
-Every `tf-plan` and `tf-drift` report names where the run spent its time, endpoint or not, and so does each `tf-apply` wave's. It reads what each root's plan (and a wave's apply) sent to the receiver:
+Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where the run spent its time, endpoint or not:
 
 - the slowest roots, with each root's wall time, its plan's and, in a wave, its apply's;
 - in each root, the slowest resource instances and their refresh time;
 - the slowest provider calls, and the resource each was for;
 - provider start-up and state lock waits.
 
-choudoufu times each resource instance and each provider call. On a large estate it sums them by resource type or provider method instead, once a graph walk passes its budget (`CHOUDOUFU_TRACE_DETAIL` and `CHOUDOUFU_TRACE_SPAN_BUDGET`). The report then lists those sums with a count and the slowest member per type. It also says how many instances it summed.
+Past a span budget (`CHOUDOUFU_TRACE_DETAIL`, `CHOUDOUFU_TRACE_SPAN_BUDGET`) choudoufu sums timings by resource type or provider method, and the report says so.
 
 ### Terragrunt and binaries that time nothing
 
-A root whose binary reports nothing per resource says so where the lists would be. Terraform exports no traces, and OpenTofu's stop above the resource. In a Terragrunt run, Terragrunt runs the binary, so each unit's time comes from Terragrunt's run report (when the unit started and ended) and the report lists the units slowest first. Terragrunt calls the binary through a small wrapper terragucci writes as `TG_TF_PATH`. The wrapper picks out each unit's plan by its `-out` file and points that run's exporter at the receiver, with `TRACEPARENT` set to the unit's span when tracing is on. A unit's report then reads its plan's spans as a root's does. Terragrunt's own telemetry is left alone.
+Terraform exports no traces and OpenTofu's stop above the resource; the report says so. A Terragrunt unit's time comes from Terragrunt's run report, and a `TG_TF_PATH` wrapper points each plan at the receiver.
 
 ### State lock waits
 
-A `tf-plan` of plain roots never takes the state lock, so it never waits for one. A Terragrunt unit's plan does, and so do a `tf-apply` wave's plan and apply, and each waits up to five minutes (`-lock-timeout=5m`) unless `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` already sets a `-lock-timeout`. The same default applies to a Terragrunt apply. With choudoufu, a wait shows as a `State lock wait` span, with the number of attempts it took, and the wave's report lists it under the root's lock waits. A wave writes its report to `terragucci-report/`, copies it to the `reports` bucket when one is set, and the apply job keeps the directory as a job artifact, as the plan job does.
+A Terragrunt plan and a `tf-apply` wave's plan and apply wait up to five minutes for a state lock (`-lock-timeout=5m`) unless `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` sets one. With choudoufu a wait shows as a `State lock wait` span. A wave writes its report to `terragucci-report/` and the `reports` bucket when set.
 
-The HTML report shows the run's timings under "Where the time went", and folds each root's own under its changes. When a binary did time its resources, the plan note gets one line naming the three slowest. `report.json` carries them as `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
+The HTML report shows them under "Where the time went", and `report.json` carries `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 
 ## The metrics
 
 ### What is sent
 
-A stage pushes its metrics once, when it ends, so a short CI job needs no scrape. Point a Prometheus exporter or remote write on your collector at them. They are read from the run's report, so they match what reviewers saw. A `tf-apply` wave sends its trace, `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges, and leaves the plan's metrics to the plan so a root is not counted twice. Every metric is a gauge with the labels `project` and `stage`, plus those below.
+A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. Every metric is a gauge with `project` and `stage` labels, plus those below.
 
 ### Metric table
 
@@ -105,15 +105,15 @@ A stage pushes its metrics once, when it ends, so a short CI job needs no scrape
 
 ### Label cardinality
 
-A plan run for a pull request labels every metric it sends with `pull_request`, so those series are new for each pull request. Three labels take values that are not bounded by your configuration: `pull_request` on a plan's metrics, `address` on `terragucci_resource_seconds` and `version` on `terragucci_module_pin`. A Prometheus that keeps every series for a long retention grows with the number of pull requests, the resources that happen to be slowest, and the module versions a root has pinned. The Change review dashboard reads `pull_request`, and the Runs dashboard reads `address`; a collector that deletes either label before Prometheus sees it leaves those panels empty. `project`, `stage`, `result`, `action`, `wave`, `binary` and `rule` stay within a small set, and `root`, `module` and `provider` grow with the size of your estate.
+`pull_request`, `address` and `version` are unbounded, so a long-retention Prometheus grows with them. The Change review dashboard needs `pull_request` and the Runs dashboard needs `address`; dropping either empties those panels.
 
 ### How a run ended
 
-The stage span's `terragucci.result` attribute says how the run ended. A plan or drift run ends in `success` or `failure`, and a wave in one of `applied`, `nothing`, `waiting`, `refused` and `failed`.
+The stage span's `terragucci.result` is `success` or `failure` for a plan or drift run, and one of `applied`, `nothing`, `waiting`, `refused` and `failed` for a wave.
 
 ### Resource attributes
 
-The metrics' resource carries `terragucci.project` and `service.version` (the terragucci version, which changes only when you upgrade), and nothing that changes from run to run, so each of a project's gauges stays one series and a dashboard reads the latest run's value. The trace's resource also carries `vcs.ref.head.revision` (the commit) and `cicd.pipeline.run.url.full` (the CI job), which is how one run's numbers are found: its trace, and the report it links.
+The metrics' resource carries only `terragucci.project` and `service.version`; the trace's adds `vcs.ref.head.revision` and `cicd.pipeline.run.url.full`.
 
 ## From a trace to its report
 
@@ -124,13 +124,13 @@ telemetry:
   trace_url: "https://grafana.example.com/explore?left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22{trace_id}%22%7D%5D%7D"
 ```
 
-Any viewer that takes a trace id in its URL works: Grafana's Explore, Tempo's API, Jaeger. The other way, with [`reports.url`](/terragucci/reference/report/#where-reports-are-kept) set, the stage span carries the address of the run's `report.html` in the bucket as `terragucci.report.url`, and the job's page as `cicd.pipeline.run.url.full`.
+With [`reports.url`](/terragucci/reference/report/#where-reports-are-kept) set, the stage span carries the run's `report.html` address as `terragucci.report.url`.
 
 ## Dashboards and alerts
 
 ### What init writes
 
-Set `dashboards: true` in `terragucci.yml` and `init` writes Grafana dashboards and alert rules into the repo, next to the pipeline. `reconcile` writes them into each project the same way. They change only when the config does, and `init` leaves a file there that it did not write alone.
+With `dashboards: true`, `init` and `reconcile` write Grafana dashboards and alert rules, and `init` leaves files it did not write alone.
 
 ```
 observability/terragucci/
@@ -158,7 +158,7 @@ Nine dashboards are written: the six below, and one for each of the three SLOs.
 
 ### SLOs and alerts
 
-There are three SLOs, each over 28 days. Plans finish within ten minutes 95% of the time. Wave applies succeed 99% of the time. Drift is corrected within a day 90% of the time. The plan and apply SLIs count the runs in each window, a project's first run among them, and a window with no runs records nothing, so a project that runs rarely still has an error budget.
+There are three SLOs over 28 days: plans finish within ten minutes 95% of the time, wave applies succeed 99%, drift is corrected within a day 90%.
 
 | Alert | Fires when |
 |---|---|
@@ -179,11 +179,11 @@ There are three SLOs, each over 28 days. Plans finish within ten minutes 95% of 
 | `path` | `/var/lib/grafana/dashboards/terragucci` | where Grafana finds the dashboard files |
 | `drift_age`, `wave_wait`, `schedule` | `1d`, `4h`, `2d` | the alert thresholds |
 
-Mount `grafana/provisioning/` under Grafana's `/etc/grafana/provisioning/` and `grafana/dashboards/` at `path`, and add `prometheus/terragucci.rules.yml` to Prometheus's `rule_files`. Load the alerting file or the Prometheus file's `ErrorBudgetBurn` alerts, whichever you page from; both alert on the same burn rates.
+Mount `grafana/provisioning/` under `/etc/grafana/provisioning/`, `grafana/dashboards/` at `path`, and add `prometheus/terragucci.rules.yml` to `rule_files`. Page from the alerting file or the `ErrorBudgetBurn` alerts, not both.
 
 ### Span metrics
 
-Pipeline health, the SLOs and the wave results read span metrics, which your collector makes from the stage spans with a `spanmetrics` connector. Turn the stage spans into the metrics the dashboards read with these settings, and send its output to the metrics pipeline your Prometheus reads:
+These read span metrics from a `spanmetrics` connector in your collector:
 
 ```yaml
 connectors:
@@ -200,8 +200,8 @@ connectors:
         buckets: [5s, 15s, 30s, 60s, 120s, 300s, 600s, 1200s, 1800s, 3600s]
 ```
 
-The Runs dashboard lists traces from Tempo. A collector that exports traces elsewhere still fills every other panel.
+Only the Runs dashboard's trace list needs Tempo.
 
 ### Links to reports
 
-With `reports.url` set, the dashboards link down to the reports. In the Runs dashboard's trace table, each run's name links its report, through the page the upload writes at `traces/<trace id>.html`; the trace id keeps Grafana's own link to the trace. The Estate dashboard links each project in "Roots per project" to its report index, and both dashboards carry a link to the index of every project.
+With `reports.url` set, the Runs dashboard links each trace to `traces/<trace id>.html` and Estate links each project to its report index.
