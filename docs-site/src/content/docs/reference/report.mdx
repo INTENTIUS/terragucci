@@ -9,7 +9,7 @@ Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one report. The report
 
 ## Running it
 
-The pipeline's plan job runs the stage for every pull request and merge request. The report's note becomes the one plan note, and the `terragucci/plan` status takes its counts from the report. GitHub and Forgejo keep the report as the run's `terragucci-report` artifact. An artifact there is a download. The note links to the run and says the report is in its artifacts. GitLab keeps it with the job's artifacts, where the note links to the HTML report. Its merge-request widget reads `gitlab-terraform.json`. When [the bucket is served](#where-reports-are-kept), the note links the copy there instead, and each link to a group or root opens at its place in the report.
+The plan job writes the report for every pull request and merge request. Its note is the one plan note, and the `terragucci/plan` status takes its counts from it. GitHub and Forgejo keep the report as the `terragucci-report` artifact, and the note links the run. GitLab keeps it with the job's artifacts and links the HTML report. Its merge-request widget reads `gitlab-terraform.json`. When [the bucket is served](#where-reports-are-kept), the note links the copy there.
 
 To run the stage yourself, from the repo:
 
@@ -17,7 +17,7 @@ To run the stage yourself, from the repo:
 npx terragucci stage tf-plan
 ```
 
-With no base to compare against it plans every root. On a pull request, or with `--base <ref>` (or `TG_BASE`), it plans only the roots the change reaches: a root whose directory, local modules or var files changed, and every root that reads such a root's state. A change that reaches no root plans nothing, and the note says so. It prints the grouped summary. It also writes the run's report to `terragucci-report/`:
+With no base it plans every root. On a pull request, or with `--base <ref>` or `TG_BASE`, it plans only what the change reaches. That is a root whose directory, local modules or var files changed, and every root that reads its state. A change that reaches none plans nothing, and the note says so. The files go to `terragucci-report/`:
 
 | File | What it is |
 |---|---|
@@ -29,9 +29,9 @@ With no base to compare against it plans every root. On a pull request, or with 
 | `roots/<root>/plan.txt` | the root's full plan, as the binary printed it |
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 
-`--out <dir>` writes it somewhere else, and `--root <glob>` plans only matching roots. [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the rest of the flags. A Terragrunt repo's units are planned with one `terragrunt run --all` per wave. The stage exits 1 when a root refuses to plan, and still writes the report.
+`--out <dir>` writes elsewhere and `--root <glob>` limits the roots; [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the rest. Terragrunt units are planned with one `terragrunt run --all` per wave. The stage exits 1 when a root refuses to plan, and still writes the report.
 
-A `tf-drift` run writes the same files, and `issue.md` besides: the body of the drift issue. Its report holds what changed outside Terraform where a plan report holds proposed changes, and it has no waves. A deleted object is listed as "deleted outside Terraform". See [Drift](/terragucci/reference/stages/#drift).
+A `tf-drift` run writes the same files plus `issue.md`, the body of the drift issue. It has no waves and lists a deleted object as "deleted outside Terraform". See [Drift](/terragucci/reference/stages/#drift).
 
 ## What a reviewer sees
 
@@ -72,14 +72,14 @@ A change to one of these that only touches tags stays folded.
 
 Folded, one click away:
 
-- each group of identical changes, shown as one diff and a root count;
+- each group of identical changes, as one diff with a count;
 - updates that only touch tags or descriptions;
 - values known only after apply;
 - roots with no changes.
 
 ## Back to the full plan
 
-Nothing is summarized away. Every root's full plan is kept beside the report, as the binary printed it and as JSON. Every group, root and named change in the HTML links to that plan and to the CI job that produced it. In the plan note, each group links to its place in the report and each destroy to its root. One click from the pull request lands on the line you were reading about.
+Every root's full plan is kept beside the report, as printed and as JSON. The HTML links each group, root and named change to its plan and CI job. The note links a group to the report and a destroy to its root.
 
 <Shot step="report" view="root" alt="One root's row in the HTML report, envs/prod/payments, with its links to plan, plan.json and the job" optional />
 
@@ -87,11 +87,11 @@ The plan link opens the root's plan as the binary printed it:
 
 <Shot step="report" view="plan" alt="The full plan text of envs/prod/payments, opened from the report" optional />
 
-The report's header links the commit and the job. A plan for a pull request links the pull request too. A run that sent a trace shows its trace id. With `telemetry.trace_url` set, the id is a link to the trace. See [Traces and metrics](/terragucci/reference/observability/#from-a-trace-to-its-report).
+The header links the commit and the job, and the pull request if there is one. With `telemetry.trace_url` set, a run's trace id links to the trace. See [Traces and metrics](/terragucci/reference/observability/#from-a-trace-to-its-report).
 
-The page opens on two lists: every destroy, replacement and refusal, and the outlier roots and highlighted changes to read first. Both fit on the first screen and neither is ever folded.
+The page opens on two lists that are never folded: destroys, replacements and refusals, then outlier roots.
 
-The HTML report is one file that makes no network calls, so it opens the same wherever you copy it. Its filters narrow the page to what one reviewer owns, and destroys stay pinned above every filter. It follows the reader's light or dark setting.
+The HTML report is one file that makes no network calls. Destroys stay pinned above its filters.
 
 ## What a script reads
 
@@ -103,19 +103,19 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 
 [Report JSON schema](/terragucci/reference/report-schema/) lists every field.
 
-Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report links to each record and never copies it, so the branch is the one record of who approved what.
+Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report links to each record and never copies it.
 
 ## Sensitive values
 
-`show -json` prints sensitive values in plain text. Before a plan is kept, every value the plan marks sensitive is replaced with `(sensitive, redacted by terragucci)`, and so is the default of every sensitive variable. The report page says how many were replaced. A [policy](/terragucci/reference/policy/) reads the unredacted plan, and the same values are replaced in its denials and warnings before they reach the report, the note or the log. Plan digests are taken before that, inside the job, so an approval binds the plan as it was planned.
+`show -json` prints sensitive values in plain text. Before a plan is kept, each sensitive value and the default of each sensitive variable becomes `(sensitive, redacted by terragucci)`. The report page counts them. A [policy](/terragucci/reference/policy/) reads the unredacted plan, and its denials and warnings are redacted before they reach the report, note or log. Digests are taken before redaction, so an approval binds the plan as planned.
 
-A change to a write-only attribute's version (`*_wo_version`) is labelled as such, since the value itself is never in the plan. Ephemeral values last only as long as the run and are not reported as changes. Imports and forgets are named on their own and never counted as destroys; a forget leaves the resource running.
+A write-only attribute's version (`*_wo_version`) is labelled as such, since the value is never in the plan. Ephemeral values are not reported. Imports and forgets are named separately, not counted as destroys; a forget leaves the resource running.
 
 ## Where reports are kept
 
 By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts.
 
-To keep them longer, name a bucket in `terragucci.yml` and run `npx terragucci init` again; the plan job then copies each report there as well. Any S3-compatible store works, Google Cloud Storage and MinIO included. The job writes as `reports.role` when it is set, a role it assumes with its OIDC token. Otherwise it uses the keys in `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (with `AWS_SESSION_TOKEN` when set). Without keys it assumes `AWS_ROLE_ARN` with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#3-give-the-job-an-identity-that-writes-only-reports) says why reports get an identity of their own. Set `endpoint` for a store that is not AWS; without it, `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL` is used when set. Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, and for `us-east-1` when neither is set.
+To keep them longer, name a bucket in `terragucci.yml` and run `npx terragucci init` again. The plan job then copies each report there. Any S3-compatible store works. The job assumes `reports.role` with its OIDC token when set. Otherwise it uses `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (and `AWS_SESSION_TOKEN`). With no keys it assumes `AWS_ROLE_ARN` with `AWS_WEB_IDENTITY_TOKEN_FILE`. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#3-give-the-job-an-identity-that-writes-only-reports) says why reports get their own identity. `endpoint` sets a non-AWS store; otherwise `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL` applies. Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`.
 
 ```yaml
 reports:
@@ -125,9 +125,9 @@ reports:
   role: arn:aws:iam::123456789012:role/terragucci-reports
 ```
 
-`url` is the address that serves the bucket to a browser, such as its static website. terragucci never works it out from the bucket's name. With it, a note links the copy of `report.html` there. `report.json` records that address as `run.report_url`. Without it, the note links the CI run.
+`url` is the address that serves the bucket to a browser. terragucci never derives it from the bucket name. With it the note links the bucket's `report.html` and `report.json` records it as `run.report_url`; without it the note links the CI run.
 
-Reports land under one path per run, the plans beside them. The path holds the full SHA of the commit the job ran on: `GITHUB_SHA` on GitHub and Forgejo, which for a GitHub pull request is the merge commit made to test it, and `CI_COMMIT_SHA` on GitLab. Links in a report are relative, so they work in the bucket as they do in the CI artifact:
+A run's report and plans land under one path holding the full commit SHA: `GITHUB_SHA` (for a GitHub pull request, the test merge commit) or `CI_COMMIT_SHA` on GitLab. Links are relative, so they work in the bucket:
 
 ```
 reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
@@ -136,10 +136,10 @@ reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/t
 
 ## Tips
 
-With `tips` on, which is the default, the report ends with advice on how your roots are set up. It flags modules and providers that float instead of pinning, a missing lock file, a local module so widely shared that every change to it plans every root, and a project with no canary wave. Each tip names the rule behind it, and the code rules are the same ones [`chant lint`](/terragucci/concepts/glossary/#chant) runs. A tip never fails a run or changes a gate. The plan note shows only how many there are. `tips: false` removes all of it. The rules are listed on [Tips](/terragucci/reference/tips/).
+With `tips` on, the default, the report ends with advice on how your roots are set up. Examples are a floating version or a missing lock file. Each tip names its rule, and none fails a run or changes a gate. `tips: false` removes them. See [Tips](/terragucci/reference/tips/).
 
 ## The report index
 
-Every upload rewrites `index.html` and `index.json` for the project, at the project's path, and for every project, at the top of the prefix. Each run gets a row in the index with its counts and destroys. The row links that run's report and the forge's page for its commit. It links the job and the pull request when the run had them, and the trace when `telemetry.trace_url` is set. Runs that finish at the same moment each keep their row: a run writes `index.json` only if it is unchanged since the run read it, and reads it again when it is not. Serve the bucket as a static site and the index is the home page for every plan you have run. That publishes every report in it. Put the site behind your identity provider and keep the bucket private. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#5-serve-the-index) has the choices. Retention is your bucket's lifecycle rule.
+Every upload rewrites `index.html` and `index.json` for the project and, at the top of the prefix, for all projects. Each run has a row with its counts, destroys and links. Concurrent runs each keep their row. Served as a static site, the index publishes every report in the bucket: put the site behind your identity provider and keep the bucket private. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#5-serve-the-index) has the choices. Retention is your bucket's lifecycle rule.
 
 <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
