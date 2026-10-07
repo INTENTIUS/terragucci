@@ -11,6 +11,8 @@ prompt: |
 ---
 
 import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
@@ -18,70 +20,88 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 ## Before you start
 
-- A wave that ran: after a merge, or from `/terragucci apply` on an open pull request when [`apply.when`](/terragucci/reference/config/#apply-before-merge) is `pull-request`.
-- `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits. See [Gate policy](/terragucci/reference/stages/#gate-policy).
-- [chant](/terragucci/concepts/glossary/#chant) installed where you approve: `npm i -D @intentius/chant`.
-- Write access: `chant approve` pushes a commit to `chant/lifecycle` with your own git credentials.
-- An ssh key of yours in `.chant/allowed_signers` on the default branch ([setup](#set-up-the-signers-file), once per repo).
-- You are a person. Nothing signs off for you.
+| You need | Detail |
+|---|---|
+| A wave that ran | After a merge, or from `/terragucci apply` on an open pull request when [`apply.when`](/terragucci/reference/config/#apply-before-merge) is `pull-request`. |
+| A gate | `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits ([Gate policy](/terragucci/reference/stages/#gate-policy)). |
+| [chant](/terragucci/concepts/glossary/#chant) | `npm i -D @intentius/chant`, where you approve. |
+| Write access | `chant approve` pushes a commit to `chant/lifecycle` with your own git credentials. |
+| Your key in the signers file | An ssh key of yours in `.chant/allowed_signers` on the default branch ([setup](#set-up-the-signers-file), once per repo). |
+| To be a person | Nothing signs off for you. |
 
 ## Steps
 
-### 1. Find the waiting wave
+<Steps>
 
-A waiting wave stops its job with exit code 3 and prints the command with the digest it planned. A comment-run apply puts the same command in its reply. A printed command looks like this.
+1. Find the waiting wave.
 
-```text
-chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --sign
-```
+   A waiting wave stops its job with exit code 3 and prints the command with the digest it planned. A comment-run apply puts it in its reply. The plan note lacks it: the digest is made after the note.
 
-The plan note does not carry it, because the apply job makes the digest after the note.
+   ```text
+   chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --sign
+   ```
 
-The example has a destroy to approve. `just example change destroy` opens its pull request and `just example merge destroy` merges it.
+   In the example, `just example change destroy` opens a destroy and `just example merge destroy` merges it. The report has a Waves table with each wave's set digest and state.
 
-<Captured step="wave-waiting" cmd="just example merge destroy" optional />
+   <Shot step="wave-waiting" view="pull" alt="The destroy pull request in Forgejo with terragucci's plan note, which lists the destroy at the top" optional />
+   <Shot step="wave-waiting" view="log" alt="The apply job's log: the wave waits, exit code 3, and the chant approve command with the plan digest" optional />
+   <Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
-The report linked from the run has a Waves table with each wave's set digest and state.
+2. Read what the wave will do.
 
-### 2. Read what the wave will do
+   The wave waits because a plan destroys or replaces something, or because `gate` is `always`. Destroys and replacements are never grouped, so they sit at the top of the report. Read each one.
 
-The wave waits because a plan destroys or replaces something, or because `gate` is `always`. Destroys and replacements are never grouped, so they sit at the top of the report. Read each one.
+3. Approve it.
 
-### 3. Approve it
+   ```bash
+   npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
+   ```
 
-```bash
-npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
-```
+   The approval binds the `--plan` digest only; a wave that plans differently is refused as changed. Without `--plan`, chant binds whatever is pending, maybe plans you did not read, so always pass it.
 
-The approval binds the `--plan` digest only; if the wave plans differently, it is refused as changed. Without `--plan`, chant binds whatever is pending, which may be plans you did not read, so always pass it.
+   `--actor` is your principal in `.chant/allowed_signers`; a seal counts only for a listed principal. `--sign` seals with your key, or git's `user.signingkey` when `gpg.format` is `ssh`.
 
-`--actor` is your principal in `.chant/allowed_signers`; a seal counts only for a listed principal. Left out, chant uses `$GITHUB_ACTOR`, then `$GITLAB_USER_LOGIN`, then `$USER`. `--sign` seals with your key, or git's `user.signingkey` when `gpg.format` is `ssh`.
+   Left out, `--actor` falls back by forge. On your own machine only `$USER` is set, so pass `--actor` with the principal you listed.
 
-<Captured step="wave-refused" cmd="just example approve" optional />
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       `$GITHUB_ACTOR`, in a workflow.
+     </TabItem>
+     <TabItem label="GitLab">
+       `$GITLAB_USER_LOGIN`, in a pipeline.
+     </TabItem>
+     <TabItem label="Forgejo">
+       No variable of its own: pass `--actor`, or chant uses `$USER`.
+     </TabItem>
+   </Tabs>
 
-The record names the wave's set digest, which hashes every root's plan digest. The seal covers the record, so an edited record no longer verifies.
+   <Captured step="wave-refused" cmd="just example approve" optional />
 
-`terragucci init` lists every wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson). Once it names any gate, every wave, including one added after `init`, needs a seal that verifies against the signers file at base.
+   The record names the wave's set digest, which hashes every root's plan digest. The seal covers the record, so an edited record no longer verifies.
 
-### 4. Run the stage again
+   `init` lists each wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson). Once it names any gate, every wave needs a seal that verifies against the signers file at base.
 
-How depends on [`apply.when`](/terragucci/reference/config/#apply-before-merge).
+4. Run the stage again.
 
-Under the default `merge`, comment `/terragucci apply` on the merged pull request (GitHub or Forgejo). Add `wave-2` to stop after that wave. You need write access. Re-running the job or another push does the same. On GitLab, retry the job.
+   | Situation | How to re-run |
+   |---|---|
+   | `apply.when: merge` (the default), GitHub or Forgejo | Comment `/terragucci apply` on the merged pull request (add `wave-2` to stop after that wave), or re-run the job. Needs write access. |
+   | `apply.when: merge`, GitLab | Retry the job. |
+   | `apply.when: pull-request` | Comment `/terragucci apply` on the open pull request again. Signers come from the default branch, so the pull request cannot add its own approver. The forge's review is also required. |
 
-With `pull-request`, comment `/terragucci apply` on the open pull request again. Gate rule and signers come from the default branch, so a pull request cannot add its own approver.
+   The comment approves nothing. A wave without a sealed approval waits, with the command in the reply; one whose plans changed is refused; otherwise it applies, resuming where it stopped. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
 
-The comment approves nothing. A wave without a sealed approval of its plans waits, with the approve command in the reply; one whose plans changed is refused. Otherwise it applies, resuming where it stopped.
+   The report then shows the wave as approved, linked to its record.
 
-Under `pull-request` the job also requires the forge's review. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
-
-The report then shows the wave as approved, linked to its record.
+</Steps>
 
 ## Roots on HCP Terraform
 
 terragucci's gate reads neither HCP Terraform's run approvals nor its locks. Set workspaces to local execution. Remote execution adds HCP's own approvals and locks.
 
 ## Set up the signers file
+
+<Steps>
 
 1. In a reviewed pull request to the default branch, add `.chant/allowed_signers`, one line per approver, in ssh-keygen's allowed_signers format:
 
@@ -90,7 +110,15 @@ terragucci's gate reads neither HCP Terraform's run approvals nor its locks. Set
    github:bob ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ...
    ```
 
-   Ed25519 (including `sk-ssh-ed25519@openssh.com`) and RSA keys are checked. A `namespaces="..."` line counts only if it lists `chant-gate` or `*`. Lines with `valid-after`, `valid-before`, `cert-authority` or a pattern principal (`*`, `?`, `!`) are ignored.
+   | Line | Counts? |
+   |---|---|
+   | `ssh-ed25519` | yes |
+   | `sk-ssh-ed25519@openssh.com` | yes |
+   | `ssh-rsa` | yes |
+   | `namespaces="..."` | only if it lists `chant-gate` or `*` |
+   | `valid-after`, `valid-before` | ignored |
+   | `cert-authority` | ignored |
+   | a pattern principal (`*`, `?`, `!`) | ignored |
 
    To move the file, set its path in `.chant/trust.json`, e.g. `{"signers": "security/allowed_signers"}`. The agent comment refuses changes to it.
 
@@ -98,29 +126,38 @@ terragucci's gate reads neither HCP Terraform's run approvals nor its locks. Set
 
 3. Protect `chant/lifecycle` against force pushes and deletion (next section).
 
+</Steps>
+
 ### Which commit the rule is read from
 
-The signers file, `.chant/trust.json` and `chant.workspace.json` are read from base, the applied commit's first parent. After a merge commit or squash that is the default branch before the merge, so a pull request's change to them governs only later merges.
+The signers file, `.chant/trust.json` and `chant.workspace.json` are read from base, the applied commit's first parent. A pull request's change to them governs only later merges.
 
-With a rebase merge of several commits, base is the pull request's own next-to-last commit, so merge such pull requests with a merge commit or a squash.
+| Merge method | Base is | Safe |
+|---|---|---|
+| Merge commit | the default branch before the merge | yes |
+| Squash | the default branch before the merge | yes |
+| Rebase of one commit | the default branch before the merge | yes |
+| Rebase of several commits | the pull request's own next-to-last commit | no: merge with a merge commit or a squash |
 
 Sealing turns off for later merges when `chant.workspace.json` is deleted or its `identity.gates` emptied, so that change needs the same review as the signers file. The [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses it.
 
 ## Who can push to `chant/lifecycle`
 
-Approvers push records with their own credentials as fast-forwards. The apply job pushes pending records with its token (`github.token` on GitHub and Forgejo, `GITLAB_TOKEN` on GitLab); on GitHub no rule can tell it from another workflow.
+Approvers push records as fast-forwards with their own credentials. The apply job pushes pending records with its token (`github.token`, or `GITLAB_TOKEN` on GitLab); on GitHub no rule can tell it from another workflow.
 
 The seal decides what counts: a line whose seal does not verify against the signers file at base counts for nothing. Protection keeps history from being rewritten.
 
 | Forge | Protect `chant/lifecycle` with |
 |---|---|
 | GitHub | a ruleset or protection rule blocking force pushes and deletion, with pull requests and status checks off. |
-| Forgejo | a protected branch rule with push for everyone with write access and force push off. |
 | GitLab | a protected branch with push and merge allowed to a role your approvers and `GITLAB_TOKEN` both hold, force push off. |
+| Forgejo | a protected branch rule with push for everyone with write access and force push off. |
 
 ## If the wave refuses instead
 
 When any root's plan changed after you approved, the wave applies nothing. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) covers that.
+
+<Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, and the roots whose plans moved" optional />
 
 ## Next
 

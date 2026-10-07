@@ -1,0 +1,95 @@
+---
+title: Roll out a new module version
+description: Move a module's pin one wave at a time, as one pull request per wave, across the roots and repos that use it.
+claims: [rollout]
+prompt: |
+  Read https://intentius.io/terragucci/guides/roll-out-a-module-version/.
+  Run `npx terragucci rollout <module>` (the preview only), fix any pin it refuses
+  in a pull request, and print the `--mode apply` command for me to run.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
+---
+
+import Shot from '../../../components/Shot.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+Every root that pins the module moved to the new version through one pull request per wave.
+
+## Before you start
+
+- Roots that pin the module exactly by `oci://` tag or digest, registry `version` or git tag. A range cannot move ([Stages](/terragucci/reference/stages/#rolling-out-a-module-version) lists the cases).
+- The new version published ([Publish your modules](/terragucci/guides/publish-modules/)).
+- The HCL parser beside terragucci: `npm i -D @cdktn/hcl2json`.
+- A forge token, in the variable `token_env` names, that can open pull requests (only the apply run needs it).
+- Optional: `waves.canary` in `terragucci.yml` for the first wave.
+
+## Steps
+
+<Steps>
+
+1. Preview the rollout.
+
+   ```bash
+   npx terragucci rollout modules/network
+   ```
+
+   Name the module by path or by source without the pin; with no version, the newest published is used. The dry run changes nothing. When pins disagree, `--from` picks which moves.
+
+2. Fix any pin it refuses. The preview reports each pin it cannot move and a tip:
+
+   | The pin | Tip |
+   |---|---|
+   | a range such as `~> 1.4` | `rollout-floating-pin`: pin one version |
+   | set from a variable or a local | `rollout-literal-pin`: write a literal, since a variable's value is not in the diff |
+   | absent from the source | `rollout-pin`: add a `?ref=`, `?tag=` or `version` |
+   | two versions of the module in one directory | `rollout-one-pin`: pin every call at one version |
+
+   Fix those in their own pull request and run the preview again.
+
+3. Open the first wave.
+
+   ```bash
+   npx terragucci rollout modules/network 1.4.0 --mode apply
+   ```
+
+   `--mode apply` writes to the forge and runs no `terraform apply`; roots apply after the merge. It opens one pull request for the canary wave, or the first in dependency order. Only that wave's files change, and each pin keeps its shape.
+
+   <Shot step="pin" view="pull" alt="The rollout's wave 1 pull request on the local Forgejo, opened for the four dev service roots" optional />
+
+4. Merge it and let it apply. Review and merge it; the apply stage runs on the merge commit.
+
+   <Shot step="pin" view="files" alt="The pull request's files: each dev service main.tf moves its ref from modules/service/v1.0.0 to v1.1.0" optional />
+
+5. Run the rollout again. Each run takes at most one step, so schedule it or run it after each merge:
+
+   ```bash
+   npx terragucci rollout modules/network 1.4.0 --mode apply
+   ```
+
+   The next wave opens after the last wave merged and applied (`apply/<path>` per directory, else `terragucci/apply`). A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
+
+   | Exit code | Meaning |
+   |---|---|
+   | 0 | a step was taken, or the rollout is complete |
+   | 3 | a pull request waits for a merge or an apply |
+   | 1 | the rollout stopped |
+
+   From a control repo, wave 1 holds every project's canaries and later waves follow in config order. Each project gets its own pull request per wave.
+
+</Steps>
+
+## Provider upgrades
+
+The same flow moves a provider in the lock file:
+
+```bash
+npx terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
+```
+
+Each lock file is rewritten for that provider alone, and an exact `version` constraint moves too. The wave stops unless every other provider stays where it was.
+
+## Next
+
+- [Tips](/terragucci/reference/tips/) names setups that make rollouts hard.
+- [The JSON output of rollout](/terragucci/reference/cli-json/#rollout) lists each wave's state for scripts.
