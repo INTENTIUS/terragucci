@@ -3,6 +3,8 @@ title: The generated pipeline
 description: Apply order, commit statuses, stale plan notes and cloud credentials in the pipeline init writes.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 ## One apply at a time
 
 A project applies one push at a time. GitHub holds every apply job, a push's waves and the apply a comment starts, in one concurrency group with `queue: max`, so jobs wait their turn in the order they arrived and none cancels another. Without it GitHub keeps one job waiting per group and cancels it when the next arrives. GitHub Enterprise Server documents no `queue` option yet, so check yours before relying on it. GitLab queues the apply jobs in a resource group, which cancels none. Forgejo cancels the earlier runs of a branch when a push arrives, even one that is applying, unless the workflow names a group, so the workflow names one that does not cancel. For runners that ignore concurrency, the Forgejo apply job also takes a lock on the remote. The lock carries a lease, and a waiter takes it over once the holder's run has ended or the lease is two hours old. On GitHub and Forgejo a push's wave whose commit is no longer the branch tip stands down, because the newer push applies the whole tree.
@@ -13,6 +15,8 @@ A waiting push applies after the one ahead of it. Pull requests take no locks, s
 
 On GitHub and Forgejo, the `apply-comment` job runs when someone writes `/terragucci apply` on a merged pull request. It runs the default branch's workflow, checks out the pull request's merge commit and runs `tf-apply` wave by wave with the apply role, under the same lock as a push's apply. The Forgejo job does not stand down for a newer tip. Instead it checks again, once it holds the lock, that no later apply has superseded the merge commit. The comment approves nothing; a gated wave still needs its sealed record. A Terragrunt repo's pipeline has no such job. [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) has the rules.
 
+<Shot step="statuses" view="reply" alt="A merged pull request's conversation in Forgejo: the reply that wave 1 waits for an approval of its set digest with the chant approve --sign command, the refusal of a commenter with no write access, and, once the wave is sealed, the reply linking the run that applied it" optional />
+
 Roots that apply together each get a provider cache directory of their own.
 
 `tf-plan` and `tf-drift` plan the roots of one dependency layer at once, up to `parallelism` at a time: 3 for GitLab-managed state, which limits concurrent inits, and 16 for other backends. `tf-apply` plans the roots of its wave under the same bound. A layer waits for the layers whose state it reads. The report, the note and the job log list the roots in the same order however they finish, so a run's report matches one made a root at a time. When the job shares one provider cache through `TF_PLUGIN_CACHE_DIR`, the roots' inits take turns and their plans still run at once.
@@ -20,6 +24,8 @@ Roots that apply together each get a provider cache directory of their own.
 ## Statuses and stale plans
 
 Each stage posts one commit status for the whole run. `terragucci/plan` carries the counts of roots, groups and destroys. `terragucci/apply` appears on the default branch. Require either in branch protection.
+
+<Shot step="statuses" view="checks" alt="An open pull request in Forgejo: the reply refusing /terragucci apply because the pull request is not merged, and below it the commit statuses of its head, terragucci/plan among them" optional />
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale. Pushing to the pull request plans it again.
 

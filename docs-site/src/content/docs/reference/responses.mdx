@@ -3,6 +3,8 @@ title: Responses to pipeline events
 description: What terragucci does when a plan finishes, a wave is refused, an apply fails or drift is found, and where an agent may help.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 Every pipeline event has a response that needs no model, and that response is the default. A project may add a model on top for one event at a time. Approving, applying and merging stay with people.
 
 | Event | Response (default) | With `agent` |
@@ -100,6 +102,8 @@ The answer picks the response. A controller write is reported with a suggested `
 
 An approval binds a wave's set digest. When a root's plan changes after the approval, the wave applies nothing. The diff reads the report the approval was given on and the current one. A waiting wave keeps the first on the `chant/lifecycle` branch next to its pending gate record, and the refused apply job writes both to `terragucci-report/approved` and `terragucci-report/current` before it runs this response. It lists each root whose plan digest moved and the changes and attributes that moved inside it. Approve again only once the new plan is the one you want.
 
+<Shot step="wave-refused" view="log" alt="A refused wave's apply job in Forgejo: the approved digest beside the planned one, and the roots whose plans moved since the approval" optional />
+
 ### Apply failed
 
 The triage table knows these classes of provider error:
@@ -131,6 +135,10 @@ Some changes are only reported, each with its reason:
 
 For a resource the state does not hold, pass `--import <address>=<id>`. terragucci writes the import block, and `plan -generate-config-out` writes its config. On Terraform 1.14 and later, a root with a `.tfquery.hcl` file gets both from `terraform query`.
 
+<Shot step="responses" view="drift" alt="The Codify drift pull request in Forgejo, from the terragucci/drift branch: its body lists the queue timeout written from its live value and the queue to import" optional />
+
+<Shot step="responses" view="drift-files" alt="The drift pull request's files: main.tf takes visibility_timeout_seconds = 45, terragucci_imports.tf adds an import block for the other queue, and terragucci_generated.tf holds that queue's generated config" optional />
+
 ### Description check
 
 With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the decision service one yes-or-no question before it posts the note: does the pull request's title and description describe what the plan does? The service reads the title, the description and the redacted report's summary (counts by action, the named destroys and replacements, the groups). When it answers yes with a probability at or above the threshold, the note starts with a line asking the author to check the description and naming the destroys and replacements the text does not mention. The same line sits at the top of `report.html`, and `intent.json` in the report directory records the decision, its probability and the model.
@@ -151,7 +159,11 @@ Each tip is its own pull request.
 | a root with no lock file | adds one written by `providers lock`, with hashes for Linux and macOS on amd64 and arm64 unless `--platform` names others |
 | no canary | adds `waves.canary` |
 
+<Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
+
 `fmt` runs on request. It formats the pull request's branch and pushes one commit there, and it refuses the default branch.
+
+<Shot step="responses" view="fmt" alt="The style: tofu fmt commit on a pull request's branch in Forgejo, realigning the locals in app/locals.tf" optional />
 
 Release notes cover the commits that touched a module between its last two tags. Breaking changes are listed first.
 

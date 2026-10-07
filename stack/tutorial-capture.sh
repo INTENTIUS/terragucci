@@ -53,7 +53,12 @@ pin|chain|publish rollout|pull files|just example change pin; the rollout'"'"'s 
 report|booted|report highlight|top root plan index|three tf-plan runs of the example with reports.bucket on floci; the module bump'"'"'s report.html, one root'"'"'s row, that root'"'"'s plan.txt, and the project'"'"'s report index
 drift|booted|drift|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
 fountain-apply|fresh|steward||just example up --fresh --fountain and just example verify
-see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves drift runs|just see-runs; four of the dashboards'
+see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves drift runs|just see-runs; four of the dashboards
+trace|booted|traces|trace|a tf-plan of the one-root change with telemetry on, sent to the observability profile; that run'"'"'s trace in Grafana'"'"'s Explore, found by the trace id in its report
+responses|booted|respond-drift respond-fmt|drift drift-files fmt|the respond-drift and respond-fmt claims; the drift pull request with the live value and an import, its files, and the fmt commit on a pull request'"'"'s branch
+tips|booted|tips respond-tips|pull report fix|just example change float, a tf-plan of it with reports.bucket on floci, and the respond-tips claim; the plan note'"'"'s tip line, the report'"'"'s Tips section, and the files of the pull request one tip opens (the pull request is closed afterwards)
+policy|booted|policy check-diagnostics|pull log|a pull request on the example that adds a policy denying dev orders'"'"' change, and the check-diagnostics claim; the plan note naming the denial, and the check job'"'"'s log naming the failing policy test (the pull request is closed afterwards)
+statuses|booted|grouped comment-apply|checks reply|the comment-apply claim; an open pull request'"'"'s commit statuses under the reply refusing its apply comment, and the replies to /terragucci apply on a merged pull request'
 
 field() { # step, field number -> that field of the step's row
   awk -F'|' -v s="$1" -v n="$2" '$1 == s { print $n }' <<<"$STEPS"
@@ -140,7 +145,10 @@ run_cmd() { # step, shown command, real command...
 # example's workflow, which Forgejo ignores. A job page's picture hides it.
 FORGEJO_HIDE='.ui.warning.message.pre-execution-error'
 
-shot() { # step, view, url, [height], [job step to open], [log line to scroll to, a regex]
+# A job page can open one of its steps and scroll to a log line in it. Any
+# other page can open scrolled to one element: the 5th argument is then a CSS
+# selector, and the 6th a regex the element's text must match.
+shot() { # step, view, url, [height], [job step to open | element to scroll to], [log line | that element's text, a regex]
   local step="$1" view="$2" url="$3" height="${4:-860}" open="${5:-}" focus="${6:-}" theme scheme png hooks
   [ -z "$REPLAY" ] || return 0
   for theme in light dark; do
@@ -151,6 +159,11 @@ shot() { # step, view, url, [height], [job step to open], [log line to scroll to
       hooks=(--hide "$FORGEJO_HIDE")
       [ -z "$open" ] || hooks+=(--expand "$open")
       [ -z "$focus" ] || hooks+=(--focus "$focus")
+      node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$png" \
+        --width 1280 --height "$height" --scheme "$theme" "${hooks[@]}" || true
+    elif [ -n "$open" ]; then
+      hooks=(--scroll "$open")
+      [ -z "$focus" ] || hooks+=(--match "$focus")
       node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$png" \
         --width 1280 --height "$height" --scheme "$theme" "${hooks[@]}" || true
     else
@@ -391,11 +404,48 @@ step_pin() {
 # bucket. The pages are served by floci's S3 endpoint, as a bucket served as
 # a static site serves them. The module bump runs last, so it heads the index.
 REPORT_BUCKET=terragucci-reports
-step_report() {
-  local image bundle="$ROOT/packages/terragucci/dist/terragucci.mjs" prefix work base scenario run_index
-  image="$(cd "$ROOT" && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
-  docker image inspect "$image" >/dev/null 2>&1 || fail "report: no CI image $image; run 'just images'"
+
+# The tofu CI image, in CI_IMAGE, and the CLI bundle it runs, built from this tree.
+CI_IMAGE=""
+ci_ready() { # step
+  CI_IMAGE="$(cd "$ROOT" && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  docker image inspect "$CI_IMAGE" >/dev/null 2>&1 || fail "$1: no CI image $CI_IMAGE; run 'just images'"
   (cd "$ROOT" && node scripts/build-cli.mjs >/dev/null)
+}
+
+# One tf-plan of a copy of the example with one scenario, run as the
+# pipeline's plan job runs it: the tofu CI image, the example's state in floci,
+# the change against its base. The commits carry fixed dates, so a scenario
+# plans the same commits on every capture. Call ci_ready first. The report is
+# left in <work dir>/terragucci-report.
+plan_example() { # step, work dir, scenario, lines to add to terragucci.yml, [docker run arguments...]
+  local step="$1" work="$2" scenario="$3" config="$4" bundle="$ROOT/packages/terragucci/dist/terragucci.mjs" base
+  shift 4
+  mkdir -p "$work"
+  cp -R "$EXAMPLE/." "$work/"
+  [ -z "$config" ] || printf '%s\n' "$config" >> "$work/terragucci.yml"
+  git -C "$work" init -q -b main
+  git -C "$work" add -A
+  GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
+    git -C "$work" -c user.name=terragucci -c user.email=example@terragucci.local -c commit.gpgsign=false commit -qm "The shop's estate"
+  base="$(git -C "$work" rev-parse HEAD)"
+  git -C "$work" apply "$EXAMPLE/changes/$scenario.patch"
+  git -C "$work" add -A
+  GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
+    git -C "$work" -c user.name=terragucci -c user.email=example@terragucci.local -c commit.gpgsign=false commit -qm "$scenario"
+  run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    -e TG_BASE="$base" "$@" \
+    "$CI_IMAGE" terragucci stage tf-plan >/dev/null 2>&1 || log "$step: $scenario's plan exited non-zero"
+  clean_mounted "$work" "$CI_IMAGE"
+}
+
+step_report() {
+  local prefix scenario run_index
+  ci_ready report
   # The commits are the same on every capture, so a capture replaces its own
   # rows in the index instead of adding to them.
   prefix=reports
@@ -403,28 +453,9 @@ step_report() {
   # The job links in the report go to the run that applied main.
   run_index="$(run_on main | jq -r '.index_in_repo // empty')"
   for scenario in one-root destroy module-bump; do
-    work="$STAGE/report-$scenario"
-    mkdir -p "$work"
-    cp -R "$EXAMPLE/." "$work/"
-    printf 'reports:\n  bucket: s3://%s\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" >> "$work/terragucci.yml"
-    git -C "$work" init -q -b main
-    git -C "$work" add -A
-    GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
-      git -C "$work" -c user.name=terragucci -c user.email=example@terragucci.local -c commit.gpgsign=false commit -qm "The shop's estate"
-    base="$(git -C "$work" rev-parse HEAD)"
-    git -C "$work" apply "$EXAMPLE/changes/$scenario.patch"
-    git -C "$work" add -A
-    GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \
-      git -C "$work" -c user.name=terragucci -c user.email=example@terragucci.local -c commit.gpgsign=false commit -qm "$scenario"
-    run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
-      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
-      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
-      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-      -e GITHUB_SERVER_URL="$URL" -e GITHUB_REPOSITORY="$REPO" ${run_index:+-e GITHUB_RUN_ID="$run_index"} \
-      -e TG_BASE="$base" \
-      "$image" terragucci stage tf-plan >/dev/null 2>&1 || log "report: $scenario's plan exited non-zero"
-    clean_mounted "$work" "$image"
+    plan_example report "$STAGE/report-$scenario" "$scenario" \
+      "$(printf 'reports:\n  bucket: s3://%s\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix")" \
+      -e GITHUB_SERVER_URL="$URL" -e GITHUB_REPOSITORY="$REPO" ${run_index:+-e GITHUB_RUN_ID="$run_index"}
   done
   # The report step records no command: its pages are the capture, and the
   # index's times differ on every run.
@@ -500,6 +531,182 @@ step_see_runs() {
   for d in pipeline-health:pipeline rollouts-waves:waves drift:drift runs:runs; do
     shot see-runs "${d#*:}" "$grafana/d/terragucci-${d%%:*}?orgId=1&kiosk&from=now-1h&to=now&var-project=forgejo:3000/$REPO"
   done
+}
+
+# ── the reference pages' steps ─────────────────────────────────────────────
+# Several of these run a smoke claim as it is recorded and photograph what it
+# leaves on Forgejo: a claim that responds on Forgejo keeps its scratch repo,
+# its branches and its pull requests until its next run starts it afresh. The
+# claim's own output is not recorded; it carries times and stamps.
+claim_run() { # step, claim
+  local line
+  line="$("$HERE/smoke.sh" "$2" 2>"$STAGE/$2.claim.log" | grep '^SMOKE ' | tail -1)" || true
+  case "$line" in
+    *verdict=pass*) log "$1: claim $2 passed"; return 0 ;;
+  esac
+  log "$1: claim $2 did not pass (${line:-no verdict}): $(tail -3 "$STAGE/$2.claim.log" | tr '\n' ' ')"
+  return 1
+}
+
+# The open pull request from a branch of a repo, by its number.
+open_pull() { # repo, branch
+  api "$URL/api/v1/repos/$1/pulls?state=open&limit=50" | jq -r --arg b "$2" '.[] | select(.head.ref == $b) | .number' | head -1
+}
+
+# Close a scenario's pull request on the example and delete its branch, so
+# the steps after it start from the example as committed.
+close_change() { # pull request number, branch
+  [ -z "$1" ] || api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$REPO/pulls/$1" || true
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$REPO/branches/${2//\//%2F}" || true
+}
+
+# The trace (reference/observability): one plan of the one-root change, as the
+# plan job runs it with OTEL_EXPORTER_OTLP_ENDPOINT set, sent to the
+# observability profile's collector. The report names the run's trace id
+# (run.trace_id); Grafana's Explore opens that trace from Tempo, once Tempo
+# holds the binary's spans as well as terragucci's.
+step_trace() {
+  "$HERE/bootstrap.sh" observability >/dev/null 2>&1 || fail "trace: the observability profile did not start; run 'just stack-up observability' to see why"
+  forge
+  ci_ready trace
+  local work="$STAGE/trace" trace i services=0 panes
+  local grafana="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}" tempo="http://localhost:${TERRAGUCCI_TEMPO_PORT:-3210}"
+  plan_example trace "$work" one-root "" \
+    -e OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 -e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_REPOSITORY="$REPO"
+  trace="$(jq -r '.run.trace_id // empty' "$work/terragucci-report/report.json" 2>/dev/null || true)"
+  [ -n "$trace" ] || { log "trace: the plan's report records no trace id"; return 0; }
+  for i in $(seq 1 30); do   # up to a minute for the collector to flush
+    services="$(curl -fsS "$tempo/api/traces/$trace" 2>/dev/null \
+      | jq '[(.batches // .trace.resourceSpans // .resourceSpans // [])[] | .resource.attributes[]? | select(.key == "service.name") | .value.stringValue] | unique | length' 2>/dev/null || echo 0)"
+    [ "${services:-0}" -ge 2 ] && break
+    sleep 2
+  done
+  [ "${services:-0}" -ge 2 ] || log "trace: Tempo holds trace $trace without the binary's spans"
+  panes="$(jq -rn --arg t "$trace" '{t: {datasource: "tempo", queries: [{refId: "A", datasource: {type: "tempo", uid: "tempo"}, queryType: "traceql", query: $t}], range: {from: "now-1h", to: "now"}}} | tostring | @uri')"
+  shot trace trace "$grafana/explore?schemaVersion=1&orgId=1&kiosk&panes=$panes" 1400
+}
+
+# What responses leave on Forgejo (reference/responses): the drift pull
+# request respond-drift opens on its scratch repo, and the commit respond-fmt
+# pushes to its branch.
+step_responses() {
+  forge
+  local pr sha repo
+  if claim_run responses respond-drift; then
+    repo="$USER/respond-drift"
+    pr="$(open_pull "$repo" terragucci/drift)"
+    if [ -n "$pr" ]; then
+      shot responses drift "$URL/$repo/pulls/$pr" 1200
+      shot responses drift-files "$URL/$repo/pulls/$pr/files" 1600
+    else
+      log "responses: no drift pull request on $repo"
+    fi
+  fi
+  if claim_run responses respond-fmt; then
+    repo="$USER/respond-fmt"
+    sha="$(remote_head "$repo" smoke-fmt)"
+    if [ -n "$sha" ]; then shot responses fmt "$URL/$repo/commit/$sha" 1000; else log "responses: $repo has no smoke-fmt branch"; fi
+  fi
+}
+
+# Tips (reference/tips): the float scenario lets dev search's provider float.
+# Its pull request's note counts the tip; a plan of the same change copied to
+# floci under its own prefix (so the report step's index stays as it is) gives
+# the report's Tips section; and respond-tips leaves the pull requests its
+# pipeline's tips job opened, one per tip.
+step_tips() {
+  forge
+  run_cmd tips "just example change float" "$HERE/example.sh" change float
+  local pr top index path repo
+  pr="$(pr_in_output)"
+  if [ -n "$pr" ]; then shot tips pull "$(note_page "$pr")" 1400; else log "tips: the output named no pull request"; fi
+  close_change "$pr" change/float
+  ci_ready tips
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  plan_example tips "$STAGE/tips" float "$(printf 'reports:\n  bucket: s3://%s\n  prefix: tips\n' "$REPORT_BUCKET")" \
+    -e GITHUB_SERVER_URL="$URL" -e GITHUB_REPOSITORY="$REPO"
+  top="$FLOCI/$REPORT_BUCKET/tips"
+  index="$(fetch "$top/index.json" || true)"
+  path="$(jq -r '.reports[0].path // empty' <<<"${index:-null}" 2>/dev/null || true)"
+  if [ -n "$path" ]; then shot tips report "$top/$path/report.html#tips" 1000; else log "tips: the index at $top lists no run"; fi
+  if claim_run tips respond-tips; then
+    repo="$USER/respond-tips"
+    pr="$(open_pull "$repo" terragucci/tip/pin-hashicorp-aws)"
+    if [ -n "$pr" ]; then shot tips fix "$URL/$repo/pulls/$pr/files" 1000; else log "tips: no pin-hashicorp-aws pull request on $repo"; fi
+  fi
+}
+
+# Policy (reference/policy): a pull request on the example that turns policy
+# on and changes dev orders' queue to keep its jobs for seven days. main has no
+# policy key, so the pull request's own policy applies, and it denies the
+# change. Then the check-diagnostics claim's check job, failing on main's
+# policy test.
+POLICY_RULE='package main
+
+import rego.v1
+
+deny contains msg if {
+  some rc in input.resource_changes
+  rc.type == "aws_sqs_queue"
+  some action in rc.change.actions
+  action in {"create", "update"}
+  rc.change.after.message_retention_seconds > 345600
+  msg := sprintf("%s keeps messages longer than four days", [rc.address])
+}'
+step_policy() {
+  forge
+  local work="$STAGE/policy" branch=change/policy title="Keep dev orders' jobs for seven days, under a retention policy" sha pr run page repo
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git" "$work/tree" 2>/dev/null || fail "policy: cannot clone $REPO"
+  git -C "$work/tree" apply "$EXAMPLE/changes/one-root.patch" || fail "policy: changes/one-root.patch does not apply to main"
+  mkdir -p "$work/tree/policy"
+  printf '%s\n' "$POLICY_RULE" > "$work/tree/policy/retention.rego"
+  printf '\npolicy:\n  engine: conftest\n  path: policy\n' >> "$work/tree/terragucci.yml"
+  sha="$(TG_FIXED_DATE=1 push_tree "$work/tree" "$REPO" "$branch" "$title")"
+  pr="$(api -H 'content-type: application/json' -X POST \
+    -d "$(jq -n --arg t "$title" --arg h "$branch" '{title: $t, head: $h, base: "main"}')" "$URL/api/v1/repos/$REPO/pulls" | jq -r '.number // empty')"
+  if [ -n "$pr" ]; then
+    wait_run "$REPO" "$sha" pull_request
+    shot policy pull "$(note_page "$pr")" 1400
+  else
+    log "policy: no pull request for $branch"
+  fi
+  close_change "$pr" "$branch"
+  if claim_run policy check-diagnostics; then
+    repo="$USER/checkdiag"
+    sha="$(remote_head "$repo" diag-policy)"
+    run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" | jq -c '.workflow_runs[0] // empty')"
+    page="$(REPO="$repo"; FORGEJO="$URL/$repo"; job_page "$run" '.name == "check"')"
+    if [ -n "$page" ]; then shot policy log "$page" 1400 "Format check and validate" "FAILED policy tests"; else log "policy: no check job on $repo's diag-policy"; fi
+  fi
+}
+
+# Commit statuses and the apply comment (reference/pipeline), on the repo the
+# comment-apply claim leaves: its open pull request, whose plan job posts
+# terragucci/plan and whose apply comment is refused, and its merged pull
+# request with the replies to /terragucci apply.
+step_statuses() {
+  forge
+  local repo="$USER/comment-apply" open merged sha state i
+  claim_run statuses comment-apply || return 0
+  open="$(open_pull "$repo" open-change)"
+  if [ -n "$open" ]; then
+    sha="$(api "$URL/api/v1/repos/$repo/pulls/$open" | jq -r '.head.sha')"
+    for i in $(seq 1 60); do   # up to five minutes for the plan job's status
+      state="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // "pending"')"
+      [ "$state" != pending ] && break
+      sleep 5
+    done
+    log "statuses: terragucci/plan on ${sha:0:8}: $state"
+    shot statuses checks "$URL/$repo/pulls/$open" 1400 '.timeline-item.comment' 'is not merged'
+  else
+    log "statuses: no open pull request on $repo"
+  fi
+  merged="$(api "$URL/api/v1/repos/$repo/pulls?state=closed&limit=50" | jq -r '.[] | select(.head.ref == "change" and .merged) | .number' | head -1)"
+  if [ -n "$merged" ]; then
+    shot statuses reply "$URL/$repo/pulls/$merged" 1800 '.timeline-item.comment' 'wave 1 waits'
+  else
+    log "statuses: no merged pull request on $repo"
+  fi
 }
 
 # ── which steps run ────────────────────────────────────────────────────────
