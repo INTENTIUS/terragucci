@@ -1,6 +1,6 @@
 // The shapes behind the comparison grid. A competitor's cell cannot be
-// written without a source: the type asks for the page of that product's
-// own docs the mark was read from.
+// written without a source: the type asks for at least one page of that
+// product's own docs the mark was read from.
 
 /** good meets by design, warn is partial or by hand, bad misses, na is out of scope. */
 export type Mark = 'good' | 'warn' | 'bad' | 'na';
@@ -25,7 +25,7 @@ export type RowId =
 	| 'modules'
 	| 'licence';
 
-export type ProductId = 'atlantis' | 'hcp' | 'spacelift' | 'digger' | 'terramate';
+export type ProductId = 'atlantis' | 'hcp' | 'spacelift' | 'opentaco' | 'terramate';
 
 /** A page of a product's own documentation, pricing or licence. */
 export interface Source {
@@ -33,11 +33,11 @@ export interface Source {
 	url: string;
 }
 
-/** A competitor's cell: the mark, what the product does, and where its docs say so. */
+/** A competitor's cell: the mark, what the product does, and the pages of its docs that say so. */
 export interface Cell {
 	mark: Mark;
 	text: string;
-	source: Source;
+	sources: [Source, ...Source[]];
 }
 
 /** A terragucci cell: the mark, what it does, and the page of this site that says so. */
