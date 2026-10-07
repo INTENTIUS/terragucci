@@ -11,7 +11,7 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 | `aws` | floci | validated: starts, answers S3 |
 | `forgejo` | floci, Forgejo, forgejo-runner (docker executor) | validated: the `check` and `apply` claims pass; `tg-check`, `tg-apply`, `cdf-check` and `cdf-apply` wait for their first record |
 | `github` | floci, a mock GitHub API, `act` on the host | validated: `check`, `apply` and `reconcile` pass; `tg-check`, `tg-apply`, `cdf-check` and `cdf-apply` wait for their first record |
-| `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply` and `reconcile` pass; `tg-check`, `tg-apply`, `cdf-check` and `cdf-apply` wait for their first record |
+| `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply` and `reconcile` pass; `tg-check`, `tg-apply`, `cdf-check`, `cdf-apply` and `gate-wait` wait for their first record |
 | `fountain` | floci, fountain 0.21.0, Postgres, a fountain runner built for the steward | runs the example's apply on a steward (`just example up --fountain`); the `steward` smoke claim checks it |
 | `observability` | an OpenTelemetry collector, Prometheus, Tempo and Grafana with terragucci's dashboards (`stack/observability/`) | started by the `traces`, `metrics` and `dash-*` claims when it is not up; Grafana answers on `localhost:3310`; `stack/down.sh` removes it |
 
@@ -59,6 +59,7 @@ Facts measured on floci that the example relies on: SQS `visibility_timeout_seco
 | `tg-apply` (forgejo, github, gitlab) | on the Terragrunt fixture, with both units' buckets deleted from floci first, a push to `main` goes green and both buckets then exist | removes the generated apply jobs |
 | `cdf-check` (forgejo, github, gitlab) | on the choudoufu fixture, whose pipeline runs in the choudoufu image: a push goes green, and a push adding `infra/ignored.tf`, a bucket whose lifecycle ignores its tags, goes red with a `refused: infra:` line naming it (live-check refuses ignoring the ownership markers) | the push that should be clean carries `ignored.tf` |
 | `cdf-apply` (forgejo, github, gitlab) | on the choudoufu fixture, with the bucket deleted from floci first, a push to `main` goes green, the bucket then exists, and its tags carry `tofu-estate` | removes the generated apply jobs |
+| `gitlab gate-wait` | with the gate at `always` and `GITLAB_TOKEN` set on the project, a push to `main` waits at wave 1: the pipeline ends failed, the wave's job ends with exit code 3 and prints `chant approve`, no status call answers 400, `terragucci/apply` is failed with the wave's command, and the bucket is absent | drops the `\|\| exit $?` after each job's heredoc, so the job ends with 1 |
 
 The `tg-*` and `cdf-*` claims run in the images the generated pipeline pins by digest, `terragucci-terragrunt` and `terragucci-choudoufu`; each runner (forgejo-runner, gitlab-runner, act) pulls them from GHCR the first time, as it does the tofu image. On Forgejo the same four claims run through `forge-forgejo.sh`, so they check the generated `.forgejo/workflows/terragucci.yml`, while Forgejo's own `check` and `apply` keep the hand-written workflow.
 

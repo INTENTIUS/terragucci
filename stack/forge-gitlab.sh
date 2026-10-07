@@ -53,6 +53,12 @@ unprotect_all() { # name
   done
 }
 
+# A CI/CD variable on the project, set or replaced.
+forge_ci_var() { # name key value
+  glapi -o /dev/null -X PUT "$URL/api/v4/projects/$(pid "$1")/variables/$2" --data-urlencode "value=$3" --data-urlencode "protected=false" 2>/dev/null \
+    || glapi -o /dev/null -X POST "$URL/api/v4/projects/$(pid "$1")/variables" --data-urlencode "key=$2" --data-urlencode "value=$3" --data-urlencode "protected=false"
+}
+
 forge_seed() { # dir name
   (cd "$1" && git init -q -b main && git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q --allow-empty -m "seed" \
     && git push -q --force "$(forge_remote "$2")" HEAD:refs/heads/main) >/dev/null 2>&1 || true
