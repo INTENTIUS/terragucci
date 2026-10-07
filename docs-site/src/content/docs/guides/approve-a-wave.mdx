@@ -1,7 +1,7 @@
 ---
 title: Approve a waiting wave
 description: Read what a wave will do, record your approval, and let the apply carry on.
-claims: [waves, sealed, comment-apply]
+claims: [waves, sealed, comment-apply, wave-report]
 ---
 
 import Captured from '../../../components/Captured.astro';
@@ -13,7 +13,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 ## Before you start
 
 - A merge that reached the default branch, so `tf-apply` has started.
-- `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
+- `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits, and the apply runs unattended. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
 - chant installed where you approve: `npm i -D @intentius/chant`.
 - Write access to the repo. What you record is a commit on its `chant/lifecycle` branch.
 - An ssh key of yours listed in `.chant/allowed_signers` on the default branch. [Set up the signers file](#set-up-the-signers-file) once per repo.
@@ -35,11 +35,11 @@ In the example, merging the pull request that stops keeping records for staging 
 
 <Captured step="wave-waiting" cmd="just example merge" optional />
 
-Open the wave's roots in the report linked from the run. It lists the wave's set digest and whether each wave is waiting or cleared.
+Open the wave's roots in the report linked from the run. Its Waves table lists each wave's set digest, whether it is waiting, approved or not required, and the ledger that holds its record.
 
 ### 2. Read what the wave will do
 
-The wave waits because its plans destroy something, or because `gate` is `always`. Read every destroy and replacement by name. They are never folded into a group, so they sit at the top of the report. Open a root's full plan when you need the detail.
+The wave waits because its plans destroy or replace something, or because `gate` is `always` and the wave has a change. Read every destroy and replacement by name. They are never folded into a group, so they sit at the top of the report. Open a root's full plan when you need the detail.
 
 ### 3. Approve it
 
@@ -67,7 +67,7 @@ Re-running the wave's job, or pushing to the default branch again, does the same
 
 Tools that apply before the merge run the pull request's code with the apply role, and the comment is the approval. Here only merged code applies, and the approval is your signature over the plans' digests, so the comment can only re-run a wave you already approved. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) lists what it refuses.
 
-The report now links each cleared wave to its record.
+The report now shows each cleared wave as approved and links it to its record.
 
 ## Set up the signers file
 
@@ -94,5 +94,6 @@ When any root's plan changed after you approved, the wave applies nothing. [Fix 
 
 ## Next
 
+- [Approvals runbook](/terragucci/guides/approvals-runbook/)
 - [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
 - [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/)
