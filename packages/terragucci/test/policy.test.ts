@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkPlan, checkPlans, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, resolvePolicySettings, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
+import { checkPlan, checkPlans, governingPolicy, hcpPolicySet, namespaceProblem, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, redactVerdict, resolvePolicySettings, sensitiveTexts, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
+import { REDACTED } from "../src/report/schema";
 import { buildReport } from "../src/report/build";
 import { renderNote } from "../src/report/views";
 import { plan, rc, RUN } from "./report-fixtures";
@@ -116,6 +117,105 @@ describe("checkPlan", () => {
     expect(input.plan).toEqual({ format_version: "1.2" });
     expect(input.run?.workspace?.name).toBe("envs/dev/app");
     expect(v.violations).toEqual(["public"]);
+  });
+});
+
+describe("policies.hcl", () => {
+  const hcl = [
+    "# an HCP Terraform policy set",
+    'policy "no_public" {',
+    '  query = "data.terraform.policies.no_public.deny"',
+    '  enforcement_level = "mandatory"',
+    "}",
+    'policy "tags" {',
+    '  query = "data.terraform.policies.tags.deny"',
+    "}",
+  ].join("\n");
+
+  it("reads each policy's query and enforcement level, advisory by default as in HCP Terraform", () => {
+    const dir = write(tmp(), { "policies.hcl": hcl });
+    expect(hcpPolicySet(dir)).toEqual([
+      { name: "no_public", query: "data.terraform.policies.no_public.deny", level: "mandatory" },
+      { name: "tags", query: "data.terraform.policies.tags.deny", level: "advisory" },
+    ]);
+    expect(hcpPolicySet(tmp())).toBeUndefined();
+    expect(hcpPolicySet(write(tmp(), { "policies.hcl": 'policy "x" {\n  enforcement_level = "mandatory"\n}\n' }))).toMatch(/policy "x" has no query/);
+    expect(hcpPolicySet(write(tmp(), { "policies.hcl": 'policy "x" {\n  query = "data.x"\n  enforcement_level = "soft"\n}\n' }))).toMatch(/enforcement_level soft/);
+  });
+
+  it("runs each policy by its query: a mandatory policy denies, an advisory one warns", async () => {
+    const dir = write(tmp(), { "policies.hcl": hcl });
+    const queries: string[] = [];
+    const exec: PolicyExec = async (_f, args) => {
+      const q = args[args.length - 1];
+      queries.push(q);
+      return { status: 0, stdout: JSON.stringify({ result: [{ expressions: [{ value: [q.includes("no_public") ? "bucket is public" : "no owner tag"] }] }] }), stderr: "" };
+    };
+    const v = await checkPlan("opa", { engine: "opa", input: "hcp", path: dir }, tmp(), "{}", { exec }, { root: "a" });
+    expect(queries).toEqual(["data.terraform.policies.no_public.deny", "data.terraform.policies.tags.deny"]);
+    expect(v).toEqual({ violations: ["no_public: bucket is public"], warnings: ["tags: no owner tag"] });
+  });
+
+  it("fails the root when a policy's query matches no rule, or the namespace matches no policy", async () => {
+    const dir = write(tmp(), { "policies.hcl": hcl });
+    const undef: PolicyExec = async () => ({ status: 0, stdout: "{}", stderr: "" });
+    const v = await checkPlan("opa", { engine: "opa", input: "hcp", path: dir }, tmp(), "{}", { exec: undef }, { root: "a" });
+    expect(v.error).toMatch(/policy no_public: its query data.terraform.policies.no_public.deny matches no rule/);
+    const none = await checkPlan("opa", { engine: "opa", input: "hcp", path: dir, namespace: "terraform.policies.nothing" }, tmp(), "{}", { exec: undef }, { root: "a" });
+    expect(none.error).toMatch(/no policy in policies.hcl has a query under data.terraform.policies.nothing/);
+  });
+});
+
+describe("namespace", () => {
+  const dir = () => write(tmp(), { "main.rego": "package main\n\ndeny contains msg if {\n  msg := \"x\"\n}\n", "helpers.rego": "package lib.helpers\n\nis_public(x) if x.public\n", "main_test.rego": "package tests\n" });
+
+  it("passes a namespace that names a package with a counted rule, and conftest's every-namespace default", () => {
+    expect(namespaceProblem({ engine: "conftest" }, dir(), "policy")).toBeUndefined();
+    expect(namespaceProblem({ engine: "conftest", namespace: "main" }, dir(), "policy")).toBeUndefined();
+    expect(namespaceProblem({ engine: "opa" }, dir(), "policy")).toBeUndefined();
+  });
+
+  it("names a namespace that matches no package, and lists the packages there", () => {
+    expect(namespaceProblem({ engine: "conftest", namespace: "mian" }, dir(), "policy")).toBe("the namespace mian matches no policy: no Rego file in policy declares package mian (the packages there: lib.helpers, main)");
+    expect(namespaceProblem({ engine: "opa", namespace: "tests" }, dir(), "policy")).toMatch(/matches no policy/);
+    expect(namespaceProblem({ engine: "opa", input: "hcp" }, dir(), "rego")).toMatch(/the namespace terraform.policies matches no policy: no Rego file in rego declares package terraform.policies or a package under it/);
+  });
+
+  it("names a package that has no deny, violation or warn rule", () => {
+    expect(namespaceProblem({ engine: "opa", namespace: "lib.helpers" }, dir(), "policy")).toBe("the namespace lib.helpers matches no rule: package lib.helpers in policy has no deny, violation or warn rule");
+  });
+
+  it("fails every root in checkPlans with the message", async () => {
+    const repo = write(tmp(), { "policy/main.rego": "package main\ndeny contains 1\n" });
+    const exec: PolicyExec = async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status: 0, stdout: "[]", stderr: "" });
+    const found = await checkPlans(repo, { path: "policy", namespace: "mian" }, [{ path: "a", plan: {} }], undefined, {}, { exec }, () => {});
+    expect(found.failed.get("a")).toMatch(/policy could not be checked, so the root fails: the namespace mian matches no policy/);
+  });
+});
+
+describe("redaction", () => {
+  const secretPlan = {
+    resource_changes: [{ address: "aws_db_instance.db", change: { actions: ["create"], after: { password: "hunter2-secret", port: 5432 }, after_sensitive: { password: true } } }],
+  };
+
+  it("finds the values the stored plan redacts", () => {
+    expect(sensitiveTexts(secretPlan)).toEqual(["hunter2-secret"]);
+    expect(sensitiveTexts({})).toEqual([]);
+  });
+
+  it("replaces them in denials, warnings and errors, as the stored plan does", () => {
+    const v = redactVerdict({ violations: ["aws_db_instance.db password hunter2-secret is weak"], warnings: ["saw hunter2-secret"] }, secretPlan);
+    expect(v).toEqual({ violations: [`aws_db_instance.db password ${REDACTED} is weak`], warnings: [`saw ${REDACTED}`] });
+  });
+
+  it("keeps a printed secret out of the report, the failure and the log", async () => {
+    const repo = write(tmp(), { "policy/p.rego": "package main\n" });
+    const exec: PolicyExec = async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status: 1, stdout: deny("password hunter2-secret is weak"), stderr: "" });
+    const lines: string[] = [];
+    const found = await checkPlans(repo, { path: "policy" }, [{ path: "a", plan: secretPlan }], undefined, {}, { exec }, (l) => lines.push(l));
+    const seen = JSON.stringify([...found.roots.values()]) + [...found.failed.values()].join("") + lines.join("\n");
+    expect(seen).not.toContain("hunter2-secret");
+    expect(found.roots.get("a")?.denials).toEqual([`password ${REDACTED} is weak`]);
   });
 });
 
@@ -249,6 +349,51 @@ describe("trustedPolicy", () => {
   });
 });
 
+describe("governingPolicy", () => {
+  const yml = "policy:\n  path: policy\n";
+
+  it("takes the base's key, so a pull request that deletes it is still checked", async () => {
+    const repo = prRepo({ "terragucci.yml": yml, "policy/p.rego": "package main\n" }, { "terragucci.yml": "roots: []\n" });
+    const g = await governingPolicy(repo, undefined, "main", { config: join(repo, "terragucci.yml") });
+    expect(g).toMatchObject({ policy: { path: "policy" }, from: "base" });
+  });
+
+  it("finds the base's config when the pull request deletes or renames the file", async () => {
+    const repo = prRepo({ "terragucci.yml": yml, "policy/p.rego": "package main\n" }, { "README.md": "pr\n" });
+    git(repo, "rm", "-q", "terragucci.yml");
+    write(repo, { "terragucci.yaml": "roots: []\n" });
+    git(repo, "add", "-A");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "rename");
+    const gone = await governingPolicy(repo, undefined, "main", {});
+    expect(gone).toMatchObject({ policy: { path: "policy" }, from: "base", trust: { config: join(repo, "terragucci.yml") } });
+    const renamed = await governingPolicy(repo, undefined, "main", { config: join(repo, "terragucci.yaml") });
+    expect(renamed).toMatchObject({ policy: { path: "policy" }, from: "base" });
+  });
+
+  it("keeps the checkout's key without a base, and when the base has none", async () => {
+    const repo = prRepo({ "terragucci.yml": "roots: []\n" }, { "terragucci.yml": yml });
+    expect(await governingPolicy(repo, { path: "policy" }, undefined)).toMatchObject({ policy: { path: "policy" }, from: "checkout" });
+    expect(await governingPolicy(repo, { path: "policy" }, "main", { config: join(repo, "terragucci.yml") })).toMatchObject({ policy: { path: "policy" }, from: "checkout" });
+    expect((await governingPolicy(repo, undefined, "main", { config: join(repo, "terragucci.yml") })).policy).toBeUndefined();
+  });
+
+  it("runs no policy for a base ref the checkout lacks when neither side names one, and says so", async () => {
+    const repo = prRepo({ "terragucci.yml": "roots: []\n" }, { "README.md": "pr\n" });
+    const g = await governingPolicy(repo, undefined, "origin/nothing", { config: join(repo, "terragucci.yml") });
+    expect(g.policy).toBeUndefined();
+    expect(g.note).toMatch(/origin\/nothing is not a commit in this checkout/);
+  });
+
+  it("keeps the check on when the base's config cannot be read and names policy", async () => {
+    const repo = prRepo({ "terragucci.yml": "policy: [\n" }, { "terragucci.yml": "roots: []\n" });
+    expect((await governingPolicy(repo, undefined, "main", { config: join(repo, "terragucci.yml") })).policy).toEqual({});
+    const quiet = prRepo({ "terragucci.yml": "roots: [\n" }, { "terragucci.yml": "roots: []\n" });
+    const g = await governingPolicy(quiet, undefined, "main", { config: join(quiet, "terragucci.yml") });
+    expect(g.policy).toBeUndefined();
+    expect(g.note).toMatch(/never names policy/);
+  });
+});
+
 describe("checkPlans and the report", () => {
   const onPath = (stdout: string, status = 1): PolicyExec => async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status, stdout, stderr: "" });
 
@@ -332,6 +477,14 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan with policy", () => {
     const result = await runStage("tf-plan", repo, { base: "main", policy: { exec } }, () => {});
     expect(seen).toEqual(["package main\n# base\n"]);
     expect(result.failed).toBe(true);
+  });
+
+  it("checks a pull request that deletes the policy key against the base's policy", { timeout: 120_000 }, async () => {
+    const repo = prRepo(files({ "policy/p.rego": "package main\n" }), { "terragucci.yml": 'binary: tofu\nroots: ["a"]\n', "a/main.tf": 'resource "terraform_data" "x" {\n  input = 2\n}\n' });
+    const exec: PolicyExec = async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status: 1, stdout: deny("terraform_data.x is not allowed"), stderr: "" });
+    const result = await runStage("tf-plan", repo, { base: "main", policy: { exec } }, () => {});
+    expect(result.failed).toBe(true);
+    expect(result.report.policy).toMatchObject({ from: "base", denied: ["a"] });
   });
 
   it("changes nothing when the policy key is absent", { timeout: 120_000 }, async () => {
