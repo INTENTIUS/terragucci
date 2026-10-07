@@ -51,6 +51,16 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 
 <Validated />
 
+## More with choudoufu
+
+[choudoufu](/terragucci/concepts/glossary/#choudoufu) is the OpenTofu fork from the team behind terragucci. Set `binary: choudoufu` in `terragucci.yml` and the same four stages gain these:
+
+| You get | Where you see it |
+|---|---|
+| A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
+| No state file to host or lose: each resource carries a tag the next plan reads back | [your cloud's own tags](/terragucci/guides/use-a-binary/#choudoufu) |
+| How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
+
 ## Hand the setup to your agent
 
 Paste this into Claude Code, Codex or Cursor in your Terraform repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.

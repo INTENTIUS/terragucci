@@ -9,6 +9,7 @@ const binaries = [
 	{ name: 'terraform', detail: 'Plain roots, with your backend.' },
 	{ name: 'tofu', detail: 'The same stages on OpenTofu.' },
 	{ name: 'Terragrunt', detail: 'Units stay units; the canary units go first and Terragrunt orders the rest.' },
+	{ name: 'choudoufu', detail: 'No state file: each resource carries its own tag. tf-check adds a live check that needs no cloud credentials.', href: '/terragucci/guides/use-a-binary/#choudoufu' },
 ];
 ---
 <div class="tg-keep not-content">
@@ -23,7 +24,7 @@ const binaries = [
 	<ul class="binaries">
 		{binaries.map((b) => (
 			<li>
-				<code>{b.name}</code>
+				{b.href ? <a href={b.href}><code>{b.name}</code></a> : <code>{b.name}</code>}
 				<span>{b.detail}</span>
 			</li>
 		))}
