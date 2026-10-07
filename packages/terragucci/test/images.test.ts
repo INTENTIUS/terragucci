@@ -60,6 +60,15 @@ describe("images", () => {
     expect(runs.indexOf("RUN git config --system --add safe.directory '*'")).toBeGreaterThan(git);
   });
 
+  // A uid with no passwd entry leaves Go without a user name, and tofu with an OTLP
+  // endpoint fails on it, so every CI image's final stage defaults USER and HOME.
+  it.each(["tofu", "terraform", "terragrunt", "choudoufu"])("the %s image sets USER and HOME for a uid with no passwd entry", (name) => {
+    const dockerfile = readFileSync(join(import.meta.dirname, "../../../images", `Dockerfile.${name}`), "utf-8");
+    const final = dockerfile.slice(dockerfile.lastIndexOf("\nFROM "));
+    expect(final).toMatch(/^ENV USER=\S+/m);
+    expect(final).toMatch(/^ENV HOME=\/tmp/m);
+  });
+
   it("a repo pinning a version the image does not carry installs it in each job", async () => {
     const dir = write(twoRootRepo(), { "network/versions.tf": 'terraform {\n  required_version = "1.12.0"\n}\n', "app/versions.tf": 'terraform {\n  required_version = "1.12.0"\n}\n' });
     git(dir, "init", "-q");
