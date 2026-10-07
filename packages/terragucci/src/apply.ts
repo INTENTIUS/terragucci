@@ -20,10 +20,11 @@
  * that moved. With no approval the wave records a pending fact for its digest,
  * so `chant approve tf-apply wave-<k>` has the plan to approve, and stops.
  *
- * A wave gate that `chant.workspace.json` at base names under `identity.gates`
- * (terragucci init lists every wave there) counts only a sealed approval:
- * one made with `chant approve --sign` whose seal verifies against the
- * signers file at base (./seal.ts). Any other approval of it is ignored.
+ * When `chant.workspace.json` at base names any gate under `identity.gates`
+ * (terragucci init lists every wave there), every wave gate counts only a
+ * sealed approval: one made with `chant approve --sign` whose seal verifies
+ * against the signers file at base (./seal.ts). Any other approval is
+ * ignored. Base is the commit before the one being applied.
  *
  * Nothing here records an approval. A person does, with `chant approve`.
  *
@@ -535,8 +536,9 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     const now = options.now ?? new Date().toISOString();
     const ledger = readLedger(repo);
     const rule = sealRule(repo);
-    if (rule.gates.has(name)) {
-      // identity.gates names this gate: an approval counts only when its seal verifies.
+    // Once identity.gates names any gate, every wave gate needs a seal: a wave added after init is never left open.
+    if (rule.gates.size > 0) {
+      if (!rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
       ledger.resolutions = ledger.resolutions.filter((r) => {
         if (r.gate !== name) return true;
         const why = sealRefusal(rule.signers, rule.signersPath, r);
