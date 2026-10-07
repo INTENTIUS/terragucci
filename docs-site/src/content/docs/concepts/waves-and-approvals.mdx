@@ -3,7 +3,11 @@ title: How waves and approvals work
 description: Why a change goes out in waves, what an approval binds, and when a wave refuses to apply.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 A shared module change goes out in batches, each after the last; a batch waits only when the [gate policy](#when-a-wave-waits) holds it.
+
+<Shot step="wave-waiting" view="pull" alt="The destroy pull request's plan note, with the records table of staging email named as a destroy above everything else" />
 
 ## How roots are split into waves
 

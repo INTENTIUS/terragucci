@@ -107,17 +107,25 @@ For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.1
 
 ### Drift attribution
 
-With `respond.drift: attribute`, each drifted attribute goes through three steps; the first to answer wins.
+With `respond.drift: attribute`, each drifted attribute goes through three steps in order; the first to answer wins.
 
-1. A table of by-design writes: ECS task count, autoscaling and node group sizes, provisioned DynamoDB capacity, RDS minor upgrades and `aws:` tags.
-2. CloudTrail LookupEvents over 14 days, for `aws_` resources. The newest write Terraform did not make decides: a service principal is a controller, a user is a person.
-3. A typed decision when `decide` is set. Below the `choice` threshold the attribute stays unattributed. Sensitive values are never shown.
+| Step | Source | Decides |
+|---|---|---|
+| 1 | a table of by-design writes: ECS task count, autoscaling and node group sizes, provisioned DynamoDB capacity, RDS minor upgrades, `aws:` tags | the write is expected |
+| 2 | CloudTrail LookupEvents over 14 days, for `aws_` resources | the newest write Terraform did not make: a service principal is a controller, a user is a person |
+| 3 | a typed decision, when `decide` is set | the attribute stays unattributed below the `choice` threshold; sensitive values are never shown |
 
 ### Reading the audit log
 
-The audit log step needs the `aws` CLI (version 2) and `cloudtrail:LookupEvents` on the job's role. The generated drift job installs the CLI against a pinned SHA-256 unless it is on the path; a pipeline you write installs it the same way. The region is `audit_region`, else the CLI's. Where the step cannot run, it says so and step 3 follows.
+| Needs | Detail |
+|---|---|
+| the `aws` CLI, version 2 | the generated drift job installs it against a pinned SHA-256 unless it is on the path; a pipeline you write installs it the same way |
+| `cloudtrail:LookupEvents` | on the job's role |
+| the region | `audit_region`, else the CLI's |
+| a plain-root repo | `terragucci stage tf-drift` lists who changed each attribute in the drift issue; a Terragrunt repo's drift run does not |
+| `decide.token_env` | received on GitHub and Forgejo |
 
-`terragucci stage tf-drift` attributes drifted roots of a plain-root repo too, listing who changed each attribute in the drift issue; a Terragrunt repo's drift run does not. On GitHub and Forgejo it receives the `decide.token_env` secret.
+Where the step cannot run, it says so and step 3 follows.
 
 Controller writes and provider default changes are reported with a suggestion (`ignore_changes`, or pin the provider) and left out of the pull request. A human edit stays in it, with the actor when known. Nothing here applies or merges.
 
@@ -125,9 +133,12 @@ Controller writes and provider default changes are reported with a suggestion (`
 
 ### Description check
 
-With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the service whether the title and description fit the plan. On a yes at or above the threshold the note starts with a line naming the destroys and replacements the text omits. `intent.json` records the decision.
+With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the service whether the title and description fit the plan. The flag never blocks a merge and changes no gate.
 
-Otherwise the note is unchanged and `intent.json` says why. The flag never blocks a merge and changes no gate.
+| Outcome | The note | `intent.json` |
+|---|---|---|
+| a yes at or above the threshold | starts with a line naming the destroys and replacements the text omits | records the decision |
+| anything else | unchanged | says why |
 
 ```bash
 terragucci respond description --report terragucci-report --title "retag email" --description "Tags only." --mode apply
@@ -153,13 +164,14 @@ Release notes cover the commits that touched a module between its last two tags,
 
 ### Version bump
 
-Conventional commits decide a module's bump, and a `version` file overrides it. With `version-bump: suggest` and no conventional commit since the last release, the typed-decision service picks the bump. This needs [`decide`](/terragucci/reference/config/).
+The bump comes from the [version bump rules](/terragucci/reference/stages/#version-bump-rules). With `version-bump: suggest` and no conventional commit since the last release, the typed-decision service picks it; this needs [`decide`](/terragucci/reference/config/).
 
-A module's releases are its git tags (`<module>/v1.2.0`). A registry-only project passes `--since <ref>`; the `version` file at that ref is the last release (0.0.0 if none).
-
-The `version-bump` job runs `terragucci respond version-bump --mode apply` on the default branch after every apply wave, with full history. It needs permission to push a branch and open a pull request. A failed response never fails the job.
-
-The release pull request writes the `version` file with the bump and its probability. Merging it confirms the version, and the next `tf-publish` publishes it. Below the threshold or without the service it proposes a patch.
+| Where | What |
+|---|---|
+| a module's releases | its git tags, `<module>/v1.2.0` |
+| a registry-only project | pass `--since <ref>`; the `version` file at that ref is the last release (0.0.0 if none) |
+| the `version-bump` job | runs `terragucci respond version-bump --mode apply` on the default branch after every apply wave, with full history; it needs permission to push a branch and open a pull request; a failed response never fails the job |
+| the release pull request | writes the `version` file with the bump and its probability; merging confirms it and the next `tf-publish` publishes it |
 
 ## Where it runs
 
