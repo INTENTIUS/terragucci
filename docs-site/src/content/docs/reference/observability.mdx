@@ -64,32 +64,34 @@ The HTML report shows the run's timings under "Where the time went", and folds e
 
 ## The metrics
 
-A stage pushes its metrics once, when it ends, so a short CI job needs no scrape. Point a Prometheus exporter or remote write on your collector at them. They are read from the run's report, so they match what reviewers saw. A `tf-apply` wave sends its trace, `terragucci_root_apply_seconds` and the `terragucci_wave_*` gauges, and leaves the plan's metrics to the plan so a root is not counted twice. Every metric is a gauge with the labels `project` and `stage`, plus those below.
+A stage pushes its metrics once, when it ends, so a short CI job needs no scrape. Point a Prometheus exporter or remote write on your collector at them. They are read from the run's report, so they match what reviewers saw. A `tf-apply` wave sends its trace, `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges, and leaves the plan's metrics to the plan so a root is not counted twice. Every metric is a gauge with the labels `project` and `stage`, plus those below.
 
-| Metric | Labels | Answers |
-|---|---|---|
-| `terragucci_stage_duration_seconds` | `result` | how long each stage takes, and whether it failed |
-| `terragucci_roots_planned` | | how many roots a change touches |
-| `terragucci_root_plan_seconds` | `root` | the slowest roots |
-| `terragucci_root_apply_seconds` | `root`, `wave` | the slowest root applies; sent by a `tf-apply` wave |
-| `terragucci_plan_changes` | `action` | creates, updates, replaces and deletes, over time |
-| `terragucci_plan_groups` | | how far a change folds |
-| `terragucci_binary_version` | `binary`, `version` | the binary versions in use across repos |
-| `terragucci_last_run_seconds` | | when each stage last ran, in Unix seconds |
-| `terragucci_roots_changed` | `pull_request` on a plan | how many roots a pull request changes |
-| `terragucci_tips` | `rule` | tips by rule |
-| `terragucci_module_pin` | `root`, `module`, `version` | which version of each module each root pins |
-| `terragucci_provider_init_seconds` | `root`, `provider` | provider start-up |
-| `terragucci_lock_wait_seconds` | `root` | time spent waiting for a state lock |
-| `terragucci_resource_seconds` | `root`, `address` | the run's slowest resources |
-| `terragucci_drift_roots` | | roots a drift run found drifted |
-| `terragucci_drift_since_seconds`, `terragucci_drift_clear_seconds` | | when the open drift was first found (its drift issue opened), and when a drift run last found none |
-| `terragucci_wave_roots` | `wave` | roots in a `tf-apply` wave |
-| `terragucci_wave_waiting_since_seconds`, `terragucci_wave_settled_seconds` | `wave` | when a wave started waiting for its approval, and when it last stopped waiting |
+| Metric | Labels | Answers | Series per project and stage |
+|---|---|---|---|
+| `terragucci_stage_duration_seconds` | `result` | how long each stage takes, and whether it failed | one per stage and result |
+| `terragucci_roots_planned` | | how many roots a change touches | one |
+| `terragucci_root_plan_seconds` | `root` | the slowest roots | one per root |
+| `terragucci_root_apply_seconds` | `root`, `wave` | the slowest root applies; sent by a `tf-apply` wave | one per root and wave |
+| `terragucci_plan_changes` | `action` | creates, updates, replaces and deletes, over time | one per action |
+| `terragucci_plan_groups` | | how far a change folds | one |
+| `terragucci_binary_version` | `binary`, `version` | the binary versions in use across repos | one per binary version in use |
+| `terragucci_last_run_seconds` | | when each stage last ran, in Unix seconds | one |
+| `terragucci_roots_changed` | `pull_request` on a plan | how many roots a pull request changes | one per pull request, which grows with every pull request |
+| `terragucci_tips` | `rule` | tips by rule | one per rule |
+| `terragucci_module_pin` | `root`, `module`, `version` | which version of each module each root pins | one per root, module and version, which grows with every version a root has pinned |
+| `terragucci_provider_init_seconds` | `root`, `provider` | provider start-up | one per root and provider |
+| `terragucci_lock_wait_seconds` | `root` | time spent waiting for a state lock | one per root that waited |
+| `terragucci_resource_seconds` | `root`, `address` | the run's slowest resources | up to the ten slowest resources of a run, so the addresses change from run to run |
+| `terragucci_drift_roots` | | roots a drift run found drifted | one |
+| `terragucci_drift_since_seconds`, `terragucci_drift_clear_seconds` | | when the open drift was first found (its drift issue opened), and when a drift run last found none | one each |
+| `terragucci_wave_roots` | `wave` | roots in a `tf-apply` wave | one per wave |
+| `terragucci_wave_waiting_since_seconds`, `terragucci_wave_settled_seconds` | `wave` | when a wave started waiting for its approval, and when it last stopped waiting | one per wave |
 
-A plan run for a pull request labels its metrics with `pull_request`. The stage span's `terragucci.result` attribute says how the run ended. A plan or drift run ends in `success` or `failure`, and a wave in one of `applied`, `nothing`, `waiting`, `refused` and `failed`.
+A plan run for a pull request labels every metric it sends with `pull_request`, so those series are new for each pull request. Three labels take values that are not bounded by your configuration: `pull_request` on a plan's metrics, `address` on `terragucci_resource_seconds` and `version` on `terragucci_module_pin`. A Prometheus that keeps every series for a long retention grows with the number of pull requests, the resources that happen to be slowest, and the module versions a root has pinned. The Change review dashboard reads `pull_request`, and the Runs dashboard reads `address`; a collector that deletes either label before Prometheus sees it leaves those panels empty. `project`, `stage`, `result`, `action`, `wave`, `binary` and `rule` stay within a small set, and `root`, `module` and `provider` grow with the size of your estate.
 
-The metrics' resource carries `terragucci.project` and nothing that changes from run to run, so each of a project's gauges stays one series and a dashboard reads the latest run's value. The trace's resource also carries `vcs.ref.head.revision` (the commit) and `cicd.pipeline.run.url.full` (the CI job), which is how one run's numbers are found: its trace, and the report it links.
+The stage span's `terragucci.result` attribute says how the run ended. A plan or drift run ends in `success` or `failure`, and a wave in one of `applied`, `nothing`, `waiting`, `refused` and `failed`.
+
+The metrics' resource carries `terragucci.project` and `service.version` (the terragucci version, which changes only when you upgrade), and nothing that changes from run to run, so each of a project's gauges stays one series and a dashboard reads the latest run's value. The trace's resource also carries `vcs.ref.head.revision` (the commit) and `cicd.pipeline.run.url.full` (the CI job), which is how one run's numbers are found: its trace, and the report it links.
 
 ## From a trace to its report
 
@@ -113,6 +115,8 @@ observability/terragucci/
   grafana/provisioning/alerting/terragucci.yaml    the SLO burn-rate alerts, as Grafana-managed rules
   prometheus/terragucci.rules.yml                  the SLO recording rules and alerts, and the pipeline alerts
 ```
+
+Nine dashboards are written: the six below, and one for each of the three SLOs.
 
 | Dashboard | Shows |
 |---|---|

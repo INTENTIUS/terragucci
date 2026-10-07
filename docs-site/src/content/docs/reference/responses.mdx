@@ -117,7 +117,7 @@ The triage table knows these classes of provider error:
 | dependency | `DependencyViolation`, `DeleteConflict`, `BucketNotEmpty` | remove what depends on it first |
 | state lock | `Error acquiring the state lock` | wait; a person runs `force-unlock` if no run holds it |
 
-Each error is read from the log with the resource it is about. An error the table does not know is listed as unknown.
+Each error is read from the log with the resource it is about. The table holds AWS provider errors, plus Terraform's state lock message. An error from another provider, such as GCP or Azure, is listed as not a known error, with its summary and the resource it is about, and a person reads it.
 
 ### Drift
 

@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { buildReport, planFiles } from "../src/report/build";
 import { changeKind, foldChange, HIGHLIGHTS } from "../src/report/highlight";
 import { readInlineReport, renderHtml } from "../src/report/html";
-import { redactPlan } from "../src/report/redact";
+import { PLAN_KEYS, redactPlan } from "../src/report/redact";
 import { S3Client, sign, type S3Fetch } from "../src/report/s3";
 import { REDACTED, type Report } from "../src/report/schema";
 import { artifactReportUrl, preventDestroyIn, projectFromRemote, reportLinks, runFacts } from "../src/report/stage";
@@ -146,6 +146,36 @@ describe("redaction", () => {
     expect(r.values).toBe(11);
     expect(terraformPlanDigest(p)).toBe(before);
     expect(JSON.stringify(p)).toContain('"old"');
+  });
+
+  it("covers every top-level key a binary prints: no secret survives in any of them", () => {
+    const S = (n: string) => `SECRET-${n}`;
+    const change = (n: string) => ({ actions: ["update"], before: { pw: S(`${n}-before`), name: "x" }, after: { pw: S(`${n}-after`), name: "x" }, before_sensitive: { pw: true }, after_sensitive: { pw: true } });
+    const full: Record<string, unknown> = {
+      format_version: "1.2",
+      terraform_version: "1.14.0",
+      variables: { pw: { value: S("variable") } },
+      planned_values: { outputs: { o: { sensitive: true, value: S("planned-output") } }, root_module: { resources: [{ address: "a.b", values: { pw: S("planned") }, sensitive_values: { pw: true } }] } },
+      resource_changes: [{ address: "a.b", change: change("resource-change") }],
+      resource_drift: [{ address: "a.b", change: change("resource-drift") }],
+      deferred_changes: [{ reason: "instance_count_unknown", resource_change: { address: "a.c", change: change("deferred") } }],
+      action_invocations: [{ address: "action.x.y", type: "x", config_values: { token: S("action"), region: "us-east-1" }, config_sensitive: { token: true } }],
+      output_changes: { o: { actions: ["update"], before: S("output-before"), after: S("output-after"), before_sensitive: true, after_sensitive: true } },
+      prior_state: { values: { outputs: { o: { sensitive: true, value: S("prior-output") } }, root_module: { resources: [{ values: { pw: S("prior") }, sensitive_values: { pw: true } }] } } },
+      configuration: { root_module: { variables: { pw: { sensitive: true, default: S("default") } } } },
+      relevant_attributes: [{ resource: "a.b", attribute: ["pw"] }],
+      checks: [{ address: { kind: "resource", name: "b", type: "a" }, status: "pass" }],
+      applyable: true,
+      complete: true,
+      errored: false,
+      timestamp: "2026-10-07T00:00:00Z",
+    };
+    expect(Object.keys(full).sort()).toEqual([...PLAN_KEYS.values, ...PLAN_KEYS.plain].sort());
+    const r = redactPlan(full);
+    expect(JSON.stringify(r.plan)).not.toContain("SECRET-");
+    expect(JSON.stringify(r.plan)).toContain("us-east-1");
+    expect(r.values).toBe(15);
+    expect(Object.keys(r.plan as object).sort()).toEqual(Object.keys(full).sort());
   });
 
   it("the report says how many values it redacted, and its marker", () => {
