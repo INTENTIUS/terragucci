@@ -131,7 +131,7 @@ With `--agent on`, the `replan` job leaves agent comments to the agent jobs, sin
 
 The `agent` job runs `--agent run`. This mode decides on a `/terragucci agent <ask>` comment with the same checks and writes the agent's prompt to `--prompt`. A pull request from a fork or from the default branch gets no agent.
 
-The `agent-push` job runs `--agent push`. This mode applies the patch in `--change` to the checkout and refuses it when it touches a path an agent may not change; `--policy-dir` (default `policy`) is one of them, and [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the others. A patch that passes is committed and sent to the pull request's head branch with the token in `TG_TOKEN`. `TG_PR`, `TG_SHA` and `TG_HEAD` name the pull request, its head commit and its branch. Either way the outcome is a reply on the pull request.
+The `agent-push` job runs `--agent push`. This mode applies the patch in `--change` to the checkout and refuses it when it touches a path an agent may not change; `--policy-dir` (default `policy`) is one of them, and [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the others. A patch that passes is committed and sent to the pull request's head branch. The job sets the `TG_*` variables this needs, which [Environment variables](/terragucci/reference/environment/) lists. Either way the outcome is a reply on the pull request.
 
 ## comment-apply
 
@@ -147,7 +147,7 @@ Reads a `/terragucci apply [wave-<n>]` comment from the event file, checks the c
 terragucci config check [--config <file>]
 ```
 
-Validates `terragucci.yml`, `terragucci.json` or `terragucci.ts` and lists every problem rather than the first.
+Validates the repo's config file and lists every problem rather than the first. [The config keys](/terragucci/reference/config/) names the file names it reads.
 
 ```text
 terragucci.yml: ok

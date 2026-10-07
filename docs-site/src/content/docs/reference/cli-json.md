@@ -26,15 +26,7 @@ description: The envelope that init, reconcile, plan, stage, rollout, respond an
 | `results` | What the command found or did, as below. `null` when the command could not run. |
 | `error` | Present when `results` is `null`: why it could not run. |
 
-Exit codes are the same with or without `--json`:
-
-| Code | Meaning |
-|---|---|
-| 0 | done |
-| 1 | one or more projects or roots failed |
-| 2 | a usage or config error |
-| 3 | waiting on an approval, or on a rollout's pull request |
-| 4 | a wave's plans changed after its approval, so `stage tf-apply` applied nothing |
+Exit codes are the same with or without `--json`; [the CLI page](/terragucci/reference/cli/#exit-codes) lists them.
 
 Code 4 comes only from `stage tf-apply`, which refuses `--json` with exit 2, so no envelope carries it.
 
