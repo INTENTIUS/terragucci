@@ -114,6 +114,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--module`, `--since` | `version-bump` | one module, and a ref (a tag, branch or commit) to count changes from for a module with no release tag |
 | `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |
 | `--attributions` | `drift` | the attributions `tf-drift` wrote, as a file; default `terragucci-report/attributions.json` |
+| `--base` | `wave-refused`, `apply-failed` | a ref such as `origin/main`: read the settings from the config there, not from the checkout. The generated apply of an open pull request passes it. A base that cannot be read gives no response and a logged reason |
 | `--out`, `--binary`, `--config`, `--project` | all | as above |
 
 [Responses to pipeline events](/terragucci/reference/responses/) explains each event. `respond` exits 0 once the event was handled, even if the project's response is `off` and nothing was done. The outcome is in the text, or in `results` with `--json` ([the JSON output](/terragucci/reference/cli-json/#respond)).

@@ -67,6 +67,7 @@ The apply of an open change reads its settings from the default branch, and the 
 | `policy` and the policy directory | the default branch; when it has no `policy` key, a change that adds one is checked against its own |
 | The gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
 | `reports`, `telemetry`, `parallelism` and every other key of `terragucci.yml` | the default branch |
+| `respond` (whether a refused wave or a failed apply gets a response) | the default branch; if its config cannot be read, there is no response |
 | The roots, modules and code that plan and apply | the change's head |
 
 A change that edits `reports.bucket`, for example, still has its apply report copied to the default branch's bucket. If the default branch's config cannot be read, the wave fails and nothing in it applies.

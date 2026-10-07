@@ -418,6 +418,12 @@ describe("apply before merge (apply.when: pull-request)", () => {
     expect(manual).toContain('if [ "$TG_OPEN" = 1 ]; then what="the head"; tf_base="--base origin/$TG_BASE"; fi');
     expect(manual).toContain('terragucci stage tf-apply --wave "$wave" --layers');
     expect(manual).toMatch(/--gate on-destroy \$tf_base/);
+    // The responses read the base's settings on an open pull request, and carry no flag after a merge.
+    expect(manual).toContain('terragucci respond wave-refused --wave "$wave" --approved terragucci-report/approved --current terragucci-report/current $tf_base || true');
+    expect(manual).toContain('terragucci respond apply-failed --log "$log" $tf_base || true');
+    const mr = mergeRequestApplyScript("tofu", layers, OIDC, { when: "pull-request" });
+    expect(mr).toContain('terragucci respond apply-failed --log "$log" --base "origin/$TG_BASE" || true');
+    expect(mr).toContain('--current terragucci-report/current --base "origin/$TG_BASE" || true');
     expect(manual).not.toContain("pr-merge");
     expect(manual).toContain("Merge it when you are ready");
     const auto = commentApplyScript("tofu", layers, "forgejo", OIDC, { when: "pull-request", merge: "auto" });
