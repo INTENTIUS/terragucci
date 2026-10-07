@@ -1,7 +1,7 @@
 ---
 title: Use OpenTofu or choudoufu
 description: Pick the binary your roots run with, and see what changes with each.
-claims: []
+claims: [check-diagnostics]
 ---
 
 ## What you end up with
