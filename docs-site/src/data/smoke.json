@@ -1,6 +1,6 @@
 {
   "recorded": "2026-10-07",
-  "commit": "2f74081",
+  "commit": "cd6dbe1",
   "forge": "forgejo",
   "claims": [
     {
@@ -454,6 +454,27 @@
     {
       "claim": "tg-comment-apply",
       "says": "a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "provider-calls",
+      "says": "with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "summed-timings",
+      "says": "with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "foreign-checkout",
+      "says": "a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
