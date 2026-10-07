@@ -1737,11 +1737,13 @@ claim_tg_zero_config() {
 
 claim_tg_waves() {
   # Boot the example: every resource the units declare reaches floci, and the
-  # pipeline runs two wave jobs: apply-wave-1 applies the 5 dev units and no
-  # other, apply-wave-2 the other 10, after it. BREAK: the pipeline is written
-  # with no canary, so everything applies in one wave.
+  # pipeline runs two wave jobs: apply-wave-1 plans and applies the 5 dev units
+  # and no other, apply-wave-2 the other 10, after it. A unit already applied
+  # plans no change and applies nothing, so the claim reads which units each
+  # wave job planned, and example-terragrunt.sh verifies the resources.
+  # BREAK: the pipeline is written with no canary, so everything is one wave.
   log() { echo "[smoke tg-waves] $*" >&2; }
-  local work="" rc=0 logs1 logs2
+  local work="" rc=0 logs1 logs2 w1 w2
   if [ -n "${BREAK:-}" ]; then
     work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
     cp -R "$TG_EXAMPLE/." "$work/"
@@ -1756,9 +1758,14 @@ claim_tg_waves() {
   if [ $rc = 0 ]; then
     logs1="$(tg_main_job_log apply-wave-1)"
     logs2="$(tg_main_job_log apply-wave-2)"
-    [ "$(grep -c 'applied live/dev/' <<<"$logs1")" = 5 ] && ! grep -qE 'applied live/(staging|prod)/' <<<"$logs1" \
-      || { log "apply-wave-1 did not apply the 5 dev units alone"; rc=1; }
-    [ "$(grep -cE 'applied live/(staging|prod)/' <<<"$logs2")" = 10 ] || { log "apply-wave-2 did not apply the 10 staging and prod units"; rc=1; }
+    # The first line of each wave job names every unit of its wave.
+    w1="$(grep -m1 'wave 1 of 2: planning ' <<<"$logs1" | sed 's/.*: planning //' || true)"
+    w2="$(grep -m1 'wave 2 of 2: planning ' <<<"$logs2" | sed 's/.*: planning //' || true)"
+    [ "$(grep -o 'live/dev/' <<<"$w1" | wc -l | tr -d ' ')" = 5 ] && ! grep -qE 'live/(staging|prod)/' <<<"$w1" \
+      || { log "apply-wave-1 did not run the 5 dev units alone (${w1:-no wave 1 of 2})"; rc=1; }
+    [ "$(grep -oE 'live/(staging|prod)/' <<<"$w2" | wc -l | tr -d ' ')" = 10 ] && ! grep -q 'live/dev/' <<<"$w2" \
+      || { log "apply-wave-2 did not run the 10 staging and prod units (${w2:-no wave 2 of 2})"; rc=1; }
+    grep -q 'wave 1 of 2 applied' <<<"$logs1" && grep -q 'wave 2 of 2 applied' <<<"$logs2" || { log "a wave job did not end applied"; rc=1; }
   fi
   # The BREAK run left every unit applied and main carrying the no-canary
   # pipeline: put main back. The runner runs this claim's BREAK before its plain
@@ -1768,7 +1775,7 @@ claim_tg_waves() {
     drop_work "$work"
     [ -n "${SMOKE_PLAIN_NEXT:-}" ] || tg_restore_main || true
   fi
-  [ $rc = 0 ] && log "15 units applied to floci, the 5 dev units first, then the other 10"
+  [ $rc = 0 ] && log "15 units applied to floci, wave 1 the 5 dev units, then wave 2 the other 10"
   return $rc
 }
 
@@ -1877,9 +1884,9 @@ claim_tg_refuse() {
 claim_tg_mock_trap() {
   # Merge new-service to main. Wave 1 applies ledger before billing: billing
   # waits while ledger has no outputs and plans once ledger applied, so its
-  # state holds ledger's real bucket and no mock value. BREAK: the pushed
-  # pipeline applies billing alone before the stage, ignoring Terragrunt's
-  # order, so billing takes the mock.
+  # state holds ledger's real bucket and no mock value. BREAK: wave 1 of the
+  # pushed pipeline applies billing and ledger with -auto-approve in place of
+  # the stage, ignoring Terragrunt's order, so billing takes the mock.
   log() { echo "[smoke tg-mock-trap] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -1888,7 +1895,7 @@ claim_tg_mock_trap() {
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
     || { log "no example repo; run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
   git -C "$work/tree" apply "$TG_EXAMPLE/changes/new-service.patch" || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && sed -i.bak "s#TG_OUTCOME=\"\$outcome\" terragucci stage tf-apply --wave 1 #terragrunt run --all --no-color --no-filters-file --queue-ignore-dag-order --filter '{./live/dev/billing}' -- apply -auto-approve -input=false; &#" "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+  [ -n "${BREAK:-}" ] && sed -i.bak "s#TG_OUTCOME=\"\$outcome\" terragucci stage tf-apply --wave 1 #terragrunt run --all --no-color --no-filters-file --queue-ignore-dag-order --filter '{./live/dev/billing}' --filter '{./live/dev/ledger}' -- apply -auto-approve -input=false; exit 0 \\#&#" "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
   sha="$(push_tree "$work/tree" "$repo" main "smoke tg-mock-trap: add billing and its ledger $(date +%s)")"
   wait_run "$repo" "$sha"
   [ "$RUN_STATUS" = success ] || { log "the apply ended '$RUN_STATUS'"; rc=1; }
