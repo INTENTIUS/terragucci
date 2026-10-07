@@ -153,6 +153,56 @@ So recapturing one step makes that step current and leaves every other step as i
 
 `<Shot optional>` and `<Captured optional>` let the site build before a step's first capture. The check still fails on them until the step is captured.
 
+### The example on GitLab
+
+`just example-gitlab` runs the same 15 roots on the stack's GitLab CE profile, applied to floci by GitLab CI, for GitLab screenshots. It is `stack/example-gitlab.sh`, which shares `stack/lib.sh` with the Forgejo example (`LIB_FORGE=gitlab`) and takes its merge request helpers from `stack/forge-gitlab.sh`.
+
+```bash
+just example-gitlab up                  # boot the gitlab profile, push the example, apply every root
+just example-gitlab change module-bump  # a merge request with one scenario from example/changes
+just example-gitlab change destroy
+just example-gitlab merge destroy       # merge it; wave 4 waits and prints its approve command
+just example-gitlab approve             # approve as the reader, retry the waiting job, wait for the apply
+just example-gitlab reset               # close merge requests, drop branches, apply the example again
+just example-gitlab verify              # every resource main declares is in floci
+just example-gitlab logs                # the failing lines of the last pipeline with a failed job
+just example-gitlab change drift        # delete a queue, run the drift schedule, print the issue
+```
+
+| Step | Took on an Apple silicon Mac, GitLab under emulation |
+|---|---|
+| `just stack-up gitlab` | about 2.5 minutes; ten or more on a slower machine |
+| `up` on a running GitLab | about 3.5 minutes |
+| `change` (plan and check pipelines) | about 40 seconds |
+| `merge destroy`, to the waiting wave | about 4 minutes, with the pipeline that lists the reader's key |
+| `approve`, the retried wave applied | about 50 seconds |
+| `change drift`, to the issue | about 2 minutes |
+| `reset` | about 2 minutes |
+
+What differs from the Forgejo example:
+
+| | Forgejo (`just example`) | GitLab (`just example-gitlab`) |
+|---|---|---|
+| Pipeline | `example/.forgejo/workflows/terragucci.yml`, committed | `.gitlab-ci.yml`, written at push time by `terragucci init` with `forge: gitlab` added to `terragucci.yml` |
+| Image | pushed by tag, digest pins stripped (`push_tree`) | the same |
+| Approve | `chant approve` only; the reader re-runs the stage | `chant approve`, then the waiting `apply-wave-N` job is retried, as the docs tell a GitLab reader to |
+| Drift | `change drift` deletes the queue | deletes the queue, then runs the pipeline schedule `terragucci drift` (made on first use) |
+| Pin | `change pin` | not on GitLab |
+| Project | `terragucci-admin/example` | `root/example`, public, with the CI variable `GITLAB_TOKEN` |
+
+The generated jobs push to `https://<CI_SERVER_HOST>/<project>.git`, which is right for a GitLab on port 443. The stack's GitLab serves plain http on `gitlab:8929`, so `up` also sets `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0` as project variables: git in the jobs rewrites that address to the stack's. The apply jobs post a commit status, `terragucci/apply`, which GitLab counts as part of the pipeline, so a pipeline whose wave waits stays "running" until the wave is retried. The script waits on the jobs, not on the pipeline's status.
+
+#### GitLab screenshots
+
+```bash
+just example-gitlab shot /root/example/-/merge_requests/1 note-light.png light --scroll 'li.note' --match 'terragucci tf-plan' --fit 1
+just example-gitlab shot /root/example/-/merge_requests/1 note-dark.png dark --scroll 'li.note' --match 'terragucci tf-plan' --fit 1
+```
+
+`shot` takes a GitLab path or URL, the PNG to write, `light` or `dark`, and any further `stack/shot.mjs` flags (`--height`, `--scroll`, `--match`, `--fit`). GitLab's color mode is a setting of the signed-in user and ignores the browser's `prefers-color-scheme`. So `shot` signs in as root (the session is kept in `stack/.state/gitlab-cookies`), sets the color mode and the syntax theme to light or dark through the preferences form, and hands the session to `shot.mjs --cookie`. Before the picture, `shot.mjs` waits for a GitLab page's spinners and skeletons to go.
+
+`GITLAB_HIDE` is the hide list, like the tutorial's `FORGEJO_HIDE`: the left sidebar and its toggle, broadcast messages and the instance's alert banners (the "add an SSH key" one), callouts and feature highlights. `GITLAB_STYLE` gives the content the sidebar's width. Both are defaults in `stack/example-gitlab.sh` and can be overridden from the environment. Gravatar is off on the stack, so avatars are GitLab's initials.
+
 ### The real-AWS pilot (SMOKE_AWS=1)
 
 floci is the AWS the smoke claims run against, in `just smoke`, `just smoke-record` and CI. `SMOKE_AWS=1` runs five of them on a real account instead, the one the default AWS CLI profile signs in to: boot, drift, respond-drift, tg-drift and report. Any other claim exits with a refusal under it, and so does `--record`, since `smoke.json` is floci's record. forgejo-oidc stays on floci. The ruling and the cost research are in terragucci#116.
