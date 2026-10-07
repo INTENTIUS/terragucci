@@ -27,6 +27,7 @@ npx terragucci init
 ```text
 found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
 wrote .gitlab-ci.yml
+wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
@@ -52,7 +53,7 @@ oidc:
 
 ```bash
 git switch -c add-terragucci
-git add .gitlab-ci.yml package.json package-lock.json
+git add .gitlab-ci.yml chant.workspace.json package.json package-lock.json
 git commit -m "Add terragucci"
 git push -u origin add-terragucci
 ```
@@ -62,6 +63,10 @@ Change a line in one root and open a merge request. The check job runs, then the
 ### 5. Require the pipeline
 
 In Settings, Merge requests, turn on "Pipelines must succeed". A failed plan then blocks the merge.
+
+### 6. Make approval possible
+
+Approvals are sealed with a key. Until your key is in `.chant/allowed_signers` on the default branch and chant is installed, a waiting wave cannot be approved. The [getting-started page](/terragucci/getting-started/#before-your-first-approval) has both steps.
 
 ## Next
 
