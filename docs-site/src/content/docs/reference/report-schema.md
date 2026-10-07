@@ -3,7 +3,7 @@ title: Report JSON schema
 description: The fields of report.json, which every plan, apply and drift run writes beside its HTML report.
 ---
 
-`report.json` sits beside every `report.html`, and the HTML also carries it inline. A script handed only the HTML still has the data:
+`report.json` sits beside every `report.html`, which also carries it inline:
 
 ```bash
 sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '.named[] | select(.action == "delete") | .address'
@@ -23,24 +23,24 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `change_set` | the set digest over every root's plan digest, the same digest [`chant`](/terragucci/concepts/glossary/#chant) gives the change set |
 | `unit`, `units` | what the groups count: `member` or `instance`, and how many |
 | `groups[]` | a stable id per normalized change, its roots and the change |
-| `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts are read from it |
+| `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
-| `waves[]` | number, roots, set digest, approval state (`waiting`, `approved` or `not-required` on a `tf-apply` wave, `not-requested` on a plan) and, on a gated wave, the branch and path of the ledger that holds its record |
+| `waves[]` | number, roots, set digest, approval state (`waiting`, `approved` or `not-required` on a `tf-apply` wave, `not-requested` on a plan) and, on a gated wave, the ledger's branch and path |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
 | `deferred[]` | Terragrunt units planned once the units they wait for apply, and what each waits for |
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
-| `intent` | the description check's decision: its status, whether it flagged the pull request, the decision in a sentence, the probability and threshold, the model, the digest of the state the service was asked about (`state_digest`) and the destroys and replacements the text leaves out (`unmentioned`); present only after `respond description` ran on the report |
-| `policy` | the run's policy check, when `policy` is on: the engine, the input mode, the namespace, whether the policy came from the checkout or the base branch, the roots it failed and how many warnings it gave |
-| `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the warnings and, for `error`, why it could not run. A denied root is `failed` and keeps its `changes`, so the report shows what was refused |
+| `intent` | the description check's decision: status, whether it flagged the pull request, the decision, probability and threshold, model, `state_digest` and the destroys and replacements the text leaves out (`unmentioned`); present only after `respond description` ran on the report |
+| `policy` | the policy check, when `policy` is on: engine, input mode, namespace, whether the policy came from the checkout or the base branch, the roots it failed and the warning count |
+| `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the warnings and, for `error`, why it could not run; a denied root is `failed` and keeps its `changes` |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
-| `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; the summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
+| `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
-The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. A minor version of `terragucci.report/v1` only adds fields, so a reader that ignores fields it does not know keeps working.
+The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`.
 
 ## Reading it
 
@@ -56,4 +56,4 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | what the policy denied or warned about in a root | `roots[].policy` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
-Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it, so the branch is the one record of who approved what.
+Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it.
