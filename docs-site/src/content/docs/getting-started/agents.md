@@ -1,20 +1,10 @@
 ---
 title: Set up with a coding agent
 description: How a coding agent adopts terragucci in a repository, and the prompt to hand it.
+prompt: setup
 ---
 
-This page is for a coding agent setting terragucci up, and the person handing it the task.
-
-## Hand your agent this
-
-Paste this into Claude Code, Codex, Cursor or any agent working in your Terraform repository:
-
-```text
-Set up terragucci in this repository.
-Read https://intentius.io/terragucci/llms.txt first, then
-https://intentius.io/terragucci/getting-started/agents/ and follow it.
-Do not apply anything. Open a pull request with the result.
-```
+This page is for a coding agent setting terragucci up, and the person handing it the task. Paste the prompt above into Claude Code, Codex, Cursor or any agent working in your Terraform repository.
 
 ## What the agent reads
 
@@ -22,6 +12,9 @@ Do not apply anything. Open a pull request with the result.
 |---|---|
 | [`llms.txt`](https://intentius.io/terragucci/llms.txt) | every page, with a one-line description |
 | [`llms-full.txt`](https://intentius.io/terragucci/llms-full.txt) | the text of every page in one file |
+| Copy page as Markdown, under each page's title | that page's text, with its prompt |
+
+A task page's own prompt sits under its title as "Hand this to your agent". Each one forbids apply, approve and merge.
 
 A key that `terragucci config check` refuses is not part of terragucci.
 
