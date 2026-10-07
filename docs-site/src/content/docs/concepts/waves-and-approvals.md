@@ -27,9 +27,9 @@ The gate policy decides which waves wait for a person.
 
 | Policy | Waits for an approval when |
 |---|---|
-| `always` | every wave |
-| `on-destroy` | the wave's plans destroy something |
-| `never` | never; use your forge's environment reviewers instead |
+| `always` | the wave has at least one change; a wave whose plans change nothing never waits |
+| `on-destroy` | the wave's plans destroy or replace something |
+| `never` | never; the wave applies as soon as its plans are made, so only the review of the pull request and the protection of the default branch stand in front of it |
 
 A waiting wave exits with code 3 and prints the approval command. A person runs it, then the stage runs again. A run that stops at an approval, or after a failed root, carries on from there next time. It never applies a root twice.
 

@@ -143,6 +143,21 @@ describe("a wave behind its gate", () => {
     expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending).toHaveLength(1);
   });
 
+  it("the wave's report says waiting with the ledger it is recorded in, then approved once an approval of the digest stands", async () => {
+    const { work, origin, bin } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
+    const wave = () => JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).waves[0];
+    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    expect(wave()).toMatchObject({ approval: "waiting", gate: { branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" } });
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+    expect(await applyWave(work, { ...opts, now: T(3) })).toBe(0);
+    expect(wave()).toMatchObject({ approval: "approved", gate: { branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" } });
+    expect(await applyWave(work, { ...opts, gate: "never", now: T(4) })).toBe(0);
+    expect(wave().approval).toBe("not-required");
+  });
+
   it("ends the ledger with a newline, so a line another writer appends stays its own record", async () => {
     const { work, origin, bin } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});

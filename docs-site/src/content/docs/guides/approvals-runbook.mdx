@@ -1,0 +1,83 @@
+---
+title: Approvals runbook
+description: "The day-to-day commands for approvals: set up signers, approve a wave, list what is waiting, revoke an approval, recover from a refusal, and what expires."
+claims: [waves, sealed, refuse]
+---
+
+## What you end up with
+
+The commands an approver and an on-call engineer use, in one place. Each section stands alone. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) walks through a first sign-off with screenshots, and [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/) explains why one is a commit.
+
+Everything lives in one file, `_gates/tf-apply.jsonl` on the `chant/lifecycle` branch. A line with `"kind":"pending"` is a wave asking to be approved, and a line without it is an approval. The commands below read or append to that file.
+
+## Set up signers
+
+Once per repo, in a reviewed pull request to the default branch.
+
+1. Add `.chant/allowed_signers`, one line per person who approves, in ssh-keygen's allowed_signers format. The first field is the name the person passes as `--actor`:
+
+   ```text
+   github:alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+   ```
+
+2. Run `terragucci init` if you have not. It lists each wave's gate under `identity.gates` in `chant.workspace.json`. For a gate listed there, the apply job counts an approval only when its seal verifies against the signers file on the default branch.
+3. Put people in the file and nobody else. A key that a CI job or an agent holds never goes in it.
+4. Add a person by pull request. Remove one the same way: from the merge, their approvals stop counting for the waves that run after it.
+
+## Approve a wave
+
+A waiting wave exits with code 3 and prints the command. Read the wave's plans in the report, then run the printed command with your name and key:
+
+```bash
+npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
+```
+
+`--plan` is the wave's set digest. The sign-off covers those plans only. Then run the wave's job again, or comment `/terragucci apply` on the merged pull request on GitHub or Forgejo. The job finds the approval and the wave goes out.
+
+## List the waves waiting for an approval
+
+The apply job's log and the plan report's Waves table show the wave you ran. To list every wave waiting across the repo, read the ledger. This prints each gate whose newest pending record has no approval of its digest after it:
+
+```bash
+git fetch origin chant/lifecycle
+git show origin/chant/lifecycle:_gates/tf-apply.jsonl | jq -s -r '
+  . as $all
+  | ($all | map(select(.kind == "pending")) | group_by(.gate) | map(max_by(.timestamp))[]) as $p
+  | select(($all | map(select(.kind != "pending" and .gate == $p.gate and .planDigest == $p.planDigest and .timestamp >= $p.timestamp)) | length) == 0)
+  | "\($p.gate)\t\($p.planDigest)\texpires \($p.expiresAt)\t\($p.description)"'
+```
+
+A line that is past its `expires` time is a wave nobody has run for 48 hours. The next run of its job records a fresh pending fact.
+
+## Revoke an approval before its wave runs
+
+An approval is a line in the ledger, so revoking it is a commit that removes the line. You need the right to push to `chant/lifecycle`.
+
+```bash
+git clone --branch chant/lifecycle --single-branch <your repo url> lifecycle
+cd lifecycle
+# delete the approval's line from _gates/tf-apply.jsonl
+git commit -am "revoke the approval of wave-2" && git push origin chant/lifecycle
+```
+
+The wave waits again, and the next run prints the approval command. The old line stays in the branch's history. Two other things also stop an approval counting:
+
+- A change to any plan in the wave. The approval names the set digest, so a moved plan is refused, not applied. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) covers it.
+- Removing the approver from `.chant/allowed_signers` on the default branch, for a gate that `identity.gates` lists. Every approval that person sealed stops counting for waves that run afterwards.
+
+## Recover from a refusal
+
+When a wave's plans changed after it was approved, the job exits with code 4 and applies nothing. It names the roots that moved, and `terragucci respond wave-refused` prints what changed inside them. You can approve the new digest or revert the change that moved the plan.
+
+A revert does not bring the old approval back. The refused run recorded a pending fact for the new digest, and an approval counts only when it is newer than the newest pending fact for its gate. The reverted wave waits again and needs a fresh `chant approve`. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) has the steps.
+
+## What expires
+
+A pending fact expires 48 hours after it is recorded. While it stands, re-running the wave records nothing new and the waiting time stays at the original. After it expires, the next run records a fresh pending fact and the waiting time starts again from that run.
+
+An approval never expires. It counts for as long as it is newer than the gate's newest pending fact and names the digest the wave plans. Age lets no different plan through, because the digest decides.
+
+## Next
+
+- [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
+- [Gate policy](/terragucci/reference/stages/#gate-policy)
