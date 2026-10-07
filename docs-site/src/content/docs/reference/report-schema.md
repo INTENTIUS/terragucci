@@ -14,20 +14,25 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | Field | Holds |
 |---|---|
 | `schema` | `terragucci.report/v1`; a minor version only adds fields |
+| `minor` | the minor version of the schema the report was written with |
 | `run` | project, commit, base, stage, binary, runtime, start and finish times, and the job |
+| `run.wave`, `run.terragucci` | the wave a `tf-apply` report is for, and the terragucci version that wrote the report |
 | `run.commit_url`, `run.pull_request`, `run.pull_request_url` | the commit's page, and the pull or merge request the run planned with its page |
 | `run.report_url` | where this `report.html` is served from the bucket, when `reports.url` is set |
 | `run.trace_id`, `run.trace_url` | the run's trace, when the stage sent one, and its link when `telemetry.trace_url` is set |
+| `change_set` | the set digest over every root's plan digest, the same digest `chant` gives the change set |
+| `unit`, `units` | what the groups count: `member` or `instance`, and how many |
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts are read from it |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
-| `waves[]` | number, roots, set digest, approval state and a link to the approval record |
+| `waves[]` | number, roots, set digest, approval state, and where the approval record lives as `gate`: `{branch, path}` on the `chant/lifecycle` branch |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
+| `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
 | `deferred[]` | Terragrunt units planned after the units they wait for apply, and what each waits for |
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
-| `intent` | the description check's decision: its status, whether it flagged the pull request, the decision in a sentence, the probability and threshold, the model and the destroys and replacements the text leaves out; present only after `respond description` ran on the report |
+| `intent` | the description check's decision: its status, whether it flagged the pull request, the decision in a sentence, the probability and threshold, the model, the digest of the state the service was asked about (`state_digest`) and the destroys and replacements the text leaves out (`unmentioned`); present only after `respond description` ran on the report |
 | `policy` | the run's policy check, when `policy` is on: the engine, the input mode, the namespace, whether the policy came from the checkout or the base branch, the roots it failed and how many warnings it gave |
 | `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the warnings and, for `error`, why it could not run. A denied root is `failed` and keeps its `changes`, so the report shows what was refused |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
@@ -51,4 +56,4 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | what the policy denied or warned about in a root | `roots[].policy` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
-Approvals stay on your repo's `chant/lifecycle` branch. The report links to each record and never copies it, so the branch is the one record of who approved what.
+Approvals stay on your repo's `chant/lifecycle` branch. The report names each record's branch and path and never copies it, so the branch is the one record of who approved what.

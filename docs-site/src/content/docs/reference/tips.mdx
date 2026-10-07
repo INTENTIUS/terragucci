@@ -26,6 +26,10 @@ Each tip names its rule. Code tips come from chant's terraform lint and link to 
 | [TF038](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf038) | an `oci://` module with no tag, or the `latest` tag |
 | [TF039](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf039) | a registry module with a version range |
 | [TF040](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040) | no committed `.terraform.lock.hcl` |
+| [TF041](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf041) | a Terragrunt `dependency` with `mock_outputs` whose allowed commands include `apply` or are not set |
+| [TF042](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf042) | a Terragrunt `dependency` that sets `skip_outputs` with `mock_outputs`, so every run reads the mocks |
+| [TF043](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf043) | a Terragrunt `terraform.source` with no version (a git ref, a `tfr` version or an `oci` tag) |
+| [TF044](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf044) | a Terragrunt config that keeps its state in a local backend |
 
 ## Rollout tips
 

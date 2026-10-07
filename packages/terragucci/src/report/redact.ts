@@ -63,6 +63,18 @@ function coverValues(values: unknown, count: { n: number }): unknown {
   return out;
 }
 
+/**
+ * Every top-level key `show -json` prints, from OpenTofu, Terraform and choudoufu, and what
+ * redaction does with it. `values` keys carry values and are walked; `plain` keys carry only
+ * paths, flags, versions or addresses. A key a binary emits that is in neither list is a new
+ * key: test/report.test.ts holds a fixture with every key here, so adding one means adding a
+ * fixture line and a row.
+ */
+export const PLAN_KEYS = {
+  values: ["variables", "planned_values", "resource_changes", "resource_drift", "deferred_changes", "action_invocations", "output_changes", "prior_state", "configuration"],
+  plain: ["format_version", "terraform_version", "relevant_attributes", "checks", "applyable", "complete", "errored", "timestamp"],
+} as const;
+
 /** The plan with every sensitive value replaced, and how many there were. The input is not changed. */
 export function redactPlan(plan: unknown): Redacted {
   if (!isObject(plan)) return { plan, values: 0 };
@@ -71,6 +83,18 @@ export function redactPlan(plan: unknown): Redacted {
   for (const key of ["resource_changes", "resource_drift"]) {
     const list = plan[key];
     if (Array.isArray(list)) out[key] = list.map((r) => (isObject(r) ? { ...r, change: coverChange(r.change, count) } : r));
+  }
+  // Terraform's deferred changes hold a resource change each, with the reason it was deferred.
+  if (Array.isArray(plan.deferred_changes)) {
+    out.deferred_changes = plan.deferred_changes.map((d) =>
+      isObject(d) && isObject(d.resource_change) ? { ...d, resource_change: { ...d.resource_change, change: coverChange(d.resource_change.change, count) } } : d,
+    );
+  }
+  // Terraform 1.14's action invocations carry the action's configuration, with its own sensitive mask.
+  if (Array.isArray(plan.action_invocations)) {
+    out.action_invocations = plan.action_invocations.map((a) =>
+      isObject(a) && "config_values" in a ? { ...a, config_values: cover(a.config_values, a.config_sensitive, count) } : a,
+    );
   }
   if (isObject(plan.output_changes)) {
     out.output_changes = Object.fromEntries(Object.entries(plan.output_changes).map(([k, c]) => [k, coverChange(c, count)]));

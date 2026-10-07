@@ -61,7 +61,7 @@ The job never applies. A root that cannot be refreshed fails the job, and drift 
 
 ### 6. Correct the drift
 
-You can apply the code as it is, which puts the object back. Or you can accept the live value, which terragucci proposes as a pull request. where the changed attribute is a literal in the root, the pull request writes the live value there. Merging it accepts the change made outside Terraform, so read it first. [Responses to pipeline events](/terragucci/reference/responses/#drift) lists what is only reported, such as values set from a variable or inside a module.
+You can apply the code as it is, which puts the object back. Or you can accept the live value, which terragucci proposes as a pull request. Where the changed attribute is a literal in the root, the pull request writes the live value there. Merging it accepts the change made outside Terraform, so read it first. [Responses to pipeline events](/terragucci/reference/responses/#drift) lists what is only reported, such as values set from a variable or inside a module.
 
 ## Next
 
