@@ -31,7 +31,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	'apply-when': {
 		mark: 'warn',
-		text: 'Both, set per project: apply.when merge (the default) applies from the push to the default branch or a /terragucci apply comment on the merged pull request, and pull-request applies the open pull request, which apply.merge auto then merges. Before merge covers plain roots; a Terragrunt repo applies after merge',
+		text: 'Both, set per project: apply.when merge (the default) applies from the push to the default branch or a /terragucci apply comment on the merged pull request, and pull-request applies the open pull request, which apply.merge auto then merges. Before merge covers plain roots on GitHub and Forgejo; GitLab and Terragrunt repos apply after merge',
 		page: 'reference/config/#apply-before-merge',
 	},
 	'approval-binds': {
@@ -51,7 +51,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	locks: {
 		mark: 'warn',
-		text: 'A pull request applied before merge locks the roots it reaches until it merges or closes, and /terragucci unlock releases them; a project applies one push at a time, queued on each forge. Plain roots only: a Terragrunt repo applies after merge and takes no per-root locks',
+		text: 'A pull request applied before merge locks the roots it reaches until it merges or closes, and /terragucci unlock releases them; a project applies one push at a time, queued on each forge. Plain roots on GitHub and Forgejo only: GitLab and Terragrunt repos apply after merge and take no per-root locks',
 		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {
