@@ -213,6 +213,10 @@ example *args="up":
 example-terragrunt *args="up":
     stack/example-terragrunt.sh {{args}}
 
+[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], reset, shot <view>|all|list, minutes.")]
+sandbox *args:
+    stack/sandbox-github.sh {{args}}
+
 [doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
 see-runs:
     stack/see-runs.sh
