@@ -22,10 +22,6 @@ describe("images", () => {
     expect(imageReference(imageFor("tofu", { [tag]: DIGEST })!)).toBe(`${tag}@${DIGEST}`);
   });
 
-  it("there is no image for cdktn yet", () => {
-    expect(imageFor("cdktn")).toBeUndefined();
-  });
-
   it("a choudoufu repo's pipeline runs in the choudoufu image, and its required_version is not taken as a choudoufu release", async () => {
     const dir = write(twoRootRepo(), { "network/versions.tf": 'terraform {\n  required_version = "1.13.1"\n}\n', "app/versions.tf": 'terraform {\n  required_version = "1.13.1"\n}\n' });
     git(dir, "init", "-q");

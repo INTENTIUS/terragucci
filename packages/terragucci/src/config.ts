@@ -16,7 +16,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseYAML } from "@intentius/chant/yaml";
 
-export const BINARIES = ["terraform", "tofu", "choudoufu", "cdktn"] as const;
+export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
 export const GATES = ["always", "on-destroy", "never"] as const;
 /** Every stage runs on the forge's CI. */

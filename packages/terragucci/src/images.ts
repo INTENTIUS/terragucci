@@ -33,9 +33,8 @@ export function imageTag(tool: keyof typeof TOOL_VERSIONS, version = VERSION): s
   return `${version}-${tool === "terraform" ? "tf" : tool}${TOOL_VERSIONS[tool]}`;
 }
 
-/** The image a pipeline for `binary` runs in, or undefined when terragucci publishes none for it. */
-export function imageFor(binary: Binary, table: Record<string, string> = digests): ImageRef | undefined {
-  if (binary !== "tofu" && binary !== "terraform" && binary !== "choudoufu") return undefined;
+/** The image a pipeline for `binary` runs in. */
+export function imageFor(binary: Binary, table: Record<string, string> = digests): ImageRef {
   const repository = `${REGISTRY}/terragucci-${binary}`;
   const tag = imageTag(binary);
   return { repository, tag, digest: table[`${repository}:${tag}`] };

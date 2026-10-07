@@ -63,7 +63,8 @@ describe("loading", () => {
 describe("validation", () => {
   it.each([
     [{ bianry: "tofu" }, /config\.bianry is not a setting/],
-    [{ binary: "pulumi" }, /config\.binary is "pulumi"; use one of terraform, tofu, choudoufu, cdktn/],
+    [{ binary: "pulumi" }, /config\.binary is "pulumi"; use one of terraform, tofu, choudoufu/],
+    [{ binary: "cdktn" }, /config\.binary is "cdktn"; use one of terraform, tofu, choudoufu$/],
     [{ gate: "sometimes" }, /config\.gate/],
     [{ roots: "envs/*" }, /config\.roots must be a list of strings/],
     [{ drift: 5 }, /config\.drift must be a cron schedule or false/],

@@ -170,7 +170,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError("cannot tell which forge this repo is on; pass --forge github, gitlab or forgejo");
   }
 
-  let ref: ImageRef | undefined;
+  let ref: ImageRef;
   let tgInput: PipelineInput["terragrunt"];
   if (terragrunt) {
     if (binary.value !== "tofu" && binary.value !== "terraform") {
@@ -187,7 +187,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   } else {
     ref = imageFor(binary.value);
   }
-  if (!ref) throw new RenderError(`terragucci has no CI image for ${binary.value} yet; set binary to tofu, terraform or choudoufu`);
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   const pipeline = renderPipeline({
     forge: forgeChoice.value,

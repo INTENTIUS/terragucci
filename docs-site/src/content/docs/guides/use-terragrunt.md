@@ -57,9 +57,9 @@ Commit the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#
 | What | How |
 |---|---|
 | Which units a change reaches | Terragrunt's own change detection, plus files a module reads with `file()`, modules called from inside modules, and stack templates |
-| Units that depend on a changed unit | they go out in later waves, planned only after the units they read from have applied |
+| Units that depend on a changed unit | they go out in the same wave as the unit they read from, or in wave 2 when that unit is a canary unit and they are not. Inside a wave, `terragrunt run --all` orders them by dependency, and a unit that reads an output the wave changes plans again in a second pass after that unit applied |
 | `mock_outputs` | a unit whose plan would read mock values is not planned; it waits for its upstream to apply, so no approval covers a made-up value |
-| Each wave | one apply job: the canary units are wave 1 and the rest wave 2. The job plans the wave's units with one `terragrunt run --all`, saving each plan, and applies the saved plans with a second one |
+| Each wave | one apply job. A Terragrunt repo has at most two waves: the canary units are wave 1 and the rest wave 2, and with no canary one wave holds every unit. The job plans the wave's units with one `terragrunt run --all`, saving each plan, and applies the saved plans with a second one |
 | The gate | `gate` works as for plain roots, and an approval is sealed the same way. The set digest covers the units whose plan changes something. A unit that reads another unit of its wave, whose plan changes its outputs, plans and goes through the gate in a second pass, after that unit applied |
 | Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
 | `/terragucci apply` | on GitHub and Forgejo, a comment on a merged pull request runs its waves of units again from the merge commit, behind the same gate and with the refusals [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) lists. It approves nothing |

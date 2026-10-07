@@ -26,13 +26,13 @@ description: Every terragucci command, its flags and its exit codes.
 ## init
 
 ```bash
-terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu|cdktn] [--force] [--dry-run]
+terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--force] [--dry-run]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--forge` | the forge, when the remote cannot tell |
-| `--binary` | the binary, when detection picks the wrong one: `tofu`, `terraform`, `choudoufu` or `cdktn` |
+| `--binary` | the binary, when detection picks the wrong one: `tofu`, `terraform` or `choudoufu` |
 | `--dry-run` | compute everything and write nothing |
 | `--force` | overwrite a pipeline file terragucci did not write |
 

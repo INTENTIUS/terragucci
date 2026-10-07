@@ -55,7 +55,7 @@ import { respond } from "./respond";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
-  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu|cdktn] [--force] [--dry-run]
+  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
