@@ -255,6 +255,6 @@ In a Terragrunt repo the same three jobs run Terragrunt:
 |---|---|
 | check | `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs`, then the policy tests when `policy` is set |
 | plan | `terragucci stage tf-plan`, one `terragrunt run --all` per wave |
-| apply | `terragucci stage tf-apply --terragrunt`, one job per wave: plans its units with `terragrunt run --all`, gates on their set digest, applies exactly those saved plans with a second `run --all` |
+| apply | `terragucci stage tf-apply --terragrunt`, one job per dependency layer: plans its units with `terragrunt run --all`, gates on their set digest, applies exactly those saved plans with a second `run --all`. The last job runs with `--rest`, so a layer added after `init` applies there, behind its own gate |
 
 The jobs run Terragrunt without prompts, with `binary` as its tool. Sources and providers stay cached in `.terragrunt-cache/` at the repo root between runs. A repo on GitLab-managed state runs 3 units at once; others run 16.

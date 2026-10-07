@@ -4,10 +4,13 @@
  *
  * check  `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs`.
  * plan   `terragucci stage tf-plan --terragrunt`: one `run --all` per wave.
- * apply  `terragucci stage tf-apply --terragrunt`, one job per wave: the
- *        wave's units planned with one `run --all`, each plan saved, the
- *        wave's gate decided on their set digest, then the saved plans
- *        applied with one `run --all` over exactly those units.
+ * apply  `terragucci stage tf-apply --terragrunt`, one job per wave: a wave
+ *        is one dependency layer of the units, cut from `terragrunt find`
+ *        when the job runs. The wave's units planned with one `run --all`,
+ *        each plan saved, the wave's gate decided on their set digest, then
+ *        the saved plans applied with one `run --all` over exactly those
+ *        units. The last job runs with `--rest`, so a layer added after init
+ *        wrote the pipeline applies there, behind its own gate.
  *
  * Every job runs Terragrunt with `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, the
  * project's binary as `TG_TF_PATH`, and Terragrunt's provider cache. Sources

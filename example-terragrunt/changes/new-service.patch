@@ -1,13 +1,13 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 451a251..9792600 100644
+index 57bcef3..08b4764 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
 @@ -132,7 +132,7 @@ jobs:
            }' -- "$@"; }
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
            tg status terragucci/plan pending "planning"
--          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
-+          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
+-          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
++          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              tg status terragucci/plan failure "the plan report was not written"
@@ -15,8 +15,8 @@ index 451a251..9792600 100644
              console.log("terragucci: " + cmd + " failed: " + err.message);
              if (cmd === "oidc") process.exit(1);
            }' -- "$@"; }
--          terragucci comment --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
-+          terragucci comment --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
+-          terragucci comment --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
++          terragucci comment --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
            read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
            EOF
@@ -24,8 +24,8 @@ index 451a251..9792600 100644
            git checkout --quiet --detach "$TG_SHA"
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
            [ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending "planning"
--          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
-+          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
+-          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
++          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
            rc=$?
            if [ ! -f terragucci-report/report.json ]; then
              tg status terragucci/plan failure "the plan report was not written"
@@ -33,8 +33,8 @@ index 451a251..9792600 100644
              console.log("terragucci: " + cmd + " failed: " + err.message);
              if (cmd === "oidc") process.exit(1);
            }' -- "$@"; }
--          terragucci comment-apply --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
-+          terragucci comment-apply --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
+-          terragucci comment-apply --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
++          terragucci comment-apply --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
            read -r TG_PR TG_SHA TG_WAVE <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
            EOF
@@ -42,30 +42,21 @@ index 451a251..9792600 100644
              sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))
            done
            trap 'git push -q --force-with-lease="$lock_ref:$mine" origin ":$lock_ref" || true' EXIT
--          terragucci comment-apply --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
-+          terragucci comment-apply --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --forge forgejo --out terragucci-comment.json || exit 1
+-          terragucci comment-apply --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
++          terragucci comment-apply --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
            read -r again _ _ <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
            EOF
-@@ -390,7 +390,7 @@ jobs:
-           done_waves=""
+@@ -391,7 +391,7 @@ jobs:
            for wave in $(seq 1 "$last"); do
              : >"$outcome"
--            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
-+            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
+             rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi
+-            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt $rest 2>&1 | tee "$log"
++            TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt $rest 2>&1 | tee "$log"
              rc=${PIPESTATUS[0]}
+             [ -s "$outcome" ] && wave="$(sed -n 's/^wave \([0-9]*\) .*/\1/p' "$outcome")"
              case "$rc" in
-               0) done_waves="${done_waves:+$done_waves, }$wave" ;;
-@@ -414,7 +414,7 @@ jobs:
-             esac
-           done
-           if [ "$last" = 2 ]; then
--            tg status terragucci/apply success "15 units in 2 waves applied"
-+            tg status terragucci/apply success "17 units in 2 waves applied"
-           else
-             tg status terragucci/apply pending "wave $last of 2 applied"
-           fi
-@@ -514,7 +514,7 @@ jobs:
+@@ -516,7 +516,7 @@ jobs:
              changed=
            fi
            moved=""
@@ -74,33 +65,51 @@ index 451a251..9792600 100644
              if [ -z "$changed" ] || printf '%s\n' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these roots: plan notes that cover them are stale.
-@@ -546,7 +546,7 @@ jobs:
+@@ -548,7 +548,7 @@ jobs:
            tg status terragucci/apply pending "applying"
            outcome="$(mktemp)"
            log="$(mktemp)"
--          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
-+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -670,7 +670,7 @@ jobs:
+@@ -672,7 +672,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
--          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/email,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
-+          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/billing,live/dev/email,live/dev/ledger,live/dev/orders,live/dev/payments,live/dev/platform,live/dev/search;live/prod/email,live/prod/orders,live/prod/payments,live/prod/platform,live/prod/search,live/staging/email,live/staging/orders,live/staging/payments,live/staging/platform,live/staging/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -678,7 +678,7 @@ jobs:
-             4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 2 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
-             *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
-           esac
--          tg status terragucci/apply success "15 units in 2 waves applied"
-+          tg status terragucci/apply success "17 units in 2 waves applied"
-           echo "all units applied"
-       - name: Keep the apply report
-         if: always()
+@@ -796,7 +796,7 @@ jobs:
+           fi
+           outcome="$(mktemp)"
+           log="$(mktemp)"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 3 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
+           rc=${PIPESTATUS[0]}
+           case "$rc" in
+             0) ;;
+@@ -920,7 +920,7 @@ jobs:
+           fi
+           outcome="$(mktemp)"
+           log="$(mktemp)"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 4 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt 2>&1 | tee "$log"
+           rc=${PIPESTATUS[0]}
+           case "$rc" in
+             0) ;;
+@@ -1044,7 +1044,7 @@ jobs:
+           fi
+           outcome="$(mktemp)"
+           log="$(mktemp)"
+-          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 5 --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt --rest 2>&1 | tee "$log"
++          TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 5 --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --binary tofu --gate on-destroy --terragrunt --rest 2>&1 | tee "$log"
+           rc=${PIPESTATUS[0]}
+           case "$rc" in
+             0) ;;
 diff --git a/live/dev/billing/terragrunt.hcl b/live/dev/billing/terragrunt.hcl
 new file mode 100644
 index 0000000..6fb7c2e

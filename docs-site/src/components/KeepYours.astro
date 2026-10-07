@@ -8,7 +8,7 @@ const kept = [
 const binaries = [
 	{ name: 'terraform', detail: 'Plain roots, with your backend.' },
 	{ name: 'tofu', detail: 'The same stages on OpenTofu.' },
-	{ name: 'Terragrunt', detail: 'Units stay units; the canary units go first and Terragrunt orders the rest.' },
+	{ name: 'Terragrunt', detail: 'Units stay units; each dependency layer is its own gated wave, the canary units first.' },
 	{ name: 'choudoufu', detail: 'No state file: each resource carries its own tag. tf-check adds a live check that needs no cloud credentials.', href: '/terragucci/guides/use-a-binary/#choudoufu' },
 ];
 ---
