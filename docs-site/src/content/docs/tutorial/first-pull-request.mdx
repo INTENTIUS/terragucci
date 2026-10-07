@@ -25,7 +25,7 @@ Open the pull request link in Forgejo. The change is the one line you would have
 
 <Shot step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" />
 
-The pipeline runs `tf-check` on every pull request: a format check, then `validate` for every root. Both pass, so the pull request shows a green check. Its plan note is a comment in the pull request's conversation:
+The pipeline runs `tf-check` on the branch push, and on a pull request only when it comes from a fork: a format check, then `validate` for every root. Look at the push's run, the second link the command printed. Both steps pass, so the branch shows a green check. Its plan note is a comment in the pull request's conversation:
 
 <Shot step="first-pr" view="pull" alt="The pull request in Forgejo with its check passing and its plan note for the one root" />
 
@@ -52,4 +52,4 @@ Run `tofu fmt -recursive` in your own repo and the check goes green again.
 
 ## What you saw
 
-Every pull request runs the check stage on every root. The check is cheap and it never needs cloud credentials, because it never plans anything.
+Every push to a branch runs the check stage on every root. The check is cheap and it never needs cloud credentials, because it never plans anything.
