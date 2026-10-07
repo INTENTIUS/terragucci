@@ -174,7 +174,9 @@ tg-sealed|a Terragrunt wave counts only an approval sealed by a key the signers 
 pr-apply|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto, and with apply.when: merge it applies nothing|
 pr-apply-lock|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
 pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
-tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request|'
+tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request|
+provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
+summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -2672,6 +2674,101 @@ HCL
   log "the wave's plan waited ${ms}ms over $attempts attempts for the lock the second plan held; trace $trace carries the State lock wait span"
 }
 
+# ── choudoufu timings ─────────────────────────────────────────────────────
+# A tf-apply wave of one root of four null_resource instances (the small
+# hashicorp/null provider, run as a plugin over gRPC, and no cloud), run in the
+# CI image of the binary given (BINARY, default choudoufu, the image
+# `binary: choudoufu` runs), with extra `docker run` arguments ("$@", such as
+# -e for a span budget). The wave inits each root with a provider cache of its
+# own, so the provider is downloaded. The report's timings come from the spans
+# the binary sent the stage's loopback receiver. Prints the path of the
+# report.json, which stays under the work dir until drop_work.
+timings_wave() { # work [docker run args...]
+  local work="$1" image bin="${BINARY:-choudoufu}" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  shift
+  image="$(image_tag "$bin")"
+  docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just images' first" >&2; return 1; }
+  build_cli || return 1
+  mkdir -p "$work/repo/calls"
+  cat >"$work/repo/calls/main.tf" <<'HCL'
+terraform {
+  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "3.2.4"
+    }
+  }
+}
+
+resource "null_resource" "n" {
+  count = 4
+
+  triggers = {
+    index = count.index
+  }
+}
+HCL
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke timings $(date +%s%N)"
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$@" \
+    "$image" terragucci stage tf-apply --wave 1 --layers calls --binary "$bin" --gate never >&2 || { echo "the $bin wave did not apply" >&2; return 1; }
+  [ -f "$work/repo/terragucci-report/report.json" ] || { echo "the $bin wave wrote no report" >&2; return 1; }
+  echo "$work/repo/terragucci-report/report.json"
+}
+
+claim_provider_calls() {
+  # With binary: choudoufu, the wave report lists the slowest provider calls
+  # of the root, read from the tfplugin5/6.Provider spans choudoufu sends with
+  # rpc.method, opentofu.provider.address and opentofu.resource.type: at least
+  # one call about a null_resource, with its method and provider named.
+  # BREAK: the same wave run by tofu, which sends no provider call spans.
+  log() { echo "[smoke provider-calls] $*" >&2; }
+  local work report calls rc=0 bin=choudoufu
+  [ -n "${BREAK:-}" ] && bin=tofu
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  report="$(BINARY="$bin" timings_wave "$work")" || { drop_work "$work"; return 1; }
+  calls="$(jq -c '[.roots[] | select(.path == "calls") | .timings.provider_calls[]?
+    | select(.type == "null_resource" and (.method // "") != "" and ((.provider // "") | test("hashicorp/null")))]' "$report")"
+  if [ "$(jq length <<<"$calls")" -lt 1 ]; then
+    log "the $bin wave report lists no provider call for a null_resource with its method and provider ($(jq -c '[.roots[] | select(.path == "calls") | .timings | {spans, detail, provider_calls: (.provider_calls | length)}]' "$report"))"
+    rc=1
+  else
+    log "the $bin wave report lists $(jq length <<<"$calls") provider call(s) for null_resource, the slowest $(jq -r '.[0] | "\(.method) on \(.provider) in \(.ms)ms"' <<<"$calls")"
+  fi
+  drop_work "$work"
+  return "$rc"
+}
+
+claim_summed_timings() {
+  # With binary: choudoufu and a span budget of one detail span per walk
+  # (CHOUDOUFU_TRACE_SPAN_BUDGET=1), choudoufu sums the rest into Aggregate:
+  # spans, and the wave report lists those sums: an aggregate for the
+  # null_resource resources that counts more instances than it detailed, with
+  # a total time, and the note of the root says how many were summed.
+  # BREAK: a span budget the four null_resource instances cannot exceed, so nothing is summed.
+  log() { echo "[smoke summed-timings] $*" >&2; }
+  local work report summed budget=1 rc=0
+  [ -n "${BREAK:-}" ] && budget=100000
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  report="$(timings_wave "$work" -e "CHOUDOUFU_TRACE_SPAN_BUDGET=$budget")" || { drop_work "$work"; return 1; }
+  summed="$(jq -c '[.roots[] | select(.path == "calls") | .timings.aggregates[]?
+    | select(.kind == "resource_instance" and .type == "null_resource" and .count > .detailed)]' "$report")"
+  if [ "$(jq length <<<"$summed")" -lt 1 ]; then
+    log "with a span budget of $budget the report lists no summed null_resource timings ($(jq -c '[.roots[] | select(.path == "calls") | .timings | {spans, detail, note, aggregates: (.aggregates | length)}]' "$report"))"
+    rc=1
+  elif ! jq -e '.roots[] | select(.path == "calls") | .timings.note // "" | test("summed")' "$report" >/dev/null; then
+    log "the report sums null_resource timings but the note of the root does not say so"
+    rc=1
+  else
+    log "with a span budget of $budget the report sums $(jq -r '.[0] | "\(.count) \(.of) spans of \(.type) (\(.detailed) detailed) to \(.ms)ms, longest \(.max_ms)ms"' <<<"$summed")"
+  fi
+  drop_work "$work"
+  return "$rc"
+}
+
 # ── dashboards ────────────────────────────────────────────────────────────
 # The dashboards `dashboards: true` writes into a repo, provisioned in the
 # observability profile's Grafana from stack/observability/terragucci/ (the
@@ -4552,6 +4649,8 @@ pr-apply             runner self! weight=250
 pr-apply-lock        runner self! weight=300
 pr-apply-stale       runner self! weight=200
 tg-comment-apply     runner self! weight=200
+provider-calls       weight=90
+summed-timings       weight=90
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

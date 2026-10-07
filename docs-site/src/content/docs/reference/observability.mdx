@@ -65,6 +65,15 @@ Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where t
 
 Past a span budget (`CHOUDOUFU_TRACE_DETAIL`, `CHOUDOUFU_TRACE_SPAN_BUDGET`) choudoufu sums timings by resource type or provider method, and the report says so.
 
+Two of these timings come only from choudoufu:
+
+| Timing | Sent by | Spans | In `report.json` |
+|---|---|---|---|
+| provider calls | choudoufu | `tfplugin5.Provider/<method>` and `tfplugin6.Provider/<method>`, with `rpc.method` | `roots[].timings.provider_calls` |
+| summed timings | choudoufu, once a walk passes its span budget (2000 by default) | `Aggregate: <span name>` | `roots[].timings.aggregates` |
+
+OpenTofu sends neither, so a root it plans lists no provider calls and no sums.
+
 ### Terragrunt and binaries that time nothing
 
 Terraform exports no traces, and the report says so. OpenTofu sends a span for each resource instance it plans or applies, so its report lists the slowest resources. A Terragrunt unit's time comes from Terragrunt's run report, and a `TG_TF_PATH` wrapper points each plan at the receiver.
