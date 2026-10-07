@@ -87,7 +87,7 @@ A local stand-in for the AWS API that the tutorial applies to, so it needs no AW
 
 ### choudoufu
 
-An OpenTofu fork with no state file; resources carry owner tags. `binary: choudoufu` adds checks and stages ([Use OpenTofu or choudoufu](/terragucci/guides/use-a-binary/#choudoufu), [its repository](https://github.com/INTENTIUS/choudoufu)).
+The OpenTofu fork from the team behind terragucci. It keeps no state file: each resource carries a tag the next plan reads back. `binary: choudoufu` runs the same four stages on it; `tf-check` also runs its live check, and wave reports show state lock waits ([Use OpenTofu or choudoufu](/terragucci/guides/use-a-binary/#choudoufu), [its repository](https://github.com/INTENTIUS/choudoufu)).
 
 ## Words that mean something else in Terraform
 

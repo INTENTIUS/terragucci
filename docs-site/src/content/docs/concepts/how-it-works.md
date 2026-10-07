@@ -46,7 +46,7 @@ With `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only
 | your machine | `npx terragucci init`, once and after a config change; `chant approve`, to approve a wave |
 | your forge's CI | every stage: check and plan on pull requests, apply on the default branch or the pull request, drift on schedule, comment jobs |
 | your repository | the pipeline file, an optional `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), the signers file and the `chant/lifecycle` branch |
-| your cloud | your state, and the plan and apply identities the jobs assume over OIDC |
+| your cloud | your state (with [choudoufu](/terragucci/concepts/glossary/#choudoufu), a tag on each resource in its place), and the plan and apply identities the jobs assume over OIDC |
 | your bucket, if you set one | the reports, with an index across runs |
 
 The plan identity is read-only because pull request code runs with it. Applying before merge gives the apply identity to unmerged code, so it is opt-in.

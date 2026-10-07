@@ -64,7 +64,15 @@ Every job now runs in that binary's CI image, pinned by digest. Commit the file.
 
 ## choudoufu
 
-[choudoufu](https://github.com/INTENTIUS/choudoufu) is a fork of OpenTofu that keeps no state file. A plan reads live resources by their owner tags.
+[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Three things come with it:
+
+| You get | Where you see it |
+|---|---|
+| A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
+| No state file to host or lose: the apply writes a tag on each resource and the next plan reads it back | your cloud's own tags |
+| How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
+
+`init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
 Its jobs run in the `terragucci-choudoufu` image, which carries choudoufu 0.22.0. Set `version` to run another release; each job installs it from choudoufu's GitHub releases, checked against SHA256SUMS. terragucci does not read a root's `required_version` as a choudoufu release.
 
