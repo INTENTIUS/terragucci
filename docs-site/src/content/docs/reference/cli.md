@@ -152,7 +152,7 @@ With `--when pull-request` (written when `apply.when` is `pull-request`), an ope
 terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
 ```
 
-Merges the pull request while its head is still `--sha`, then releases its root locks. The generated job runs it after the last wave of a pull request applied before merge, with `apply.merge: auto`. It exits 1 when the forge refuses the merge, and the job replies that the pull request was applied and not merged.
+Merges the pull request while its head is still `--sha`, then releases its root locks. The generated job runs it after the last wave of a pull request applied before merge, with `apply.merge: auto`. It merges with the token in `TG_MERGE_TOKEN` when the job has one (the secret `apply.merge_token_env` names), and with `TG_TOKEN` otherwise. It exits 1 when the forge refuses the merge, and the job replies that the pull request was applied and not merged, with the forge's reason.
 
 ## config check
 

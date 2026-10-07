@@ -3722,6 +3722,12 @@ pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, its 
   gated_repo "$1" || return 1
   sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
   [ -n "${3:-}" ] || printf 'apply:\n  when: pull-request\n  merge: %s\n' "$2" >> "$work/tree/terragucci.yml"
+  # Forgejo refuses a merge made with the job's own token, so merge: auto merges with the admin's, from a secret.
+  if [ -z "${3:-}" ] && [ "$2" = auto ]; then
+    echo '  merge_token_env: TG_SMOKE_MERGE_TOKEN' >> "$work/tree/terragucci.yml"
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "$TOKEN" '{data: $d}')" "$URL/api/v1/repos/$USER/$1/actions/secrets/TG_SMOKE_MERGE_TOKEN" \
+      || { log "could not set TG_SMOKE_MERGE_TOKEN on $USER/$1"; return 1; }
+  fi
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
 }
 
@@ -3736,7 +3742,16 @@ pr_reviewer() { # repo, user -> sets PR_REVIEWER_TOKEN, for a new user with writ
 }
 
 pr_open() { # repo, branch, title -> prints the number of the pull request into main
-  api -H 'content-type: application/json' -X POST -d "$(jq -cn --arg h "$2" --arg t "$3" '{head: $h, base: "main", title: $t}')" "$URL/api/v1/repos/$1/pulls" | jq -r .number
+  # Forgejo checks the head against its branch table, which a push queue fills,
+  # so a pull request opened right after the push can 404. Wait for the branch.
+  local i n=""
+  for i in $(seq 1 30); do
+    api -o /dev/null "$URL/api/v1/repos/$1/branches/$2" 2>/dev/null && break
+    sleep 2
+  done
+  n="$(api -H 'content-type: application/json' -X POST -d "$(jq -cn --arg h "$2" --arg t "$3" '{head: $h, base: "main", title: $t}')" "$URL/api/v1/repos/$1/pulls" | jq -r '.number // empty')"
+  [ -n "$n" ] || { log "no pull request opened from $2"; return 1; }
+  echo "$n"
 }
 
 pr_ready() { # repo, number, head sha -> waits for the runs on the head, then the reviewer approves it
@@ -3761,8 +3776,8 @@ pr_say() { # repo, number, text -> prints the reply terragucci posts, once it ha
   api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
 }
 
-pr_state_input() { # name, root -> the input its terraform_data holds in the state, empty when it has none
-  curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty' 2>/dev/null || true
+pr_state_input() { # name, root -> the input its terraform_data holds in the state (tofu writes it as {value, type}), empty when it has none
+  curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?.attributes.input // empty] | first // empty | if type == "object" then .value else . end' 2>/dev/null || true
 }
 
 claim_pr_apply() {
@@ -3773,8 +3788,8 @@ claim_pr_apply() {
   # merged; the forge must show it merged; every root must have state, and
   # canary/one must hold the value of the pull request.
   # BREAK: the pipeline is written without apply.when, so it applies after
-  # merge only: the comment on the open pull request is refused, nothing has
-  # state and nothing is merged.
+  # merge only: the comment on the open pull request is refused, canary/one
+  # never holds the value of the pull request, and nothing merges.
   log() { echo "[smoke pr-apply] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -3785,7 +3800,7 @@ claim_pr_apply() {
   pr_reviewer "$repo" smoke-rev-pr-apply || { drop_work "$work"; return 1; }
   echo opened > "$work/tree/canary/one/rev.txt"
   head="$(push_tree "$work/tree" "$repo" change "pr-apply: change canary/one")" || { drop_work "$work"; return 1; }
-  pr="$(pr_open "$repo" change "pr-apply: change canary/one")"
+  pr="$(pr_open "$repo" change "pr-apply: change canary/one")" || { drop_work "$work"; return 1; }
   pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
   reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
   applied="$(gated_applied pr-apply)"
@@ -3823,8 +3838,8 @@ claim_pr_apply_lock() {
   git -C "$work/tree" checkout -q main
   echo b > "$work/tree/canary/one/rev.txt"
   head_b="$(push_tree "$work/tree" "$repo" change-b "pr-apply-lock: b")" || { drop_work "$work"; return 1; }
-  pr_a="$(pr_open "$repo" change-a "pr-apply-lock: a")"
-  pr_b="$(pr_open "$repo" change-b "pr-apply-lock: b")"
+  pr_a="$(pr_open "$repo" change-a "pr-apply-lock: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" change-b "pr-apply-lock: b")" || { drop_work "$work"; return 1; }
   { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || { drop_work "$work"; return 1; }
   reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
   log "A ($pr_a): ${reply:-no reply}; canary/one holds $(pr_state_input pr-apply-lock canary/one)"
@@ -3875,7 +3890,7 @@ claim_pr_apply_stale() {
   pr_reviewer "$repo" smoke-rev-pr-apply-stale || { drop_work "$work"; return 1; }
   echo stale > "$work/tree/canary/one/rev.txt"
   head="$(push_tree "$work/tree" "$repo" change "pr-apply-stale: change canary/one")" || { drop_work "$work"; return 1; }
-  pr="$(pr_open "$repo" change "pr-apply-stale: change canary/one")"
+  pr="$(pr_open "$repo" change "pr-apply-stale: change canary/one")" || { drop_work "$work"; return 1; }
   pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
   # main moves on under the pull request.
   git -C "$work/tree" checkout -q main
