@@ -3,6 +3,8 @@ title: Policy
 description: Opt-in policy checks that run conftest or OPA over each plan and fail tf-plan on a denial.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 Add `policy` to `terragucci.yml` to turn policy checks on; without it nothing runs. `tf-plan` then passes the plan JSON of each planned root to your Rego and fails the root when it denies.
 
 ```yaml
@@ -37,6 +39,8 @@ deny contains msg if {
 
 Both engines count rules the way conftest does. `deny`, `violation`, `deny_<name>` and `violation_<name>` fail the root; `warn` and `warn_<name>` are warnings. A rule's message is its string, or the `msg` field of an object it returns. The same Rego directory gives the same verdict under `engine: conftest` and `engine: opa`; the only difference is the namespace: conftest reads every package unless `namespace` names one, and opa reads `main` unless `namespace` names another.
 
+<Shot step="policy" view="pull" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders failed, with the denial naming its queue as keeping messages longer than four days" optional />
+
 A denied root fails and the job exits 1. The report keeps the root's changes beside the denial messages in `roots[].policy`, so a reader sees what the policy refused. Warnings never fail a root. The pull request note lists them under "Policy warnings" and the report shows them under their root. A policy that cannot run also fails the root. So does an engine that is not installed, or Rego that does not compile.
 
 A denial has no override. Responses, agents and comments cannot waive it; the code changes until the policy passes, or the policy changes in a pull request your reviewers approve and merge.
@@ -46,6 +50,8 @@ A pull request cannot edit the policy to allow itself. When a plan runs for a pu
 The base branch is the pull request's target. terragucci finds it from the environment the forge sets: `GITHUB_BASE_REF` on GitHub Actions and Forgejo Actions, and `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` on GitLab merge request pipelines, read as `origin/<branch>`. `TG_BASE` names a ref directly and wins over both. The job's checkout needs that ref fetched, as affected-root selection already does.
 
 `tf-check` tests the policy itself. It runs `conftest verify` (engine `conftest`) or `opa test` (engine `opa`) over the policy directory, from the base branch for a change on another branch, and fails on a failing test. Tests are Rego files named `*_test.rego`; a directory with none is skipped with a note. See [Stages](/terragucci/reference/stages/#check).
+
+<Shot step="policy" view="log" alt="The failed check job in Forgejo, its check step open where conftest verify failed on the policy read from origin/main and named the test test_denies_an_instance" optional />
 
 `tf-apply` runs the same check on each wave's plans, after planning and before the gate, and refuses a wave with a denial: the wave applies nothing and records no approval to wait for. The apply job runs from the default branch, so its checkout is the policy from main. Set `TG_BASE` to read the policy from another ref.
 

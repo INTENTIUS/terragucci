@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // One screenshot of a page in headless Chrome, driven over the DevTools
 // protocol so the page can be prepared first, which `chrome --screenshot`
-// cannot do. tutorial-capture.sh uses it for Forgejo's job pages.
+// cannot do. tutorial-capture.sh uses it for Forgejo's job pages, and for any
+// page it opens scrolled to one element.
 //
 //   node stack/shot.mjs --chrome PATH --url URL --out FILE.png
 //        [--width 1280] [--height 860] [--scheme light|dark]
@@ -9,6 +10,10 @@
 //        [--expand TEXT]     open the job step whose summary contains TEXT
 //        [--focus REGEX]     scroll the first log line of that step matching
 //                            REGEX near the top of the picture
+//        [--scroll SELECTOR] scroll the first element matching SELECTOR near
+//                            the top of the picture
+//        [--match REGEX]     with --scroll, the first such element whose text
+//                            matches REGEX
 //
 // It exits 0 with the picture taken even when a hook finds nothing (the step
 // or the line), and says so on stderr; it exits 1 when there is no picture.
@@ -81,7 +86,7 @@ try {
   await page("Page.navigate", { url: opts.url });
   await loaded;
 
-  const prepare = async ({ hide, expand, focus }) => {
+  const prepare = async ({ hide, expand, focus, scroll, match }) => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const until = async (fn, ms = 15000) => {
       const end = Date.now() + ms;
@@ -121,11 +126,21 @@ try {
         }
       }
     }
+    if (scroll) {
+      const re = match ? new RegExp(match) : undefined;
+      const el = await until(() => [...document.querySelectorAll(scroll)].find((e) => !re || re.test(e.textContent)));
+      if (el) {
+        el.scrollIntoView({ block: "start" });
+        window.scrollTo(0, Math.max(0, window.scrollY + el.getBoundingClientRect().top - 80));
+      } else {
+        notes.push(`no element ${scroll}${match ? ` matching /${match}/` : ""} on the page`);
+      }
+    }
     await wait(300);
     return notes.join("; ");
   };
   const res = await page("Runtime.evaluate", {
-    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus })})`,
+    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus, scroll: opts.scroll, match: opts.match })})`,
     awaitPromise: true,
     returnByValue: true,
   });

@@ -3,6 +3,8 @@ title: Traces and metrics
 description: Each stage run as one trace, and the pipeline's numbers as metrics, sent over OTLP to your collector.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 Each stage run sends one trace and a set of metrics over OTLP to the collector you run. Tempo, Honeycomb, Datadog and any other backend with an OTLP endpoint work too. Nothing is sent unless an endpoint is set.
 
 ## Turning it on
@@ -38,6 +40,8 @@ terragucci tf-plan          project, commit, binary, change set, totals
 ```
 
 Every run of the binary is a span, and the binary gets that span as `TRACEPARENT`. OpenTofu and choudoufu read it, so their own spans land inside the trace. Terraform ignores it and starts a trace of its own. Its spans carry the resource attributes `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`, so a query on them finds the span that ran it.
+
+<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
 
 terragucci also turns the binary's OTLP trace exporter on and points it at a receiver of its own, on a loopback port, for as long as the run lasts. With an endpoint set, each batch the binary sends is passed on to your collector unchanged. The receiver takes OTLP over HTTP only. A collector reached only over gRPC gets nothing from terragucci or the binary.
 
@@ -119,6 +123,8 @@ observability/terragucci/
 | Estate | roots per project, the binary and terragucci versions each runs, module pins and tips by rule |
 | Runs | the slowest roots, root applies and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
 | One per SLO | the SLI against its objective, the error budget left and the burn rates |
+
+<Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
 
 There are three SLOs, each over 28 days. Plans finish within ten minutes 95% of the time. Wave applies succeed 99% of the time. Drift is corrected within a day 90% of the time. The plan and apply SLIs count the runs in each window, a project's first run among them, and a window with no runs records nothing, so a project that runs rarely still has an error budget.
 
