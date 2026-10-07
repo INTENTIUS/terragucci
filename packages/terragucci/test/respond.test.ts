@@ -433,7 +433,7 @@ describe("respond with --base: an open pull request's responses read the default
   });
 
   it("a base the checkout does not have gives no response and says why", async () => {
-    const dir = pr("binary: tofu\n", "binary: tofu\n");
+    const dir = pr("binary: tofu\n", "binary: tofu\nparallelism: 2\n");
     const r = await respond("apply-failed", dir, { log, base: "origin/gone" });
     expect(r.skipped).toContain("origin/gone");
     expect(r.skipped).toContain("no response");
