@@ -200,8 +200,10 @@ export interface ProjectSettings {
    * A bucket for plan reports. `url` is the address that serves the bucket's
    * objects to a browser (a static site, a CDN, the store's public endpoint);
    * with it, the note, the index and the dashboards link the bucket's copy.
+   * `role` is an AWS role the job assumes with its OIDC token to write the
+   * reports, apart from the job's own role.
    */
-  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string };
+  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string; role?: string };
   /** The environment variable holding the forge token. */
   token_env?: string;
   /** Environment variables every job gets. Values only, never secrets. */
@@ -370,6 +372,12 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!(isObject(s.reports) && typeof s.reports.bucket === "string")) problems.push(`${where}.reports must name a bucket`);
     else if (s.reports.url !== undefined && !(typeof s.reports.url === "string" && /^https?:\/\/[^\s?#]+$/.test(s.reports.url))) {
       problems.push(`${where}.reports.url must be the http(s) address that serves the bucket, such as https://reports.example.com`);
+    }
+    if (isObject(s.reports) && s.reports.role !== undefined) {
+      if (typeof s.reports.role !== "string" || !/^arn:aws[\w-]*:iam::\d{12}:role\/\S+$/.test(s.reports.role)) problems.push(`${where}.reports.role must be an AWS role ARN, such as arn:aws:iam::123456789012:role/terragucci-reports`);
+      else if (isObject(s.oidc) && (s.reports.role === s.oidc.plan_role || s.reports.role === s.oidc.apply_role)) {
+        problems.push(`${where}.reports.role is a job's own role; give reports a role of its own that can write only under the bucket's prefix`);
+      }
     }
   }
   if (s.oidc !== undefined) checkOidc(s.oidc, `${where}.oidc`, problems);
