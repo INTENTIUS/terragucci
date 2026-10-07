@@ -6,7 +6,7 @@ description: Every pipeline terragucci generates runs on a Forgejo or GitLab ser
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
-A pipeline that only parses has not been tested. Before a release, every pipeline terragucci generates runs against an AWS emulator: on a Forgejo or GitLab server with its runner, and on GitHub through `act` against a mock GitHub API. Each feature has a check that must pass, and each check is also broken on purpose to show it fails when it should.
+Before a release, every pipeline terragucci generates runs against an AWS emulator. Each feature's check must pass, and also fail when broken on purpose.
 
 | Forge | What runs |
 |---|---|
@@ -18,7 +18,7 @@ Forgejo, GitHub and the AWS emulator are checked on every pull request to terrag
 
 ## The claims
 
-Each claim runs once as it should, and once with the property it checks broken on purpose; the claim must then fail. `reconcile` runs `terragucci reconcile` from a control repo and follows the pull or merge request it opens through its check, its merge and the apply that follows. The `tg-` claims run the generated pipeline for a Terragrunt repo of two units, and the `cdf-` claims run it for a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in the CI image that pipeline pins: `cdf-check` fails a resource that `choudoufu live-check` refuses, and `cdf-apply` finds the estate marker on the bucket it created.
+Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
 
 <ValidationClaims />
 
@@ -38,6 +38,6 @@ just smoke
 just stack-down
 ```
 
-To run a single claim on a forge, use `just validate <forge> <claim>`. To run all of a forge's claims, plain and broken, use `just validate-forge <forge>`. After a full run, `just validation-record` rewrites the table above.
+`just validate <forge> <claim>` runs one claim and `just validate-forge <forge>` all of a forge's, plain and broken. `just validation-record` rewrites the table above after a full run.
 
 `just smoke` prints one line per check. `BREAK=1 just smoke <check>` breaks the property on purpose, and the line must then say `caught`.
