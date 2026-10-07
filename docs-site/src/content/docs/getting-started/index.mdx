@@ -11,15 +11,22 @@ prompt: |
   Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
-import { Badge, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import { Badge, CardGrid, LinkCard, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import PlanNote from '../../../components/PlanNote.astro';
 import Shot from '../../../components/Shot.astro';
 
 <Badge text="About 10 minutes" variant="note" size="medium" />
 
+<CardGrid>
+<LinkCard title="Try it on an example first" description="A 15-root example on your laptop, with no cloud account." href="/terragucci/tutorial/" />
+<LinkCard title="Hand it to my agent" description="A prompt for Claude Code, Codex or Cursor that stops at a pull request." href="/terragucci/getting-started/agents/" />
+<LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
+<LinkCard title="Coming from Atlantis, HCP Terraform, Spacelift or Digger" description="Each of them beside terragucci, row by row." href="/terragucci/compare/" />
+</CardGrid>
+
 ## What you end up with
 
-A pull request with one plan note that groups the roots a change reaches and names every destroy. [The tutorial](/terragucci/tutorial/) runs a 15-root example on a laptop first, if you prefer.
+A pull request with one plan note that groups the roots a change reaches and names every destroy.
 
 ## Before you start
 
