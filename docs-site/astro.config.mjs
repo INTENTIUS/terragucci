@@ -4,9 +4,10 @@ import starlight from '@astrojs/starlight';
 
 // expressive-code renders each code line as its own block element with no
 // newline between them, so text extracted from the page (an agent, a reader
-// mode, a copy of the selection) runs lines together. A newline text node at the
-// end of each line fixes that. The line is a grid, which drops a whitespace-only
-// text node, so nothing changes on screen.
+// mode, a copy of the selection) runs lines together. A newline text node as the
+// last child of each line fixes that. The line is a grid, which does not render a
+// whitespace-only text child, so nothing changes on screen. Between the lines,
+// inside the <pre>, the same node would render as a blank line.
 const newlinesBetweenLines = {
 	name: 'newlines-between-lines',
 	hooks: {
@@ -18,7 +19,7 @@ const newlinesBetweenLines = {
 					// A blank line already carries its own newline.
 					const code = line.children.find((c) => c.type === 'element');
 					if (code && !code.children.some((c) => c.type === 'element')) continue;
-					node.children.splice(node.children.indexOf(line) + 1, 0, { type: 'text', value: '\n' });
+					line.children.push({ type: 'text', value: '\n' });
 				}
 				node.children.forEach(visit);
 			};
