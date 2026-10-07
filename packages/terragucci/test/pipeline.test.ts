@@ -389,7 +389,8 @@ describe("apply before merge (apply.when: pull-request)", () => {
     const job = doc.jobs["apply-comment"];
     expect(job.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))");
     expect(doc.jobs.replan.if).toContain("!(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))");
-    expect(job.permissions.contents).toBe("write");
+    // Forgejo ignores permissions:, so only GitHub's jobs carry them.
+    if (forge === "github") expect(job.permissions.contents).toBe("write");
     if (forge === "github") expect(job.permissions.checks).toBe("read");
     const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
     expect(run).toContain("--when pull-request");
@@ -397,7 +398,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
     const confirm = doc.jobs.confirm;
     expect(confirm.needs).toBe("check");
     expect(confirm.if).toBe("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
-    expect(confirm.permissions.contents).toBe("read");
+    if (forge === "github") expect(confirm.permissions.contents).toBe("read");
     const plan = confirm.steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-plan")).run as string;
     expect(plan).toContain(OIDC.plan_role);
     expect(plan).not.toContain(OIDC.apply_role);
