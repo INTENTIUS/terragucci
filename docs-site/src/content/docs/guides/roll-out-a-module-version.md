@@ -61,7 +61,7 @@ Each run takes at most one step and exits. Run it on a schedule or after each me
 npx terragucci rollout modules/network 1.4.0 --mode apply
 ```
 
-The next wave opens only after the last wave's pull requests merged and their apply passed. The check that decides it is `apply/<path>` per directory when there is one, and the pipeline's `apply` job otherwise. A pull request closed without merging stops the rollout, and so does a failed apply. The command never merges anything and never writes a default branch.
+The next wave opens only after the last wave's pull requests merged and their apply passed. The check that decides it is `apply/<path>` per directory when there is one. Otherwise the `terragucci/apply` status decides, which turns success once the last wave has applied. A pull request closed without merging stops the rollout, and so does a failed apply. The command never merges anything and never writes a default branch.
 
 | Exit code | Meaning |
 |---|---|

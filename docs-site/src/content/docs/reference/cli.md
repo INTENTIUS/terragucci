@@ -18,33 +18,34 @@ description: Every terragucci command, its flags and its exit codes.
 | `comment-apply` | reads a `/terragucci apply [wave-<n>]` comment on a merged pull request; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `install` | fetches a release of OpenTofu, Terraform, Terragrunt or choudoufu, verified against its checksums |
 | `profiles` | prints the stack profiles a config needs, for the local validation stack |
 
 ## init
 
 ```bash
-terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--force] [--dry-run]
+terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu|cdktn] [--force] [--dry-run]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--forge` | the forge, when the remote cannot tell |
-| `--binary` | the binary, when detection picks the wrong one |
+| `--binary` | the binary, when detection picks the wrong one: `tofu`, `terraform`, `choudoufu` or `cdktn` |
 | `--dry-run` | compute everything and write nothing |
 | `--force` | overwrite a pipeline file terragucci did not write |
 
-A flag that detection cannot find on its own is recorded in `terragucci.yml`.
+With no config file, a flag that detection would not reach on its own is written to a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key the file already sets wins over the flag, and a note in the output says the flag is ignored.
 
 `init` also writes `chant.workspace.json` and lists each apply wave's gate (`wave-1`, `wave-2` and so on) under `identity.gates`, so a wave counts only an approval sealed with `chant approve --sign`. When the file already exists, `init` adds the gates it lacks and leaves the rest as it is. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file the seals are checked against.
 
 ## reconcile
 
 ```bash
-terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
+terragucci reconcile [--config <file>] [--mode dry-run|apply] [--project <host/path>]
 ```
 
-`--mode` defaults to `dry-run`. `--mode apply` opens a pull request in each project that changes. `--project` narrows the run to one project.
+`--config` defaults to the config file in the working directory. `--mode` defaults to `dry-run`. `--mode apply` opens a pull request in each project that changes. `--project` narrows the run to one project.
 
 ## plan and stage
 
@@ -52,7 +53,10 @@ terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/pat
 terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
 terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>]
     [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--canary <globs>] [--bucket s3://<b>]
-    [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--parallelism <n>]
+    [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
+terragucci stage tf-drift [the same flags as tf-plan]
+terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
+    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>]
 ```
 
 | Flag | Meaning |
@@ -66,15 +70,20 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
 | `--bucket-endpoint`, `--bucket-prefix`, `--bucket-url` | the store's endpoint, the key prefix, and the address that serves the bucket to a browser; with an address, the note links the bucket's copy |
 | `--terragrunt` | plan Terragrunt units, one `run --all` per wave |
 | `--base` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
+| `--forge` | `github`, `forgejo` or `gitlab`, when the environment alone cannot tell the forge; used by `tf-drift` to file its issue |
 | `--parallelism` | how many roots of one dependency layer plan at once (`tf-plan`, `tf-drift`), or of one wave (`tf-apply`); overrides `parallelism` in `terragucci.yml`. `--parallelism 1` plans one root at a time |
 
-`stage` exits 1 when a root refuses to plan, and still writes the report. [The plan report](/terragucci/reference/report/) lists the files.
+`stage tf-plan` and `stage tf-drift` exit 1 when a root refuses to plan, and still write the report. [The plan report](/terragucci/reference/report/) lists the files.
+
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Its flags are `--wave`, `--layers`, `--canary`, `--binary`, `--gate` (`always`, `on-destroy` or `never`, default `on-destroy`), `--config` and `--parallelism`. Exit 3 means the wave waits for an approval, and exit 4 that its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
 
 ## publish
 
 ```bash
 terragucci publish [--dry-run] [--config <file>]
 ```
+
+`--dry-run` lists what would be published and pushes nothing. `publish` exits 0 when it finishes. It exits 2 on a config error, on an OCI tag that exists already, and on a git tag that exists with different content. A git tag with the same content is reported as unchanged and exits 0.
 
 ## rollout
 
@@ -104,9 +113,10 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--module`, `--since` | `version-bump` | one module, and a ref (a tag, branch or commit) to count changes from for a module with no release tag |
 | `--question` | `question` | the reviewer's question |
 | `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |
+| `--attributions` | `drift` | the attributions `tf-drift` wrote, as a file; default `terragucci-report/attributions.json` |
 | `--out`, `--binary`, `--config`, `--project` | all | as above |
 
-[Responses to pipeline events](/terragucci/reference/responses/) explains each event.
+[Responses to pipeline events](/terragucci/reference/responses/) explains each event. `respond` exits 0 once the event was handled, even if the project's response is `off` and nothing was done. The outcome is in the text, or in `results` with `--json` ([the JSON output](/terragucci/reference/cli-json/#respond)).
 
 ## comment
 
@@ -159,7 +169,7 @@ terragucci check-policy [--config <file>] [--base <ref>]
 terragucci install tofu|terraform|terragrunt|choudoufu <version>
 ```
 
-Fetches the release, checks it against the release's SHA256SUMS, unpacks it and prints the directory. A pipeline uses it when a repo pins a version its image does not carry.
+Fetches the release, checks it against the release's SHA256SUMS, unpacks it and prints the directory. A pipeline uses it when a repo pins a version its image does not carry. The releases are Linux builds for a CI job. On another OS the command exits 2 and says so; use your package manager there.
 
 ## --json
 
@@ -175,3 +185,6 @@ The codes are the same with or without `--json`.
 | 1 | one or more projects or roots failed |
 | 2 | a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
+| 4 | a wave's plans changed after its approval, so `stage tf-apply` applied nothing |
+
+Code 4 comes only from `stage tf-apply`, which has no `--json`.

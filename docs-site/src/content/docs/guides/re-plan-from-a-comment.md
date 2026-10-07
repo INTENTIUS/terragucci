@@ -56,6 +56,7 @@ Nothing applies, and the reply says why, when:
 - its head is in a fork;
 - its base is not the default branch;
 - the default branch no longer has the merge commit;
+- more than 50 commits reached the default branch after the merge commit, since the apply of the newest one applies them;
 - a later commit on the default branch has an apply of its own, which the reply links, since going back would undo that newer tree;
 - the named wave does not exist.
 

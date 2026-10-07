@@ -234,6 +234,11 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
 
   // A command-line choice is saved when detection would not reach it on its own,
   // so the next run, and the next person, gets the same pipeline.
+  if (!options.settings) {
+    // A key the config sets decides; say so when a flag disagrees, rather than ignore it.
+    if (options.forge && settings.forge && options.forge !== settings.forge) notes.push(`--forge ${options.forge} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets forge: ${settings.forge}`);
+    if (options.binary && settings.binary && options.binary !== settings.binary) notes.push(`--binary ${options.binary} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets binary: ${settings.binary}`);
+  }
   let configNote = configPath ? `using ${relative(repo, configPath)}` : "no terragucci.yml needed (defaults fit)";
   if (!options.settings) {
     const save: ProjectSettings = {};
@@ -241,7 +246,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (options.binary && !settings.binary && options.binary !== detectedBinary.value) save.binary = options.binary;
     if (Object.keys(save).length) {
       if (configPath) {
-        throw new ConfigError(`add ${Object.entries(save).map(([k, v]) => `${k}: ${v}`).join(", ")} to ${relative(repo, configPath)}`);
+        throw new ConfigError(`${relative(repo, configPath)} exists and init does not edit it; add ${Object.entries(save).map(([k, v]) => `${k}: ${v}`).join(", ")} to it`);
       }
       const path = join(repo, "terragucci.yml");
       files.push(plan(path, `${emitYAML(save, 0).trim()}\n`));

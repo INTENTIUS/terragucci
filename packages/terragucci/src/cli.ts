@@ -7,6 +7,9 @@
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>]
+ *   terragucci check-root <dir> [--binary <b>]
+ *   terragucci check-policy [--config <file>] [--base <ref>]
+ *   terragucci install tofu|terraform|terragrunt|choudoufu <version>   (Linux builds, for a CI job)
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
@@ -35,7 +38,7 @@ import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
-import { install, type Tool } from "./install";
+import { assertLinux, install, type Tool } from "./install";
 import { plan } from "./plan";
 import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
@@ -51,7 +54,7 @@ import { respond } from "./respond";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
-  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform] [--force] [--dry-run]
+  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu|cdktn] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
@@ -61,7 +64,8 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>]
   terragucci check-policy [--config <file>] [--base <ref>]
-  terragucci install tofu|terraform|terragrunt|choudoufu <version>
+  terragucci install tofu|terraform|terragrunt|choudoufu <version>   (Linux builds, for a CI job)
+  terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
@@ -69,6 +73,8 @@ const USAGE = `usage:
   terragucci comment --agent push --change <dir> [--policy-dir <dir>]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump|description [--mode dry-run|apply] [flags]
+
+Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
 
 init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
 
@@ -217,6 +223,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu"].includes(tool)) {
           throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu <version>");
         }
+        assertLinux();
         console.log(await install(tool as Tool, version));
         return 0;
       }

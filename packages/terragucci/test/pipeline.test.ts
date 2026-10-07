@@ -514,6 +514,7 @@ describe("publish job", () => {
     expect(jobs.publish.needs).toBe("apply-wave-2");
     expect(jobs.publish.if).toContain("default_branch");
     expect(jobs.publish.env.TERRAGUCCI_REGISTRY_USER).toContain("secrets.TERRAGUCCI_REGISTRY_USER");
+    expect(jobs.publish.env.TERRAGUCCI_REGISTRY_INSECURE).toContain("secrets.TERRAGUCCI_REGISTRY_INSECURE");
     expect(jobs.publish.steps[0].with["fetch-depth"]).toBe(0);
     expect(jobs.publish.steps.at(-1).run).toContain("terragucci publish");
     for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("REGISTRY");
