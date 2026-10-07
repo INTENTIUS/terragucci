@@ -60,11 +60,13 @@ Nothing applies, and the reply says why, when:
 - a later commit on the default branch has an apply of its own, which the reply links, since going back would undo that newer tree;
 - the named wave does not exist.
 
-Waiting, refused and failed waves behave as on a push: a refused wave prints its diff (`respond.wave-refused`) and a failed one its triage (`respond.apply-failed`) before the reply. GitLab has no comment trigger, so retry the job there. A Terragrunt pipeline has no `apply-comment` job, and its reply says so.
+Waiting, refused and failed waves behave as on a push: a refused wave prints its diff (`respond.wave-refused`) and a failed one its triage (`respond.apply-failed`) before the reply. GitLab has no comment trigger, so retry the job there.
+
+A [Terragrunt](/terragucci/guides/use-terragrunt/) repo gets the same job with the same refusals. Its waves are the waves of units its apply jobs run, and each runs `tf-apply --terragrunt` from the merge commit: the wave's units planned and saved, the gate decided on their set digest, and the saved plans applied.
 
 ## Apply an open pull request
 
-With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies it from its head, before it merges. The same `apply-comment` job reads it. The commenter, a fork and the base are refused as above, before any credential is asked for. The job also refuses when:
+With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies it from its head, before it merges. This is for plain roots: in a Terragrunt repo `init` stops with an error when `apply.when` is `pull-request`, and its pull requests apply after they merge. The same `apply-comment` job reads it. The commenter, a fork and the base are refused as above, before any credential is asked for. The job also refuses when:
 
 - no reviewer other than the author approved the head;
 - a status or check on the head failed or is still running, or `terragucci/plan` has not passed there;

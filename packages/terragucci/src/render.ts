@@ -20,8 +20,8 @@
  *        A Terragrunt repo's waves are the same jobs over its units, each
  *        behind the same gate.
  * apply-comment  `/terragucci apply [wave-<n>]` on a merged pull request
- *        (GitHub and Forgejo, plain roots): the same stage at its merge commit,
- *        under the same lock, approving nothing.
+ *        (GitHub and Forgejo, plain roots and Terragrunt units): the same
+ *        stage at its merge commit, under the same lock, approving nothing.
  *
  * drift  only when `drift:` names a schedule: `terragucci stage tf-drift` plans
  *        every root with -refresh-only, keeps the same report, and opens,
@@ -580,6 +580,8 @@ export interface CommentApplyInput {
   when?: ApplyWhen;
   /** `apply.merge`. With `auto` a pull request whose every wave applied from its head is merged. */
   merge?: ApplyMerge;
+  /** A Terragrunt repo: the layers are its waves of units, and each wave runs Terragrunt after this shell (credentials, caches). */
+  terragrunt?: { prelude: string };
 }
 
 /**
@@ -592,7 +594,7 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
   const triage = responds(input.respond, "apply-failed");
   const refused = responds(input.respond, "wave-refused");
   const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(base ? [base] : [])];
+  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.terragrunt ? ["--terragrunt"] : []), ...(base ? [base] : [])];
   return [
     'outcome="$(mktemp)"',
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -668,7 +670,10 @@ function openReply(forge: ForgeName, count: number, merge: ApplyMerge | undefine
  * no other apply runs), and runs `stage tf-apply` wave by wave from wave 1
  * (waveLoop). A refused wave and a failed apply get the responses a push's
  * wave gets (respond wave-refused, respond apply-failed) before the reply.
- * The reply says what happened and links the run.
+ * The reply says what happened and links the run. In a Terragrunt repo the
+ * waves are its waves of units, and each runs `stage tf-apply --terragrunt`
+ * after the apply jobs' prelude (caches, the auth provider's apply roles),
+ * so a comment applies them through the gate a push's wave job uses.
  */
 export function commentApplyScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
   const total = layers.flat().length;
@@ -711,10 +716,13 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
         ]
       : ['git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the merge commit ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }']),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
+    ...(input.terragrunt ? [input.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "applying on a comment"',
     ...waveLoop(binary, layers, input, prMode ? "$tf_base" : ""),
     `if [ "$last" = ${count} ]; then`,
-    `  tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
+    input.terragrunt
+      ? `  tg status terragucci/apply success "${total} units in ${count} wave${count === 1 ? "" : "s"} applied"`
+      : `  tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
     "else",
     `  tg status terragucci/apply pending "wave $last of ${count} applied"`,
     "fi",
@@ -1065,7 +1073,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (prApply && tg) throw new RenderError("apply.when: pull-request needs plain roots: a Terragrunt repo applies after merge, so leave apply.when unset");
   const pushApplyJobs = prApply ? [] : applyJobs;
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { canary: input.canary, gate, respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch.
   const writesLedger = gate !== "never";
   const what = tg ? "unit" : "root";
@@ -1319,8 +1327,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       }),
     ],
   } as never);
-  // `/terragucci apply` goes to its own job, for plain roots; a Terragrunt repo's waves run on a push.
-  const applyOnComment = !tg;
   // With apply.when: pull-request, `/terragucci unlock` is the apply-comment job's too: it holds the locks.
   const APPLY_COMMENT = prApply
     ? "(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))"
@@ -1330,7 +1336,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci')${applyOnComment ? ` && !${APPLY_COMMENT}` : ""}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
+    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !${APPLY_COMMENT}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
@@ -1351,25 +1357,24 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ["plan", plan as never],
     ["replan", replan as never],
   ]);
-  if (applyOnComment) {
-    // `/terragucci apply` on a merged pull request re-runs its apply from the merge commit, with the
-    // apply role, under the lock a push's apply holds. The workflow is the default branch's, as for
-    // every comment; commentApplyScript decides before it asks for any credential.
-    entities.set("apply-comment", new Job({
-      "runs-on": "ubuntu-latest",
-      container: { image },
-      if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
-      // Before merge it also pushes the root locks and merges (contents: write), and reads the head's checks.
-      permissions: { contents: writesLedger || prApply ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...(needsToken ? { "id-token": "write" } : {}) },
-      ...openid(needsToken),
-      concurrency: applyConcurrency(forge),
-      env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
-      steps: [
-        ...steps(new Step({ name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) }), true, true),
-        new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
-      ],
-    } as never) as never);
-  }
+  // `/terragucci apply` on a merged pull request re-runs its apply from the merge commit, with the
+  // apply role, under the lock a push's apply holds. The workflow is the default branch's, as for
+  // every comment; commentApplyScript decides before it asks for any credential. A Terragrunt repo's
+  // job runs its waves of units with --terragrunt, after the apply jobs' prelude.
+  entities.set("apply-comment", new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
+    // Before merge it also pushes the root locks and merges (contents: write), and reads the head's checks.
+    permissions: { contents: writesLedger || prApply ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...(needsToken ? { "id-token": "write" } : {}) },
+    ...openid(needsToken),
+    concurrency: applyConcurrency(forge),
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+    steps: [
+      ...steps(new Step({ name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) }), true, true),
+      new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
+    ],
+  } as never) as never);
   if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
   for (const [i, job] of pushApplyJobs.entries()) {
     entities.set(job.name, new Job({

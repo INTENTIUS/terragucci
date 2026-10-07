@@ -173,7 +173,8 @@ tg-gate-refuse|a Terragrunt wave whose plans changed after approval applies noth
 tg-sealed|a Terragrunt wave counts only an approval sealed by a key the signers file lists|
 pr-apply|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto, and with apply.when: merge it applies nothing|
 pr-apply-lock|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
-pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|'
+pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
+tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -4323,6 +4324,88 @@ claim_tg_sealed() {
   return $rc
 }
 
+claim_tg_comment_apply() {
+  # The Terragrunt gated fixture on main, where wave 1 (live/canary/one) waits.
+  # A pull request changes live/canary/one and is merged; the merge commit's
+  # apply waits at wave 1 for its new digest. An agent writes an unsealed
+  # approval of that plan to chant/lifecycle. `/terragucci apply` on the merged
+  # pull request must be answered that wave 1 waits, with its set digest and
+  # the chant approve command, and apply no unit. The same comment on an open
+  # pull request is refused. The approver approves wave 1 with a sealed record,
+  # and `/terragucci apply` again must apply live/canary/one through the
+  # Terragrunt path (wave 2 waits at its own gate) and reply with a link to the
+  # run.
+  # BREAK: chant.workspace.json is left out of the pushed tree, so no gate
+  # needs a seal, and the unsealed approval lets the first comment apply wave 1.
+  log() { echo "[smoke tg-comment-apply] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-comment-apply" wf sha merge pr open_pr applied reply rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo tg-comment-apply tg-gated-waves || { drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  apply-comment:' "$wf" || { log "the Terragrunt pipeline has no apply-comment job"; drop_work "$work"; return 1; }
+  grep -q 'tf-apply --wave "\$wave".* --terragrunt' "$wf" || { log "the apply-comment job does not run tf-apply with --terragrunt"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "tg-comment-apply: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  echo 2 > "$work/tree/live/canary/one/rev.txt"
+  push_tree "$work/tree" "$repo" change "tg-comment-apply: change live/canary/one" >/dev/null || { drop_work "$work"; return 1; }
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"change","base":"main","title":"tg-comment-apply: change live/canary/one"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "pull request $pr did not merge"; drop_work "$work"; return 1; }
+  merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+  [ -n "$merge" ] || { log "pull request $pr has no merge commit"; drop_work "$work"; return 1; }
+  wait_run "$repo" "$merge" || { drop_work "$work"; return 1; }
+  log "pull request $pr merged as ${merge:0:8}; its apply: $RUN_STATUS, state for: $(tg_gated_applied tg-comment-apply)"
+  gated_forge tg-comment-apply 1 unsealed || rc=1
+
+  # tg_reply n text -> the reply terragucci posts on n, once it has.
+  tg_reply_count() { api "$URL/api/v1/repos/$repo/issues/$1/comments?limit=100" | jq '[.[] | select(.body | startswith("terragucci: "))] | length'; }
+  tg_reply() {
+    local n="$1" before i
+    before="$(tg_reply_count "$n")"
+    api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$2" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$n/comments" || return 1
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+      [ "$(tg_reply_count "$n")" -gt "$before" ] && break
+      sleep 3
+    done
+    api "$URL/api/v1/repos/$repo/issues/$n/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
+  }
+
+  if [ $rc = 0 ]; then
+    reply="$(tg_reply "$pr" "/terragucci apply")"
+    applied="$(tg_gated_applied tg-comment-apply)"
+    log "first comment: state for: ${applied:-nothing}; reply: ${reply:-none}"
+    [ -z "$applied" ] || { log "the comment applied a unit with no sealed approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -Eq "wave 1 waits for an approval of its set digest (jcs1-)?sha256:[0-9a-f]+" <<<"$reply" || { log "the reply does not say wave 1 waits, with its digest"; rc=1; }
+    grep -Eq 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$reply" || { log "the reply does not give the chant approve command"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    echo open > "$work/tree/live/fleet/two/rev.txt"
+    push_tree "$work/tree" "$repo" open-change "tg-comment-apply: an open change" >/dev/null || rc=1
+    open_pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"open-change","base":"main","title":"tg-comment-apply: open"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+    reply="$(tg_reply "$open_pr" "/terragucci apply")"
+    log "open pull request $open_pr: ${reply:-no reply}"
+    grep -q "pull request $open_pr is not merged" <<<"$reply" || { log "an apply comment on an open pull request was not refused"; rc=1; }
+    applied="$(tg_gated_applied tg-comment-apply)"
+    [ -z "$applied" ] || { log "a refused comment applied: $applied"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve tg-comment-apply 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    reply="$(tg_reply "$pr" "/terragucci apply")"
+    applied="$(tg_gated_applied tg-comment-apply)"
+    log "after the sealed approval: state for: ${applied:-nothing}; reply: ${reply:-none}"
+    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, wave 2 waiting at its own gate"; rc=1; }
+    grep -q "/actions/runs/" <<<"$reply" || { log "the reply does not link the run"; rc=1; }
+    grep -q "wave 2 waits" <<<"$reply" || { log "the reply does not say wave 2 waits"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the comment applied no unit while wave 1 had only an unsealed approval, refused an open pull request, and applied live/canary/one once wave 1 was sealed"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -4444,6 +4527,7 @@ tg-sealed            runner self! weight=200
 pr-apply             runner self! weight=250
 pr-apply-lock        runner self! weight=300
 pr-apply-stale       runner self! weight=200
+tg-comment-apply     runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

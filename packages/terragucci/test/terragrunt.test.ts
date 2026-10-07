@@ -277,14 +277,14 @@ describe("init in a Terragrunt repo", () => {
     expect(check).toContain("terragucci check-policy");
     const plan = doc.jobs.plan.steps.at(-2).run as string;
     expect(plan).toMatch(/terragucci stage tf-plan .*--layers 'live\/dev\/app,live\/dev\/vpc;live\/prod\/app,live\/prod\/vpc' .*--terragrunt/);
-    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-wave-1", "apply-wave-2"]);
+    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2"]);
     const apply = doc.jobs["apply-wave-1"].steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-apply")).run as string;
     expect(apply).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/app,live/dev/vpc;live/prod/app,live/prod/vpc' --binary tofu --gate on-destroy --terragrunt");
     expect(apply).not.toContain("-auto-approve");
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
     // Each wave's gate is declared, so an approval of it counts only when sealed.
     expect(JSON.parse(r.files.find((f) => f.path.endsWith("chant.workspace.json"))!.content).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
-    for (const job of ["plan", "apply-wave-1", "apply-wave-2"]) {
+    for (const job of ["plan", "apply-wave-1", "apply-wave-2", "apply-comment"]) {
       expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === "actions/cache@v4")?.with.path).toBe(".terragrunt-cache");
     }
     expect(text).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
