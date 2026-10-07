@@ -5,14 +5,14 @@ description: terragucci beside Atlantis, HCP Terraform, Spacelift and Digger, ro
 
 import Scorecard from '../../components/Scorecard.astro';
 
-Teams that run Terraform or OpenTofu from pull requests mostly use one of these four or a pipeline written by hand. The grid sets terragucci beside them in three bands: review, apply and operate.
+The grid sets terragucci beside the four tools teams most use to run Terraform or OpenTofu from pull requests, in three bands: review, apply and operate.
 
-Open a row to read what each product does. Every mark for another product carries a numbered note that links the page of that product's own documentation it was read from. When those docs say nothing about a row the row says so and takes the lower mark. terragucci's marks link the page of this site that describes the behaviour, and a mark counts only for what works on every forge terragucci supports.
+Other products' marks link their own docs, taking the lower mark where docs are silent; terragucci's count only what works on every forge.
 
 <Scorecard />
 
 ## Reading the grid
 
-Atlantis is the closest in shape to terragucci. It comments plans on the pull request and holds a lock on each project while it does, and it runs policy with conftest. It applies before merge and runs as a server you host. Digger works from the same pull request comments but runs its jobs in your CI, with an orchestrator beside it. HCP Terraform and Spacelift are services that run the plans for you. HCP Terraform keeps each workspace's state and Spacelift can, and both put drift checks and policy sets kept in git on paid tiers.
+Atlantis is a server you host that applies before merge. Digger runs in your CI with an orchestrator. HCP Terraform and Spacelift are services; both put drift checks and git-kept policy on paid tiers.
 
-terragucci writes a pipeline for the CI you already have and adds no server. Its strongest rows are in review and rollout. A pull request gets one grouped note for many roots, and each approval is bound to a digest of one wave's plans, so while the gate holds a wave, a plan that changed after approval makes it apply nothing. Under the default `on-destroy` gate, a re-plan that no longer destroys or replaces applies without a new approval. Where terragucci is partial or misses, the row says what it does instead.
+terragucci adds no server; its strongest rows are the grouped note and digest-bound wave approvals. Partial rows say what it does instead.

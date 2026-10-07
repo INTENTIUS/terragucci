@@ -31,7 +31,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	'apply-when': {
 		mark: 'warn',
-		text: 'Both, set per project: apply.when merge (the default) applies from the push to the default branch or a /terragucci apply comment on the merged pull request, and pull-request applies the open pull request, which apply.merge auto then merges. Before merge covers plain roots on GitHub and Forgejo; GitLab and Terragrunt repos apply after merge',
+		text: 'Both, per project: apply.when merge (default) or pull-request; before merge on plain roots on GitHub and Forgejo only',
 		page: 'reference/config/#apply-before-merge',
 	},
 	'approval-binds': {
@@ -46,17 +46,17 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	'refuse-changed': {
 		mark: 'good',
-		text: 'While the gate holds a wave, a plan in it that changed after the approval changes the digest and the wave applies nothing. Under the default on-destroy gate, a re-plan that no longer destroys or replaces applies without a new approval; under gate: never nothing is refused',
+		text: 'A gated wave whose plan changed after approval applies nothing; under on-destroy a re-plan with no destroy applies, and under gate: never nothing is refused',
 		page: 'concepts/waves-and-approvals/',
 	},
 	locks: {
 		mark: 'warn',
-		text: 'A pull request applied before merge locks the roots it reaches until it merges or closes, and /terragucci unlock releases them; a project applies one push at a time, queued on each forge. Plain roots on GitHub and Forgejo only: GitLab and Terragrunt repos apply after merge and take no per-root locks',
+		text: 'A pull request applied before merge locks its roots until it merges or closes; /terragucci unlock releases them; one push applies at a time. Plain roots on GitHub and Forgejo only',
 		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {
 		mark: 'warn',
-		text: 'At most two waves, the canary units and then the rest, each one terragrunt run --all in which Terragrunt orders the units by its graph, and no unit plans against mock outputs; each wave is planned, gated by policy and applied under a sealed approval of its set digest, as plain roots are, and a wave whose plans changed applies nothing. /terragucci apply on a merged pull request re-runs the waves behind the same gate',
+		text: 'Two waves, canary units then the rest, each one terragrunt run --all, gated and sealed like plain roots; a changed wave applies nothing',
 		page: 'guides/use-terragrunt/',
 	},
 	drift: {

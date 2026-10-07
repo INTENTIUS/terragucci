@@ -9,9 +9,9 @@ Each docs page links a word here the first time it uses it, unless the page expl
 
 ### root
 
-A directory that Terraform or OpenTofu runs in. Its files declare a `backend` or a `cloud` block, or they configure a provider. A child module does neither. `init` finds these directories on its own, and `roots:` in `terragucci.yml` names them by glob instead. Every stage runs the binary once in each.
+A directory whose files hold a `backend` or `cloud` block or configure a provider. `init` finds roots, or `roots:` names them by glob. Every stage runs the binary once in each.
 
-A directory with a `cloud` block counts like any other, and the jobs run the binary's own `plan` and `apply` in it. When its HCP Terraform workspace uses remote execution, Terraform carries those runs out on HCP Terraform's workers with the workspace's variables and credentials. The job's `oidc` roles do not reach them there. Set the workspace to local execution to keep the runs in your CI while HCP Terraform holds the state.
+A root with a `cloud` block on remote execution runs on HCP Terraform's workers, where the job's `oidc` roles do not reach. Local execution keeps the runs in your CI.
 
 ### forge
 
@@ -19,19 +19,19 @@ The service that hosts your repository and runs its pipelines: GitHub, GitLab or
 
 ### unit
 
-In Terragrunt, a directory with a `terragrunt.hcl` is a unit. terragucci treats each unit as a root and takes the list from `terragrunt find`. A directory of units is an implicit stack; it appears as a label in the report.
+A Terragrunt directory with a `terragrunt.hcl`; terragucci lists units with `terragrunt find` and treats each as a root. A directory of units is an implicit stack, shown as a report label.
 
 ### layer
 
-One step of the dependency order. A root that reads another through `terraform_remote_state` sits in a later layer than the one it reads, and so does a unit with a `dependency` block. `init --dry-run` counts the layers, and `tf-plan` plans one layer at a time.
+A step of the dependency order set by `terraform_remote_state` reads or Terragrunt `dependency` blocks. `init --dry-run` counts them; `tf-plan` plans one at a time.
 
 ### wave
 
-A batch of roots that `tf-apply` applies together, behind its own approval. Waves are built from layers. The roots named in `waves.canary` go first in waves of their own, and the rest follow layer by layer, so nothing in a wave reads anything else in it. In a Terragrunt repo the canary units are wave 1 and the rest wave 2. The wave's job plans its units with one `terragrunt run --all`, and Terragrunt orders the units inside it. The gates take the waves' names: `wave-1`, `wave-2` and so on.
+A batch `tf-apply` applies behind one approval, gated as `wave-1`, `wave-2`: canary first, then one layer each. Terragrunt has two, each one `terragrunt run --all`.
 
 ### canary
 
-The roots named in `waves.canary`. They apply first, in a wave of their own, so a bad change reaches a few roots before it reaches the rest. In a plain repo the canary is wave 1, which is also what the plan note and the report call it. A Terragrunt repo's canary units are wave 1 too.
+The roots named in `waves.canary`. They apply first, in wave 1, so a bad change reaches a few roots before the rest.
 
 ### plan digest
 
@@ -39,43 +39,43 @@ A hash of one root's plan. The job takes it before anything is redacted or rende
 
 ### set digest
 
-The hash over the plan digest of every root in a wave. An approval names it, so the approval covers those plans and no others. When one plan in the wave changes, the set digest changes too and the wave refuses to apply.
+The hash over every plan digest in a wave. An approval names it, so when one plan in the wave changes, the wave refuses to apply.
 
 ### gate
 
-The point where a wave can wait for a person. The `gate` setting decides which waves wait: `on-destroy` (the default), `always` or `never`. A waiting wave's job exits with code 3 and prints the `chant approve` command for it.
+Where a wave waits for a person, per the `gate` setting: `on-destroy` (default), `always` or `never`. A waiting job exits 3 and prints its `chant approve` command.
 
 ## Approvals
 
 ### chant
 
-The tool terragucci's stages are written in. [chant](https://intentius.io/chant/) declares a pipeline in TypeScript and renders it for GitHub Actions, GitLab CI or Forgejo Actions. That is how `init` writes your forge's own workflow file. Install chant (`npm i -D @intentius/chant`) on the machine you approve from, because `chant approve` writes approvals. The pipeline's jobs find what they need in terragucci's CI image.
+The tool terragucci's stages are written in. [chant](https://intentius.io/chant/) renders them for your forge, and `chant approve` (`npm i -D @intentius/chant`) writes approvals from your machine.
 
 ### chant/lifecycle
 
-A branch of your repository that holds approvals and the records the apply job writes. Each approval is a commit on it. Protect it so that only the apply job's identity can push to it, and block force pushes and deletion. [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/) says why it is a branch.
+A branch that holds the apply job's records and the approvals, each approval a commit. Let only the apply job's identity push to it and block force pushes and deletion. [Approvals as records](/terragucci/concepts/approvals-as-records/) says why.
 
 ### chant.workspace.json
 
-chant's file at the root of your repository, which `init` writes. For terragucci it lists the apply waves' gates under `identity.gates`. It has nothing to do with Terraform workspaces or HCP Terraform workspaces.
+chant's file at the repository root, written by `init`, listing the wave gates under `identity.gates`. It has nothing to do with Terraform workspaces.
 
 ### identity.gates
 
-The key in `chant.workspace.json` that lists gates whose approvals must be sealed. `init` lists every wave's gate. Once the list names any gate, the apply job counts an approval only when its seal verifies against `.chant/allowed_signers` at base, the commit before the one it applies.
+The gates in `chant.workspace.json` (`init` lists all) whose approvals count only with a seal that verifies against `.chant/allowed_signers` as of the parent commit.
 
 ### .chant/allowed_signers
 
-The signers file. It has one line per person who may approve, with their ssh public key, in ssh-keygen's allowed_signers format. The job reads it from the commit before the one it applies, so a change cannot loosen the rule that judges it. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) shows one.
+The signers file: one ssh public key per approver, in ssh-keygen's allowed_signers format. It is read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
 
 ### seal
 
-The ssh signature that `chant approve --sign` puts over an approval record. A record whose seal does not verify against the signers file counts for nothing. Editing a record after it was sealed breaks the seal.
+The ssh signature `chant approve --sign` puts on an approval. An unverified or edited record counts for nothing.
 
 ## Other tools
 
 ### fountain
 
-A separate runtime that runs chant stages on a long-lived machine instead of in a CI job. You meet the word in chant's docs. terragucci's pipelines run on your forge's CI and never on [fountain](https://github.com/managoat/fountain).
+A separate runtime that runs chant stages on a long-lived machine. terragucci's pipelines run on your forge's CI and never on [fountain](https://github.com/managoat/fountain).
 
 ### steward
 
@@ -83,19 +83,19 @@ fountain's word for the machine that runs stages for one environment. terragucci
 
 ### floci
 
-A local stand-in for the AWS API. The tutorial's example applies its roots to floci, so you need no AWS account to run it. The validation stack checks every generated pipeline against it too. floci keeps no tags, so on floci every root's tags show as drift.
+A local stand-in for the AWS API that the tutorial applies to, so it needs no AWS account. floci keeps no tags, so every root's tags show as drift.
 
 ### choudoufu
 
-A fork of OpenTofu that keeps no state file. Each resource it manages carries tags that name its owner. With `binary: choudoufu`, terragucci adds its own checks and stages. [Use OpenTofu or choudoufu](/terragucci/guides/use-a-binary/#choudoufu) covers them, and [its repository](https://github.com/INTENTIUS/choudoufu) has the rest.
+An OpenTofu fork with no state file; resources carry owner tags. `binary: choudoufu` adds checks and stages ([Use OpenTofu or choudoufu](/terragucci/guides/use-a-binary/#choudoufu), [its repository](https://github.com/INTENTIUS/choudoufu)).
 
 ## Words that mean something else in Terraform
 
 | Here | What it means here | Not to be confused with |
 |---|---|---|
-| `chant.workspace.json` | chant's file that lists the gates | a Terraform CLI workspace or an HCP Terraform workspace. terragucci selects no Terraform workspace; each root plans in the one the binary picks, `default` unless `TF_WORKSPACE` says otherwise |
+| `chant.workspace.json` | chant's file that lists the gates | a Terraform or HCP Terraform workspace; each root plans in `default` unless `TF_WORKSPACE` says otherwise |
 | `--mode apply` on `rollout`, `respond` and `reconcile` | push the commit or open the pull request that the dry run described | `terraform apply`, which none of the three runs |
-| layer | a step of the dependency order | a wave, which is an apply batch built from layers, canary roots first |
-| `/terragucci apply` | run `tf-apply` again at a merged pull request's merge commit; with `apply.when: pull-request`, also run it from an open pull request's head. A gated wave still needs its sealed approval either way | an Atlantis `apply` comment, which applies the plan Atlantis made of the pull request; here each wave plans again and applies only what its approval covers |
-| `/terragucci unlock` | with `apply.when: pull-request`, release the root locks a pull request took when it applied | Atlantis `unlock`, which discards the pull request's plans too; here no plan is kept between runs |
+| layer | a step of the dependency order | a wave, an apply batch built from layers |
+| `/terragucci apply` | rerun `tf-apply` on a merged pull request, or an open one with `apply.when: pull-request`; gated waves still need a sealed approval | Atlantis `apply`, which applies its stored plan; here each wave plans again |
+| `/terragucci unlock` | with `apply.when: pull-request`, release the root locks a pull request took when it applied | Atlantis `unlock`, which also discards plans; none are kept here |
 | run | a forge pipeline run, with its jobs | an HCP Terraform run, which is one plan and apply in one workspace |
