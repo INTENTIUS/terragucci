@@ -13,7 +13,12 @@ A shared module change goes out in batches, each after the last; a batch waits o
 
 The roots in `waves.canary` go first, then one dependency layer per wave, so no root in a wave reads another in it. The report's wave 3 is the gate `wave-3`.
 
-In Terragrunt, the `waves.canary` units are wave 1 and the rest wave 2, ordered by the dependency graph. An approved wave applies exactly the plans its job saved.
+Terragrunt units split the same way: the canary units' layers first, then the layers of the rest, each wave one `terragrunt run --all` with its own gate. An approved wave applies exactly the plans its job saved.
+
+| Where | Terragrunt waves come from |
+|---|---|
+| `init` | `terragrunt find`; without Terragrunt on the path, the plain paths in each unit's `dependency` and `dependencies` blocks |
+| each apply job | `terragrunt find` in the job, which splits a wave whose units read each other; the last job also runs any wave past the jobs `init` wrote |
 
 ## What an approval binds
 

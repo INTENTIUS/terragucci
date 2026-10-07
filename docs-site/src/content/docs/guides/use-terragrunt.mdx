@@ -34,6 +34,8 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 
    Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. Explicit stacks are not supported: `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
 
+   Without Terragrunt on the path, `init` reads the units' `dependency` and `dependencies` paths to cut the waves; the apply jobs check them with `terragrunt find`.
+
 2. Name the tool Terragrunt calls. `binary` names the tool Terragrunt runs underneath:
 
    ```yaml
@@ -63,10 +65,10 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 | What | How |
 |---|---|
 | Which units a change reaches | Terragrunt's own change detection, plus files a module reads with `file()`, modules called from inside modules, and stack templates |
-| Units that depend on a changed unit | same wave as the unit they read from, or wave 2 when that unit is a canary and they are not; `terragrunt run --all` orders them inside a wave |
+| Units that depend on a changed unit | a later wave than the unit they read from |
 | `mock_outputs` | a unit whose plan would read mock values waits for its upstream to apply, so no approval covers a made-up value |
-| Each wave | one apply job; at most two waves: canary units are wave 1 and the rest wave 2, or one wave with no canary. One `terragrunt run --all` saves the plans and a second applies them |
-| The gate | as for plain roots; the set digest covers units whose plan changes something, and a unit reading an output its wave changes goes through a second pass after that unit applied |
+| Each wave | one dependency layer, canary layers first, in its own apply job. One `terragrunt run --all` saves the plans and a second applies them. The last job also runs any layer added since `init` |
+| The gate | as for plain roots, one gate per wave; the set digest covers the units whose plan changes a resource or an output |
 | Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
 | `/terragucci apply` | on a merged pull request (GitHub, Forgejo) reruns its waves from the merge commit behind the same gate, with [these refusals](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request); it approves nothing |
 | When a change applies | after it merges; `init` errors when `apply.when` is `pull-request` in a Terragrunt repo ([apply before merge](/terragucci/reference/config/#apply-before-merge) is for plain roots) |

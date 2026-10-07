@@ -61,7 +61,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
     [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
-    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt] [--base <ref>]
+    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
 ```
 
 | Flag | Environment | Meaning |
@@ -74,6 +74,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--layers`, `--binary`, `--canary`, `--bucket` | | roots in apply order (layers split by `;`), binary, canary wave and bucket; each overrides `terragucci.yml` |
 | `--bucket-endpoint`, `--bucket-prefix`, `--bucket-url` | | the store's endpoint, the key prefix, and the address that serves the bucket to a browser |
 | `--terragrunt` | | run Terragrunt units, one `run --all` per wave; `tf-apply` applies each unit's saved plan |
+| `--rest` | | `tf-apply --terragrunt` only: run this wave, then each wave after it, stopping at the first that does not apply |
 | `--base` | `TG_BASE` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
 | `--forge` | | `github`, `forgejo` or `gitlab`, when the environment cannot tell; `tf-drift` files its issue there |
 | `--parallelism` | | roots run at once per dependency layer (`tf-plan`, `tf-drift`) or wave (`tf-apply`); overrides `parallelism` in `terragucci.yml`; `1` is serial |

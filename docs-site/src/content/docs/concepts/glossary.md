@@ -27,7 +27,7 @@ A step of the dependency order set by `terraform_remote_state` reads or Terragru
 
 ### wave
 
-A batch `tf-apply` applies behind one approval, gated as `wave-1`, `wave-2`: canary first, then one layer each. Terragrunt has two, each one `terragrunt run --all`.
+A batch `tf-apply` applies behind one approval, gated as `wave-1`, `wave-2`: canary first, then one layer each. Terragrunt units go the same way, each wave one `terragrunt run --all`.
 
 ### canary
 
