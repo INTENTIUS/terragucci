@@ -1,0 +1,260 @@
+---
+// One section of the comparison page, or its numbered notes. Each entry
+// opens to what terragucci does and one line per other product, and every
+// other product's line carries numbered notes that link the pages of its own
+// docs the line was read from. The data is in ./compare/.
+import { getCollection } from 'astro:content';
+import { products } from './compare/grid';
+import { inSection, lineOf, note, notes, ownLineOf, who, type SectionId } from './compare/sections';
+
+interface Props {
+	section: SectionId | 'notes';
+}
+const { section } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const href = (page: string) => (/^https?:/.test(page) ? page : `${base}/${page}`);
+const titles = new Map((await getCollection('docs')).map((e) => [e.id, e.data.title]));
+const titleOf = (page: string) =>
+	/^https?:/.test(page) ? new URL(page).hostname : (titles.get(page.replace(/[#?].*$/, '').replace(/\/$/, '')) ?? page);
+
+const entries = section === 'notes' ? [] : inSection(section);
+const names = (ps: { name: string }[]) => ps.map((p) => p.name).join(', ');
+---
+{section === 'notes' ? (
+	<section class="cmp-notes not-content" aria-label="Notes">
+		<ol>
+			{notes.map((n, i) => (
+				<li id={`note-${i + 1}`}>{n.product}: <a href={n.url}>{n.title}</a></li>
+			))}
+		</ol>
+	</section>
+) : (
+	<div class:list={['cmp not-content', section === 'everyone' && 'compact']}>
+		{entries.map((p) => {
+			const own = ownLineOf(p);
+			const w = who(p);
+			return (
+				<details class="cmp-entry" id={`row-${p.rows[0]}`}>
+					<summary>
+						<span class="cmp-head">{p.headline}</span>
+						{p.why && <span class="cmp-why">{p.why}</span>}
+						{section === 'different' && w.meet.length > 0 && (
+							<span class="cmp-who">Also met by {names(w.meet)}</span>
+						)}
+						{section === 'further' && <span class="cmp-who">Met by {names(w.meet)}</span>}
+					</summary>
+					<dl class="cmp-lines">
+						<div class="own">
+							<dt>terragucci</dt>
+							<dd>
+								{own.text}{' '}
+								{own.pages.map((page, i) => (
+									<Fragment>{i > 0 && ', '}<a href={href(page)}>{titleOf(page)}</a></Fragment>
+								))}
+							</dd>
+						</div>
+						{products.map((x) => {
+							const line = lineOf(p, x);
+							return (
+								<div>
+									<dt>{x.name}</dt>
+									<dd>
+										{line.text}
+										<sup>{line.sources.map((s, i) => {
+											const n = note(s);
+											return <Fragment>{i > 0 && ','}<a href={`#note-${n}`} aria-label={`Note ${n}: ${x.name}, ${s.title}`}>{n}</a></Fragment>;
+										})}</sup>
+									</dd>
+								</div>
+							);
+						})}
+					</dl>
+				</details>
+			);
+		})}
+	</div>
+)}
+
+<script>
+	// Following a link to an entry (#row-locks) opens it.
+	const open = () => {
+		const target = location.hash && document.getElementById(location.hash.slice(1));
+		if (target instanceof HTMLDetailsElement) target.open = true;
+	};
+	open();
+	window.addEventListener('hashchange', open);
+</script>
+
+<style>
+	.cmp {
+		--cmp-ink: var(--sl-color-white);
+		--cmp-muted: var(--sl-color-gray-2);
+		--cmp-faint: var(--sl-color-gray-3);
+		--cmp-link: var(--sl-color-accent-high);
+		display: grid;
+		gap: 0.6rem;
+		margin: 1rem 0 0;
+	}
+	.cmp-entry {
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.5rem;
+		background: var(--sl-color-black);
+	}
+	.cmp-entry > summary {
+		list-style: none;
+		cursor: pointer;
+		display: grid;
+		gap: 0.25rem;
+		padding: 0.75rem 0.9rem 0.75rem 2rem;
+		position: relative;
+	}
+	.cmp-entry > summary::-webkit-details-marker {
+		display: none;
+	}
+	.cmp-entry > summary::marker {
+		content: '';
+	}
+	/* A small caret at the left, turned when the entry is open. */
+	.cmp-entry > summary::before {
+		content: '';
+		position: absolute;
+		left: 0.9rem;
+		top: 1.15rem;
+		border-left: 6px solid var(--cmp-faint);
+		border-top: 5px solid transparent;
+		border-bottom: 5px solid transparent;
+		transition: transform 0.15s ease;
+	}
+	.cmp-entry[open] > summary::before {
+		transform: rotate(90deg);
+		border-left-color: var(--sl-color-accent);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.cmp-entry > summary::before {
+			transition: none;
+		}
+	}
+	.cmp-entry > summary:hover {
+		background: var(--tg-panel);
+		border-radius: 0.5rem;
+	}
+	.cmp-entry > summary:focus-visible {
+		outline: 2px solid var(--sl-color-accent);
+		outline-offset: -2px;
+		border-radius: 0.5rem;
+	}
+	.cmp-entry[open] {
+		box-shadow: inset 3px 0 0 var(--sl-color-accent);
+	}
+	.cmp-head {
+		font-weight: 600;
+		font-size: 1rem;
+		color: var(--cmp-ink);
+		line-height: 1.35;
+	}
+	.cmp-why {
+		font-size: 0.88rem;
+		color: var(--cmp-muted);
+		line-height: 1.45;
+	}
+	.cmp-who {
+		font-size: 0.8rem;
+		color: var(--cmp-faint);
+	}
+	.cmp-lines {
+		margin: 0;
+		padding: 0.2rem 0.9rem 0.85rem 2rem;
+		display: grid;
+		gap: 0.5rem;
+	}
+	.cmp-lines > div {
+		display: grid;
+		grid-template-columns: 8rem 1fr;
+		column-gap: 0.75rem;
+		padding-top: 0.5rem;
+		border-top: 1px solid var(--tg-rule);
+	}
+	.cmp-lines dt {
+		margin: 0;
+		font-size: 0.84rem;
+		font-weight: 600;
+		color: var(--cmp-ink);
+	}
+	.cmp-lines .own dt {
+		color: var(--cmp-link);
+	}
+	.cmp-lines dd {
+		margin: 0;
+		font-size: 0.84rem;
+		color: var(--cmp-muted);
+		line-height: 1.5;
+	}
+	.cmp-lines a {
+		color: var(--cmp-link);
+	}
+	.cmp-lines sup {
+		margin-left: 0.15rem;
+		font-size: 0.7em;
+	}
+	.cmp-lines sup a {
+		text-decoration: none;
+		font-weight: 700;
+	}
+	@media (max-width: 40rem) {
+		.cmp-lines > div {
+			grid-template-columns: 1fr;
+			row-gap: 0.15rem;
+		}
+		.cmp-entry > summary,
+		.cmp-lines {
+			padding-left: 1.75rem;
+		}
+	}
+
+	/* What everyone does: one line per entry until it is opened. */
+	.cmp.compact {
+		gap: 0;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.5rem;
+		overflow: hidden;
+	}
+	.cmp.compact .cmp-entry {
+		border: 0;
+		border-radius: 0;
+	}
+	.cmp.compact .cmp-entry + .cmp-entry {
+		border-top: 1px solid var(--tg-rule);
+	}
+	.cmp.compact .cmp-entry > summary {
+		padding-top: 0.5rem;
+		padding-bottom: 0.5rem;
+	}
+	.cmp.compact .cmp-entry > summary::before {
+		top: 0.9rem;
+	}
+	.cmp.compact .cmp-head {
+		font-size: 0.92rem;
+		font-weight: 500;
+	}
+
+	.cmp-notes ol {
+		margin: 0;
+		padding-left: 1.6rem;
+		display: grid;
+		gap: 0.3rem;
+	}
+	.cmp-notes li {
+		font-size: 0.83rem;
+		color: var(--sl-color-gray-2);
+		line-height: 1.5;
+		overflow-wrap: anywhere;
+	}
+	.cmp-notes a {
+		color: var(--sl-color-accent-high);
+	}
+	.cmp-notes li:target {
+		color: var(--sl-color-white);
+		background: var(--sl-color-accent-low);
+	}
+</style>
