@@ -166,7 +166,8 @@ oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and
 comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
 comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|
 wave-report|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|
-policy-delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|'
+policy-delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|
+report-oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -829,6 +830,37 @@ claim_report() {
   drop_work "$work"
   [ $rc = 0 ] || return 1
   log "two runs, each root linked to its plan, both in $REPORT_BUCKET/$prefix/index.json"
+}
+
+claim_report_oidc() {
+  # The plan job of a pipeline with oidc: AWS_ROLE_ARN and a token in
+  # AWS_WEB_IDENTITY_TOKEN_FILE, and no AWS_ACCESS_KEY_ID. The report goes to
+  # the bucket with the keys AssumeRoleWithWebIdentity answers, and the index
+  # lists the commit. BREAK: no role and no token, so nothing is written.
+  log() { echo "[smoke report-oidc] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 prefix commit index env=""
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/run"
+  prefix="smoke-oidc-$(date +%s)"
+  # A token shaped like the forge's; floci's STS answers it with keys of its own.
+  printf '%s' 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOm1lL2V4YW1wbGU6cHVsbF9yZXF1ZXN0In0.c21va2U' >"$work/run/.oidc-token"
+  [ -z "${BREAK:-}" ] && env="AWS_ROLE_ARN=arn:aws:iam::000000000000:role/terragucci-reports AWS_WEB_IDENTITY_TOKEN_FILE=/repo/.oidc-token AWS_ROLE_SESSION_NAME=smoke"
+  local -a REPORT_EXTRA=(-e AWS_ACCESS_KEY_ID= -e AWS_SECRET_ACCESS_KEY= -e AWS_SESSION_TOKEN=) REPORT_ARGS=(--root envs/dev/platform)
+  REPORT_ENV="$env" REPORT_CONFIG="$(printf 'reports:\n  bucket: s3://%s\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix")" report_run "$work/run" || true
+  commit="$(git -C "$work/run" rev-parse HEAD 2>/dev/null || true)"
+  [ -f "$work/run/terragucci-report/report.json" ] || { log "the run wrote no report"; rc=1; }
+  if [ $rc = 0 ]; then
+    if ! index="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json")"; then
+      log "no index at $REPORT_BUCKET/$prefix/index.json"; rc=1
+    elif [ -z "$(jq -r --arg c "$commit" '.reports[] | select(.commit == $c) | .path' <<<"$index")" ]; then
+      log "the index does not list commit $commit"; rc=1
+    fi
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] || return 1
+  log "with only a role and an OIDC token, the report of $commit is in $REPORT_BUCKET/$prefix and its index"
 }
 
 claim_affected() {
@@ -4070,6 +4102,7 @@ comment-apply        runner self! weight=200
 comment-agent        runner self! weight=200
 wave-report     weight=120
 policy-delete-key    ex after=boot weight=150
+report-oidc          ex after=boot weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

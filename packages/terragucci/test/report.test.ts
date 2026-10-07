@@ -9,11 +9,12 @@ import { describe, expect, it } from "vitest";
 import { buildReport, planFiles } from "../src/report/build";
 import { changeKind, foldChange, HIGHLIGHTS } from "../src/report/highlight";
 import { readInlineReport, renderHtml } from "../src/report/html";
+import { validateConfig } from "../src/config";
 import { PLAN_KEYS, redactPlan } from "../src/report/redact";
-import { S3Client, sign, type S3Fetch } from "../src/report/s3";
+import { S3Client, S3Error, s3FromEnv, sign, type S3Fetch } from "../src/report/s3";
 import { REDACTED, type Report } from "../src/report/schema";
 import { artifactReportUrl, preventDestroyIn, projectFromRemote, reportLinks, runFacts } from "../src/report/stage";
-import { addToIndex, bucketReportUrl, copyToRun, indexEntry, renderIndexHtml, reportsBase, runPath, traceKey, uploadReport, writeReportDir } from "../src/report/store";
+import { addToIndex, bucketReportUrl, copyToRun, INDEX_TRIES, indexEntry, renderIndexHtml, reportsBase, runPath, traceKey, updateIndex, uploadReport, writeReportDir } from "../src/report/store";
 import { isArtifactPage, renderGitLabTerraform, renderNote, renderText } from "../src/report/views";
 import { fixture200, plan, rc, RUN, smallFixture } from "./report-fixtures";
 import { tmp, write } from "./helpers";
@@ -359,6 +360,152 @@ describe("where reports go", () => {
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", new Date("2013-05-24T00:00:00Z"),
     );
     expect(h.authorization).toBe("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41");
+  });
+
+  it("with no static keys, assumes AWS_ROLE_ARN with the token in AWS_WEB_IDENTITY_TOKEN_FILE once, and signs with the session it got", async () => {
+    const dir = tmp();
+    const tokenFile = join(dir, "token");
+    writeFileSync(tokenFile, "eyJ.token.sig\n");
+    const env = { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: tokenFile, AWS_REGION: "eu-west-2" };
+    const target = s3FromEnv({ bucket: "s3://acme-reports" }, env);
+    expect(target).toMatchObject({ bucket: "acme-reports", region: "eu-west-2", webIdentity: { roleArn: env.AWS_ROLE_ARN, tokenFile, endpoint: "https://sts.eu-west-2.amazonaws.com" } });
+    const calls: { url: string; init: Parameters<S3Fetch>[1] }[] = [];
+    const fake: S3Fetch = async (url, init) => {
+      calls.push({ url, init });
+      if (url.startsWith("https://sts.")) {
+        const xml = `<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>ASIAWEB</AccessKeyId><SecretAccessKey>web/secret</SecretAccessKey><SessionToken>tok&amp;en</SessionToken><Expiration>2999-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`;
+        return { ok: true, status: 200, text: async () => xml };
+      }
+      return { ok: true, status: 200, text: async () => "" };
+    };
+    const s3 = new S3Client(target, fake);
+    await s3.put("a.json", "{}", "application/json");
+    await s3.put("b.json", "{}", "application/json");
+    expect(calls.map((c) => c.url)).toEqual(["https://sts.eu-west-2.amazonaws.com/", "https://acme-reports.s3.eu-west-2.amazonaws.com/a.json", "https://acme-reports.s3.eu-west-2.amazonaws.com/b.json"]);
+    const form = new URLSearchParams(calls[0].init.body as string);
+    expect(Object.fromEntries(form)).toEqual({ Action: "AssumeRoleWithWebIdentity", Version: "2011-06-15", RoleArn: env.AWS_ROLE_ARN, RoleSessionName: "terragucci-report", WebIdentityToken: "eyJ.token.sig" });
+    expect(calls[0].init.headers.authorization).toBeUndefined();
+    expect(calls[1].init.headers.authorization).toMatch(/^AWS4-HMAC-SHA256 Credential=ASIAWEB\/\d{8}\/eu-west-2\/s3\/aws4_request, /);
+    expect(calls[1].init.headers["x-amz-security-token"]).toBe("tok&en");
+  });
+
+  it("picks reports.role, then static keys, then AWS_ROLE_ARN, and names what is missing", () => {
+    const keys = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" };
+    const oidc = { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: "/tmp/t", AWS_ENDPOINT_URL: "http://floci:4566/" };
+    const role = "arn:aws:iam::123456789012:role/reports";
+    expect(s3FromEnv({ bucket: "b" }, { ...keys, ...oidc })).toMatchObject({ accessKeyId: "AK", endpoint: "http://floci:4566", region: "us-east-1" });
+    expect(s3FromEnv({ bucket: "b" }, oidc)).toMatchObject({ webIdentity: { roleArn: oidc.AWS_ROLE_ARN, endpoint: "http://floci:4566" } });
+    expect(s3FromEnv({ bucket: "b", role }, { ...keys, ...oidc })).toMatchObject({ webIdentity: { roleArn: role } });
+    expect(s3FromEnv({ bucket: "b" }, { ...oidc, AWS_ENDPOINT_URL_STS: "https://sts.example" })).toMatchObject({ webIdentity: { endpoint: "https://sts.example" } });
+    expect(() => s3FromEnv({ bucket: "b", role }, keys)).toThrow(/reports.role is set, but AWS_WEB_IDENTITY_TOKEN_FILE is not/);
+    expect(() => s3FromEnv({ bucket: "b" }, { AWS_ROLE_ARN: oidc.AWS_ROLE_ARN })).toThrow(/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE/);
+    expect(() => s3FromEnv({ bucket: "b" }, { AWS_ACCESS_KEY_ID: "", AWS_SECRET_ACCESS_KEY: "" })).toThrow(S3Error);
+  });
+
+  it("a refused web identity names STS's error, and the next request asks again", async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, "token"), "t");
+    let sts = 0;
+    const fake: S3Fetch = async () => {
+      sts++;
+      return { ok: false, status: 403, text: async () => "<ErrorResponse><Error><Code>AccessDenied</Code><Message>Not authorized to perform sts:AssumeRoleWithWebIdentity</Message></Error></ErrorResponse>" };
+    };
+    const s3 = new S3Client(s3FromEnv({ bucket: "b" }, { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "token") }), fake);
+    await expect(s3.get("x")).rejects.toThrow("AssumeRoleWithWebIdentity for arn:aws:iam::123456789012:role/plan: 403 AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity");
+    await expect(s3.get("x")).rejects.toThrow(/AccessDenied/);
+    expect(sts).toBe(2);
+    const missing = new S3Client(s3FromEnv({ bucket: "b" }, { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "absent") }), fake);
+    await expect(missing.get("x")).rejects.toThrow(/cannot read the OIDC token/);
+  });
+
+  it("reports.role is a role ARN of its own", () => {
+    const role = "arn:aws:iam::123456789012:role/terragucci-reports";
+    expect(validateConfig({ reports: { bucket: "s3://b", role } }, "t").reports?.role).toBe(role);
+    expect(() => validateConfig({ reports: { bucket: "s3://b", role: "reports" } }, "t")).toThrow(/reports.role must be an AWS role ARN/);
+    expect(() => validateConfig({ oidc: { plan_role: role, apply_role: "arn:aws:iam::123456789012:role/apply" }, reports: { bucket: "s3://b", role } }, "t")).toThrow(/reports.role is a job's own role/);
+  });
+
+  it("runs uploading at once each keep their row: the index is written If-Match the copy read, and read again when another run wrote it", async () => {
+    // A store with S3's conditional writes: an ETag per object, 412 on a stale If-Match or an If-None-Match on an object that exists.
+    const objects = new Map<string, { body: string; etag: string }>();
+    let n = 0;
+    const refused: string[] = [];
+    // Every run reads the project's index before any writes it, so all but one write lose the first time.
+    const PROJECT_INDEX = "reports/forgejo.example/acme/infra/index.json";
+    let firstReads = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    const fake: S3Fetch = async (url, init) => {
+      const key = decodeURIComponent(new URL(url).pathname.replace(/^\/acme-reports\//, ""));
+      if (init.method === "GET" && key === PROJECT_INDEX && firstReads < 6) {
+        if (++firstReads === 6) open();
+        await gate;
+      }
+      await new Promise((r) => setTimeout(r, Math.random() * 3));
+      const held = objects.get(key);
+      const headers = (etag?: string) => ({ get: (h: string) => (h === "etag" ? etag ?? null : null) });
+      if (init.method === "GET") return held ? { ok: true, status: 200, text: async () => held.body, headers: headers(held.etag) } : { ok: false, status: 404, text: async () => "", headers: headers() };
+      const ifMatch = init.headers["if-match"];
+      const ifNone = init.headers["if-none-match"];
+      if ((ifMatch !== undefined && ifMatch !== held?.etag) || (ifNone === "*" && held)) {
+        refused.push(key);
+        return { ok: false, status: 412, text: async () => "PreconditionFailed", headers: headers() };
+      }
+      const etag = `"${++n}"`;
+      objects.set(key, { body: Buffer.from(init.body as Uint8Array).toString("utf-8"), etag });
+      return { ok: true, status: 200, text: async () => "", headers: headers(etag) };
+    };
+    const runs = Array.from({ length: 6 }, (_, i) => buildReport({ run: { ...RUN, commit: String(i).repeat(40), finished: `2026-10-05T09:00:0${i}.000Z` }, roots: smallFixture() }));
+    const noWait = async () => {};
+    await Promise.all(runs.map((r) => {
+      const dir = tmp();
+      writeReportDir(dir, r, plans(r));
+      return uploadReport(new S3Client({ bucket: "acme-reports", endpoint: "http://minio:9000", region: "us-east-1", accessKeyId: "AK", secretAccessKey: "SK" }, fake), dir, r, "reports", noWait);
+    }));
+    expect(refused.filter((k) => k === PROJECT_INDEX).length).toBeGreaterThanOrEqual(5);
+    for (const at of ["reports/forgejo.example/acme/infra", "reports"]) {
+      const index = JSON.parse(objects.get(`${at}/index.json`)!.body);
+      expect(index.reports.map((r: Json) => r.commit).sort()).toEqual(runs.map((r) => r.run.commit).sort());
+      const html = objects.get(`${at}/index.html`)!.body;
+      for (const r of runs) expect(html).toContain(r.run.commit.slice(0, 12));
+    }
+  });
+
+  it("an index another run keeps rewriting fails the upload by name after INDEX_TRIES tries, and a store with no ETags is written once", async () => {
+    let puts = 0;
+    const busy: S3Fetch = async (_url, init) => {
+      if (init.method === "GET") return { ok: true, status: 200, text: async () => JSON.stringify({ reports: [] }), headers: { get: (h: string) => (h === "etag" ? `"${puts}"` : null) } };
+      puts++;
+      return { ok: false, status: 412, text: async () => "", headers: { get: () => null } };
+    };
+    const target = { bucket: "acme-reports", endpoint: "http://minio:9000", region: "us-east-1", accessKeyId: "AK", secretAccessKey: "SK" };
+    const waits: number[] = [];
+    await expect(updateIndex(new S3Client(target, busy), "reports/index.json", indexEntry(small(), "x"), async (a) => void waits.push(a))).rejects.toThrow(`reports/index.json changed under this run ${INDEX_TRIES} times in a row`);
+    expect(puts).toBe(INDEX_TRIES);
+    expect(waits).toEqual(Array.from({ length: INDEX_TRIES - 1 }, (_, i) => i + 1));
+
+    const sent: Record<string, string>[] = [];
+    const plain: S3Fetch = async (_url, init) => {
+      if (init.method === "PUT") sent.push(init.headers);
+      return init.method === "GET" ? { ok: true, status: 200, text: async () => "{}" } : { ok: true, status: 200, text: async () => "" };
+    };
+    await updateIndex(new S3Client(target, plain), "reports/index.json", indexEntry(small(), "x"));
+    expect(sent.length).toBe(1);
+    expect(sent[0]["if-match"]).toBeUndefined();
+    expect(sent[0]["if-none-match"]).toBeUndefined();
+  });
+
+  it("a store that answers a conditional write with 501 is written without the condition from then on", async () => {
+    const sent: Record<string, string>[] = [];
+    const fake: S3Fetch = async (_url, init) => {
+      if (init.method === "GET") return { ok: false, status: 404, text: async () => "" };
+      sent.push(init.headers);
+      return init.headers["if-none-match"] ? { ok: false, status: 501, text: async () => "NotImplemented" } : { ok: true, status: 200, text: async () => "" };
+    };
+    const s3 = new S3Client({ bucket: "b", endpoint: "http://gcs:9000", region: "us-east-1", accessKeyId: "AK", secretAccessKey: "SK" }, fake);
+    await updateIndex(s3, "index.json", indexEntry(small(), "x"));
+    await updateIndex(s3, "index.json", indexEntry(small(), "y"));
+    expect(sent.map((h) => h["if-none-match"] ?? "-")).toEqual(["*", "-", "-"]);
   });
 
   it("names the project from an https or ssh remote", () => {

@@ -62,7 +62,7 @@ projects:
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
-| `reports` | none: the report is a CI artifact | a bucket to copy reports to (`bucket`, `endpoint`, `prefix`), and `url`, the address that serves the bucket to a browser, so the note, the index and the dashboards link the bucket's copy; see [The plan report](/terragucci/reference/report/) |
+| `reports` | none: the report is a CI artifact | a bucket to copy reports to (`bucket`, `endpoint`, `prefix`), and `url`, the address that serves the bucket to a browser, so the note, the index and the dashboards link the bucket's copy; `role`, an AWS role ARN the job assumes with its OIDC token to write the reports, apart from its own role; see [The plan report](/terragucci/reference/report/) and [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/) |
 | `version` | the one every root pins exactly, else terragucci's default for the binary | the binary's version |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
