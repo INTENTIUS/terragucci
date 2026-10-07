@@ -1175,6 +1175,32 @@ describe("the drift stage", () => {
   });
 });
 
+describe("report storage keys", () => {
+  const withReports = (forge: ForgeName, reports: { bucket: string; role?: string }): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", reports }).content;
+  const KEYS = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"];
+  const WRITERS = ["plan", "drift"];
+
+  it.each(["github", "forgejo"] as const)("%s: with a bucket and no role, the jobs that write reports map the key secrets, and no other job does", (forge) => {
+    const doc = body(withReports(forge, { bucket: "s3://r" }));
+    for (const job of WRITERS) for (const k of KEYS) expect(doc.jobs[job].env[k]).toBe(`\${{ secrets.${k} }}`);
+    for (const job of ["check", "apply-wave-1", "apply-wave-2"]) for (const k of KEYS) expect(doc.jobs[job].env?.[k]).toBeUndefined();
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: with reports.role the key secrets are not mapped", (forge) => {
+    const doc = body(withReports(forge, { bucket: "s3://r", role: "arn:aws:iam::123456789012:role/terragucci-reports" }));
+    for (const job of WRITERS) for (const k of KEYS) expect(doc.jobs[job].env?.[k]).toBeUndefined();
+  });
+
+  it.each(FORGES)("%s: with no bucket no key secret is mapped", (forge) => {
+    expect(render(forge)).not.toContain("AWS_ACCESS_KEY_ID");
+  });
+
+  it("gitlab: the project's variables reach the jobs as they are, so nothing is mapped", () => {
+    expect(withReports("gitlab", { bucket: "s3://r" })).not.toContain("AWS_ACCESS_KEY_ID");
+  });
+});
+
 describe("telemetry headers secret", () => {
   const withHeaders = (forge: ForgeName): string =>
     renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, headersSecret: "OTLP_HEADERS" }).content;

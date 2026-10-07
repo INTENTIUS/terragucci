@@ -24,8 +24,8 @@ Set these on the plan job when `reports.bucket` is set.
 | Variable | Meaning |
 |---|---|
 | `AWS_WEB_IDENTITY_TOKEN_FILE` | the job's OIDC token, which a job with `oidc` writes; with `reports.role` the job assumes that role with it |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | credentials that can write to the bucket, used when `reports.role` is not set |
-| `AWS_SESSION_TOKEN` | for temporary credentials, when set |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | credentials that can write to the bucket, used when `reports.role` is not set; the GitHub and Forgejo plan, re-plan and drift jobs set them from the repository secrets of the same name |
+| `AWS_SESSION_TOKEN` | for temporary credentials, when set; mapped from the secret of the same name like the two keys |
 | `AWS_ROLE_ARN` | with no `reports.role` and no keys, the role assumed with the token to write the bucket; a job with `oidc` sets it to its own role |
 | `AWS_ROLE_SESSION_NAME` | the session name of an assumed role; `terragucci-report` when not set |
 | `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL` | a store that is not AWS; `reports.endpoint` takes precedence |

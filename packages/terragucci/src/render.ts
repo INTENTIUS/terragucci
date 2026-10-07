@@ -675,7 +675,7 @@ export function terragruntApplyScript(
 /** Where a plan job's report is kept, and what the stage needs beyond the roots. */
 export interface PlanReportInput {
   /** Copy the report to this bucket as well as keeping it with the job. */
-  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string };
+  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string; role?: string };
   /** Globs for the canary wave the report shows. */
   canary?: string[];
   /** A Terragrunt repo: the stage runs Terragrunt, after this shell (credentials, caches). */
@@ -684,6 +684,18 @@ export interface PlanReportInput {
   description?: boolean;
   /** The agent comment is on, so a re-plan leaves `/terragucci agent` comments to the agent job. */
   agentComment?: boolean;
+}
+
+/**
+ * The secrets a GitHub or Forgejo job that writes reports carries for the
+ * static-keys route: empty when the repo has not made them. Not mapped when
+ * `reports.role` is set, where the job assumes that role instead. GitLab jobs
+ * already see the project's CI/CD variables, so they need no mapping.
+ */
+export const REPORT_KEY_SECRETS = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"] as const;
+function reportKeyEnv(forge: ForgeName, reports: PlanReportInput["reports"]): Record<string, string> {
+  if (forge === "gitlab" || !reports || reports.role) return {};
+  return Object.fromEntries(REPORT_KEY_SECRETS.map((k) => [k, `\${{ secrets.${k} }}`]));
 }
 
 /** The plan report's directory in the job's workspace. */
@@ -1107,6 +1119,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_PR: "${{ github.event.pull_request.number }}",
       ...headersEnv,
       ...decideEnv,
+      ...reportKeyEnv(forge, input.reports),
     },
     steps: [
       ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true),
@@ -1131,7 +1144,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv, ...reportKeyEnv(forge, input.reports) },
     steps: [
       ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, { ...report, ...(input.agentComment ? { agentComment: true } : {}) }, true) }), true, true),
       new Step({
@@ -1263,6 +1276,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_SHA: "${{ github.sha }}",
         ...headersEnv,
         ...driftDecideEnv,
+        ...reportKeyEnv(forge, input.reports),
       },
       steps: [
         ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true, false, awsStep),
