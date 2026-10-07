@@ -169,6 +169,33 @@ describe("a wave behind its gate", () => {
     expect(parseLedger(appended).pending).toHaveLength(1);
   });
 
+  it("applied from an open pull request with --base, a pull request that changes reports.bucket uploads to the base's bucket", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { work, bin, log } = setup({ "terragucci.yml": "reports:\n  bucket: s3://base-reports\n  endpoint: http://s3.test\n" });
+    git(work, "checkout", "-q", "-b", "pr");
+    write(work, { "terragucci.yml": "reports:\n  bucket: s3://pr-reports\n  endpoint: http://s3.test\n" });
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "point reports elsewhere");
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: { method: string }) => {
+      urls.push(url);
+      return init.method === "GET" ? new Response(null, { status: 404 }) : new Response("", { status: 200 });
+    });
+    try {
+      const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" } };
+      expect(await applyWave(work, { ...opts, base: "main", now: T(1) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+      expect(urls.length).toBeGreaterThan(0);
+      expect(urls.every((u) => u.includes("base-reports"))).toBe(true);
+      // Applied after the merge (no base), the merged config's bucket is the one in force.
+      urls.length = 0;
+      expect(await applyWave(work, { ...opts, now: T(2) })).toBe(0);
+      expect(urls.length).toBeGreaterThan(0);
+      expect(urls.every((u) => u.includes("pr-reports"))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("a wave refused for a moved plan writes the approved and current reports, and respond wave-refused names the root and attribute that moved", async () => {
     const { work, origin, bin, log } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});

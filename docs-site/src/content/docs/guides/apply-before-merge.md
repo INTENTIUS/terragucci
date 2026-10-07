@@ -57,6 +57,20 @@ With `merge: auto` the job merges after the last wave and releases the locks. Wi
 
 The `confirm` job then plans every root. Its `terragucci/apply` status on the default branch passes when nothing plans a change.
 
+## Which config applies
+
+The apply of an open change reads its settings from the default branch, and the change's own edits to `terragucci.yml` take effect after it merges.
+
+| Setting | Read from |
+|---|---|
+| Waves, `binary`, `gate`, `canary`, the apply role | the default branch's pipeline, which `init` wrote from its config |
+| `policy` and the policy directory | the default branch; when it has no `policy` key, a change that adds one is checked against its own |
+| The gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
+| `reports`, `telemetry`, `parallelism` and every other key of `terragucci.yml` | the default branch |
+| The roots, modules and code that plan and apply | the change's head |
+
+A change that edits `reports.bucket`, for example, still has its apply report copied to the default branch's bucket. If the default branch's config cannot be read, the wave fails and nothing in it applies.
+
 ## Locks
 
 Applying locks each root the change reaches. Another open change that reaches one of them is refused, and the reply names the root and its holder. The lock goes when the holder merges or closes. To release it sooner, comment `/terragucci unlock` on the holder (on GitLab, run its `unlock-mr` job).
