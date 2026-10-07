@@ -47,6 +47,18 @@ const FOREIGN_CHECKOUT = [
   "echo 'git: safe'",
 ].join(" && ");
 
+/**
+ * The image's tool as a uid with no passwd entry, with an OTLP endpoint set:
+ * Go finds no user name without cgo or $USER, and tofu init then fails. Prints
+ * "init: ok" when the tool ran.
+ */
+const UNNAMED_UID: Record<Name, string> = {
+  tofu: "tofu init -input=false",
+  terraform: "terraform init -input=false",
+  terragrunt: "tofu init -input=false",
+  choudoufu: "choudoufu version",
+};
+
 const args = process.argv.slice(2);
 const cmd = args[0];
 const platform = args.includes("--platform") ? args[args.indexOf("--platform") + 1] : undefined;
@@ -70,12 +82,13 @@ if (cmd === "tags") {
   let failed = false;
   for (const n of NAMES) {
     const plat = platform ? ["--platform", platform] : [];
-    for (const [argv, want] of [...PROBES[n], [["terragucci", "--help"], "terragucci init"], [["sh", "-c", FOREIGN_CHECKOUT], "git: safe"]] as Array<[string[], string]>) {
-      const out = spawnSync("docker", ["run", "--rm", ...plat, ref(n), ...argv], { encoding: "utf-8" });
+    for (const [argv, want] of [...PROBES[n], [["terragucci", "--help"], "terragucci init"], [["sh", "-c", FOREIGN_CHECKOUT], "git: safe"], [["sh", "-c", `mkdir -p /tmp/w && cd /tmp/w && ${UNNAMED_UID[n]} && echo 'init: ok'`], "init: ok"]] as Array<[string[], string]>) {
+      const unnamed = argv[2]?.includes("init: ok");
+      const out = spawnSync("docker", ["run", "--rm", ...plat, ...(unnamed ? ["--user", "4242:4242", "-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318"] : []), ref(n), ...argv], { encoding: "utf-8" });
       const text = `${out.stdout}${out.stderr}`;
       const ok = out.status === 0 && text.includes(want);
       if (!ok) failed = true;
-      console.log(`${ok ? "ok  " : "FAIL"} ${n}: ${argv[0] === "sh" ? "git in a checkout another user owns" : argv.join(" ")}${ok ? "" : `\n${text}`}`);
+      console.log(`${ok ? "ok  " : "FAIL"} ${n}: ${argv[0] === "sh" ? (unnamed ? "a tool as a uid with no passwd entry and OTLP set" : "git in a checkout another user owns") : argv.join(" ")}${ok ? "" : `\n${text}`}`);
     }
     const bytes = Number(execFileSync("docker", ["image", "inspect", "--format", "{{.Size}}", ref(n)], { encoding: "utf-8" }).trim());
     const mb = (b: number) => (b / 1e6).toFixed(0);

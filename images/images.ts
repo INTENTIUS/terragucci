@@ -73,6 +73,12 @@ const choudoufuFetch = (v: string): string => {
 
 const finalStage = (name: string, description: string) => ({
   from: NODE,
+  // A forge may run the job as a uid with no /etc/passwd entry. Go reads the user
+  // from the passwd file, or without cgo from $USER and $HOME, and tofu with an
+  // OTLP endpoint set fails ("Current requires cgo or $USER set") when it finds
+  // neither. These defaults hold for any uid and any entrypoint; a forge that sets
+  // its own USER or HOME wins, and /tmp is writable for every uid.
+  env: ["USER=terragucci", "HOME=/tmp"],
   run: [
     "apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*",
     // A job often runs as another user than the one who owns its checkout (on
