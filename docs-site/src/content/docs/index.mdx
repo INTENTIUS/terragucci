@@ -17,17 +17,17 @@ import Validated from '../../components/Validated.astro';
 
 ## The lifecycle around your roots
 
-terragucci carries a root through review, rollout and the watch that follows, and you write none of the pipeline. The stages are built on [chant](/terragucci/concepts/glossary/#chant), which renders each one into a workflow for your forge. [How terragucci works](/terragucci/concepts/how-it-works/) follows one change through all of them. Your Terraform code and its state stay yours.
+[chant](/terragucci/concepts/glossary/#chant) stages, rendered for your forge, run the whole lifecycle of a root, and you write no pipeline. [How terragucci works](/terragucci/concepts/how-it-works/).
 
 <Lifecycle />
 
 ## One note for two hundred plans
 
-A change to a shared module can touch hundreds of roots. Your reviewer gets one note on the pull request that groups the roots taking the same change. Every destroy and every replacement is still named.
+One pull request note groups roots taking the same change and names every destroy and replacement.
 
 <PlanNote />
 
-The note links to the full report. It opens on the destroys and the outliers with the identical groups folded away, and every root in it links to its full plan. Scripts read the same data as JSON. [The plan report](/terragucci/reference/report/) shows both.
+[The full report](/terragucci/reference/report/) opens on destroys and outliers, links every root's plan, and comes as JSON too.
 
 ## Rollouts in waves
 
@@ -57,6 +57,6 @@ Paste this into Claude Code, Codex or Cursor in your Terraform repository. [The 
 
 <Landing part="agent" />
 
-Once it runs, the [how-to guides](/terragucci/guides/add-to-github/) cover the tasks, the [reference](/terragucci/reference/config/) the details, and the [concepts](/terragucci/concepts/how-it-works/) the reasons behind them. The [glossary](/terragucci/concepts/glossary/) defines the words that come from chant.
+When it has run, the [guides](/terragucci/guides/add-to-github/) and the [reference](/terragucci/reference/config/) cover tasks and details. The [concepts](/terragucci/concepts/how-it-works/) and the [glossary](/terragucci/concepts/glossary/) explain the reasons and the words.
 
 [How terragucci compares](/terragucci/compare/) sets it beside Atlantis, HCP Terraform, Spacelift and Digger.
