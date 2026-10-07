@@ -2973,7 +2973,7 @@ REGO
   main_sha="$(push_tree "$tree" "$repo" main "check-diagnostics: a failing policy test")" || return 1
   git -C "$tree" checkout -q -b diag-policy
   policy_test 1
-  sha="$(push_tree "$tree" "$repo" diag-policy "check-diagnostics: the branch's policy test passes")" || return 1
+  sha="$(push_tree "$tree" "$repo" diag-policy "check-diagnostics: a policy test the base branch fails")" || return 1
   wait_run "$repo" "$sha" || return 1
   logs="$(check_log "$RUN_ID")"
   if [ "$RUN_STATUS" != failure ]; then
