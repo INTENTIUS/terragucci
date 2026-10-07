@@ -1,7 +1,6 @@
 ---
 title: Apply a pull request before it merges
 description: Turn on apply.when pull-request, apply an approved change from a comment or a manual job, and merge it once every wave applied.
-draft: true
 claims: [pr-apply, pr-apply-lock, pr-apply-stale]
 ---
 

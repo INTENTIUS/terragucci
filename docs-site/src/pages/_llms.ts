@@ -18,6 +18,7 @@ const ORDER = [
 	'guides/fix-a-refused-wave',
 	'guides/approvals-runbook',
 	'guides/re-plan-from-a-comment',
+	'guides/apply-before-merge',
 	'guides/roll-out-a-module-version',
 	'guides/publish-modules',
 	'guides/turn-on-drift-checks',

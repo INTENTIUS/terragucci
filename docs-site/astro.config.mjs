@@ -88,6 +88,7 @@ export default defineConfig({
 								{ label: 'Roll out a new module version', slug: 'guides/roll-out-a-module-version' },
 								{ label: 'Publish your modules', slug: 'guides/publish-modules' },
 								{ label: 'Re-plan from a comment', slug: 'guides/re-plan-from-a-comment' },
+								{ label: 'Apply a pull request before it merges', slug: 'guides/apply-before-merge' },
 							],
 						},
 						{
