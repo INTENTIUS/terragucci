@@ -55,6 +55,8 @@ oidc:
 
 Plan runs the pull request's code, so it gets the read-only identity on every cloud. The config rejects the same identity for both stages. Apply gets the write identity and runs only on the default branch, for a push or for a comment on a merged pull request, at its merge commit. Forks get no plan job, so nothing reaches their pull requests. The drift job takes the plan identities.
 
+With `reports.bucket` set and no `reports.role`, the GitHub and Forgejo plan, re-plan and drift jobs map the repository secrets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` into their env. A secret that does not exist maps to an empty value. No other job maps them. With `reports.role` set, nothing is mapped and the report is written with the role. GitLab reads the project's CI/CD variables without a mapping, so its pipeline has no such lines. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/) says which secrets to create.
+
 The job asks the forge for one token per cloud, with the audience that cloud expects:
 
 | Cloud | Token audience | What the job sets for the provider |

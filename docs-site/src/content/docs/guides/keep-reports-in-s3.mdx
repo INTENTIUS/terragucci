@@ -55,7 +55,7 @@ The plan job runs the pull request's code. A root or a module in the pull reques
 
 With `oidc` set, `reports.role` is that identity. The job assumes it through STS `AssumeRoleWithWebIdentity` with the OIDC token it already has. Give the role the trust policy your plan role has. `config check` refuses a `reports.role` that is the plan or apply role.
 
-Without `oidc`, make an IAM user (or the store's equivalent) with the same narrow policy. Pass its keys as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN` for temporary ones. Add them as secrets or protected variables in your forge, and expose them to the plan job. OpenTofu sees these keys as well, so on a job that plans with them they are the plan's identity too.
+Without `oidc`, make an IAM user (or the store's equivalent) with the same narrow policy. Pass its keys as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN` for temporary ones. Create them as repository secrets on GitHub or Forgejo, or as CI/CD variables on GitLab, under those names. With `reports.bucket` set and no `reports.role`, `terragucci init` writes the plan, re-plan and drift jobs with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` set from the secret of the same name, and empty when it does not exist. The apply and check jobs do not carry them. GitLab jobs read the project's variables as they are, so the pipeline needs no lines for them; a protected variable reaches only jobs on protected branches, so leave it unprotected for merge request pipelines. OpenTofu sees these keys as well, so on a job that plans with them they are the plan's identity too.
 
 The job uses the first of these that is set:
 
