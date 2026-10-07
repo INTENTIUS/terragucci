@@ -1,6 +1,10 @@
 ---
 title: CLI commands
 description: Every terragucci command, its flags and its exit codes.
+prompt: |
+  Read https://intentius.io/terragucci/reference/cli/.
+  Run `npx terragucci config check` and `npx terragucci init --dry-run --json` in this repo and tell me the roots, binary and forge it found, and any config problem, with the exit code of each.
+  Read only. Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 `npx terragucci <command>` runs from the root of a repo. A generated pipeline calls the same commands.
@@ -60,23 +64,29 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
     [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt] [--base <ref>]
 ```
 
-| Flag | Meaning |
-|---|---|
-| `--root` | plan only the roots matching this glob |
-| `--project` | the project, as `<host>/<path>`, for a run from a control repo |
-| `--config` | the config file, when it is not at the repo root |
-| `--out` | where `stage` writes the report; default `terragucci-report/` |
-| `--report-url` | where the note links the HTML report, when it is not beside the note; a URL that is not an `.html` file is read as the run's page, and the note says so |
-| `--layers`, `--binary`, `--canary`, `--bucket` | the roots in apply order (layers split by `;`), binary, canary wave and bucket the pipeline was written with; each overrides `terragucci.yml` |
-| `--bucket-endpoint`, `--bucket-prefix`, `--bucket-url` | the store's endpoint, the key prefix, and the address that serves the bucket to a browser; with an address, the note links the bucket's copy |
-| `--terragrunt` | run Terragrunt units: `tf-plan` and `tf-drift` use one `run --all` per wave; `tf-apply` saves each unit's plan and applies the saved plans |
-| `--base` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
-| `--forge` | `github`, `forgejo` or `gitlab`, when the environment alone cannot tell the forge; used by `tf-drift` to file its issue |
-| `--parallelism` | how many roots of a dependency layer (`tf-plan`, `tf-drift`) or of a wave (`tf-apply`) run at once; overrides `parallelism` in `terragucci.yml`; `1` runs one at a time |
+| Flag | Environment | Meaning |
+|---|---|---|
+| `--root` | | plan only the roots matching this glob |
+| `--project` | | the project, as `<host>/<path>`, for a run from a control repo |
+| `--config` | | the config file, when it is not at the repo root |
+| `--out` | | where `stage` writes the report; default `terragucci-report/` |
+| `--report-url` | | where the note links the HTML report; a URL that is not an `.html` file is read as the run's page |
+| `--layers`, `--binary`, `--canary`, `--bucket` | | roots in apply order (layers split by `;`), binary, canary wave and bucket; each overrides `terragucci.yml` |
+| `--bucket-endpoint`, `--bucket-prefix`, `--bucket-url` | | the store's endpoint, the key prefix, and the address that serves the bucket to a browser |
+| `--terragrunt` | | run Terragrunt units, one `run --all` per wave; `tf-apply` applies each unit's saved plan |
+| `--base` | `TG_BASE` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
+| `--forge` | | `github`, `forgejo` or `gitlab`, when the environment cannot tell; `tf-drift` files its issue there |
+| `--parallelism` | | roots run at once per dependency layer (`tf-plan`, `tf-drift`) or wave (`tf-apply`); overrides `parallelism` in `terragucci.yml`; `1` is serial |
 
-`stage tf-plan` and `stage tf-drift` exit 1 when a root refuses to plan, and still write the report. [The plan report](/terragucci/reference/report/) lists the files.
+`stage tf-plan` and `stage tf-drift` still write the report when a root refuses to plan. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. `--gate` is `always`, `on-destroy` (the default) or `never`. `--base` names the ref that holds the wave's policy, gate rule, signers file and other config; the job for an open pull request passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied, and other settings from the checkout. Exit 3 means the wave waits for an approval. Exit 4 means its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. It refuses `--json` with exit 2.
+
+| Flag | Environment | Meaning |
+|---|---|---|
+| `--wave` | | the wave to apply |
+| `--gate` | | `always`, `on-destroy` (the default) or `never` |
+| `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
 
 ## publish
 
@@ -84,7 +94,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 terragucci publish [--dry-run] [--config <file>]
 ```
 
-`--dry-run` lists what would be published and pushes nothing. `publish` exits 0 when it finishes. It exits 2 on a config error, on an OCI tag that exists already, and on a git tag that exists with different content. A git tag with the same content is unchanged and exits 0.
+`--dry-run` lists what would be published and pushes nothing. A git tag that exists with the same content is unchanged and exits 0.
 
 ## rollout
 
@@ -111,10 +121,10 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--platform` | `tips` | lock file platforms, comma separated |
 | `--branch` | `fmt` | the branch to format; the default branch is refused |
 | `--module`, `--version` | `publish` | the module, and the release |
-| `--module`, `--since` | `version-bump` | one module, and a ref (a tag, branch or commit) to count changes from for a module with no release tag |
+| `--module`, `--since` | `version-bump` | one module, and the ref to count changes from for a module with no release tag |
 | `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |
 | `--attributions` | `drift` | the attributions `tf-drift` wrote, as a file; default `terragucci-report/attributions.json` |
-| `--base` | `wave-refused`, `apply-failed` | read settings from the config at this ref (such as `origin/main`), not the checkout; the generated apply of an open pull request passes it. An unreadable base gives no response and a logged reason |
+| `--base` | `wave-refused`, `apply-failed` | read settings from the config at this ref (such as `origin/main`), not the checkout; an unreadable base gives no response and a logged reason |
 | `--out`, `--binary`, `--config`, `--project` | all | as above |
 
 [Responses to pipeline events](/terragucci/reference/responses/) explains each event. `respond` exits 0 once the event was handled, even when the response is `off`. The outcome is in the text, or in `results` with `--json` ([the JSON output](/terragucci/reference/cli-json/#respond)).
@@ -127,13 +137,18 @@ terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>]
 terragucci comment --agent push --change <dir> [--policy-dir <dir>]
 ```
 
-Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). A forge error or an unreadable event file exits 1. `/terragucci apply` is read by `comment-apply`.
+Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`.
 
-With `--agent on`, `replan` leaves agent comments to the agent jobs. With `off`, the default, it replies with how to turn the agent comment on.
+`--agent` picks the mode:
 
-The `agent` job runs `--agent run`. It decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`. A fork or default-branch pull request gets no agent.
+| `--agent` | Run by job | Does |
+|---|---|---|
+| `off` (the default) | `replan` | replies with how to turn the agent comment on |
+| `on` | `replan` | leaves agent comments to the agent jobs |
+| `run` | `agent` | decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`; a fork or default-branch pull request gets no agent |
+| `push` | `agent-push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them, and commits a passing patch to the pull request's head branch with the `TG_*` variables in [Environment variables](/terragucci/reference/environment/) |
 
-The `agent-push` job runs `--agent push`. It refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them; [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the rest. A passing patch is committed to the pull request's head branch, using the `TG_*` variables in [Environment variables](/terragucci/reference/environment/).
+[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths.
 
 ## comment-apply
 
@@ -144,7 +159,10 @@ terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--for
 
 Reads a `/terragucci apply [wave-<n>]` comment, checks the commenter's permission as `comment` does, and writes a decision to `--out`: the merge commit and last wave to apply, or why nothing applies. The generated `apply-comment` job runs it before any credential, and on Forgejo again once it holds the apply lock. See [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request).
 
-With `--when pull-request` (written when `apply.when` is `pull-request`), an open pull request applies from its head once the checks in [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) pass. The command takes the root locks, and `/terragucci unlock` releases them.
+| `--when` | An open pull request |
+|---|---|
+| `merge` (the default) | does not apply |
+| `pull-request` (written when `apply.when` is `pull-request`) | applies from its head once the checks in [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) pass; the command takes the root locks and `/terragucci unlock` releases them |
 
 ## pr-merge
 
@@ -152,7 +170,7 @@ With `--when pull-request` (written when `apply.when` is `pull-request`), an ope
 terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]
 ```
 
-Merges the pull request while its head is still `--sha`, then releases its root locks. The generated `pr-merge` job runs it after the last wave applied before merge, with `apply.merge: auto`. Because the sha comes from a job that ran the pull request's code, it first checks with `TG_TOKEN` that the pull request is open, its head is `--sha`, and a reviewer other than the author approved that head. It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`, and exits 1 when it does not merge.
+Merges the pull request while its head is still `--sha`, then releases its root locks. The generated `pr-merge` job runs it after the last wave applied before merge, with `apply.merge: auto`. The sha comes from a job that ran the pull request's code, so the command first checks with `TG_TOKEN` that the pull request is open, its head is `--sha`, and a reviewer other than the author approved that head. It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
 
 ## config check
 
@@ -173,7 +191,7 @@ terragucci check-root <dir> [--binary <b>]
 terragucci check-policy [--config <file>] [--base <ref>]
 ```
 
-`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. `check-policy` runs the policy's tests when `policy` is set. Both exit 1 on a failure, append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
+`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. `check-policy` runs the policy's tests when `policy` is set. Both append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 
@@ -181,7 +199,7 @@ terragucci check-policy [--config <file>] [--base <ref>]
 terragucci install tofu|terraform|terragrunt|choudoufu <version>
 ```
 
-Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds; on another OS the command exits 2.
+Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds.
 
 ## --json
 
@@ -189,7 +207,7 @@ Fetches the release, checks it against its SHA256SUMS and prints the directory i
 
 ## Exit codes
 
-The codes are the same with or without `--json`.
+The codes are the same with or without `--json`. Every command exits 2 on a usage or config error.
 
 | Code | Meaning |
 |---|---|
@@ -198,5 +216,20 @@ The codes are the same with or without `--json`.
 | 2 | a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
 | 4 | a wave's plans changed after its approval, so `stage tf-apply` applied nothing |
+
+| Command | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| `init` | done | | an existing config file needs a line added | | |
+| `reconcile` | done | a project failed | | | |
+| `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
+| `stage tf-apply` | wave applied | a root failed | `--json` | waits for an approval | plans changed after the approval |
+| `publish` | done | | OCI tag exists already; git tag exists with different content | | |
+| `rollout` | complete | stopped | | waiting | |
+| `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |
+| `comment`, `comment-apply` | decision written | forge error, unreadable event file | | | |
+| `pr-merge` | merged | not merged | | | |
+| `config check` | `ok` | | problems found | | |
+| `check-root`, `check-policy` | passed | failed | | | |
+| `install` | done | | not a Linux host | | |
 
 Code 4 comes only from `stage tf-apply`, which has no `--json`.
