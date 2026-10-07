@@ -176,7 +176,8 @@ pr-apply-lock|a second pull request that reaches a root another open pull reques
 pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
 tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request|
 provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
-summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|'
+summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
+foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -700,6 +701,8 @@ REPORT_BUCKET=terragucci-reports
 # work dir, then the patches to apply; leaves the run's report in $1/terragucci-report.
 # REPORT_STAGE names another stage (tf-drift); REPORT_EXTRA holds more `docker run` arguments and REPORT_ARGS more stage arguments.
 # REPORT_BASE=1 commits the tree before the patches and REPORT_EDIT (shell, run in the tree), and names that commit TG_BASE.
+# REPORT_OWNER=uid:gid hands the checkout to that owner before the stage, which runs as the image's user (root), and
+# leaves out the safe.directory the other runs pass, so git sees the checkout as a github.com container job does.
 REPORT_EXTRA=()
 REPORT_ARGS=()
 
@@ -753,14 +756,20 @@ report_run() {
   local extra=() kv
   for kv in ${REPORT_ENV:-}; do extra+=(-e "$kv"); done
   [ -n "$base" ] && extra+=(-e "TG_BASE=$base")
+  local -a stage=(terragucci stage)
+  if [ -n "${REPORT_OWNER:-}" ]; then
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    stage=(sh -c 'chown -R "$0" /repo && exec terragucci stage "$@"' "$REPORT_OWNER")
+  else
+    extra+=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*')
+  fi
   run_copied --rm --network terragucci -v "$work:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
     ${extra[@]+"${extra[@]}"} \
     -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
     "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
-    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     ${REPORT_EXTRA[@]+"${REPORT_EXTRA[@]}"} \
-    "$image" terragucci stage "${REPORT_STAGE:-tf-plan}" ${REPORT_ARGS[@]+"${REPORT_ARGS[@]}"} >&2 || rc=$?
+    "$image" "${stage[@]}" "${REPORT_STAGE:-tf-plan}" ${REPORT_ARGS[@]+"${REPORT_ARGS[@]}"} >&2 || rc=$?
   clean_mounted "$work" "$image"
   return $rc
 }
@@ -2769,6 +2778,33 @@ claim_summed_timings() {
   return "$rc"
 }
 
+claim_foreign_checkout() {
+  # On github.com a container job runs as root and the runner's user (uid 1001)
+  # owns the checkout; git refuses such a checkout unless it is marked safe.
+  # The same change as affected, with the checkout handed to uid 1001 and no
+  # safe.directory passed: the CI image's own git config must let affected
+  # selection read the range, so envs/dev/platform and the four dev services
+  # that read its state plan, and nothing else. The image must be built from
+  # this tree (just images), since the setting lives in it.
+  # BREAK: GIT_CONFIG_NOSYSTEM=1, so git skips the image's config, refuses the
+  # checkout, and every root plans.
+  log() { echo "[smoke foreign-checkout] $*" >&2; }
+  local work r got want rc=0
+  local -a REPORT_EXTRA=()
+  want="envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/platform,envs/dev/search"
+  [ -n "${BREAK:-}" ] && REPORT_EXTRA=(-e GIT_CONFIG_NOSYSTEM=1)
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  REPORT_OWNER=1001:1001 REPORT_BASE=1 \
+    REPORT_EDIT='printf "\n# smoke foreign-checkout: a change to this root alone\n" >> envs/dev/platform/main.tf' report_run "$work" || true
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; drop_work "$work"; return 1; }
+  got="$(jq -r '[.roots[] | select(.status == "planned") | .path] | sort | join(",")' "$r")"
+  [ "$got" = "$want" ] || { log "planned $got, not $want: git refused the checkout uid 1001 owns"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "as root on a checkout uid 1001 owns, envs/dev/platform changed: it and the four dev services that read its state planned, nothing else"
+  return $rc
+}
+
 # ── dashboards ────────────────────────────────────────────────────────────
 # The dashboards `dashboards: true` writes into a repo, provisioned in the
 # observability profile's Grafana from stack/observability/terragucci/ (the
@@ -4651,6 +4687,7 @@ pr-apply-stale       runner self! weight=200
 tg-comment-apply     runner self! weight=200
 provider-calls       weight=90
 summed-timings       weight=90
+foreign-checkout     ex after=boot weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
