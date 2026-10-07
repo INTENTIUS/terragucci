@@ -3,6 +3,7 @@
  * the release's SHA256SUMS, unpack it, and print the directory it is in. It
  * needs only Node, so it runs in terragucci's images, which carry no curl or
  * unzip. A pipeline uses it when a repo pins a version its image does not carry.
+ * It fetches Linux builds only (see assertLinux).
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -24,6 +25,13 @@ export interface Release {
 
 function arch(): string {
   return process.arch === "arm64" ? "arm64" : "amd64";
+}
+
+/** The releases `install` fetches are Linux builds, for a CI job; anywhere else it says so rather than hand over a binary that will not run. */
+export function assertLinux(platform: string = process.platform): void {
+  if (platform !== "linux") {
+    throw new ConfigError(`terragucci install fetches Linux builds for a CI job, and this machine is ${platform}; install the tool with your package manager`);
+  }
 }
 
 export function release(tool: Tool, version: string, a = arch()): Release {

@@ -1241,6 +1241,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       env: {
         TERRAGUCCI_REGISTRY_USER: "${{ secrets.TERRAGUCCI_REGISTRY_USER }}",
         TERRAGUCCI_REGISTRY_PASSWORD: "${{ secrets.TERRAGUCCI_REGISTRY_PASSWORD }}",
+        TERRAGUCCI_REGISTRY_INSECURE: "${{ secrets.TERRAGUCCI_REGISTRY_INSECURE }}",
       },
       steps: [
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),

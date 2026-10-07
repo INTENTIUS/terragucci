@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { expectedSum, installDir, release, unzipEntry } from "../src/install";
+import { assertLinux, expectedSum, installDir, release, unzipEntry } from "../src/install";
 import { tmp } from "./helpers";
 
 describe("install", () => {
@@ -45,5 +45,10 @@ describe("install", () => {
   it("installs under the runner's cache when the stack sets one", () => {
     expect(installDir("tofu", "1.12.0", { TOFU_INSTALL_DIR: "/cache/bin" })).toBe("/cache/bin/tofu-1.12.0");
     expect(installDir("tofu", "1.12.0", { RUNNER_TEMP: "/rt" })).toBe("/rt/terragucci-bin/tofu-1.12.0");
+  });
+
+  it("refuses off Linux, where the releases it fetches would not run", () => {
+    expect(() => assertLinux("darwin")).toThrow(/Linux builds.*darwin/);
+    expect(() => assertLinux("linux")).not.toThrow();
   });
 });

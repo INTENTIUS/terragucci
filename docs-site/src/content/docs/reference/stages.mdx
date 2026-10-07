@@ -16,6 +16,16 @@ Every stage takes the root directories and the binary.
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
 
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 1 | one or more projects or roots failed |
+| 2 | a usage or config error |
+| 3 | waiting on an approval, or on a rollout's pull request |
+| 4 | a wave's plans changed after its approval, so `tf-apply` applied nothing |
+
 ## Check
 
 `tf-check` runs on every push, and on a fork's pull request. `fmt -check` runs first, and a formatting difference stops the job. Each root then gets `init -backend=false` and `validate -json`, and every diagnostic prints with its file and range:
