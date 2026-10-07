@@ -2,7 +2,7 @@
 
 CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. Every pull request gets one grouped plan note, and every merge goes out in approved waves while terragucci watches for drift.
 
-It runs whichever binary you already use; [Use OpenTofu or choudoufu](https://intentius.io/terragucci/guides/use-a-binary/) lists them. Pipelines run on your forge's CI.
+It runs whichever binary you already use; [Choose Terraform, OpenTofu, Terragrunt or choudoufu](https://intentius.io/terragucci/guides/use-a-binary/) compares them. Pipelines run on your forge's CI.
 
 ```bash
 npm i -D @intentius/terragucci
