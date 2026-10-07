@@ -12,7 +12,7 @@ This path uses `example-terragrunt/`, beside the plain example. Boot it with `ju
 
 ## The layout
 
-The shop is the one from the rest of the tutorial, written as Terragrunt units. Each environment is a directory of units, an implicit stack:
+The same shop, as Terragrunt units. Each environment is a directory of units:
 
 ```
 root.hcl                 state in the shop's bucket, and the AWS provider every unit gets
@@ -22,20 +22,20 @@ live/dev/orders          a service; its dependency block reads platform's output
 modules/service          the module every service uses; it reads policy.json with file()
 ```
 
-There is no `roots:` setting. `init` sees `root.hcl`, asks Terragrunt for the units and their graph, and writes the pipeline. `just example-terragrunt up` pushes the pipeline it wrote, so the example already has it. In your own Terragrunt repo you run `npx terragucci init` at the root of the repo, and it prints:
+There is no `roots:` setting. `init` sees `root.hcl`, asks Terragrunt for the units and writes the pipeline; the example already has it. In your own repo run `npx terragucci init` at the root, and it prints:
 
 ```
 found Terragrunt (root.hcl): 15 units in 2 waves from terragrunt find, terragrunt 1.1.6 (the image)
 calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
 ```
 
-The dev units are the canary wave. On the main branch the pipeline has one apply job per wave: `apply-wave-1` for the five dev units and `apply-wave-2` for the other ten. Each job plans its units with one `terragrunt run --all` and saves the plans. Once the gate lets it, a second `run --all` applies the saved plans. The gate is the one plain roots have. With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the two gates.
+The dev units are the canary wave: `apply-wave-1` applies the five dev units and `apply-wave-2` the other ten. Each job plans with one `terragrunt run --all`, and a second `run --all` applies the saved plans once the gate lets it. With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the two gates.
 
-A platform always applies before the services that read it. When a platform's plan changes its outputs, its services sit out the first pass. They plan again once the platform has applied.
+A platform applies before the services that read it. When its plan changes its outputs, its services plan again once it has applied.
 
 ## The check stage
 
-The check job runs `terragrunt hcl fmt --check`, formats the modules with `tofu fmt`, and runs `terragrunt hcl validate --inputs`, which compares each unit's inputs with its module's variables. An `.hcl` file nobody formatted fails the job by name:
+The check job runs `terragrunt hcl fmt --check`, `tofu fmt`, and `terragrunt hcl validate --inputs`. An unformatted `.hcl` file fails the job by name:
 
 ```bash
 just example-terragrunt change unformatted
@@ -43,7 +43,7 @@ just example-terragrunt change unformatted
 
 ## A file Terragrunt does not see
 
-`modules/service` reads `policy.json` with `file()`. Terragrunt's own change detection does not follow that read, so a change to the file selects no unit. terragucci adds the units it reaches, and says why:
+`modules/service` reads `policy.json` with `file()`, which Terragrunt's change detection does not follow. terragucci adds the units it reaches, and says why:
 
 ```bash
 just example-terragrunt change module-bump
@@ -53,19 +53,19 @@ The plan covers the 12 service units and none of the platforms. Each unit in the
 
 ## A new unit and its upstream, in one change
 
-The `new-service` scenario adds two units to dev: `ledger`, which makes a bucket, and `billing`, which registers itself in that bucket through a `dependency` block. Ledger has never applied, so it has no outputs. If billing planned now, it would plan on its `mock_outputs`. An approval would then cover a made-up value.
+The `new-service` scenario adds `ledger`, which makes a bucket, and `billing`, which depends on it. Ledger has no outputs yet, so billing would plan on its `mock_outputs`.
 
 ```bash
 just example-terragrunt change new-service
 ```
 
-The plan job plans ledger. Billing is listed under the units planned later, with the read that held it back: its `ledger` dependency has no outputs yet. Merged, wave 1 applies ledger first. Billing plans in a second pass, once ledger has outputs, so its state holds the real bucket.
+The plan job plans ledger. Billing is listed under the units planned later, because its `ledger` dependency has no outputs. Merged, wave 1 applies ledger first, then plans billing.
 
-Billing's dependency block has no allow-list, so its mocks could also stand in for `apply`. The report's tips name it as `TF041`, and `live/prod/email` in the example carries the same tip on purpose.
+Billing's dependency block has no allow-list, so its mocks could stand in for `apply`. The report's tips name it `TF041`, as for `live/prod/email`.
 
 ## Credentials
 
-Most Terragrunt repos give each environment a plan role and an apply role. Map them by path, and a unit that sets its own `iam_role` keeps it:
+Map a plan role and an apply role by path; a unit that sets its own `iam_role` keeps it:
 
 ```yaml
 terragrunt:

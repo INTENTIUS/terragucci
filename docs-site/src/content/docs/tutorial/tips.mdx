@@ -14,4 +14,4 @@ Booted with `just example up`. `just example reset` gets you back to that from a
 just example change float
 ```
 
-Dev search now lets the AWS provider float to any 6.x release (`~> 6.0`). The report adds a tip, `terragucci-floating-range`. It names the root and the rule and says how to pin the version again. The note counts it. Tips are advice. They never fail a run and they never change a plan: with `tips: false` in `terragucci.yml` the report has none, and every plan digest stays the same. [Tips](/terragucci/reference/tips/) lists the rules.
+Dev search now lets the AWS provider float to any 6.x release (`~> 6.0`). The report adds the tip `terragucci-floating-range`. It names the root and how to pin the version. Tips never fail a run or change a plan or its digest; `tips: false` removes them. [Tips](/terragucci/reference/tips/) lists the rules.

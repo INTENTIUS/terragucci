@@ -9,7 +9,7 @@ claims: [boot]
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
 
-This tutorial runs terragucci against a small shop's estate on your own machine. You make the changes a team makes every week and see what terragucci does with each one. Nothing here touches a cloud account or costs anything.
+This tutorial runs terragucci against a small shop's estate on your machine. Nothing here touches a cloud account.
 
 ## Before you start
 
@@ -18,7 +18,7 @@ This tutorial runs terragucci against a small shop's estate on your own machine.
 | Docker, with 4 GB of memory free | the forge, its runner and the AWS stand-in run as containers |
 | [`just`](https://just.systems), `git` and `jq` | the commands below are `just` recipes |
 | Node.js 22 or later | `just example up` runs `npx tsx` and builds terragucci from the clone |
-| about ten minutes | the first boot pulls the Forgejo, runner and floci images and builds the pipeline's CI images |
+| about ten minutes | the first boot pulls the images and builds the CI images |
 
 Clone terragucci and move into its directory:
 
@@ -27,21 +27,21 @@ git clone https://github.com/INTENTIUS/terragucci && cd terragucci
 npm ci
 ```
 
-`npm ci` installs terragucci's dependencies in the clone, [chant](/terragucci/concepts/glossary/#chant) among them. The approval step later runs the chant it installs.
+`npm ci` installs [chant](/terragucci/concepts/glossary/#chant), which the approval step runs later.
 
 ## Boot it
 
-From the `terragucci` directory:
+In the `terragucci` directory, run:
 
 ```bash
 just example up
 ```
 
-It starts three containers. Forgejo is a forge like GitHub that runs on your laptop, its runner runs the pipelines, and floci answers the AWS API so Terraform has something to create. Then it pushes the example to Forgejo, and the pipeline applies every root. When it finishes you see this:
+It starts Forgejo (a local forge) with its runner, and floci (an AWS stand-in). It pushes the example and the pipeline applies every root:
 
 <Captured step="boot" />
 
-The last line is how long the boot took. This one ran on a machine that already had every image. A first boot pulls the three service images and builds the pipeline's CI images from the clone before it starts anything, so expect ten minutes, more on a slow connection. Later boots skip both.
+The last line is the boot time. A first boot pulls the images and builds the CI images, so expect ten minutes; later boots skip both.
 
 ## What you just made
 
@@ -58,9 +58,9 @@ envs/prod/...        the same five roots
 terragucci.yml       the whole terragucci config
 ```
 
-That is three environments of five roots each, fifteen in all. Every service root calls the same module, so a change to `modules/service` reaches twelve roots at once. That is the situation terragucci is built for. Payments in prod is the one root that differs: its jobs queue has a dead-letter queue.
+That is three environments of five roots, fifteen in all. A change to `modules/service` reaches twelve roots. Prod payments differs because its jobs queue has a dead-letter queue.
 
-The platform root in each environment holds the logs bucket every service writes to, so it has to exist first. terragucci reads that from the code and always applies the platform roots before the services.
+The platform roots hold the logs bucket, so terragucci applies them before the services.
 
 The pipeline run shows every root applied:
 
@@ -79,10 +79,10 @@ drift: "0 6 * * *"
 
 | You see | Try |
 |---|---|
-| `port is already allocated` | another program has port 3300 or 4580. Set `TERRAGUCCI_FORGEJO_PORT` or `TERRAGUCCI_FLOCI_PORT` to a free one and run `just example up` again. |
-| the pipeline waits and never starts | the runner has not registered. `docker logs terragucci-forgejo-runner` shows why; `just example up` again re-registers it. |
-| containers restart or Docker stops answering | Docker is short of memory. Give it 4 GB in Docker Desktop's settings. |
-| a link to `http://forgejo:3000/...` does not open | that is Forgejo's address on the stack's own Docker network, where the pipeline's jobs reach it, and Forgejo writes it into the links it builds, the plan note's among them. On your laptop the same page is at `http://localhost:3300/...`: change the start of the link. |
+| `port is already allocated` | port 3300 or 4580 is taken. Set `TERRAGUCCI_FORGEJO_PORT` or `TERRAGUCCI_FLOCI_PORT` to a free one and run `just example up` again. |
+| the pipeline waits and never starts | the runner has not registered. `docker logs terragucci-forgejo-runner` shows why; `just example up` re-registers it. |
+| containers restart or Docker stops answering | Docker is short of memory. Give it 4 GB. |
+| a link to `http://forgejo:3000/...` does not open | that is Forgejo's address inside the stack. On your laptop the page is at `http://localhost:3300/...`: change the start of the link. |
 
 ## Stopping and starting again
 
