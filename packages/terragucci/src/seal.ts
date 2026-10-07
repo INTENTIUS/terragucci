@@ -10,6 +10,7 @@
  * unsigned approval, one signed by a key the file does not list for the
  * approver, or one whose signed fields were edited after sealing, does not
  * count. With no signers file at base, no approval of such a gate counts.
+ * Base is the commit before the one being applied (`sealRule`).
  *
  * A seal is an ssh signature (the SSHSIG format `ssh-keygen -Y sign` makes)
  * in the `chant-gate` namespace, over the lines chant's `gateSealPayload`
@@ -163,23 +164,24 @@ export function sealRefusal(signers: Signer[] | null, signersPath: string, a: Se
     : `the seal by ${a.resolvedBy} does not verify against ${signersPath} at base`;
 }
 
-/**
- * The base revision, as chant's `resolveBase` finds it, then the remote
- * default branch a CI checkout may hold instead. The apply job runs only on
- * the default branch, so its own commit is the last resort.
- */
-const BASES = ["refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master", "refs/remotes/origin/main", "refs/remotes/origin/master", "HEAD"];
+/** The first `parent` line of a commit object; a shallow clone keeps the line even when it lacks the parent itself. */
+const firstParent = (commit: string): string | undefined => /^parent ([0-9a-f]{40,64})$/m.exec(commit.split("\n\n")[0] ?? "")?.[1];
 
-/** The gates `chant.workspace.json` at base says need a seal, and the signers file at base. */
-export function sealRule(repo: string): SealRule {
+/**
+ * The gates `chant.workspace.json` names under `identity.gates`, and the
+ * signers file, both as they stand at base.
+ *
+ * Base is the first parent of the commit being applied (HEAD): the default
+ * branch as it stood before the merge, so a merge that adds a signer, moves
+ * the signers file or drops a gate does not judge its own apply. A shallow
+ * checkout fetches that one commit. A root commit has no parent and is read
+ * as it is. `at` names another base, for a caller that applies something
+ * other than the default branch's own commit.
+ */
+export function sealRule(repo: string, at?: string): SealRule {
   const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf-8" });
-  let base: string | undefined;
-  for (const rev of BASES) {
-    const r = git(["rev-parse", "--verify", "-q", `${rev}^{commit}`]);
-    if (r.status === 0 && (base = r.stdout.trim())) break;
-  }
+  const base = at ?? baseBefore(repo, git);
   const show = (path: string): string | undefined => {
-    if (!base) return undefined;
     const r = git(["show", `${base}:${path}`]);
     return r.status === 0 ? r.stdout : undefined;
   };
@@ -196,4 +198,17 @@ export function sealRule(repo: string): SealRule {
   const signersPath = typeof named === "string" ? named : SIGNERS_PATH;
   const text = gates.size > 0 ? show(signersPath) : undefined;
   return { gates, signers: text === undefined ? null : parseSigners(text), signersPath };
+}
+
+/** The first parent of HEAD, fetched when the checkout is shallow; HEAD itself when it has none. Throws when it cannot be read. */
+function baseBefore(repo: string, git: (args: string[]) => { status: number | null; stdout: string }): string {
+  const head = git(["rev-parse", "--verify", "-q", "HEAD^{commit}"]);
+  const sha = head.stdout.trim();
+  if (head.status !== 0 || !sha) throw new ConfigError(`${repo} has no commit checked out, so the gate cannot be decided`);
+  const parent = firstParent(git(["cat-file", "commit", sha]).stdout);
+  if (!parent) return sha;
+  const has = () => git(["cat-file", "-e", `${parent}^{commit}`]).status === 0;
+  if (!has()) git(["fetch", "-q", "--depth=1", "origin", parent]);
+  if (!has()) throw new ConfigError(`cannot fetch ${parent.slice(0, 12)}, the commit before this one, so the gate cannot be decided`);
+  return parent;
 }

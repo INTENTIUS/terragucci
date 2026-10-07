@@ -258,6 +258,23 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
       expect(existsSync(log)).toBe(false);
     });
+
+    it("a wave added after init, which identity.gates does not list, counts only a sealed approval too", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const s = setup({ ...base, "chant.workspace.json": JSON.stringify({ name: "x", schema: 1, minReader: "0.102.0", members: [], identity: { gates: { "wave-2": {} } } }) });
+      const opts = { wave: 1, layers: [["a"]], binary: s.bin, gate: "always" as const, env: {} };
+      expect(await applyWave(s.work, { ...opts, now: T(1) })).toBe(3);
+      const digest = parseLedger(git(s.origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+      approve(s.origin, approval(digest, "alice"));
+      expect(await applyWave(s.work, { ...opts, now: T(3) })).toBe(3);
+      expect(existsSync(s.log)).toBe(false);
+      expect(lines.join("\n")).toContain("does not list wave-1 under identity.gates");
+      expect(lines.join("\n")).toMatch(/not signed/);
+      approve(s.origin, sealed(digest, "alice", alice));
+      expect(await applyWave(s.work, { ...opts, now: T(5) })).toBe(0);
+      expect(existsSync(s.log)).toBe(true);
+    });
   });
 
   it("gate never applies the wave's plans without reading the ledger", async () => {

@@ -15,7 +15,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 - A merge that reached the default branch, so `tf-apply` has started.
 - `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits, and the apply runs unattended. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
 - chant installed where you approve: `npm i -D @intentius/chant`.
-- Write access to the repo. What you record is a commit on its `chant/lifecycle` branch.
+- Write access to the repo. What you record is a commit on its `chant/lifecycle` branch, which `chant approve` pushes from your machine with your own git credentials. [Who can push to `chant/lifecycle`](#who-can-push-to-chantlifecycle) covers how to protect that branch.
 - An ssh key of yours listed in `.chant/allowed_signers` on the default branch. [Set up the signers file](#set-up-the-signers-file) once per repo.
 - You are a person. A gate exists so that someone reads the plans; anything that signs off for you defeats it.
 
@@ -55,7 +55,7 @@ When you leave out `--actor`, chant records `$GITHUB_ACTOR`, then `$GITLAB_USER_
 
 The command writes a record that names the wave's set digest, a hash over the plan digest of every root in it. Your sign-off covers those plans and no others, and the seal covers the record, so an edited record no longer verifies.
 
-`terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`. For those gates the job accepts a record only when its seal verifies against `.chant/allowed_signers` on the default branch. Without such a seal the wave stays put, and the job prints why.
+`terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`. Once that list names any gate, the job accepts a record for any wave only when its seal verifies against the signers file at base, so a wave added after `init` needs a sealed approval too, and the job prints that its gate is not listed. Without such a seal the wave stays put, and the job prints why.
 
 ### 4. Run the stage again
 
@@ -80,13 +80,31 @@ Once per repo, through a reviewed pull request to the default branch:
    github:bob ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ...
    ```
 
-   Ed25519 keys, including security keys (`sk-ssh-ed25519@openssh.com`), and RSA keys are checked. Lines with options or principal patterns are ignored.
+   Ed25519 keys, including security keys (`sk-ssh-ed25519@openssh.com`), and RSA keys are checked. A line with `namespaces="..."` counts for approvals only when the list includes `chant-gate` or `*`, so `namespaces="git"` keeps a key to commit signing. Lines with `valid-after`, `valid-before` or `cert-authority`, and lines whose principal is a pattern (`*`, `?` or `!`), are ignored.
+
+   To keep the file somewhere else, name its path in `.chant/trust.json`, for example `{"signers": "security/allowed_signers"}`. The job reads that file instead, and the agent comment refuses a change to it as it does to `.chant/`.
 
 2. List people only. No key that an agent or a CI job holds belongs in the file.
 
-3. Protect `chant/lifecycle` so that only the apply job's identity can push to it, and block force pushes and deletion. The job writes its pending records there. A seal stops a forged record from counting, and protection stops records from being rewritten or removed.
+3. Protect `chant/lifecycle` against force pushes and deletion, as the next section shows for each forge.
 
-The signers file and `chant.workspace.json` are read from the default branch, so a pull request cannot loosen the rule that judges it.
+### Which commit the rule is read from
+
+The job reads the signers file, `.chant/trust.json` and `chant.workspace.json` from base: the first parent of the commit it applies. For a merge commit or a squash merge, that is the default branch as it stood before the merge, so a pull request that adds a signer, moves the signers file or drops `identity.gates` does not judge its own apply. Its change governs the merges after it. With a rebase merge of several commits, the first parent is the pull request's own next-to-last commit, so merge a pull request that touches these files with a merge commit or a squash.
+
+Deleting `chant.workspace.json`, or emptying its `identity.gates`, turns sealing off for the merges that follow. That is why it goes through review like the signers file, and why the [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses a change to it.
+
+## Who can push to `chant/lifecycle`
+
+Two kinds of writer push to the branch. Each person who approves pushes a record from their own machine: `chant approve` commits it and pushes the branch with that person's git credentials, as a fast-forward. The apply job pushes its pending records with the job's token: `github.token` on GitHub and Forgejo, the `GITLAB_TOKEN` project access token on GitLab. On GitHub every job with `contents: write` holds the same kind of token, so no rule can tell the apply job apart from another workflow.
+
+The seal decides which approvals count. A record counts only when its seal verifies against the signers file at base, and that file changes only through a merge to the default branch. Anyone who can push to `chant/lifecycle` can add a line, and a line with no valid seal counts for nothing. What protection adds is a history nobody can rewrite: with force pushes and deletion blocked, a record stays where `git log` shows it.
+
+| Forge | Protect `chant/lifecycle` with |
+|---|---|
+| GitHub | a branch ruleset or protection rule that blocks force pushes and deletion. Leave pull requests and status checks off for this branch, since records are pushed to it directly. |
+| Forgejo | a protected branch rule with push enabled for everyone with write access and force push left off. Forgejo refuses to delete a protected branch. |
+| GitLab | a protected branch with "Allowed to push and merge" set to a role that your approvers and the `GITLAB_TOKEN` project access token both hold, and "Allowed to force push" off. A push cannot delete a protected branch. |
 
 ## If the wave refuses instead
 

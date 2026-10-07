@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { gateSealPayload, parseSigners, sealRefusal, verifySshSignature, type SealedApproval } from "../src/seal";
-import { tmp } from "./helpers";
+import { gateSealPayload, parseSigners, sealRefusal, sealRule, verifySshSignature, type SealedApproval } from "../src/seal";
+import { tmp, write } from "./helpers";
 import { signerLine, sshsig, sshKey } from "./sshsig";
 
 const approval: SealedApproval = { op: "tf-apply", gate: "wave-2", planDigest: "sha256:abc", resolvedBy: "github:alice", timestamp: "2026-10-04T10:00:00.000Z" };
@@ -63,6 +63,59 @@ describe("sealRefusal", () => {
   it("refuses a key whose namespaces leave out chant-gate", () => {
     const git = parseSigners(signerLine("github:alice", alice, 'namespaces="git"'));
     expect(sealRefusal(git, ".chant/allowed_signers", sealWith())).toMatch(/no key/);
+  });
+});
+
+describe("sealRule", () => {
+  const git = (dir: string, ...args: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { encoding: "utf-8" });
+  const declared = (...gates: string[]) => JSON.stringify({ name: "x", schema: 1, members: [], identity: { gates: Object.fromEntries(gates.map((g) => [g, {}])) } });
+  const bob = sshKey();
+
+  /** A repo whose second commit, the merge being applied, adds bob as a signer, moves the signers file and drops the gates. */
+  function merged(): string {
+    const repo = tmp("tg-rule-");
+    git(repo, "init", "-q", "-b", "main");
+    write(repo, { "chant.workspace.json": declared("wave-1", "wave-2"), ".chant/allowed_signers": `${signerLine("alice", alice)}\n` });
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "base");
+    write(repo, {
+      "chant.workspace.json": declared(),
+      ".chant/allowed_signers": `${signerLine("alice", alice)}\n${signerLine("bob", bob)}\n`,
+      ".chant/trust.json": JSON.stringify({ signers: "keys/signers" }),
+      "keys/signers": `${signerLine("bob", bob)}\n`,
+    });
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "the merge");
+    return repo;
+  }
+
+  it("reads the gates and the signers from the commit before the one being applied, so a merge does not judge its own apply", () => {
+    const rule = sealRule(merged());
+    expect([...rule.gates].sort()).toEqual(["wave-1", "wave-2"]);
+    expect(rule.signersPath).toBe(".chant/allowed_signers");
+    expect(rule.signers?.map((s) => s.principals)).toEqual([["alice"]]);
+  });
+
+  it("fetches that commit when the checkout is shallow", () => {
+    const origin = merged();
+    const clone = join(tmp("tg-rule-clone-"), "c");
+    execFileSync("git", ["clone", "-q", "--depth=1", `file://${origin}`, clone]);
+    expect(spawnSync("git", ["-C", clone, "rev-parse", "--verify", "-q", "HEAD^1"]).status).not.toBe(0);
+    expect(sealRule(clone).signers?.map((s) => s.principals)).toEqual([["alice"]]);
+  });
+
+  it("reads a root commit as it is, and another base when one is named", () => {
+    const repo = tmp("tg-rule-root-");
+    git(repo, "init", "-q", "-b", "main");
+    write(repo, { "chant.workspace.json": declared("wave-1"), ".chant/trust.json": JSON.stringify({ signers: "keys/signers" }), "keys/signers": `${signerLine("bob", bob)}\n` });
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "first");
+    const rule = sealRule(repo);
+    expect([...rule.gates]).toEqual(["wave-1"]);
+    expect(rule.signersPath).toBe("keys/signers");
+    expect(rule.signers?.map((s) => s.principals)).toEqual([["bob"]]);
+    const later = merged();
+    expect(sealRule(later, "HEAD").gates.size).toBe(0);
   });
 });
 

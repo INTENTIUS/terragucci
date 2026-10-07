@@ -20,9 +20,9 @@ Once per repo, in a reviewed pull request to the default branch.
    github:alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
    ```
 
-2. Run `terragucci init` if you have not. It lists each wave's gate under `identity.gates` in `chant.workspace.json`. For a gate listed there, the apply job counts an approval only when its seal verifies against the signers file on the default branch.
+2. Run `terragucci init` if you have not. It lists each wave's gate under `identity.gates` in `chant.workspace.json`. Once that list names any gate, the apply job counts an approval of any wave only when its seal verifies against the signers file at base, the commit before the one it applies. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from) explains why.
 3. Put people in the file and nobody else. A key that a CI job or an agent holds never goes in it.
-4. Add a person by pull request. Remove one the same way: from the merge, their approvals stop counting for the waves that run after it.
+4. Add a person by pull request. Remove one the same way. The rule is read from the commit before the one being applied, so the change first governs the apply of the next merge.
 
 ## Approve a wave
 
@@ -51,7 +51,7 @@ A line that is past its `expires` time is a wave nobody has run for 48 hours. Th
 
 ## Revoke an approval before its wave runs
 
-An approval is a line in the ledger, so revoking it is a commit that removes the line. You need the right to push to `chant/lifecycle`.
+An approval is a line in the ledger, so revoking it is a commit that removes the line. You need the right to push to `chant/lifecycle`, which everyone who approves has. The commit is a normal push on top of the branch, so it works with force pushes blocked. [Who can push to `chant/lifecycle`](/terragucci/guides/approve-a-wave/#who-can-push-to-chantlifecycle) lists the protection for each forge.
 
 ```bash
 git clone --branch chant/lifecycle --single-branch <your repo url> lifecycle
@@ -63,7 +63,7 @@ git commit -am "revoke the approval of wave-2" && git push origin chant/lifecycl
 The wave waits again, and the next run prints the approval command. The old line stays in the branch's history. Two other things also stop an approval counting:
 
 - A change to any plan in the wave. The approval names the set digest, so a moved plan is refused, not applied. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) covers it.
-- Removing the approver from `.chant/allowed_signers` on the default branch, for a gate that `identity.gates` lists. Every approval that person sealed stops counting for waves that run afterwards.
+- Removing the approver from `.chant/allowed_signers` on the default branch. Every approval that person sealed stops counting for the applies of merges made after that removal.
 
 ## Recover from a refusal
 
