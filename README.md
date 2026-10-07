@@ -2,14 +2,14 @@
 
 The whole Terraform and Terragrunt lifecycle, handled. Every pull request gets one grouped plan note, and every merge goes out in approved waves while terragucci watches for drift.
 
-It runs whichever binary you already use; [Use OpenTofu, choudoufu or CDK Terrain](https://intentius.io/terragucci/guides/use-a-binary/) lists them. Pipelines run on your forge's CI, or a fountain steward takes apply and drift for durable runs.
+It runs whichever binary you already use; [Use OpenTofu, choudoufu or CDK Terrain](https://intentius.io/terragucci/guides/use-a-binary/) lists them. Pipelines run on your forge's CI.
 
 ```bash
 npm i -D @intentius/terragucci
 npx terragucci init
 ```
 
-The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Build progress lives on its [status page](https://intentius.io/terragucci/status/).
+The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Its [validation page](https://intentius.io/terragucci/reference/validation/) lists every check the generated pipelines pass.
 
 ## For agents
 
@@ -19,7 +19,6 @@ Setting terragucci up with a coding agent? Paste this prompt into it.
 Set up terragucci in this repository.
 Read https://intentius.io/terragucci/llms.txt first, then
 https://intentius.io/terragucci/getting-started/agents/ and follow it.
-Check https://intentius.io/terragucci/status/ before using any feature.
 Do not apply anything. Open a pull request with the result.
 ```
 

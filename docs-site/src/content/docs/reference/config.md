@@ -61,7 +61,7 @@ projects:
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
-| `runtime` | `forge` | `fountain` runs apply and drift on a steward; see [Where it runs](/terragucci/reference/runtimes/) |
+| `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | a bucket to copy reports to (`bucket`, `endpoint`, `prefix`), and `url`, the address that serves the bucket to a browser, so the note, the index and the dashboards link the bucket's copy; see [The plan report](/terragucci/reference/report/) |
 | `version` | the one every root pins exactly, else terragucci's default for the binary | the binary's version |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
@@ -75,8 +75,8 @@ projects:
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
-| `respond` | a response per event, none of them an agent | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
-| `agent` | none | `via` (`forge` or `fountain`), `token_env` and an optional read-only `role`: where an event set to `agent` runs. `comment` turns on the `/terragucci agent` pull request comment; see [The agent comment](#the-agent-comment) |
+| `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
+| `agent` | none | `via` (`forge`), `token_env` and an optional read-only `role`: the agent integration. `comment` turns on the `/terragucci agent` pull request comment; see [The agent comment](#the-agent-comment) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or a map of `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait` and `schedule`: `init` and `reconcile` write the dashboards and alert rules next to the pipeline; see [Dashboards and alerts](/terragucci/reference/observability/#dashboards-and-alerts) |

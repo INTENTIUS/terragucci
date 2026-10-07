@@ -19,7 +19,8 @@ import { parseYAML } from "@intentius/chant/yaml";
 export const BINARIES = ["terraform", "tofu", "choudoufu", "cdktn"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
 export const GATES = ["always", "on-destroy", "never"] as const;
-export const RUNTIMES = ["forge", "fountain"] as const;
+/** Every stage runs on the forge's CI. */
+export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
 export const POLICY_ENGINES = ["conftest", "opa"] as const;
 export const POLICY_INPUTS = ["plan", "hcp"] as const;
@@ -92,27 +93,24 @@ export interface TerragruntSettings {
 
 /**
  * Pipeline events and the responses each takes. The first mode is the
- * default and needs no model; `agent` adds an agent's comment or proposal on
- * top of the deterministic response, and is never the default. `drift:
- * attribute` also names who changed each drifted attribute (a known-writes
+ * default and needs no model. `drift: attribute` also names who changed each drifted attribute (a known-writes
  * table, then the audit log, then a typed decision when `decide:` is set).
  */
 export const RESPONSES = {
-  plan: ["summary", "agent"],
+  plan: ["summary"],
   "wave-refused": ["diff", "off"],
-  "apply-failed": ["triage", "agent", "off"],
-  drift: ["pull-request", "attribute", "agent", "off"],
+  "apply-failed": ["triage", "off"],
+  drift: ["pull-request", "attribute", "off"],
   tips: ["pull-request", "off"],
   fmt: ["commit", "off"],
-  publish: ["notes", "agent", "off"],
+  publish: ["notes", "off"],
   rollout: ["next-wave", "off"],
-  question: ["off", "agent"],
   "version-bump": ["off", "suggest"],
   /** terragucci#30: a typed decision flags a pull request whose description leaves out what its plan destroys or replaces. Needs `decide:`. */
   description: ["off", "check"],
 } as const;
 export type RespondEvent = keyof typeof RESPONSES;
-export const AGENT_VIA = ["forge", "fountain"] as const;
+export const AGENT_VIA = ["forge"] as const;
 
 /** The services `decide:` can name; each speaks the Jev request and response shape. */
 export const DECIDE_BACKENDS = ["laya", "von", "decider", "jev"] as const;
@@ -231,8 +229,8 @@ export interface ProjectSettings {
   /** The response to each pipeline event; see RESPONSES. */
   respond?: Partial<Record<RespondEvent, string>>;
   /**
-   * Where an agent response runs, for any event set to `agent`. Its token can
-   * comment and open pull requests; its role, when named, is read-only.
+   * The agent integration behind `agent.comment`. Its token can comment and
+   * push to a pull request's branch; its role, when named, is read-only.
    */
   agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string; comment?: boolean | AgentCommentSettings };
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -333,7 +331,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
-  oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
+  if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
+  else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
   for (const k of ["version", "url", "token_env"] as const) {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
@@ -384,7 +383,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     else {
       for (const [event, mode] of Object.entries(s.respond)) {
         const modes = (RESPONSES as Record<string, readonly string[]>)[event];
-        if (!modes) problems.push(`${where}.respond.${event} is not an event (events: ${Object.keys(RESPONSES).join(", ")})`);
+        if (event === "question") problems.push(`${where}.respond.question is not supported; remove it`);
+        else if (!modes) problems.push(`${where}.respond.${event} is not an event (events: ${Object.keys(RESPONSES).join(", ")})`);
+        else if (mode === "agent") problems.push(`${where}.respond.${event}: agent is not supported; remove it, and ${event} takes its default response, ${modes[0]}`);
         else oneOf(mode, modes, `${where}.respond.${event}`, problems);
       }
     }
@@ -394,7 +395,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
       for (const k of Object.keys(a)) if (!["via", "token_env", "role", "comment"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, role, comment)`);
-      if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge or fountain`);
+      if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
+      else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
       if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
       if (a.role !== undefined && typeof a.role !== "string") problems.push(`${where}.agent.role must name a read-only role`);
@@ -562,10 +564,6 @@ function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
   }
 }
 
-/**
- * An `agent` response needs somewhere to run, and the agent never holds the
- * apply role: at most a forge token and read-only cloud credentials.
- */
 /** The GCP Workload Identity Federation provider's resource name. */
 const WIF_PROVIDER = /^projects\/[0-9]+\/locations\/global\/workloadIdentityPools\/[^/\s]+\/providers\/[^/\s]+$/;
 
@@ -615,14 +613,9 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
   if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client", ["audience"]);
 }
 
+/** The agent never holds the apply role: at most a forge token and read-only cloud credentials. */
 function checkAgent(s: Record<string, unknown>, where: string, problems: string[]): void {
-  const respond = isObject(s.respond) ? s.respond : {};
   const agent = isObject(s.agent) ? s.agent : undefined;
-  for (const [event, mode] of Object.entries(respond)) {
-    if (mode === "agent" && !agent) {
-      problems.push(`${where}.respond.${event} is agent, but no agent integration is configured; add agent with via (forge or fountain) and token_env (the variable holding the agent's forge token)`);
-    }
-  }
   const oidc = isObject(s.oidc) ? s.oidc : {};
   if (agent?.role !== undefined && agent.role === oidc.apply_role) {
     problems.push(`${where}.agent.role is the apply role; an agent gets read-only credentials at most, so name the plan role or a read-only role of its own`);

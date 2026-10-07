@@ -37,20 +37,24 @@ export default defineConfig({
 		'/getting-started/overview': '/terragucci/getting-started/',
 		'/getting-started/binaries': '/terragucci/guides/use-a-binary/',
 		'/getting-started/config': '/terragucci/reference/config/',
+		'/status': '/terragucci/reference/validation/',
+		'/guides/move-apply-to-fountain': '/terragucci/reference/runtimes/',
+		'/guides/agent-explain-a-plan': '/terragucci/reference/responses/',
+		'/guides/agent-drift-fixes': '/terragucci/guides/turn-on-drift-checks/',
 	},
 	integrations: [
 		starlight({
 			title: 'terragucci',
 			expressiveCode: { plugins: [newlinesBetweenLines] },
 			customCss: ['./src/styles/terragucci.css'],
-			description: 'A lifecycle kit for Terraform, OpenTofu and Terragrunt: plan, approve, apply and watch for drift, on your CI or a fountain steward.',
+			description: 'A lifecycle kit for Terraform, OpenTofu and Terragrunt: plan, approve, apply and watch for drift, on your forge\'s CI.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],
 			editLink: {
 				baseUrl: 'https://github.com/INTENTIUS/terragucci/edit/main/docs-site/',
 			},
-			// The sections follow what the reader is doing. The status page is the
+			// The sections follow what the reader is doing. The validation page is the
 			// one people link to, so it has a fixed place.
 			sidebar: [
 				{ label: 'Getting started', items: [{ label: 'Get your first plan note', slug: 'getting-started' }] },
@@ -93,16 +97,13 @@ export default defineConfig({
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
 								{ label: 'Use OpenTofu, choudoufu or CDK Terrain', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
-								{ label: 'Move apply onto a fountain steward', slug: 'guides/move-apply-to-fountain' },
 							],
 						},
 						{
 							label: 'With a coding agent',
 							items: [
 								{ label: 'Set up with a coding agent', slug: 'getting-started/agents' },
-								{ label: 'Have an agent explain a plan', slug: 'guides/agent-explain-a-plan' },
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
-								{ label: 'Have an agent propose drift fixes', slug: 'guides/agent-drift-fixes' },
 								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
 							],
 						},
@@ -124,7 +125,6 @@ export default defineConfig({
 						{ label: 'Responses to pipeline events', slug: 'reference/responses' },
 						{ label: 'Traces and metrics', slug: 'reference/observability' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
-						{ label: 'Validation', slug: 'reference/validation' },
 					],
 				},
 				{
@@ -135,7 +135,7 @@ export default defineConfig({
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
 					],
 				},
-				{ label: 'Status', slug: 'status' },
+				{ label: 'Validation', slug: 'reference/validation' },
 			],
 		}),
 	],

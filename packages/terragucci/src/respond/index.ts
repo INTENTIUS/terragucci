@@ -1,10 +1,7 @@
 /**
  * `terragucci respond <event>`: the response to a pipeline event. Each event
- * has a deterministic response, the default, which needs no model. A project
- * sets `respond.<event>: agent` to add an agent on top: the deterministic
- * response still runs, and its result is written as the agent's input, with
- * what the agent may do. The agent comments or proposes; it never approves,
- * applies, merges or resolves a gate, and nothing here gives it the means to.
+ * has a deterministic response, the default, which needs no model. Nothing
+ * here approves, merges or resolves a gate.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -30,10 +27,6 @@ import type { DecideFetch } from "../decide";
 import { describeTriage, triage } from "./triage";
 
 export const EVENTS = Object.keys(RESPONSES) as RespondEvent[];
-
-/** What an agent response may do, and what it never does, written into its input. */
-export const AGENT_MAY = ["comment", "open a pull request for a person to review"];
-export const AGENT_NEVER = ["approve", "apply", "resolve or re-approve a gate", "merge", "push to the default branch", "state rm, import or force-unlock"];
 
 export interface RespondOptions {
   config?: string;
@@ -62,7 +55,6 @@ export interface RespondOptions {
   version?: string;
   /** version-bump: the ref to count changes from when a module has no release tag. */
   since?: string;
-  question?: string;
   /** version-bump and description: the decision service's HTTP client, for tests. */
   decideFetch?: DecideFetch;
   /** description: the pull request's title and description; by default read from the job's event. */
@@ -88,8 +80,6 @@ export interface RespondResult {
   text: string;
   data?: unknown;
   proposals?: Proposed[];
-  /** The agent's input file, when the response is `agent`. */
-  agent_input?: string;
 }
 
 function readReport(path: string): Report {
@@ -157,7 +147,6 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   if (response === "off") return { event: ev, response, skipped: `respond.${ev} is off`, text: `respond.${ev} is off` };
   const mode = o.mode ?? "dry-run";
   const out = resolve(repo, o.out ?? "terragucci-respond");
-  const agent = response === "agent";
   const roots = () => findRoots(repo, settings.roots).filter((r) => !o.root || globMatch(o.root, r));
   const binary = () => o.binary ?? settings.binary ?? detectBinary(repo, roots()).value;
   const need = (v: unknown, flag: string) => {
@@ -176,7 +165,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   } else if (ev === "apply-failed") {
     need(o.log !== undefined, "--log, the failed apply's output");
     const t = triage(o.log!);
-    r = { text: describeTriage(t, agent), data: t };
+    r = { text: describeTriage(t), data: t };
   } else if (ev === "drift") {
     const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions, known: knownAttributions(repo, o.attributions) } : undefined;
     const d = await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
@@ -185,7 +174,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
       ...d.notes.map((n) => `- ${n}`),
       ...d.codified.map((c) => `- \`${c.file}\`: \`${c.address}\` \`${c.path}\` ${c.from} -> ${c.to}`),
       ...d.imports.map((i) => `- import ${i}`),
-      ...d.left.map((l) => `- not codified${agent ? " (an agent may propose it)" : ""}: \`${l.address}\`${l.path ? ` \`${l.path}\`` : ""}: ${l.reason}`),
+      ...d.left.map((l) => `- not codified: \`${l.address}\`${l.path ? ` \`${l.path}\`` : ""}: ${l.reason}`),
     ].join("\n");
     const proposed = await propose(repo, settings, d.files.size ? [{ branch: "terragucci/drift", title: "Codify drift", body: `A refresh-only plan found drift. Merging this accepts the change made outside Terraform.\n\n${body}`, files: d.files }] : [], { mode, env, fetch: o.fetch });
     r = { text: [body || "no drift", ...proposed.map(said)].join("\n"), data: { codified: d.codified, imports: d.imports, left: d.left, ...(attributing ? { attributions: d.attributions, notes: d.notes } : {}) }, proposals: proposed };
@@ -227,19 +216,8 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
       }
     }
     r = { text: c.text + copied, data: c.record };
-  } else if (ev === "question") {
-    need(o.question, "--question");
-    r = { text: "an agent answers from the report and the code", data: { question: o.question } };
   } else throw new ConfigError("respond rollout runs terragucci rollout; pass its arguments");
 
-  if (agent) {
-    mkdirSync(out, { recursive: true });
-    const file = join(out, `${ev}.json`);
-    const a = settings.agent!;
-    const input = { schema: "terragucci.respond/v1", event: ev, deterministic: { text: r.text, data: r.data ?? null, proposals: r.proposals ?? [] }, agent: { ...a, may: AGENT_MAY, never: AGENT_NEVER } };
-    writeFileSync(file, JSON.stringify(input, null, 2) + "\n");
-    r.agent_input = file;
-  }
   return { event: ev, response, ...r };
 }
 

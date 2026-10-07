@@ -13,7 +13,6 @@ Paste this into Claude Code, Codex, Cursor or any agent working in your Terrafor
 Set up terragucci in this repository.
 Read https://intentius.io/terragucci/llms.txt first, then
 https://intentius.io/terragucci/getting-started/agents/ and follow it.
-Check https://intentius.io/terragucci/status/ before using any feature.
 Do not apply anything. Open a pull request with the result.
 ```
 
@@ -23,9 +22,8 @@ Do not apply anything. Open a pull request with the result.
 |---|---|
 | [`llms.txt`](https://intentius.io/terragucci/llms.txt) | every page, with a one-line description |
 | [`llms-full.txt`](https://intentius.io/terragucci/llms-full.txt) | the text of every page in one file |
-| [Status](/terragucci/status/) | what is built today |
 
-The site describes the finished product, and the status page is the only record of what exists now. An agent checks it before running a command and tells you when a step needs something not built yet.
+Every page is true as written. A key that `terragucci config check` refuses is not part of terragucci, whatever an older copy of a page said.
 
 ## Steps for the agent
 
@@ -41,10 +39,9 @@ The site describes the finished product, and the status page is the only record 
 - Run terragucci from the shell with `--json` and parse the envelope ([JSON output](/terragucci/reference/cli-json/)). Each root carries the reason it was found, and the binary, version and forge carry theirs. Do not add an MCP server for it.
 - Run `npx terragucci config check --json` after writing a config; it lists every problem at once.
 - Approvals belong to people. An agent may print the `chant approve` command for a waiting wave but never runs it. Over MCP or ACP, chant refuses to resolve a wave's gate at all, whichever channel reached it.
-- Responses to pipeline events need no model. [Responses to pipeline events](/terragucci/reference/responses/) shows how a project opts in, one event at a time.
+- Responses to pipeline events need no model. [Responses to pipeline events](/terragucci/reference/responses/) lists each event's choices.
 - Credentials stay in the forge's secrets. The config names environment variables (`token_env`) and never holds a value.
-- Ask before choosing a runtime other than the forge. A fountain steward is opt-in.
 
 ## Next
 
-To have an agent work after setup, read the recipes: [explain a plan](/terragucci/guides/agent-explain-a-plan/), [summarize a refused wave](/terragucci/guides/agent-refused-wave/) and [propose drift fixes](/terragucci/guides/agent-drift-fixes/). Each uses a read-only token.
+To have an agent work after setup, read [summarize a refused wave](/terragucci/guides/agent-refused-wave/), which uses a comment-only token, and [change a pull request](/terragucci/guides/agent-change-a-pull-request/).

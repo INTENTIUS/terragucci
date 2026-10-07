@@ -2,16 +2,20 @@
 // The smoke claims, as last recorded by `just smoke-record`.
 import record from '../data/smoke.json';
 
-const claims = record.claims as Array<{
+// `steward` checks the validation stack's own fountain profile and backs no
+// page, so it stays off the table.
+const STACK_ONLY = new Set(['steward']);
+
+const claims = (record.claims as Array<{
 	claim: string;
 	says: string;
 	needs: string | null;
 	verdict: string;
 	break: string | null;
-}>;
+}>).filter((c) => !STACK_ONLY.has(c.claim));
 
 const result = (c: (typeof claims)[number]) => {
-	if (c.verdict === 'pending') return 'not built yet';
+	if (c.verdict === 'pending') return 'not recorded';
 	if (c.verdict === 'pass' && c.break === 'caught') return 'passes, and fails when broken';
 	if (c.verdict === 'pass') return 'passes';
 	return 'fails';

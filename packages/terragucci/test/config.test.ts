@@ -187,7 +187,7 @@ describe("stack profiles", async () => {
   const { profilesFor } = await import("../src/cli");
   it.each([
     [{ projects: { "github.com/a/b": {}, "gitlab.example.com/c/d": {} } }, ["aws", "github", "gitlab"]],
-    [{ projects: { "codeberg.org/a/b": { runtime: "fountain" } } }, ["aws", "forgejo", "fountain"]],
+    [{ projects: { "codeberg.org/a/b": { runtime: "forge" } } }, ["aws", "forgejo"]],
     [{ defaults: { forge: "forgejo" }, projects: { "localhost:3300/a/b": {} } }, ["aws", "forgejo"]],
     [{ forge: "gitlab" }, ["aws", "gitlab"]],
     [{}, ["aws"]],

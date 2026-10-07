@@ -97,7 +97,7 @@ terragucci rollout --provider <address> <version> [--from <version>] [--mode dry
 ## respond
 
 ```bash
-terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump|description [--mode dry-run|apply] [flags]
+terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
 ```
 
 | Flag | Used by | Meaning |
@@ -111,7 +111,6 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 | `--branch` | `fmt` | the branch to format; the default branch is refused |
 | `--module`, `--version` | `publish` | the module, and the release |
 | `--module`, `--since` | `version-bump` | one module, and a ref (a tag, branch or commit) to count changes from for a module with no release tag |
-| `--question` | `question` | the reviewer's question |
 | `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |
 | `--attributions` | `drift` | the attributions `tf-drift` wrote, as a file; default `terragucci-report/attributions.json` |
 | `--out`, `--binary`, `--config`, `--project` | all | as above |

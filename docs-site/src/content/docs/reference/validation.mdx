@@ -3,6 +3,7 @@ title: Validation
 description: Every pipeline terragucci generates runs on a real forge and runner before it ships.
 ---
 
+import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
 A pipeline that only parses has not been tested. Before a release, every pipeline terragucci generates runs on a real forge, with a real runner, against an AWS emulator. Each feature has a check that must pass, and each check is also broken on purpose to show it fails when it should.
@@ -12,9 +13,8 @@ A pipeline that only parses has not been tested. Before a release, every pipelin
 | Forgejo | a Forgejo server and its runner |
 | GitHub | the generated workflow, run by `act` against a mock GitHub API |
 | GitLab | GitLab CE and its runner |
-| fountain | a fountain steward, its database and a sandbox runner |
 
-Forgejo, GitHub and the AWS emulator are checked on every pull request to terragucci. GitLab is checked every night, because its server is heavy. fountain is opt-in and is not part of these checks yet.
+Forgejo, GitHub and the AWS emulator are checked on every pull request to terragucci. GitLab is checked every night, because its server is heavy.
 
 ## The claims
 
@@ -22,7 +22,13 @@ Each claim runs once as it should, and once with the property it checks broken o
 
 <ValidationClaims />
 
-The same setup runs on your laptop. [The tutorial](/terragucci/tutorial/) boots it with one command and walks through each feature, and [Status](/terragucci/status/) shows which checks pass today.
+## The example's checks
+
+Each feature has one check, run against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo. A check that passes has also been broken on purpose, and it failed then.
+
+<SmokeClaims />
+
+The same setup runs on your laptop. [The tutorial](/terragucci/tutorial/) boots it with one command and walks through each feature.
 
 ## Running it yourself
 

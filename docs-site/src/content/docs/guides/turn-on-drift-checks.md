@@ -65,5 +65,4 @@ You can apply the code as it is, which puts the object back. Or you can accept t
 
 ## Next
 
-- [Have an agent propose drift fixes](/terragucci/guides/agent-drift-fixes/)
 - [Stages](/terragucci/reference/stages/) lists what `tf-drift` reads and writes.

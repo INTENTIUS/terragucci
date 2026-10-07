@@ -10,7 +10,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 
 ## Before you start
 
-- A Terragrunt repo with a `root.hcl`, `terragrunt.hcl` or `terragrunt.stack.hcl`.
+- A Terragrunt repo with a `root.hcl` or `terragrunt.hcl`.
 - Terragrunt 1.1 or later.
 - terragucci installed: [Get your first plan note](/terragucci/getting-started/) covers it.
 
@@ -23,6 +23,8 @@ npx terragucci init --dry-run
 ```
 
 terragucci notices Terragrunt on its own. Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. Implicit stacks, directories of units, appear as labels in the report.
+
+Explicit stacks are not supported. `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
 
 ### 2. Name the tool Terragrunt calls
 

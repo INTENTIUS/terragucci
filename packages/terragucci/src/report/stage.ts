@@ -374,8 +374,8 @@ export function emptyStateText(text: string): boolean | undefined {
 
 const tail = (s: string, n = 40): string => s.trim().split("\n").slice(-n).join("\n");
 
-/** Why a unit is in the plan. Affected selection (Terragrunt's git range and chant's supplements) replaces this. */
-const SELECTED_ALL = "every unit: affected selection is not built yet";
+/** Why a unit is in the plan when there is no base to select against. With a base, affected selection (Terragrunt's git range and chant's supplements) gives each unit its own reason. */
+const SELECTED_ALL = "every unit: no base branch to compare against";
 
 /**
  * Plan a Terragrunt repo's units, one `terragrunt run --all` per wave, and

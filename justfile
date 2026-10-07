@@ -151,7 +151,7 @@ stack-up profile="forgejo":
     fi
     stack/bootstrap.sh {{profile}}
 
-[doc("Bring up the stack profiles a terragucci config needs: floci, its forges, and fountain only if a project runs there.")]
+[doc("Bring up the stack profiles a terragucci config needs: floci and its forges.")]
 stack-for config:
     #!/usr/bin/env bash
     set -euo pipefail

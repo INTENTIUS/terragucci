@@ -69,6 +69,20 @@ const DOCS = "docs-site/src/content/docs/";
   }
 }
 
+// Every page is true as written: no roadmap words, and no mention of Temporal. Held over the site's
+// source, the READMEs and the package's source, whose messages reach a user's terminal.
+{
+  const ROADMAP = /being built|not built|in development|planned after|roadmap|coming soon|temporal/i;
+  const walk = (path) => (statSync(path).isDirectory() ? readdirSync(path).sort().flatMap((e) => walk(join(path, e))) : [path]);
+  for (const file of ["docs-site/src", "README.md", "packages/terragucci/src", "packages/terragucci/README.md"].flatMap(walk)) {
+    if (!/\.(mdx?|astro|ts|mjs|js|json|css)$/.test(file)) continue;
+    read(file).split("\n").forEach((line, i) => {
+      const m = ROADMAP.exec(line);
+      if (m) problems.push(`${file}:${i + 1}: "${m[0]}"; say what is true now, and never name Temporal`);
+    });
+  }
+}
+
 for (const p of problems) console.log(`FAIL  ${p}`);
 
 const files = roots.flatMap(collect);

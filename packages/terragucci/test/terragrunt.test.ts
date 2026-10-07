@@ -328,7 +328,7 @@ describe("init in a Terragrunt repo", () => {
   it("explicit stacks and roots are named in the notes", async () => {
     const repo = liveRepo({ "live/st/terragrunt.stack.hcl": "", "terragucci.yml": 'roots: ["live/*"]\n' });
     const notes = (await init(repo, { binary: "tofu", dryRun: true, terragrunt: "/nonexistent/terragrunt" })).notes.join("\n");
-    expect(notes).toMatch(/explicit stacks are not run yet, so live\/st is left out/);
+    expect(notes).toMatch(/explicit stacks \(terragrunt.stack.hcl\) are not supported, so live\/st is left out/);
     expect(notes).toMatch(/roots is ignored for a Terragrunt repo/);
   });
 
@@ -506,7 +506,7 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "would read mock_outputs", previewed: false }]);
     expect(r.report.waves.map((w) => w.roots)).toEqual([["live/dev/vpc"]]);
     expect(r.failed).toBe(false);
-    expect(readFileSync(join(repo, "out/note.md"), "utf-8")).toMatch(/Planned after what they wait for applies \(1\)/);
+    expect(readFileSync(join(repo, "out/note.md"), "utf-8")).toMatch(/Planned once what they wait for applies \(1\)/);
     expect(readFileSync(join(repo, "out/report.html"), "utf-8")).toContain('id="deferred"');
   });
 
