@@ -491,7 +491,7 @@ export function applyConcurrency(forge: ForgeName): Record<string, unknown> {
  * one that is refused (4) ends the step at the stage, before its status, its
  * note, its response or the comment's reply. On GitLab these scripts run in
  * their own `bash` from a heredoc, which starts without `-e`; the line says
- * the same there.
+ * the same there, and the heredoc's `|| exit $?` hands its code to the job.
  */
 export const READS_EXIT = "set +e -uo pipefail";
 
@@ -558,7 +558,8 @@ export function applyScript(
     triage ? "rc=${PIPESTATUS[0]}" : "rc=$?",
     'case "$rc" in',
     "  0) ;;",
-    '  3) tg status terragucci/apply pending "$(cat "$outcome")"; exit 3 ;;',
+    // GitLab reuses a running status and refuses to move it to pending or running again (400), and a status left running keeps the pipeline running, so a waiting wave fails it there; a retry posts a new one.
+    `  3) tg status terragucci/apply ${forge === "gitlab" ? "failure" : "pending"} "$(cat "$outcome")"; exit 3 ;;`,
     // A wave waiting at a gate (3) is not a failure. A refused wave (4) and a failed apply are, and each gets its response before the job fails.
     `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${input.wave} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}exit 4 ;;`,
     `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}exit 1 ;;`,
@@ -1082,7 +1083,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
     const jobImage = new Image({ name: image });
     const script = (main: string): string[] => (installStep ? [installStep, main] : [main]);
-    const bash = (tag: string, body: string): string => `bash <<'${tag}'\n${body}\n${tag}`;
+    // The runner evals the job's script in a pipeline under errexit, where a command that fails ends the job with 1
+    // whatever its code; `exit` keeps the code, so a waiting wave ends 3 and a refused one 4, as on the other forges.
+    const bash = (tag: string, body: string): string => `bash <<'${tag}' || exit $?\n${body}\n${tag}`;
     const gitlabEnv = {
       ...jobEnv,
       ...headersEnv,

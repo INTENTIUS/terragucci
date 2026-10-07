@@ -31,13 +31,19 @@
 #              with the resource named.
 #   cdf-apply  apply, on the same estate: the bucket exists afterwards and
 #              carries the estate marker choudoufu writes.
+#   gate-wait  gitlab only: with the gate at always, a push to main waits at
+#              wave 1. The pipeline ends (failed), the wave's job ends with
+#              exit code 3 and prints chant approve, no status call is
+#              refused, terragucci/apply is failed with the wave's command,
+#              and the bucket does not exist.
 #
 # The images are the ones the generated pipeline pins by digest; the runner
 # (gitlab-runner, or act on the host) pulls each the first time.
 #
 # BREAK=1 breaks the property each claim is about: a check claim puts its bad
 # file in the clean push; an apply claim drops the apply job so the run stays
-# green; reconcile runs a dry run, which opens nothing.
+# green; reconcile runs a dry run, which opens nothing; gate-wait drops the
+# `|| exit $?` after each job's heredoc, so the waiting job ends with 1.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,7 +59,8 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait)" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
 
 case "$FORGE:$CLAIM" in forgejo:check|forgejo:apply|forgejo:reconcile) echo "forgejo's $CLAIM is validate.sh's own; this script runs its tg-* and cdf-* claims" >&2; exit 2 ;; esac
 
@@ -192,6 +199,37 @@ run_apply() { # repo prepare-fn bucket...
   done
 }
 
+# With the gate at always, wave 1 waits. GITLAB_TOKEN lets the job post its
+# statuses and push the pending record.
+run_gate_wait() {
+  local repo=validate-gate sha f st code
+  forge_reset_repo "$repo"
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
+  prepare "$WORK/main"
+  f="$WORK/main/$PIPELINE_FILE"
+  sed 's/--gate on-destroy/--gate always/' "$f" > "$f.new" && mv "$f.new" "$f"
+  grep -q -- '--gate always' "$f" || fail "could not set the gate to always in $PIPELINE_FILE"
+  if [ -n "$BREAK" ]; then
+    sed 's/ || exit \$?$//' "$f" > "$f.new" && mv "$f.new" "$f"
+    ! grep -q '|| exit \$?$' "$f" || fail "could not drop the heredocs' exit from $PIPELINE_FILE"
+  fi
+  sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
+  log "pushed to $repo main at ${sha:0:8} with the gate at always"
+  forge_run "$repo" main "$sha"
+  grep -q "no finished pipeline" "$RUN_LOG" && { forge_logs; fail "the pipeline did not end: a running terragucci/apply status holds it open"; }
+  [ "$RUN_STATUS" = failure ] || { forge_logs; fail "the pipeline ended '$RUN_STATUS'; a waiting wave fails it"; }
+  grep -q "chant approve tf-apply wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 did not print its approval command"; }
+  grep -q "answered 400" "$RUN_LOG" && { forge_logs; fail "GitLab refused a status call"; }
+  grep -q "Job failed: exit code 3" "$RUN_LOG" || { forge_logs; fail "the waiting wave's job did not end with exit code 3"; }
+  st="$(glapi "$URL/api/v4/projects/$(pid "$repo")/repository/commits/$sha/statuses?name=terragucci%2Fapply" | jq -c '.[0] // {}')"
+  [ "$(jq -r .status <<<"$st")" = failed ] || fail "terragucci/apply is '$(jq -r .status <<<"$st")'; expected failed"
+  jq -r .description <<<"$st" | grep -q "wave 1 waits" || fail "terragucci/apply does not say wave 1 waits: $(jq -r .description <<<"$st")"
+  code="$(bucket_code "$BUCKET")"
+  [ "$code" = 404 ] || fail "the waiting wave applied: $BUCKET answered $code"
+  log "the pipeline ended failed, the wave's job ended with exit code 3, terragucci/apply is failed with the wave's command, and nothing applied"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -209,6 +247,7 @@ case "$CLAIM" in
     grep -q 'tofu-estate' <<<"$tags" || { echo "$tags"; fail "terragucci-validate-cdf carries no tofu-estate tag, so choudoufu did not apply it as an estate"; }
     log "terragucci-validate-cdf carries the tofu-estate marker"
     ;;
+  gate-wait) run_gate_wait ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done

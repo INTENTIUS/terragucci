@@ -101,6 +101,15 @@ The guard against all of this is a reviewer's approval of the head, read from th
 
 Each stage posts one commit status per run. `terragucci/plan` carries the counts of roots, groups and destroys. Require `terragucci/plan` or `terragucci/apply` in branch protection.
 
+| `terragucci/apply` when | GitHub and Forgejo | GitLab |
+|---|---|---|
+| wave 1 starts | pending, `applying` | running, `applying` |
+| a wave waits for its approval (exit 3) | pending, with the approve command | failed, with the approve command |
+| a wave is refused (exit 4) or fails | failure | failed |
+| the last wave applies | success | success |
+
+GitLab refuses to move a running status back to pending, and a status left running keeps the pipeline running. The next status a retried wave posts replaces the failed one.
+
 <Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" optional />
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale. Pushing to the pull request plans it again.
