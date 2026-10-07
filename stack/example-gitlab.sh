@@ -92,10 +92,9 @@ browser_url() { sed "s#^http://gitlab:8929#$URL#"; }
 uri() { printf %s "$1" | jq -sRr @uri; }
 
 # The project, public, and the CI variables the pipeline reads. GITLAB_TOKEN
-# is the token the plan, apply and drift jobs call the API and push with.
-# The jobs set origin to https://<CI_SERVER_HOST>/..., which is right for
-# a GitLab on port 443; this one serves plain http on gitlab:8929, so git in
-# the jobs rewrites that address (GIT_CONFIG_*).
+# is the token the plan, apply and drift jobs call the API and push with. The
+# jobs push to CI_SERVER_PROTOCOL://CI_SERVER_FQDN, which is http and
+# gitlab:8929 here, so git needs no address rewrite.
 ensure_project() {
   if ! api -o /dev/null "$P" 2>/dev/null; then
     api -o /dev/null -X POST "$URL/api/v4/projects" --data-urlencode "name=example" \
@@ -104,9 +103,9 @@ ensure_project() {
       --data-urlencode "default_branch=main"
   fi
   ci_var GITLAB_TOKEN "$TOKEN" true
-  ci_var GIT_CONFIG_COUNT 1
-  ci_var GIT_CONFIG_KEY_0 "url.http://oauth2:${TOKEN}@gitlab:8929/.insteadOf"
-  ci_var GIT_CONFIG_VALUE_0 "https://oauth2:${TOKEN}@gitlab/"
+  # A project from an earlier driver may still carry the old rewrite.
+  local v
+  for v in GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do api -o /dev/null -X DELETE "$P/variables/$v" 2>/dev/null || true; done
   # Avatars from gravatar.com would load from outside the stack.
   api -o /dev/null -X PUT "$URL/api/v4/application/settings" --data-urlencode "gravatar_enabled=false" || true
 }
