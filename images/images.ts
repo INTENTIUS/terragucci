@@ -75,6 +75,14 @@ const finalStage = (name: string, description: string) => ({
   from: NODE,
   run: [
     "apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*",
+    // A job often runs as another user than the one who owns its checkout (on
+    // github.com the job is root and the runner's user owns the workspace), and
+    // git then refuses every command there ("dubious ownership"). The system
+    // config holds for every user and HOME, in every job and in workflows that
+    // are not terragucci's, and for the upload-pack a fetch from a local path
+    // starts, which drops GIT_CONFIG_* from its environment. Debian's git 2.39
+    // matches no path prefix, so it is every directory.
+    "git config --system --add safe.directory '*'",
     // The HCL parser the tips and rollouts read with. /usr/local/node_modules is on the
     // bundle's module path, so `terragucci` finds it with no further setup.
     `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} && npm cache clean --force`,

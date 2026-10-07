@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import pkg from "../package.json" with { type: "json" };
 import { imageFor, imageReference, imageTag, TOOL_VERSIONS } from "../src/images";
@@ -45,6 +46,18 @@ describe("images", () => {
     expect(out).toContain("pinned by digest");
     expect(out).not.toContain("terragucci install");
     expect(out).not.toMatch(/curl|unzip/);
+  });
+
+  // A job's user often differs from its checkout's owner (root in a github.com
+  // container job, the runner's user on the workspace), so each CI image marks
+  // every directory safe for git in its system config, after git is installed.
+  it.each(["tofu", "terraform", "terragrunt", "choudoufu"])("the %s image lets git into a checkout another user owns", (name) => {
+    const dockerfile = readFileSync(join(import.meta.dirname, "../../../images", `Dockerfile.${name}`), "utf-8");
+    const final = dockerfile.slice(dockerfile.lastIndexOf("\nFROM "));
+    const runs = final.split("\n").filter((l) => l.startsWith("RUN "));
+    const git = runs.findIndex((l) => l.includes("install -y --no-install-recommends git "));
+    expect(git).toBeGreaterThanOrEqual(0);
+    expect(runs.indexOf("RUN git config --system --add safe.directory '*'")).toBeGreaterThan(git);
   });
 
   it("a repo pinning a version the image does not carry installs it in each job", async () => {
