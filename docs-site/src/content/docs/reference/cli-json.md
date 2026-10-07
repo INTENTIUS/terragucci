@@ -3,7 +3,7 @@ title: The CLI's JSON output
 description: The envelope that init, reconcile, plan, stage, rollout, respond and config check print with --json, and the exit codes behind it.
 ---
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` and `config check` take `--json`. With it, the command prints one JSON object on stdout and nothing else, so a script or an agent can parse the whole output. Text, progress and tool output stay off stdout.
+With `--json`, these commands print one JSON object on stdout and nothing else.
 
 ## The envelope
 
@@ -28,7 +28,7 @@ description: The envelope that init, reconcile, plan, stage, rollout, respond an
 
 Exit codes are the same with or without `--json`; [the CLI page](/terragucci/reference/cli/#exit-codes) lists them.
 
-Code 4 comes only from `stage tf-apply`, which refuses `--json` with exit 2, so no envelope carries it.
+No envelope carries code 4: `stage tf-apply` refuses `--json`.
 
 ## init
 
@@ -37,11 +37,11 @@ Code 4 comes only from `stage tf-apply`, which refuses `--json` with exit 2, so 
 | Field | Holds |
 |---|---|
 | `dryRun` | Whether the run wrote files. |
-| `roots` | Each root as `path` and `reason`: `backend s3` (or the backend's type), `cloud block`, `provider aws` (or the provider's name), or `matches roots glob <glob>` when `roots` is set in the config. |
+| `roots` | Each root as `path` and `reason`, such as `backend s3`, `cloud block`, `provider aws` or `matches roots glob <glob>`. |
 | `layers` | Roots grouped in apply order; roots in one layer can apply together. |
 | `binary`, `version`, `forge` | Each as `value` and `reason`, where the reason names the file, flag or detection that decided it. |
 | `image` | The CI image the pipeline runs in. |
-| `files` | Each file as `path` (relative to the repo), `status` (`created`, `updated` or `unchanged`) and `content`, the full text it writes or would write. |
+| `files` | Each file as `path`, `status` (`created`, `updated` or `unchanged`) and `content`. |
 | `notes` | Settings the pipeline does not act on, and flags the config overrides. |
 | `configNote` | Whether a `terragucci.yml` was used or written. |
 
@@ -66,7 +66,7 @@ The exit code is 1 when any project failed.
 
 ## stage
 
-`results` holds `stage`, `change_set` (the run's set digest), `files` (the paths of `report.html`, `report.json` and `note.md`) and `uploaded`, which is null unless `reports.bucket` is set. Then it holds the run's key prefix in the bucket and the indexes it rewrote. `tf-drift` adds `issue`: an `action` (`opened`, `updated`, `closed`, `left-open` or `none`), the `issue` it acted on, and an `error` when the forge refused the issue call. The exit code is 1 when a root refused to plan; the report is written either way.
+`results` holds `stage`, `change_set`, `files` and `uploaded` (null without `reports.bucket`). `tf-drift` adds `issue` with `action` (`opened`, `updated`, `closed`, `left-open` or `none`), `issue` and `error`. A root that refused to plan exits 1.
 
 ## rollout
 
@@ -79,18 +79,18 @@ The exit code is 1 when any project failed.
 | `discovered` | Where `to` was found, when no version was named: a tag, or an OCI repository. |
 | `mode` | `dry-run` or `apply`. |
 | `status` | `complete`, `opened`, `would-open`, `waiting` or `stopped`, with `stop` saying why it stopped. |
-| `waves` | Each wave as `wave`, `canary` and `parts`, one part per project: `project`, `roots`, `branch`, `state`, `pullRequest`, and `pending`, `failed` or `files` when they apply. |
-| `roots` | Each root that names the module or provider: `project`, `root`, `state` (`from`, `to`, `refused` or `elsewhere`), `version` and `reason`. |
+| `waves` | `wave`, `canary` and `parts`: `project`, `roots`, `branch`, `state`, `pullRequest`, `pending`, `failed`, `files`. |
+| `roots` | `project`, `root`, `state` (`from`, `to`, `refused` or `elsewhere`), `version`, `reason`. |
 | `tips` | Each refused root's tip, as `rule`, `project`, `root` and `message`. |
 
-A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`, `waiting-apply`, `failed`, `closed` or `not-reached`. The exit code is 3 while a pull request waits for a merge or an apply, and 1 when the rollout stopped.
+A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`, `waiting-apply`, `failed`, `closed` or `not-reached`. Exit 3 means waiting; 1 means stopped.
 
 ## respond
 
-`results` holds `event`, `response` (what the project's config sets for the event), `text` (what the plain output prints) and, when they apply, `skipped` (why nothing was done), `data` (the event's findings), `proposals` (each file or pull request the response would make or made) and `agent_input` (the path of the input file for an agent). The exit code is 0 whenever the event was handled, and 2 for an unknown event or a missing flag, with `results` null.
+`results` holds `event`, `response`, `text`, and when set `skipped`, `data`, `proposals` and `agent_input`. Exit 0 when handled; 2, with `results` null, for an unknown event or missing flag.
 
 ## config check
 
-`terragucci config check [--config <file>]` validates `terragucci.yml`, `terragucci.json` or `terragucci.ts` and lists every problem rather than the first. For a `.ts` file it also checks that folding and running the config agree.
+`terragucci config check [--config <file>]` lists every problem; for `.ts` it also checks that folding and running agree.
 
 `results` holds `file`, `ok`, and `problems`, a list of strings. A config with problems exits 2.
