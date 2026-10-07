@@ -5,15 +5,15 @@ description: The advice terragucci gives about how a repo is set up, and the rul
 
 import Shot from '../../../components/Shot.astro';
 
-Tips are on by default. They appear in the [plan report](/terragucci/reference/report/#tips), as one line in the pull request note, and in the `terragucci reconcile` dry run. `tips: false` in `terragucci.yml` removes all of them.
+Tips show in the [plan report](/terragucci/reference/report/#tips), the pull request note and the `terragucci reconcile` dry run; `tips: false` turns them off.
 
-A tip is advice. It cannot fail a run or change a gate, and no plan digest or set digest covers it, so a run with tips and a run without them produce the same digests.
+A tip never fails a run, changes a gate or enters a digest.
 
 <Shot step="tips" view="pull" alt="The plan note on a pull request that lets dev search's AWS provider float, with its line counting the tips on how the roots are set up" optional />
 
 <Shot step="tips" view="report" alt="The Tips section of the HTML report, from its heading through its last tip: terragucci-floating-range for envs/dev/search among them, each tip linked to its rule's page" optional />
 
-Each tip names its rule. Code tips come from chant's terraform lint and link to that rule's page, so `chant lint` and a report agree. They need the HCL parser (`npm i -D @cdktn/hcl2json`); without it the report leaves them out and says so in the job log.
+Code tips come from `chant lint` and need `npm i -D @cdktn/hcl2json`; without it the job log says they were left out.
 
 ## Code tips
 
@@ -35,22 +35,22 @@ Each tip names its rule. Code tips come from chant's terraform lint and link to 
 
 ### terragucci-shared-module
 
-A local module is included by ten or more roots, so a change under it plans every one of them. Publish it with `tf-publish` and pin it in each root. Only the roots whose pin moves are planned, and `tf-rollout` moves them in waves.
+Ten or more roots include a local module. Publish it with `tf-publish` and pin it, so `tf-rollout` moves only the pinned roots, in waves.
 
 ### terragucci-floating-range
 
-A module call is pinned to a range such as `~> 1.4`. A range cannot be bumped by a pin, so a rollout cannot move it. Pin one version.
+A module call is pinned to a range such as `~> 1.4`, which a rollout cannot move. Pin one version.
 
-The same rule covers a provider constrained to a range in `required_providers`. `tf-rollout --provider` moves the lock file, and a version outside the range fails `init`, so the rollout cannot cross it. Pin the exact version, or widen the range on purpose. When chant's TF038 or TF039 already names the call, only that tip is given.
+It also covers a provider range in `required_providers`, which `tf-rollout --provider` cannot cross. When TF038 or TF039 names the call, only that tip is given.
 
 ### terragucci-no-canary
 
-A project has more than five roots and no `waves.canary`. The first wave is the riskiest, so name the roots that go first.
+A project has more than five roots and no `waves.canary`.
 
 ### terragucci-ungated-destroy
 
-`gate` is `never` and a root's plan destroys or replaces something. Nothing stops the destroy except the review of the pull request and the protection of the default branch. Use `gate: on-destroy`.
+`gate` is `never` and a plan destroys or replaces something. Use `gate: on-destroy`.
 
 ### terragucci-many-roots
 
-A hundred or more roots are planned on every change. Publishing shared modules and pinning them shrinks the set a change reaches.
+A hundred or more roots are planned on every change. Publish and pin shared modules.

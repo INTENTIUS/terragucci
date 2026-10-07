@@ -5,7 +5,7 @@ description: Opt-in policy checks that run conftest or OPA over each plan and fa
 
 import Shot from '../../../components/Shot.astro';
 
-Add `policy` to `terragucci.yml` to turn policy checks on; without it nothing runs. `tf-plan` then passes the plan JSON of each planned root to your Rego and fails the root when it denies.
+Add `policy` to `terragucci.yml` to turn policy checks on; `tf-plan` then fails each planned root whose plan JSON your Rego denies.
 
 ```yaml
 policy:
@@ -39,21 +39,25 @@ deny contains msg if {
 
 ### What Rego sees
 
-`input` is the unredacted output of `show -json` for one root, so Rego sees sensitive values. What a rule prints back does not keep them: before a denial or a warning reaches the report, the note or the job log, every value the plan marks sensitive is replaced with `(sensitive, redacted by terragucci)`, as it is in the stored plan. A short sensitive value, such as `1`, is replaced wherever it appears in the message. That bare plan is what conftest and Atlantis pass too. HCP Terraform passes the plan as `input.plan` beside `input.run`, and Spacelift as `input.terraform`, so a policy written for either reads a path that is not there and denies nothing. Set `input: hcp` to run an HCP Terraform policy set (below). A Spacelift policy needs its paths changed from `input.terraform` to `input`.
+`input` is the unredacted `show -json` of one root. Before a denial or warning reaches the report, note or log, every sensitive value in it, short ones such as `1` included, becomes `(sensitive, redacted by terragucci)`.
+
+HCP Terraform and Spacelift policies read other paths and deny nothing as written: set `input: hcp` for HCP Terraform, and change `input.terraform` to `input` for Spacelift.
 
 ### Which rules count
 
-Both engines count rules the way conftest does. `deny`, `violation`, `deny_<name>` and `violation_<name>` fail the root; `warn` and `warn_<name>` are warnings. A rule's message is its string, or the `msg` field of an object it returns. The same Rego directory gives the same verdict under `engine: conftest` and `engine: opa`; the only difference is the namespace: conftest reads every package unless `namespace` names one, and opa reads `main` unless `namespace` names another.
+`deny`, `violation`, `deny_<name>` and `violation_<name>` fail the root; `warn` and `warn_<name>` warn. A message is the rule's string or its object's `msg`.
+
+Both engines give the same verdict; conftest reads every package and opa reads `main`, unless `namespace` names one.
 
 ### Namespace matching
 
-The namespace must match a policy. When `namespace` is set, or opa reads its default, terragucci looks for a Rego file in the policy directory that declares that package (test files aside) and has a `deny`, `violation` or `warn` rule. If none does, every planned root fails with a message that names the namespace and lists the packages the directory has, so a misspelled package fails the plan and never passes it.
+If no Rego file outside the tests declares the namespace and has a `deny`, `violation` or `warn` rule, every planned root is refused and the message lists the packages found.
 
 ## What a denial does
 
 <Shot step="policy" view="pull" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
 
-A denied root fails and the job exits 1. The report keeps the root's changes beside the denial messages in `roots[].policy`, so a reader sees what the policy refused. Warnings never fail a root. The pull request note lists them under "Policy warnings" and the report shows them under their root. A policy that cannot run also fails the root. So does an engine that is not installed, or Rego that does not compile.
+A denied root fails and the job exits 1; the denials go to the report's `roots[].policy`. A root also fails when its policy cannot run, as with no engine or Rego that does not compile. Warnings never block.
 
 ### No override
 
@@ -61,27 +65,35 @@ A denial has no override. Responses, agents and comments cannot waive it; the co
 
 ## The base branch decides
 
-A pull request cannot edit the policy to allow itself, and it cannot turn the policy off. For a pull request's plan the base branch decides whether policy runs. terragucci reads the `policy` key from `terragucci.yml` at the base. It copies the policy directory from the base into a temporary directory and checks the plan against that copy. A pull request that deletes the `policy` key is still checked against the base's policy. The same holds when it renames or deletes `terragucci.yml`. The pull request's own edits take effect once the pull request is merged. If the base has no `policy` key, the pull request's own policy applies, since there is nothing to waive. If the base has the key but the directory is missing there, every planned root fails. The same happens when the base's config cannot be read. A job whose checkout lacks the base commit uses the checkout's key: if the checkout has one, every planned root fails; if not, no policy runs and the log says why. A `terragucci.ts` config is read at the base the way it is read in the checkout. terragucci folds the base's `.ts` files to a value without running them and takes the `policy` settings from it.
+A pull request's plan is checked against the `policy` key and directory at the base branch, so editing, deleting or renaming them, or `terragucci.yml`, changes nothing until merged.
+
+| At the base | Result |
+|---|---|
+| no `policy` key | the pull request's own policy applies |
+| the key, but no directory, or an unreadable config | every planned root fails |
+| commit missing from the checkout | the checkout's key: every root fails if it has one, else no policy runs |
+
+A base `terragucci.ts` is folded to a value without running it.
 
 ### Finding the base branch
 
-The base branch is the pull request's target. terragucci finds it from the environment the forge sets: `GITHUB_BASE_REF` on GitHub Actions and Forgejo Actions, and `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` on GitLab merge request pipelines, read as `origin/<branch>`. `TG_BASE` names a ref directly and wins over both. The job's checkout needs that ref fetched, as affected-root selection already does.
+terragucci reads `origin/<branch>` from `GITHUB_BASE_REF` (GitHub, Forgejo) or `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` (GitLab); `TG_BASE` wins over both. The checkout needs that ref fetched.
 
 ## Tests and the apply check
 
 ### tf-check
 
-`tf-check` tests the policy itself. It runs `conftest verify` (engine `conftest`) or `opa test` (engine `opa`) over the policy directory, and fails on a failing test. For a change on another branch the `policy` key comes from the base branch along with the directory. A change that deletes the key still runs the base's tests. Tests are Rego files named `*_test.rego`; a directory with none is skipped with a note. See [Stages](/terragucci/reference/stages/#check).
+`tf-check` runs `conftest verify` or `opa test` on the base branch's policy and fails on a failing test. A directory with no `*_test.rego` is skipped.
 
 <Shot step="policy" view="log" alt="The failed check job in Forgejo, its check step open where conftest verify failed on the policy read from origin/main and named the test test_denies_an_instance" optional />
 
 ### tf-apply
 
-`tf-apply` runs the same check on each wave's plans, after planning and before the gate, and refuses a wave with a denial: the wave applies nothing and records no approval to wait for. The apply job runs from the default branch, so its checkout is the policy from main. Set `TG_BASE` to read the policy from another ref; that ref's `policy` key then decides whether the check runs, as the base branch's does for a plan.
+`tf-apply` checks each wave's plans before the gate. A denied wave applies nothing and records no approval. The policy comes from the default branch, or from `TG_BASE` when set.
 
 ### The engines
 
-The images carry neither engine. When the engine you set is not on the path, terragucci downloads a pinned release once per job, conftest 0.71.0 as its Linux archive or OPA 1.21.1 as its static Linux binary, and refuses any download that differs from the SHA-256 shipped with terragucci (taken from the release's own checksums). A job without network access needs the engine installed beforehand, and drift runs and provisional Terragrunt previews skip the check.
+terragucci downloads a missing engine once per job, conftest 0.71.0 or OPA 1.21.1, and refuses one whose SHA-256 differs from the pinned one. Offline jobs need the engine installed; drift runs and provisional Terragrunt previews skip the check.
 
 ## HCP Terraform policy sets
 
@@ -126,7 +138,7 @@ deny contains msg if {
 
 ### policies.hcl
 
-An HCP Terraform policy set lists its policies in `policies.hcl`. Each one has a query and an enforcement level. With `engine: opa` and `input: hcp`, terragucci reads that file from the policy directory and runs each policy the way HCP Terraform does:
+With `engine: opa` and `input: hcp`, terragucci runs each policy in the set's `policies.hcl` as HCP Terraform does:
 
 ```hcl
 policy "no_public_buckets" {
@@ -140,6 +152,10 @@ policy "owner_tags" {
 }
 ```
 
-Each policy runs by its own `query`. A mandatory policy's messages deny and fail the root. An advisory policy's messages are warnings: the note and the report show them, and they fail nothing. A policy without `enforcement_level` is advisory, as in HCP Terraform. Each message starts with the policy's name. A query that matches no rule fails the root and names the policy. A policy with no `query` fails it too, as does an enforcement level HCP Terraform does not have. Set `namespace` to run only the policies whose query is inside that package.
+Mandatory messages fail the root; advisory ones, the default, warn. A missing or unmatched `query`, or an unknown level, fails the root.
 
-Without `policies.hcl`, the opa engine reads every package under `terraform.policies` as one policy each. Their `deny` rules fail the root and their `warn` rules warn. conftest does not read `policies.hcl`: with `engine: conftest` every policy in the set is mandatory, and the job log says so. Set `namespace` to run one policy alone. The pinned OPA reads Rego 1.0 syntax. A policy written for older OPA releases needs the `if` and `contains` keywords added. Sentinel policies and HCP Terraform's `tfpolicy` framework run only in HCP Terraform and Terraform Enterprise.
+`namespace` keeps only the policies whose query is in that package.
+
+Without `policies.hcl`, opa runs each package under `terraform.policies` as a policy. conftest ignores the file and treats every policy as mandatory.
+
+The pinned OPA reads Rego 1.0: older policies need `if` and `contains`. terragucci does not run Sentinel or `tfpolicy` policies.
