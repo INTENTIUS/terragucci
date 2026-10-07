@@ -42,6 +42,9 @@ export default defineConfig({
 		'/guides/move-apply-to-fountain': '/terragucci/reference/runtimes/',
 		'/guides/agent-explain-a-plan': '/terragucci/reference/responses/',
 		'/guides/agent-drift-fixes': '/terragucci/guides/turn-on-drift-checks/',
+		'/guides/add-to-github': '/terragucci/guides/add-to-a-repo/',
+		'/guides/add-to-gitlab': '/terragucci/guides/add-to-a-repo/',
+		'/guides/add-to-forgejo': '/terragucci/guides/add-to-a-repo/',
 	},
 	integrations: [
 		starlight({
@@ -75,14 +78,7 @@ export default defineConfig({
 				{
 					label: 'How-to guides',
 					items: [
-						{
-							label: 'Add terragucci to a repo',
-							items: [
-								{ label: 'A GitHub repo', slug: 'guides/add-to-github' },
-								{ label: 'A GitLab repo', slug: 'guides/add-to-gitlab' },
-								{ label: 'A Forgejo repo', slug: 'guides/add-to-forgejo' },
-							],
-						},
+						{ label: 'Add terragucci to a repo', slug: 'guides/add-to-a-repo' },
 						{
 							label: 'Ship changes',
 							items: [
