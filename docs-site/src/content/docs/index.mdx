@@ -71,6 +71,8 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 | A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
 | No state file to host or lose: each resource carries a tag the next plan reads back | [your cloud's own tags](/terragucci/guides/use-a-binary/#choudoufu) |
 | How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
+| Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
+| Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
 
 ## Hand the setup to your agent
 
