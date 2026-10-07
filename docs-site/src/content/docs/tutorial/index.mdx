@@ -3,6 +3,9 @@ title: Boot the example
 description: Run a 15-root Terraform estate on your laptop, with a local forge and an AWS stand-in, in a few minutes.
 sidebar:
   order: 1
+  badge:
+    text: 10 min
+    variant: note
 claims: [boot]
 prompt: |
   Read https://intentius.io/terragucci/tutorial/.
@@ -14,6 +17,20 @@ import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
 
 This tutorial runs terragucci against a small shop's estate on your machine. Nothing here touches a cloud account.
+
+| Page | You see | Time |
+|---|---|---|
+| Boot the example (this page) | 15 roots applied by a local pipeline | about 10 min the first time |
+| [Your first pull request](/terragucci/tutorial/first-pull-request/) | the check stage passing, then failing on formatting | 5 min |
+| [One note for fifteen plans](/terragucci/tutorial/one-note/) | twelve plans grouped in one note | 5 min |
+| [Waves and approvals](/terragucci/tutorial/waves/) | a change applied a wave at a time | 10 min |
+| [A wave that changed](/terragucci/tutorial/changed-wave/) | an approved wave refusing to apply after one of its roots changed | 5 min |
+| [Drift](/terragucci/tutorial/drift/) | a drift report naming the root | 5 min |
+| [Publishing and pinning modules](/terragucci/tutorial/modules/) | a module version rolled out one pull request per wave | 10 min |
+| [Tips](/terragucci/tutorial/tips/) | a tip on a floating provider version | 5 min |
+| [See your runs](/terragucci/tutorial/see-your-runs/) | runs on terragucci's Grafana dashboards | 10 min |
+| [The same shop on Terragrunt](/terragucci/tutorial/terragrunt/) | the estate as 15 Terragrunt units | 15 min |
+| [Clean up, then your own repo](/terragucci/tutorial/your-repo/) | terragucci on a repository of your own | 10 min |
 
 ## Before you start
 

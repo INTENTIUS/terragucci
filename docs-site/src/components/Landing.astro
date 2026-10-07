@@ -1,9 +1,10 @@
 ---
 // The home page's two ends. `part="top"` (the default) is the wordmark, the
-// tagline, what terragucci is and the three ways in. `part="agent"` is the
-// prompt to hand a coding agent, further down the page: the setup prompt from
-// src/prompts.ts, which the agents page and the README carry too. The tagline
-// is the one the README and the site description use.
+// tagline and what terragucci is; the cards that route by goal follow it in
+// index.mdx. `part="agent"` is the prompt to hand a coding agent, further down
+// the page: the setup prompt from src/prompts.ts, which the agents page and the
+// README carry too. The tagline is the one the README and the site description
+// use.
 import AgentPrompt from './AgentPrompt.astro';
 import { setupPrompt } from '../prompts';
 
@@ -12,11 +13,6 @@ interface Props {
 }
 const { part = 'top' } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const paths = [
-	{ href: `${base}/tutorial/`, label: 'Try it on your laptop', detail: 'A 15-root example with a local forge and an AWS stand-in, booted with one command.' },
-	{ href: `${base}/getting-started/`, label: 'Set it up in your repo', detail: 'npm i -D @intentius/terragucci, npx terragucci init, and a plan note on your next pull request.' },
-	{ href: `${base}/getting-started/agents/`, label: 'Let your agent do it', detail: 'A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies or approves.' },
-];
 ---
 {part === 'top' ? (
 	<section class="tg-landing not-content">
@@ -30,15 +26,6 @@ const paths = [
 			<a href={`${base}/concepts/glossary/#forge`}>forge's</a> runners with no server.
 			<a href={`${base}/concepts/how-it-works/`}>How it works</a>, <a href={`${base}/compare/`}>how it compares</a>.
 		</p>
-
-		<ul class="paths">
-			{paths.map((p) => (
-				<li>
-					<a href={p.href}>{p.label}</a>
-					<p>{p.detail}</p>
-				</li>
-			))}
-		</ul>
 	</section>
 ) : (
 	<section class="tg-landing tg-agent not-content">
@@ -51,7 +38,7 @@ const paths = [
 		display: grid;
 		justify-items: center;
 		gap: 2rem;
-		padding-block: clamp(3rem, 10vw, 6rem) clamp(2rem, 6vw, 4rem);
+		padding-block: clamp(3rem, 10vw, 6rem) clamp(1rem, 3vw, 2rem);
 		text-align: center;
 	}
 	.wordmark {
@@ -90,42 +77,5 @@ const paths = [
 		color: var(--sl-color-accent-high);
 		font-weight: 500;
 		white-space: nowrap;
-	}
-	.paths {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		width: min(100%, 52rem);
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
-		gap: 1rem;
-		text-align: left;
-	}
-	.paths li {
-		margin: 0;
-		padding: 1rem 1.1rem;
-		border: 1px solid var(--tg-rule);
-		border-radius: 0.75rem;
-		background: var(--tg-panel);
-		display: grid;
-		gap: 0.4rem;
-		align-content: start;
-		min-width: 0;
-	}
-	.paths a {
-		font-family: var(--tg-display);
-		font-size: 1.1rem;
-		font-weight: 600;
-		color: var(--sl-color-accent-high);
-		text-decoration: none;
-	}
-	.paths a:hover {
-		text-decoration: underline;
-	}
-	.paths p {
-		margin: 0;
-		font-size: 0.9rem;
-		color: var(--sl-color-gray-2);
-		overflow-wrap: anywhere;
 	}
 </style>
