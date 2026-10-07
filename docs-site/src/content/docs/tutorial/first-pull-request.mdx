@@ -15,23 +15,23 @@ Booted with `just example up`, nothing changed yet. `just example reset` gets yo
 
 ## Change one root
 
-Orders in dev should keep jobs nobody has picked up for seven days instead of four. That is one line in one root, `envs/dev/orders/main.tf`. The example has it ready as a scenario. One command makes the branch and opens a pull request with the change:
+Orders in dev should keep unpicked jobs for seven days instead of four: one line in `envs/dev/orders/main.tf`. One command makes the branch and opens the pull request:
 
 <Captured step="first-pr" />
 
-Pushing the branch and opening the pull request each start a run, so the command waits for both and prints both. The pull request's run plans the change and posts the plan note. The push's run is the check. Forgejo numbers them in whichever order it queues them, so take the numbers from the output.
+The push and the pull request each start a run. The pull request's run posts the plan note and the push's run is the check; take the run numbers from the output.
 
-Open the pull request link in Forgejo. The change is the one line you would have written by hand:
+Open the pull request link in Forgejo:
 
 <Shot step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" />
 
-The pipeline runs `tf-check` on the branch push, and on a pull request only when it comes from a fork: a format check, then `validate` for every root. Look at the push's run, the second link the command printed. Both steps pass, so the branch shows a green check. Its plan note is a comment in the pull request's conversation:
+`tf-check` runs on the branch push, and on a pull request only from a fork: a format check, then `validate` for every root. Look at the push's run, the second link printed. Both steps pass. The plan note is a comment in the conversation:
 
 <Shot step="first-pr" view="pull" alt="The pull request in Forgejo with its check passing and its plan note for the one root" />
 
 ## Break the formatting
 
-Now add a file typed in a hurry and never run through `tofu fmt`:
+Now add a badly formatted file:
 
 ```hcl
 locals {
@@ -40,11 +40,11 @@ locals {
 }
 ```
 
-The scenario opens it as a second pull request. This time the check fails, and `just example logs` prints why: the file, and the change `tofu fmt` would make to it.
+The scenario opens it as a second pull request. The check fails, and `just example logs` prints the file and the change `tofu fmt` would make.
 
 <Captured step="check" />
 
-In Forgejo the failed step is "Format check and validate, every root", stopped by `tofu fmt -check`. Open it to see the same lines:
+In Forgejo the failed step is "Format check and validate, every root":
 
 <Shot step="check" view="log" alt="The failed check job in Forgejo, its format step open on the diff tofu fmt -check printed for envs/dev/orders/locals.tf" />
 
@@ -52,4 +52,4 @@ Run `tofu fmt -recursive` in your own repo and the check goes green again.
 
 ## What you saw
 
-Every push to a branch runs the check stage on every root. The check is cheap and it never needs cloud credentials, because it never plans anything.
+Every push runs the check stage on every root. It needs no cloud credentials, because it never plans.

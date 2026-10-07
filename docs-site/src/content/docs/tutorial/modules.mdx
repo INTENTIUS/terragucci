@@ -13,9 +13,9 @@ import Shot from '../../../components/Shot.astro';
 Booted with `just example up`. `just example reset` gets you back to that from any step, and removes the release tags this page makes.
 :::
 
-When roots call a module from the repo, a change reaches every root that calls it, as `just example change module-bump` showed with twelve plans. When roots pin a published version, a change to the module reaches no root until a pin moves. `tf-publish` publishes a module at a new version, and `tf-rollout` moves the pins for one wave at a time, each wave its own small pull request.
+When roots pin a published version, a module change reaches no root until a pin moves. `tf-publish` publishes a module version, and `tf-rollout` moves the pins one wave at a time, each wave its own pull request.
 
-The example's roots call `modules/service` by path, so the scenario first does what a team does when it starts versioning a module. `tf-publish` tags `modules/service` at `1.0.0` in git. The twelve service roots are then pinned to that tag in one commit on main, together with a new output on the module, and the pipeline applies it. The changed module is published as `1.1.0`, and the rollout runs:
+The scenario first tags `modules/service` at `1.0.0` with `tf-publish` and pins the twelve service roots to that tag on main. The changed module is published as `1.1.0`, and the rollout runs:
 
 ```bash
 just example change pin
@@ -27,7 +27,7 @@ just example change pin
 
 <Shot step="pin" view="files" alt="The pull request's files: each dev service main.tf moves its ref from modules/service/v1.0.0 to v1.1.0" />
 
-The last command it ran is `terragucci rollout modules/service --mode apply`. Here `apply` means opening the pull request; no `terraform apply` runs until it merges. With no version given, the rollout takes the newest one published, `1.1.0`, and opens the pull request for the first wave. That wave is the canary, the dev services. It changes only their `main.tf` files, and the `ref` in each moves from `modules/service/v1.0.0` to `modules/service/v1.1.0`. The usual stages plan it as they plan any pull request.
+The last command it ran is `terragucci rollout modules/service --mode apply`. Here `apply` means opening the pull request; no `terraform apply` runs until it merges. It takes the newest version, `1.1.0`, and opens the canary wave, the dev services, moving each `ref` from `modules/service/v1.0.0` to `modules/service/v1.1.0`.
 
 Merge it, and let the apply on the merge commit finish. Then open the next wave's pull request:
 
@@ -35,4 +35,4 @@ Merge it, and let the apply on the merge commit finish. Then open the next wave'
 just example rollout
 ```
 
-It runs `terragucci rollout modules/service --mode apply` from a clone of the example repo, with the forge, its URL and a token set the way the first rollout had them. In your own repo, with `modules` and the forge's token in your config, that command is all you run. Each run takes at most one step, so the next wave opens only once the last one has applied. [Publish your modules](/terragucci/guides/publish-modules/) adds the job that publishes on every merge, and [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) has every step.
+It runs the same `terragucci rollout` command. Each run takes at most one step, so the next wave opens only once the last has applied. [Publish your modules](/terragucci/guides/publish-modules/) adds the publish job, and [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) has every step.
