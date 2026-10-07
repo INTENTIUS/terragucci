@@ -25,7 +25,10 @@ Add the `apply` block to `terragucci.yml`.
 apply:
   when: pull-request
   merge: auto      # or manual, the default, to merge by hand
+  merge_token_env: MERGE_TOKEN
 ```
+
+With `merge: auto`, add a secret of that name to the repo, holding a token of a user who may push to the default branch. Forgejo refuses a merge made with the job's own token, so it needs one. On GitHub it is optional, and without it the merge starts no workflow. On GitLab leave `merge_token_env` out: the merge uses the token the pipeline already has.
 
 Run `npx terragucci init` and merge the result through a pull request of its own. The comment job runs the default branch's pipeline, so nothing changes until that merge lands. After it, each new commit on the default branch runs the `confirm` job instead of the apply waves.
 

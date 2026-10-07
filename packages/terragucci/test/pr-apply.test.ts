@@ -329,6 +329,28 @@ describe("pr-merge", () => {
     }
   });
 
+  it("merges with TG_MERGE_TOKEN when the job has it, on GitHub and Forgejo", async () => {
+    const r = repos();
+    for (const forge of ["github", "forgejo"] as const) {
+      const auth: (string | undefined)[] = [];
+      const fetch: Fetch = async (_u, init) => {
+        auth.push(init?.headers?.authorization);
+        return { ok: true, status: 200, json: async () => ({}), text: async () => "{}" } as never;
+      };
+      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", TG_TOKEN: "job", TG_MERGE_TOKEN: "person" };
+      await mergePullRequest({ pr: 7, sha: r.head, forge, env, fetch, repo: r.work });
+      expect(auth).toEqual(["token person"]);
+    }
+  });
+
+  it("gives the forge's reason for a refused merge", async () => {
+    const r = repos();
+    const body = JSON.stringify({ message: "PushRejected with remote message: Forgejo: User 'forgejo-actions' is not allowed to push to branch 'main'", url: "x" });
+    const fetch: Fetch = async () => ({ ok: false, status: 409, json: async () => JSON.parse(body), text: async () => body }) as never;
+    await expect(mergePullRequest({ pr: 7, sha: r.head, forge: "forgejo", env: { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", TG_TOKEN: "t" }, fetch, repo: r.work }))
+      .rejects.toThrow("the forge refused the merge (POST answered 409: PushRejected with remote message: Forgejo: User 'forgejo-actions' is not allowed to push to branch 'main')");
+  });
+
   it("throws when the forge refuses, and keeps the locks", async () => {
     const r = repos();
     await takeLocks(r.work, ["network"], { pr: 7, by: "dev", at: "2026-10-07T00:00:00.000Z", head: r.head }, async () => true);

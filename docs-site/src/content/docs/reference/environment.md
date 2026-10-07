@@ -40,6 +40,7 @@ These names come from your config, and each defaults as shown. The variable hold
 |---|---|---|
 | `agent.comment.key_secret` | `ANTHROPIC_API_KEY` | the model's API key, given to the agent's step alone |
 | `agent.token_env` | none, required | the token the agent's change is pushed with |
+| `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto` | the token `apply.merge: auto` merges with, of a user who may push to the default branch |
 | `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
 | `telemetry.headers_secret` | none | the value of `OTEL_EXPORTER_OTLP_HEADERS` |
 | `token_env` | by forge, see above | the forge token |

@@ -45,11 +45,14 @@ export type ApplyMerge = (typeof APPLY_MERGE)[number];
  * request's head on `/terragucci apply` (a manual job on GitLab), under the
  * same waves and gates, and the push after the merge plans and reports drift
  * without applying. `merge: auto` merges the pull request once every wave
- * applied. Plain roots only.
+ * applied, with the token in the secret `merge_token_env` names when it is
+ * set (required on Forgejo, whose job token cannot push to the default
+ * branch). Plain roots only.
  */
 export interface ApplySettings {
   when?: ApplyWhen;
   merge?: ApplyMerge;
+  merge_token_env?: string;
 }
 
 /**
@@ -451,13 +454,17 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 
 function checkApply(a: unknown, where: string, problems: string[]): void {
   if (!isObject(a)) {
-    problems.push(`${where} must be a map (settings: when, merge)`);
+    problems.push(`${where} must be a map (settings: when, merge, merge_token_env)`);
     return;
   }
-  for (const k of Object.keys(a)) if (k !== "when" && k !== "merge") problems.push(`${where}.${k} is not a setting (settings: when, merge)`);
+  for (const k of Object.keys(a)) if (k !== "when" && k !== "merge" && k !== "merge_token_env") problems.push(`${where}.${k} is not a setting (settings: when, merge, merge_token_env)`);
   oneOf(a.when, APPLY_WHEN, `${where}.when`, problems);
   oneOf(a.merge, APPLY_MERGE, `${where}.merge`, problems);
   if (a.merge !== undefined && a.when !== "pull-request") problems.push(`${where}.merge is set, and only a pull request applied before it merges is merged by terragucci; set ${where}.when to pull-request or drop merge`);
+  if (a.merge_token_env !== undefined) {
+    if (!(typeof a.merge_token_env === "string" && SECRET_NAME.test(a.merge_token_env))) problems.push(`${where}.merge_token_env must name the secret holding the token the merge is made with, such as MERGE_TOKEN`);
+    else if (a.merge !== "auto") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env`);
+  }
 }
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {

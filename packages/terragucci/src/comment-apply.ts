@@ -554,14 +554,17 @@ export interface MergeOptions {
 /**
  * Merge a pull request whose every wave applied from its head
  * (`apply.merge: auto`), only while its head is still `sha`, then release
- * its locks. Returns what to reply; throws when the forge refused the merge.
+ * its locks. It merges with TG_MERGE_TOKEN (apply.merge_token_env's secret)
+ * when the job has it, else with TG_TOKEN. Returns what to reply; throws with
+ * the forge's reason when it refused the merge.
  */
 export async function mergePullRequest(o: MergeOptions): Promise<string> {
   const env = o.env ?? process.env;
   const doFetch: Fetch = o.fetch ?? fetch;
   if (!SHA.test(o.sha)) throw new ConfigError("--sha must be a commit sha");
   const gitlab = o.forge === "gitlab";
-  const token = env.TG_TOKEN;
+  // apply.merge_token_env's secret, when set: Forgejo refuses a merge made with the job's own token.
+  const token = (gitlab ? undefined : env.TG_MERGE_TOKEN) || env.TG_TOKEN;
   if (!token) throw new ConfigError("pr-merge needs TG_TOKEN in the environment");
   const [url, method, body] = gitlab
     ? [`${env.CI_API_V4_URL}/projects/${env.CI_PROJECT_ID}/merge_requests/${o.pr}/merge`, "PUT", { sha: o.sha }]
@@ -573,7 +576,25 @@ export async function mergePullRequest(o: MergeOptions): Promise<string> {
     headers: { "content-type": "application/json", ...(gitlab ? { "private-token": token } : { authorization: `token ${token}` }) },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`the forge refused the merge (${method} answered ${r.status})`);
+  if (!r.ok) throw new Error(`the forge refused the merge (${method} answered ${r.status}${await refusal(r)})`);
   const released = releaseLocks(o.repo ?? process.cwd(), o.pr);
   return `merged ${gitlab ? "merge request" : "pull request"} ${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
+}
+
+/** The forge's own words for a refused merge, as ": <message>", or nothing when its answer has none. */
+async function refusal(r: { text(): Promise<string> }): Promise<string> {
+  let said = "";
+  try {
+    const raw = await r.text();
+    try {
+      const m = (JSON.parse(raw) as { message?: unknown })?.message;
+      said = typeof m === "string" ? m : raw;
+    } catch {
+      said = raw;
+    }
+  } catch {
+    return "";
+  }
+  said = said.replace(/\s+/g, " ").trim().slice(0, 300);
+  return said ? `: ${said}` : "";
 }

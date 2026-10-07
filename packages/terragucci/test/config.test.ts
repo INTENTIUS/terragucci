@@ -93,11 +93,13 @@ describe("validation", () => {
     [{ defaults: { terragrunt: { parallelism: -1 } }, projects: { "github.com/a/b": {} } }, /defaults\.terragrunt\.parallelism/],
     [{ parallelism: 0 }, /config\.parallelism must be a whole number of 1 or more/],
     [{ parallelism: "8" }, /config\.parallelism must be a whole number of 1 or more/],
-    [{ apply: "pull-request" }, /config\.apply must be a map \(settings: when, merge\)/],
+    [{ apply: "pull-request" }, /config\.apply must be a map \(settings: when, merge, merge_token_env\)/],
     [{ apply: { when: "approve" } }, /config\.apply\.when is "approve"; use one of merge, pull-request/],
     [{ apply: { when: "pull-request", merge: "now" } }, /config\.apply\.merge is "now"; use one of manual, auto/],
     [{ apply: { merge: "auto" } }, /config\.apply\.merge is set, and only a pull request applied before it merges/],
     [{ apply: { when: "pull-request", lock: true } }, /config\.apply\.lock is not a setting/],
+    [{ apply: { when: "pull-request", merge: "auto", merge_token_env: "merge-token" } }, /config\.apply\.merge_token_env must name the secret holding the token the merge is made with/],
+    [{ apply: { when: "pull-request", merge_token_env: "MERGE_TOKEN" } }, /config\.apply\.merge_token_env is set, and only apply\.merge: auto merges/],
   ])("%j is refused", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(message);
   });
@@ -110,6 +112,7 @@ describe("validation", () => {
     [{ apply: { when: "merge" } }],
     [{ apply: { when: "pull-request" } }],
     [{ apply: { when: "pull-request", merge: "auto" } }],
+    [{ apply: { when: "pull-request", merge: "auto", merge_token_env: "MERGE_TOKEN" } }],
     [{ binary: "tofu", terragrunt: { credentials: { "live/prod/**": { plan: "arn:aws:iam::111:role/plan", apply: "arn:aws:iam::111:role/apply" } } } }],
   ])("%j is accepted as written", (raw) => {
     expect(validateConfig(raw, "t")).toEqual(raw);
