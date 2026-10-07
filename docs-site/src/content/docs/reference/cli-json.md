@@ -26,7 +26,17 @@ description: The envelope that init, reconcile, plan, stage, rollout, respond an
 | `results` | What the command found or did, as below. `null` when the command could not run. |
 | `error` | Present when `results` is `null`: why it could not run. |
 
-Exit codes are the same with or without `--json`: 0 done, 1 one or more projects or roots failed, 2 a usage or config error, 3 waiting on an approval.
+Exit codes are the same with or without `--json`:
+
+| Code | Meaning |
+|---|---|
+| 0 | done |
+| 1 | one or more projects or roots failed |
+| 2 | a usage or config error |
+| 3 | waiting on an approval, or on a rollout's pull request |
+| 4 | a wave's plans changed after its approval, so `stage tf-apply` applied nothing |
+
+Code 4 comes only from `stage tf-apply`, which refuses `--json` with exit 2, so no envelope carries it.
 
 ## init
 
@@ -40,7 +50,7 @@ Exit codes are the same with or without `--json`: 0 done, 1 one or more projects
 | `binary`, `version`, `forge` | Each as `value` and `reason`, where the reason names the file, flag or detection that decided it. |
 | `image` | The CI image the pipeline runs in. |
 | `files` | Each file as `path` (relative to the repo), `status` (`created`, `updated` or `unchanged`) and `content`, the full text it writes or would write. |
-| `notes` | Settings the pipeline does not act on yet. |
+| `notes` | Settings the pipeline does not act on, and flags the config overrides. |
 | `configNote` | Whether a `terragucci.yml` was used or written. |
 
 ## reconcile
@@ -68,7 +78,7 @@ The exit code is 1 when any project failed.
 
 ## rollout
 
-`results` is the rollout as the run left it.
+`results` is the rollout as the run left it. `stage tf-apply` has no `--json` and exits 2 with it.
 
 | Field | Holds |
 |---|---|
@@ -82,6 +92,10 @@ The exit code is 1 when any project failed.
 | `tips` | Each refused root's tip, as `rule`, `project`, `root` and `message`. |
 
 A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`, `waiting-apply`, `failed`, `closed` or `not-reached`. The exit code is 3 while a pull request waits for a merge or an apply, and 1 when the rollout stopped.
+
+## respond
+
+`results` holds `event`, `response` (what the project's config sets for the event), `text` (what the plain output prints) and, when they apply, `skipped` (why nothing was done), `data` (the event's findings), `proposals` (each file or pull request the response would make or made) and `agent_input` (the path of the input file for an agent). The exit code is 0 whenever the event was handled, and 2 for an unknown event or a missing flag, with `results` null.
 
 ## config check
 

@@ -71,6 +71,14 @@ describe("init", () => {
     expect(existsSync(join(dir, "terragucci.yml"))).toBe(false);
   });
 
+  it("a --binary that the config contradicts is noted, and one it lacks names the line to add", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "binary: terraform\n" });
+    const r = await init(dir, { binary: "tofu", dryRun: true });
+    expect(r.notes.join("\n")).toMatch(/--binary tofu is ignored: terragucci.yml sets binary: terraform/);
+    const bare = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "roots: [network]\n" });
+    await expect(init(bare, { binary: "choudoufu", dryRun: true })).rejects.toThrow(/terragucci.yml exists and init does not edit it; add binary: choudoufu to it/);
+  });
+
   it("terragucci.yml roots, binary, version and env reach the pipeline", async () => {
     const dir = write(withRemote("https://github.com/acme/infra.git"), {
       "terragucci.yml": 'roots: ["network"]\nbinary: terraform\nversion: "1.14.0"\nenv:\n  AWS_REGION: eu-west-1\n',
