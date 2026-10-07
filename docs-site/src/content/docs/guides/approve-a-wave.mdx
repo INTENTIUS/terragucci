@@ -23,11 +23,13 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 ### 1. Find the waiting wave
 
-After a merge, each wave runs in its own job. A wave that has to wait for you stops its job with exit code 3 and prints the command to run. The pull request's plan note shows the same command at its foot, for example:
+After a merge, each wave runs in its own job. A wave that has to wait for you stops its job with exit code 3 and prints the command to run, with the digest it planned, for example:
 
 ```text
-approve wave 2 with chant approve tf-apply wave-2 --sign
+chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --sign
 ```
+
+The plan note on the pull request does not carry it. The note is made before the merge, and the digest a wave waits on is made by the job after it.
 
 In the example, merging the pull request that stops keeping records for staging email shows it. The wave that holds the destroy waits, and the run prints the command:
 
@@ -42,10 +44,12 @@ The wave waits because its plans destroy something, or because `gate` is `always
 ### 3. Approve it
 
 ```bash
-npx chant approve tf-apply wave-2 --actor github:alice --sign ~/.ssh/id_ed25519
+npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
 ```
 
-`--actor` is you, named as the signers file names you. `--sign` seals the approval with your key. With no key file, it uses git's `user.signingkey` when `gpg.format` is `ssh`.
+`--plan` is the digest the job printed. The approval binds that digest and no other: if another merge planned the wave again since you read it, the digest no longer matches and the wave is refused as changed, whatever the approval says. Without `--plan`, chant binds whichever digest is pending when the command runs, which can be plans you did not read. Always pass it.
+
+When you leave out `--actor`, chant records `$GITHUB_ACTOR`, then `$GITLAB_USER_LOGIN`, then `$USER`. A seal counts only when the approver is a principal in `.chant/allowed_signers`, so pass `--actor` unless one of those is already your principal. `--actor` is you, named as the signers file names you. `--sign` seals the approval with your key. With no key file, it uses git's `user.signingkey` when `gpg.format` is `ssh`.
 
 <Captured step="wave-refused" cmd="just example approve" optional />
 
@@ -57,7 +61,7 @@ The command writes a record that names the wave's set digest, a hash over the pl
 
 Comment `/terragucci apply` on the merged pull request, on GitHub or Forgejo. The `apply-comment` job runs `tf-apply` at the merge commit and replies with a link to the run. Add `wave-2` to stop after that wave. You need write access.
 
-The comment approves nothing. A wave with no sealed approval of the plans it makes now stays put, and the reply gives its set digest and the `chant approve ... --sign` command. A wave whose plans changed since you approved is refused.
+The comment approves nothing. A wave with no sealed approval of the plans it makes now stays put, and the reply gives its set digest and the `chant approve ... --plan <digest> --sign` command. A wave whose plans changed since you approved is refused.
 
 Re-running the wave's job, or pushing to the default branch again, does the same; on GitLab, retry the job. The stage finds your approval and the wave goes out. It starts where it stopped and never touches a root twice. A later wave that also has to wait stops at exit code 3 with its own command.
 

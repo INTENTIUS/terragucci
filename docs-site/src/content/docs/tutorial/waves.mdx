@@ -29,7 +29,7 @@ Open it in Forgejo and merge it, signed in with the account `just example up` pr
 
 <Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing chant approve tf-apply wave-4 with the plan's digest" optional />
 
-Read the wave's plans in the report first. The destroy is named on its own at the top. Then run the command the job printed from a checkout of the repo. `--sign` seals it with your ssh key. The approval is sealed, and the wave counts it only when your key is listed in `.chant/allowed_signers` on the default branch. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets that up once per repo.
+Read the wave's plans in the report first. The destroy is named on its own at the top. Then run the command the job printed from a checkout of the repo. It carries the digest the wave planned, so the approval covers those plans and no others. If `$GITHUB_ACTOR`, `$GITLAB_USER_LOGIN` and `$USER` are not your principal in the signers file, add `--actor <principal>`. `--sign` seals it with your ssh key. The approval is sealed, and the wave counts it only when your key is listed in `.chant/allowed_signers` on the default branch. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets that up once per repo.
 
 Run the wave's job again on the forge. Wave 4 finds your approval and applies. The approval names the set digest of the plans you read. A plan that changes afterwards is not covered, which is the next page.
 
