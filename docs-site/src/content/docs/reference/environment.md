@@ -17,6 +17,8 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 `token_env` in the config names a different variable for a project. The token for `rollout`, `reconcile` and `respond` needs no merge or approval rights, and the commands never merge.
 
+No forge token reaches the binary. When a stage runs `tofu`, `terraform`, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Terragrunt, it leaves out `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and `ACTIONS_RUNTIME_TOKEN`, and any other variable that holds the value of `TG_TOKEN` or `TG_MERGE_TOKEN`, such as the variable `token_env` names. A variable whose name starts with `TF_` is passed as set. A provider that reads a forge token of its own, such as the GitLab provider's `GITLAB_TOKEN`, needs it under a `TF_VAR_` name and a variable in the root. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) says what this covers.
+
 ## Reports
 
 Set these on the plan job when `reports.bucket` is set.
@@ -140,7 +142,7 @@ terragucci reads these from the job's environment to find the project, the run a
 |---|---|
 | GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo also sets `FORGEJO_ACTIONS` and `GITEA_ACTIONS`, which tell the two apart |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
-| GitLab | `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_STATUS`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME`, and for the `apply-mr` and `unlock-mr` jobs `GITLAB_USER_LOGIN` and `GITLAB_USER_ID`, who started the job |
+| GitLab | `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_STATUS`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
 ## Variables the generated jobs set
 
@@ -148,7 +150,8 @@ The renderers write these into a job's steps. They are internal: nothing needs s
 
 | Variable | Set for |
 |---|---|
-| `TG_MERGE_TOKEN` | the apply-comment job sets it from the secret `apply.merge_token_env` names; `apply.merge: auto` merges with it on GitHub and Forgejo, and falls back to `TG_TOKEN` when it is empty |
+| `TG_MERGE_TOKEN` | the `pr-merge` job alone sets it from the secret `apply.merge_token_env` names; `apply.merge: auto` merges with it on GitHub and Forgejo, and falls back to `TG_TOKEN` when it is empty. No job that runs a pull request's code has it |
+| `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME` | the forge helper and the steps that name a pull request, wave or root; `TG_OPEN` says the pull request is open and applies from its head; `TG_OUTCOME` is the file that carries a job's one-line status |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES` | Terragrunt repos: how Terragrunt runs the binary, where it caches, and the roles it assumes per unit; `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` carries the web identity token, and terragucci never sets `TG_IAM_ASSUME_ROLE` |

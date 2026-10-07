@@ -7,7 +7,7 @@ Every stage runs as a job on your forge's CI: GitHub Actions, GitLab CI or Forge
 
 | Forge | What runs the jobs | Credentials |
 |---|---|---|
-| GitHub | GitHub Actions, with environments as a second reviewer | per-job OIDC roles or secrets |
+| GitHub | GitHub Actions | per-job OIDC roles or secrets |
 | GitLab | GitLab CI, with the summary as the merge-request note | per-job OIDC roles or CI variables |
 | Forgejo | Forgejo Actions, on your own instance | per-job OIDC roles or secrets |
 

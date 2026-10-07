@@ -6,6 +6,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { binaryEnv } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type Binary } from "./config";
 import { applyLayers, detectBinary, findRoots, globMatch } from "./detect";
 import { detectTerragrunt, discoverUnits } from "./terragrunt";
@@ -38,8 +39,8 @@ export async function planTargets(repo: string, options: PlanOptions): Promise<{
 
 function run(binary: string, dir: string, terragrunt: boolean, ...args: string[]) {
   return terragrunt
-    ? spawnSync(process.env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt", ["--working-dir", dir, "--non-interactive", "--no-color", ...args], { encoding: "utf-8", env: { ...process.env, TG_TF_PATH: binary } })
-    : spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8" });
+    ? spawnSync(process.env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt", ["--working-dir", dir, "--non-interactive", "--no-color", ...args], { encoding: "utf-8", env: binaryEnv({ ...process.env, TG_TF_PATH: binary }) })
+    : spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", env: binaryEnv(process.env) });
 }
 
 export async function plan(repo: string, options: PlanOptions, out: (line: string) => void = console.log): Promise<RootPlan[]> {

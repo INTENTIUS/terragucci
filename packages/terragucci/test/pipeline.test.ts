@@ -7,7 +7,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, mergeRequestApplyScript, movedRoots, planScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, mergeScript, movedRoots, planScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -436,42 +436,52 @@ describe("apply before merge (apply.when: pull-request)", () => {
     // The responses read the base's settings on an open pull request, and carry no flag after a merge.
     expect(manual).toContain('terragucci respond wave-refused --wave "$wave" --approved terragucci-report/approved --current terragucci-report/current $tf_base || true');
     expect(manual).toContain('terragucci respond apply-failed --log "$log" $tf_base || true');
-    const mr = mergeRequestApplyScript("tofu", layers, OIDC, { when: "pull-request" });
-    expect(mr).toContain('terragucci respond apply-failed --log "$log" --base "origin/$TG_BASE" || true');
-    expect(mr).toContain('--current terragucci-report/current --base "origin/$TG_BASE" || true');
     expect(manual).not.toContain("pr-merge");
+    expect(manual).not.toContain("GITHUB_OUTPUT");
     expect(manual).toContain("Merge it when you are ready");
     const auto = commentApplyScript("tofu", layers, "forgejo", OIDC, { when: "pull-request", merge: "auto" });
-    expect(auto).toContain('terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA" --forge forgejo');
-    // The merge comes after the loop, which exits at the first wave that does not apply.
-    expect(auto.indexOf("terragucci pr-merge")).toBeGreaterThan(auto.indexOf("done\n"));
+    // The job that ran the pull request's code never merges: it hands the head on, after the loop, which exits at the first wave that does not apply.
+    expect(auto).not.toContain("terragucci pr-merge");
+    expect(auto.indexOf('echo "merge=1"')).toBeGreaterThan(auto.indexOf("done\n"));
+    expect(mergeScript("forgejo")).toContain('terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA" --forge forgejo');
   });
 
-  it("gitlab: a manual apply-mr job after the plan, in the terragucci-apply environment, an unlock-mr job, and confirm on the default branch", () => {
-    const doc = renderPr("gitlab", "auto");
-    const job = doc["apply-mr"];
-    expect(job.needs).toEqual(["plan"]);
-    expect(job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH', when: "manual" }]);
-    expect(job.environment).toEqual({ name: "terragucci-apply" });
-    expect(job.resource_group).toBe("terragucci-apply");
-    expect(job.script.join("\n")).toContain("--forge gitlab --when pull-request");
-    expect(job.script.join("\n")).toContain('--base "origin/$TG_BASE"');
-    expect(job.script.join("\n")).toContain("terragucci pr-merge");
-    expect(doc["unlock-mr"].rules[0].when).toBe("manual");
-    expect(doc["unlock-mr"].script.join("\n")).toContain("--unlock");
-    expect(doc["apply-wave-1"]).toBeUndefined();
-    expect(doc.confirm.rules).toEqual([{ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" }]);
-    expect(mergeRequestApplyScript("tofu", layers, OIDC, { when: "pull-request" })).toContain("run the apply-mr job of this merge request again");
+  it("gitlab refuses apply.when pull-request: a merge request's pipeline is the merge request's own", () => {
+    expect(() => renderPr("gitlab")).toThrow(/apply\.when: pull-request is not supported on GitLab/);
+    expect(() => renderPr("gitlab", "auto")).toThrow(/not supported on GitLab/);
   });
 
-  it("apply.merge auto merges with apply.merge_token_env's secret, which Forgejo needs and GitLab refuses", () => {
+  it("apply.merge auto merges in a pr-merge job of its own, the only job that gets apply.merge_token_env's secret", () => {
     // Forgejo pushes a merge as its doer, and refuses a push to a branch from the job's own token.
     expect(() => renderPr("forgejo", "auto")).toThrow(/apply\.merge: auto on Forgejo needs apply\.merge_token_env/);
-    expect(renderPr("forgejo", "auto", "MERGE_TOKEN").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBe("${{ secrets.MERGE_TOKEN }}");
-    expect(renderPr("github", "auto", "MERGE_TOKEN").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBe("${{ secrets.MERGE_TOKEN }}");
-    expect(renderPr("github", "auto").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBeUndefined();
-    expect(renderPr("forgejo", "manual").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBeUndefined();
-    expect(() => renderPr("gitlab", "auto", "MERGE_TOKEN")).toThrow(/merge_token_env is for GitHub and Forgejo/);
+    for (const forge of ["github", "forgejo"] as const) {
+      const doc = renderPr(forge, "auto", "MERGE_TOKEN");
+      const apply = doc.jobs["apply-comment"];
+      const merge = doc.jobs["pr-merge"];
+      expect(apply.env.TG_MERGE_TOKEN).toBeUndefined();
+      expect(JSON.stringify(apply)).not.toContain("MERGE_TOKEN");
+      expect(apply.outputs).toEqual({ merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" });
+      expect(apply.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).id).toBe("apply");
+      expect(merge.needs).toBe("apply-comment");
+      expect(merge.if).toBe("needs.apply-comment.outputs.merge == '1'");
+      expect(merge.env).toEqual({
+        TG_TOKEN: "${{ github.token }}",
+        TG_MERGE_TOKEN: "${{ secrets.MERGE_TOKEN }}",
+        TG_PR: "${{ github.event.issue.number }}",
+        TG_SHA: "${{ needs.apply-comment.outputs.sha }}",
+        TG_WAVES: "${{ needs.apply-comment.outputs.waves }}",
+      });
+      // No cloud role, no install, no checkout of the pull request: the default branch's checkout and the merge.
+      expect(JSON.stringify(merge)).not.toContain(OIDC.apply_role);
+      expect(merge.steps).toHaveLength(2);
+      expect(merge.steps[0].uses).toMatch(/actions\/checkout@v4$/);
+      expect(merge.steps[0].with).toBeUndefined();
+      // The outputs never reach the script as expressions, only through the environment.
+      expect(merge.steps[1].run).not.toContain("${{");
+    }
+    expect(renderPr("github", "auto").jobs["pr-merge"].env.TG_MERGE_TOKEN).toBeUndefined();
+    expect(renderPr("github", "manual").jobs["pr-merge"]).toBeUndefined();
+    expect(renderPr("forgejo", "manual").jobs["apply-comment"].outputs).toBeUndefined();
   });
 
   it("a Terragrunt repo refuses apply.when pull-request", () => {
@@ -499,18 +509,42 @@ describe("apply before merge (apply.when: pull-request)", () => {
       LOG: join(dir, "stage.log"), DECISION: JSON.stringify(d), TG_TOKEN: "t", GITHUB_API_URL: api, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "https://forge.test", GITHUB_RUN_ID: "9",
     });
 
-    it("applies an open pull request's head with --base, merges it with apply.merge auto, and says so", async () => {
+    it("applies an open pull request's head with --base and, with apply.merge auto, hands the head to pr-merge, which merges it and says so", async () => {
+      const { work, sha } = head();
+      const { dir, env } = fake();
+      const api = await stubApi(() => ({}));
+      const output = join(dir, "output");
+      try {
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github", undefined, { when: "pull-request", merge: "auto" })}`, { ...env, ...envFor(api.url, dir, { go: true, open: true, pr: 7, sha, base: "main" }), GITHUB_OUTPUT: output });
+        expect(r.status, r.out).toBe(0);
+        const log = readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n");
+        expect(log.filter((l) => l.startsWith("stage tf-apply")).every((l) => l.endsWith("--base origin/main"))).toBe(true);
+        expect(log.some((l) => l.startsWith("pr-merge"))).toBe(false);
+        expect(readFileSync(output, "utf-8")).toBe(`merge=1\nsha=${sha}\nwaves=1, 2\n`);
+        expect(api.hits.filter((h) => h.url === "/repos/acme/infra/issues/7/comments")).toEqual([]);
+        const m = await runStep(`cd ${work} && ${mergeScript("github")}`, { ...env, ...envFor(api.url, dir, {}), TG_PR: "7", TG_SHA: sha, TG_WAVES: "1, 2" });
+        expect(m.status, m.out).toBe(0);
+        expect(readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n").at(-1)).toBe(`pr-merge --pr 7 --sha ${sha}`);
+        const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
+        expect(reply).toBe(`terragucci: applied wave 1, 2 of pull request 7 at ${sha.slice(0, 8)}, and merged pull request 7 at abcdef12. https://forge.test/acme/infra/actions/runs/9`);
+      } finally {
+        api.close();
+      }
+    });
+
+    it("pr-merge reads what the apply job handed on as data: a head that is not a sha merges nothing, and the waves keep only digits", async () => {
       const { work, sha } = head();
       const { dir, env } = fake();
       const api = await stubApi(() => ({}));
       try {
-        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github", undefined, { when: "pull-request", merge: "auto" })}`, { ...env, ...envFor(api.url, dir, { go: true, open: true, pr: 7, sha, base: "main" }) });
-        expect(r.status, r.out).toBe(0);
-        const log = readFileSync(join(dir, "stage.log"), "utf-8").trim().split("\n");
-        expect(log.filter((l) => l.startsWith("stage tf-apply")).every((l) => l.endsWith("--base origin/main"))).toBe(true);
-        expect(log.at(-1)).toBe(`pr-merge --pr 7 --sha ${sha}`);
+        const bad = await runStep(`cd ${work} && ${mergeScript("github")}`, { ...env, ...envFor(api.url, dir, {}), TG_PR: "7", TG_SHA: "$(touch pwned)", TG_WAVES: "1" });
+        expect(bad.status).toBe(1);
+        expect(existsSync(join(work, "pwned"))).toBe(false);
+        expect(existsSync(join(dir, "stage.log"))).toBe(false);
+        const odd = await runStep(`cd ${work} && ${mergeScript("github")}`, { ...env, ...envFor(api.url, dir, {}), TG_PR: "7", TG_SHA: sha, TG_WAVES: "1, 2 `id` $(id)" });
+        expect(odd.status, odd.out).toBe(0);
         const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
-        expect(reply).toBe(`terragucci: applied wave 1, 2 of pull request 7 at ${sha.slice(0, 8)}, and merged pull request 7 at abcdef12. https://forge.test/acme/infra/actions/runs/9`);
+        expect(reply).toContain("applied wave 1, 2   of pull request 7");
       } finally {
         api.close();
       }
@@ -521,7 +555,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
       const { dir, env } = fake();
       const api = await stubApi(() => ({}));
       try {
-        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github", undefined, { when: "pull-request", merge: "auto" })}`, { ...env, ...envFor(api.url, dir, { go: true, open: true, pr: 7, sha, base: "main" }), MERGE_FAILS: "1" });
+        const r = await runStep(`cd ${work} && ${mergeScript("github")}`, { ...env, ...envFor(api.url, dir, {}), TG_PR: "7", TG_SHA: sha, TG_WAVES: "1, 2", MERGE_FAILS: "1" });
         expect(r.status, r.out).toBe(1);
         const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
         expect(reply).toBe(`terragucci: applied wave 1, 2 of pull request 7 at ${sha.slice(0, 8)}, and it was not merged: the forge refused the merge (POST answered 409). Merge it by hand. https://forge.test/acme/infra/actions/runs/9`);

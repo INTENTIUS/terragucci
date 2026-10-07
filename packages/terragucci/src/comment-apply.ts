@@ -17,8 +17,8 @@
  * with the default branch; it does not change the pipeline file, which the
  * comment's job runs from the default branch; and no other open pull request
  * holds a lock on a root it reaches (locks.ts). The decision then takes those
- * locks. `/terragucci unlock` releases them. The same checks run for a GitLab
- * merge request's manual apply job (`decideMergeRequestApply`).
+ * locks. `/terragucci unlock` releases them. GitLab has no apply before
+ * merge: its merge request pipelines come from the merge request itself.
  *
  * The comment is untrusted input, read from the event file and parsed by the
  * one grammar in comment.ts. What leaves this file for the pipeline's shell is
@@ -37,7 +37,7 @@ import { readFileSync } from "node:fs";
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { applyWaves } from "./apply";
 import { apiOf, BRANCH, LOGIN, parseComment, SHA, type CommentDecision } from "./comment";
-import { ConfigError, type ApplyWhen, type ForgeName } from "./config";
+import { ConfigError, type ApplyWhen } from "./config";
 import { rootDependencies } from "./detect";
 import type { Fetch } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
@@ -406,146 +406,17 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
 }
 
 /** The generated pipeline's path on each forge (render.ts's PIPELINE_PATHS). */
-const PIPELINE_FILES: Record<ForgeName, string> = {
+const PIPELINE_FILES: Record<"github" | "forgejo", string> = {
   github: ".github/workflows/terragucci.yml",
   forgejo: ".forgejo/workflows/terragucci.yml",
-  gitlab: ".gitlab-ci.yml",
 };
-
-// ── GitLab: the merge request's manual apply and unlock jobs ─────────────
-
-/** GitLab's Developer role: the access a person needs to start a merge request's manual job. */
-const DEVELOPER = 30;
-
-export interface MergeRequestApplyOptions {
-  layers: string[][];
-  /** Release the merge request's locks instead of applying. */
-  unlock?: boolean;
-  env?: NodeJS.ProcessEnv;
-  fetch?: Fetch;
-  git?: Git;
-  repo?: string;
-}
-
-/**
- * The manual `apply-mr` job of a GitLab merge request pipeline under
- * `apply.when: pull-request` (and `unlock-mr`, with `unlock`). GitLab starts
- * no pipeline for a note, so a person starts the job. The job needs the
- * pipeline's check and plan jobs, so it runs only once they passed. Checked
- * here, each refused with a note that names it: the person has the Developer
- * role or more, the merge request is open, from this project, into the
- * default branch, and its head is the commit the pipeline runs; a reviewer
- * other than its author approved it; it is up to date with the default
- * branch; it does not change `.gitlab-ci.yml`; and no other open merge
- * request holds a lock on a root it reaches.
- */
-export async function decideMergeRequestApply(o: MergeRequestApplyOptions): Promise<ApplyCommentDecision> {
-  const env = o.env ?? process.env;
-  const doFetch: Fetch = o.fetch ?? fetch;
-  const git: Git = o.git ?? ((args) => spawnSync("git", args, { encoding: "utf-8" }) as ReturnType<Git>);
-  const stop = (reason: string): ApplyCommentDecision => ({ go: false, reason });
-  const broke = (reason: string): ApplyCommentDecision => ({ go: false, fail: true, reason });
-  const api = env.CI_API_V4_URL;
-  const project = env.CI_PROJECT_ID;
-  const token = env.TG_TOKEN;
-  const iid = Number(env.CI_MERGE_REQUEST_IID);
-  const sha = env.CI_COMMIT_SHA ?? "";
-  const user = env.GITLAB_USER_LOGIN ?? "";
-  const userId = env.GITLAB_USER_ID ?? "";
-  if (!api || !project || !token) throw new ConfigError("the merge request apply needs CI_API_V4_URL, CI_PROJECT_ID and TG_TOKEN in the environment");
-  if (!Number.isInteger(iid) || iid < 1) return stop("the pipeline is not a merge request's");
-  if (!SHA.test(sha)) return broke("CI_COMMIT_SHA is not a commit");
-  if (!LOGIN.test(user) || !/^\d+$/.test(userId)) return broke("the job does not say who started it");
-  const call = async (method: string, path: string, body?: unknown): Promise<any> => {
-    const r = await doFetch(`${api}/projects/${project}/${path}`, {
-      method,
-      headers: { "content-type": "application/json", "private-token": token },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
-    return r.status === 204 ? null : r.json();
-  };
-  const refuse = async (reason: string): Promise<ApplyCommentDecision> => {
-    try {
-      await call("POST", `merge_requests/${iid}/notes`, { body: `terragucci: ${reason}` });
-    } catch (e) {
-      console.error(`terragucci: could not reply: ${(e as Error).message}`);
-    }
-    return stop(reason);
-  };
-
-  let member: any;
-  try {
-    member = await call("GET", `members/all/${userId}`);
-  } catch {
-    member = undefined;
-  }
-  if (!(Number(member?.access_level) >= DEVELOPER)) return refuse(`${user} has no Developer access to this project, so nothing is ${o.unlock ? "unlocked" : "applied"}`);
-  const repo = o.repo ?? process.cwd();
-  if (o.unlock) {
-    let released: string[];
-    try {
-      released = releaseLocks(repo, iid);
-    } catch (e) {
-      return broke(`could not release the locks of merge request ${iid} (${(e as Error).message})`);
-    }
-    const text = released.length ? `released the locks merge request ${iid} held on ${released.map((r) => `\`${r}\``).join(", ")}, for ${user}` : `merge request ${iid} holds no lock`;
-    await refuse(text);
-    return stop(text);
-  }
-
-  let mr: any;
-  try {
-    mr = await call("GET", `merge_requests/${iid}`);
-  } catch (e) {
-    return broke(`could not read merge request ${iid} (${(e as Error).message})`);
-  }
-  if (mr?.state !== "opened") return refuse(`merge request ${iid} is not open, so nothing is applied`);
-  if (mr?.source_project_id !== mr?.target_project_id || String(mr?.target_project_id) !== String(project)) return refuse("a merge request from a fork is never applied: its code would run with this project's apply credentials");
-  const base = env.CI_DEFAULT_BRANCH;
-  if (!validBranch(base)) return broke("CI_DEFAULT_BRANCH is not a branch name this job passes on");
-  if (mr?.target_branch !== base) return refuse(`merge request ${iid} targets ${String(mr?.target_branch)}, not the default branch ${base}, so it is not applied`);
-  if (mr?.sha !== sha) return refuse(`merge request ${iid} moved since this pipeline started (its head is now ${short(String(mr?.sha))}); run the job of the newest pipeline`);
-
-  let approvals: any;
-  try {
-    approvals = await call("GET", `merge_requests/${iid}/approvals`);
-  } catch (e) {
-    return broke(`could not read the approvals of merge request ${iid} (${(e as Error).message})`);
-  }
-  const author = mr?.author?.username;
-  const approvers = (Array.isArray(approvals?.approved_by) ? approvals.approved_by : []).map((a: any) => a?.user?.username).filter((u: unknown) => typeof u === "string" && u !== author);
-  if (approvers.length === 0) return refuse(`merge request ${iid} is not approved: no reviewer other than its author approved it, so nothing is applied`);
-
-  const remote = `refs/remotes/origin/${base}`;
-  const fetched = git(["fetch", "-q", "origin", `+refs/heads/${base}:${remote}`]);
-  if (fetched.status !== 0) return broke(`could not fetch ${base} (${fetched.stderr.trim()})`);
-  const tip = git(["rev-parse", remote]).stdout.trim();
-  const upToDate = git(["merge-base", "--is-ancestor", remote, sha]);
-  if (upToDate.status === 1) return refuse(`merge request ${iid} is not up to date with ${base}: its head ${short(sha)} does not contain ${short(tip)}. Rebase it or merge ${base} into it, and run the job again once its plan passes`);
-  if (upToDate.status !== 0) return broke(`could not tell whether ${short(sha)} contains ${base} (${upToDate.stderr.trim()})`);
-  const touched = git(["diff", "--name-only", `${remote}...${sha}`, "--", PIPELINE_FILES.gitlab]);
-  if (touched.status === 0 && touched.stdout.trim()) {
-    return refuse(`merge request ${iid} changes ${PIPELINE_FILES.gitlab}, so it is not applied before merge. Merge it, and its push to ${base} plans the change`);
-  }
-
-  const roots = reachedRoots(repo, git, remote, sha, o.layers);
-  let locked;
-  try {
-    locked = await takeLocks(repo, roots, { pr: iid, by: user, at: new Date().toISOString(), head: sha }, async (n) => (await call("GET", `merge_requests/${n}`))?.state === "opened");
-  } catch (e) {
-    return broke(`could not take the root locks (${(e as Error).message})`);
-  }
-  if (!locked.ok) return refuse(`${describeHeld(locked.held).replace(/pull request/g, "merge request")}, so merge request ${iid} is not applied. It applies once that merge request merges or closes, or someone runs its unlock-mr job`);
-  return { go: true, open: true, reason: `apply merge request ${iid}'s head ${short(sha)} for ${user}${roots.length ? `, locking ${roots.join(", ")}` : ""}`, pr: iid, sha, base };
-}
 
 // ── the merge after the last wave ────────────────────────────────────────
 
 export interface MergeOptions {
   pr: number;
   sha: string;
-  forge?: ForgeName;
+  forge?: "github" | "forgejo";
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
   repo?: string;
@@ -553,32 +424,56 @@ export interface MergeOptions {
 
 /**
  * Merge a pull request whose every wave applied from its head
- * (`apply.merge: auto`), only while its head is still `sha`, then release
- * its locks. It merges with TG_MERGE_TOKEN (apply.merge_token_env's secret)
- * when the job has it, else with TG_TOKEN. Returns what to reply; throws with
- * the forge's reason when it refused the merge.
+ * (`apply.merge: auto`), then release its locks. The `pr-merge` job runs it
+ * with a sha a job that ran the pull request's code handed on, so before the
+ * merge it checks, with the job's own token, that the pull request is open,
+ * its head is still `sha`, and a reviewer other than its author approved
+ * that head, as the apply's decision did; the forge then merges only while
+ * the head is `sha`. It merges with TG_MERGE_TOKEN (apply.merge_token_env's
+ * secret) when the job has it, else with TG_TOKEN. Returns what to reply;
+ * throws with the reason when it does not merge.
  */
 export async function mergePullRequest(o: MergeOptions): Promise<string> {
   const env = o.env ?? process.env;
   const doFetch: Fetch = o.fetch ?? fetch;
   if (!SHA.test(o.sha)) throw new ConfigError("--sha must be a commit sha");
-  const gitlab = o.forge === "gitlab";
+  const { api, repo } = apiOf(env);
+  const read = env.TG_TOKEN;
   // apply.merge_token_env's secret, when set: Forgejo refuses a merge made with the job's own token.
-  const token = (gitlab ? undefined : env.TG_MERGE_TOKEN) || env.TG_TOKEN;
-  if (!token) throw new ConfigError("pr-merge needs TG_TOKEN in the environment");
-  const [url, method, body] = gitlab
-    ? [`${env.CI_API_V4_URL}/projects/${env.CI_PROJECT_ID}/merge_requests/${o.pr}/merge`, "PUT", { sha: o.sha }]
-    : o.forge === "forgejo"
-      ? [`${apiOf(env).api}/repos/${apiOf(env).repo}/pulls/${o.pr}/merge`, "POST", { Do: "merge", head_commit_id: o.sha }]
-      : [`${apiOf(env).api}/repos/${apiOf(env).repo}/pulls/${o.pr}/merge`, "PUT", { sha: o.sha, merge_method: "merge" }];
+  const token = env.TG_MERGE_TOKEN || read;
+  if (!token || !read) throw new ConfigError("pr-merge needs TG_TOKEN in the environment");
+  const get = async (path: string): Promise<any> => {
+    const r = await doFetch(`${api}/repos/${repo}/${path}`, { method: "GET", headers: { "content-type": "application/json", authorization: `token ${read}` } });
+    if (!r.ok) throw new Error(`GET ${path} answered ${r.status}`);
+    return r.json();
+  };
+  const pr = await get(`pulls/${o.pr}`);
+  if (pr?.state !== "open" || pr?.merged === true) throw new Error(`pull request ${o.pr} is not open`);
+  if (pr?.head?.sha !== o.sha) throw new Error(`pull request ${o.pr} moved after it applied (its head is now ${short(String(pr?.head?.sha))})`);
+  if (pr?.head?.repo?.full_name !== repo) throw new Error(`pull request ${o.pr} comes from a fork`);
+  const reviews = await get(`pulls/${o.pr}/reviews?per_page=100&limit=50`);
+  const mayWrite = async (login: string): Promise<boolean> => {
+    if (o.forge === "forgejo") return true;
+    try {
+      const p = (await get(`collaborators/${encodeURIComponent(login)}/permission`))?.permission;
+      return typeof p === "string" && MAY_APPLY.has(p);
+    } catch {
+      return false;
+    }
+  };
+  const approval = await approvalOf(Array.isArray(reviews) ? reviews : [], pr?.user?.login, o.sha, mayWrite);
+  if (approval.changes.length > 0 || approval.by.length === 0) throw new Error(`no reviewer other than its author approved its head ${short(o.sha)}`);
+  const [url, method, body] = o.forge === "forgejo"
+    ? [`${api}/repos/${repo}/pulls/${o.pr}/merge`, "POST", { Do: "merge", head_commit_id: o.sha }]
+    : [`${api}/repos/${repo}/pulls/${o.pr}/merge`, "PUT", { sha: o.sha, merge_method: "merge" }];
   const r = await doFetch(url, {
     method,
-    headers: { "content-type": "application/json", ...(gitlab ? { "private-token": token } : { authorization: `token ${token}` }) },
+    headers: { "content-type": "application/json", authorization: `token ${token}` },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`the forge refused the merge (${method} answered ${r.status}${await refusal(r)})`);
   const released = releaseLocks(o.repo ?? process.cwd(), o.pr);
-  return `merged ${gitlab ? "merge request" : "pull request"} ${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
+  return `merged pull request ${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
 }
 
 /** The forge's own words for a refused merge, as ": <message>", or nothing when its answer has none. */

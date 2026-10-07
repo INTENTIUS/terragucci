@@ -46,7 +46,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { responseTo, type ApplyMerge, type ApplyWhen, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyWhen, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -107,11 +107,11 @@ export interface PipelineInput {
   policy?: boolean;
   /** `agent.comment` is set: `/terragucci agent <ask>` gets the agent and agent-push jobs (render-agent.ts). GitHub and Forgejo only. */
   agentComment?: AgentCommentInput;
-  /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (a manual job on GitLab), and the push after the merge only confirms. Plain roots only. */
+  /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (GitHub and Forgejo), and the push after the merge only confirms. Plain roots only. */
   applyWhen?: ApplyWhen;
   /** `apply.merge`: with `auto`, a pull request whose every wave applied is merged. */
   applyMerge?: ApplyMerge;
-  /** `apply.merge_token_env`: the secret whose token `pr-merge` merges with on GitHub and Forgejo, in place of the job's own. */
+  /** `apply.merge_token_env`: the secret whose token the `pr-merge` job merges with, in place of the job's own. Only that job gets it. */
   applyMergeTokenEnv?: string;
 }
 
@@ -572,7 +572,7 @@ const PR_DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.ar
 /** What a waiting wave's reply asks for next, as the comment's job says it. */
 const COMMENT_AGAIN = "A comment approves nothing: approve the plans with \\\`$cmd\\\` and comment \\\`/terragucci apply\\\` again";
 
-/** How the apply a comment (or a GitLab merge request's manual job) starts is cut, gated and answered. */
+/** How the apply a comment starts is cut, gated and answered. */
 export interface CommentApplyInput {
   canary?: string[];
   gate?: Gate;
@@ -586,7 +586,7 @@ export interface CommentApplyInput {
 }
 
 /**
- * The waves of an apply a comment or a manual job started, from wave 1 to
+ * The waves of an apply a comment started, from wave 1 to
  * `$last`, as a re-run does: a wave already applied plans no change, a gated
  * wave counts only the sealed approval of the plans it makes now, and the
  * first wave that does not apply stops the run, with a reply that says why.
@@ -630,30 +630,52 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
 }
 
 /**
- * After every wave of an open pull request applied from its head: merge it
- * (`apply.merge: auto`, through `terragucci pr-merge`, which merges only
- * while the head is the commit that applied, then releases its locks), or
- * leave it for a person. A run that stopped at a wave never gets here, so a
- * pull request whose apply partly failed is never merged.
+ * After every wave of an open pull request applied from its head. With
+ * `apply.merge: auto` the step hands the pull request's head and its applied
+ * waves to the `pr-merge` job as outputs, and that job merges it (mergeScript):
+ * this job ran the pull request's code, so it never holds the merge token.
+ * With `manual` it says the pull request is left for a person. A run that
+ * stopped at a wave never gets here, so a pull request whose apply partly
+ * failed is never merged.
  */
-function openReply(forge: ForgeName, count: number, merge: ApplyMerge | undefined, noun: string): string[] {
-  const applied = `applied wave $done_waves of ${noun} $TG_PR at \${TG_SHA:0:8}`;
+function openReply(count: number, merge: ApplyMerge | undefined): string[] {
+  const applied = "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}";
   return [
     `if [ "$last" = ${count} ]; then`,
     ...(merge === "auto"
-      ? [
-          `  if merged="$(terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA"${forge === "github" ? "" : ` --forge ${forge}`} 2>&1)"; then`,
-          `    tg reply "${applied}, and \${merged#terragucci pr-merge: }. $run_url"`,
-          "  else",
-          `    tg reply "${applied}, and it was not merged: \${merged#terragucci pr-merge: not merged: }. Merge it by hand. $run_url"`,
-          "    exit 1",
-          "  fi",
-        ]
+      ? ['  { echo "merge=1"; echo "sha=$TG_SHA"; echo "waves=$done_waves"; } >> "$GITHUB_OUTPUT"']
       : [`  tg reply "${applied}. Merge it when you are ready; its root locks hold until it merges or closes. $run_url"`]),
     "else",
     `  tg reply "${applied}. $run_url"`,
     "fi",
   ];
+}
+
+/**
+ * The `pr-merge` job's script (`apply.merge: auto`): merge the pull request
+ * the comment named, at the head the apply step handed on, through
+ * `terragucci pr-merge`, which merges only while that head is still the pull
+ * request's head and approved by a reviewer other than its author, then
+ * releases its locks. It runs in a job of its own, from the default branch's
+ * checkout, so the merge token never shares a job with the pull request's
+ * code. The outputs it reads come from a step that ran that code, so they
+ * are read as data: the head must be a commit sha and the waves only digits.
+ */
+export function mergeScript(forge: Exclude<ForgeName, "gitlab">): string {
+  const applied = "applied wave $waves of pull request $TG_PR at ${TG_SHA:0:8}";
+  return [
+    READS_EXIT,
+    forgeApi(forge),
+    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
+    'case "$TG_SHA" in ""|*[!0-9a-f]*) echo "terragucci: the apply job handed on no commit sha, so nothing is merged" >&2; exit 1 ;; esac',
+    `waves="$(printf '%s' "\${TG_WAVES:-}" | tr -cd '0-9, ')"`,
+    `if merged="$(terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA"${forge === "github" ? "" : ` --forge ${forge}`} 2>&1)"; then`,
+    `  tg reply "${applied}, and \${merged#terragucci pr-merge: }. $run_url"`,
+    "else",
+    `  tg reply "${applied}, and it was not merged: \${merged#terragucci pr-merge: not merged: }. Merge it by hand. $run_url"`,
+    "  exit 1",
+    "fi",
+  ].join("\n");
 }
 
 /**
@@ -728,52 +750,8 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     `  tg status terragucci/apply pending "wave $last of ${count} applied"`,
     "fi",
     ...(prMode
-      ? ['if [ "$TG_OPEN" = 1 ]; then', ...openReply(forge, count, input.merge, "pull request").map((l) => `  ${l}`), "else", '  tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"', "fi"]
+      ? ['if [ "$TG_OPEN" = 1 ]; then', ...openReply(count, input.merge).map((l) => `  ${l}`), "else", '  tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"', "fi"]
       : ['tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"']),
-  ].join("\n");
-}
-
-/**
- * GitLab's apply before merge (`apply.when: pull-request`): the manual
- * `apply-mr` job of a merge request pipeline. GitLab starts no pipeline for a
- * merge request note, so a person starts the job; it needs the pipeline's
- * check and plan jobs. `terragucci comment-apply --forge gitlab` checks who
- * started it, the merge request, its approval, that it is up to date, and
- * takes its root locks, before any credential; the job then runs the waves
- * from the head the pipeline checked out, each reading the gate rule and the
- * signers from the default branch, and answers on the merge request.
- */
-export function mergeRequestApplyScript(binary: Binary, layers: string[][], oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
-  const total = layers.flat().length;
-  const count = applyWaves(layers, input.canary).length;
-  return [
-    READS_EXIT,
-    forgeApi("gitlab"),
-    // The locks and a waiting wave's pending record are pushed to chant/lifecycle.
-    'git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"',
-    `terragucci comment-apply --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${input.canary?.length ? ` --canary ${sh(input.canary.join(","))}` : ""} --forge gitlab --when pull-request --out terragucci-comment.json || exit 1`,
-    "read -r TG_PR TG_SHA TG_WAVE TG_OPEN TG_BASE <<EOF",
-    `$(node -e '${PR_DECISION_JS}' terragucci-comment.json)`,
-    "EOF",
-    // A refusal was answered on the merge request; the job fails so the pipeline shows nothing applied.
-    '[ -n "$TG_PR" ] || exit 1',
-    "export TG_PR TG_SHA",
-    `last=${count}`,
-    'run_url="$CI_JOB_URL"',
-    ...cloudScripts("gitlab", oidc, "apply", "terragucci-apply"),
-    'tg status terragucci/apply pending "applying the merge request"',
-    ...waveLoop(binary, layers, input, '--base "origin/$TG_BASE"', "Approve the plans with \\\`$cmd\\\` and run the apply-mr job of this merge request again"),
-    `tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
-    ...openReply("gitlab", count, input.merge, "merge request"),
-  ].join("\n");
-}
-
-/** GitLab's `unlock-mr` job: releases the root locks the merge request holds, for someone with the Developer role or more. */
-export function mergeRequestUnlockScript(layers: string[][]): string {
-  return [
-    "set -eu",
-    'git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"',
-    `terragucci comment-apply --layers ${sh(layers.map((l) => l.join(",")).join(";"))} --forge gitlab --when pull-request --out terragucci-comment.json --unlock`,
   ].join("\n");
 }
 
@@ -1074,8 +1052,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (prApply && tg) throw new RenderError("apply.when: pull-request needs plain roots: a Terragrunt repo applies after merge, so leave apply.when unset");
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
   if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
-  if (input.applyMergeTokenEnv && forge === "gitlab") throw new RenderError("apply.merge_token_env is for GitHub and Forgejo: on GitLab the merge is made with token_env's token, so drop merge_token_env");
+  if (prApply && forge === "gitlab") throw new RenderError(`apply.when: ${NO_GITLAB_PR_APPLY}`);
   const pushApplyJobs = prApply ? [] : applyJobs;
+  const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch.
@@ -1156,42 +1135,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: script(bash("APPLY", job.body)),
         // The wave's report stays with the job, like the plan's; the agent's input joins it when there is one.
         artifacts: { name: `${REPORT_DIR}-${job.name}`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
-      } as never) as never);
-    }
-    if (prApply) {
-      const onDefault = drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH";
-      const sameProject = '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH';
-      // The push after a merge applies nothing: it plans every root with the read-only role and says whether any still changes.
-      jobs.set("confirm", new GitLabJob({
-        stage: "apply",
-        image: jobImage,
-        variables: gitlabEnv,
-        rules: [new Rule({ if: onDefault })],
-        ...idTokens,
-        script: script(bash("CONFIRM", confirmScript(binary, layers, forge, oidc, report))),
-        artifacts: { name: `${REPORT_DIR}-confirm`, when: "always", paths: [`${REPORT_DIR}/`] },
-      } as never) as never);
-      // A person starts the merge request's apply once its plan passed. The job runs the merge request's code with the
-      // apply role, so it deploys to the terragucci-apply environment, which the apply role's trust can require to be protected.
-      jobs.set("apply-mr", new GitLabJob({
-        stage: "apply",
-        image: jobImage,
-        needs: ["plan"],
-        variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
-        rules: [new Rule({ if: sameProject, when: "manual" })],
-        environment: { name: "terragucci-apply" },
-        resource_group: "terragucci-apply",
-        ...idTokens,
-        script: script(bash("APPLY", mergeRequestApplyScript(binary, layers, oidc, prInput))),
-        artifacts: { name: `${REPORT_DIR}-apply-mr`, when: "always", paths: [`${REPORT_DIR}/`] },
-      } as never) as never);
-      jobs.set("unlock-mr", new GitLabJob({
-        stage: "apply",
-        image: jobImage,
-        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
-        rules: [new Rule({ if: sameProject, when: "manual" })],
-        resource_group: "terragucci-apply",
-        script: script(bash("UNLOCK", mergeRequestUnlockScript(layers))),
       } as never) as never);
     }
     if (tipsOn) {
@@ -1373,12 +1316,36 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     permissions: { contents: writesLedger || prApply ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: applyConcurrency(forge),
-    env: { TG_TOKEN: "${{ github.token }}", ...(prApply && input.applyMerge === "auto" && input.applyMergeTokenEnv ? { TG_MERGE_TOKEN: `\${{ secrets.${input.applyMergeTokenEnv} }}` } : {}), ...headersEnv },
+    // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+    ...(autoMerge ? { outputs: { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } } : {}),
     steps: [
-      ...steps(new Step({ name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) }), true, true),
+      ...steps(new Step({ ...(autoMerge ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true),
       new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
     ],
   } as never) as never);
+  // apply.merge: auto merges in a job of its own, after the apply-comment job applied every wave from the head. It runs no
+  // code of the pull request: a fresh container, the default branch's checkout (to release the locks), and the merge token.
+  if (autoMerge) {
+    entities.set("pr-merge", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      needs: "apply-comment",
+      if: "needs.apply-comment.outputs.merge == '1'",
+      permissions: { contents: "write", "pull-requests": "write" },
+      env: {
+        TG_TOKEN: "${{ github.token }}",
+        ...(input.applyMergeTokenEnv ? { TG_MERGE_TOKEN: `\${{ secrets.${input.applyMergeTokenEnv} }}` } : {}),
+        TG_PR: "${{ github.event.issue.number }}",
+        TG_SHA: "${{ needs.apply-comment.outputs.sha }}",
+        TG_WAVES: "${{ needs.apply-comment.outputs.waves }}",
+      },
+      steps: [
+        new Step({ uses: "actions/checkout@v4" }),
+        new Step({ name: "Merge the pull request whose every wave applied", shell: "bash", run: mergeScript(forge) }),
+      ],
+    } as never) as never);
+  }
   if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
   for (const [i, job] of pushApplyJobs.entries()) {
     entities.set(job.name, new Job({

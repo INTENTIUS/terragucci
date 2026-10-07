@@ -23,25 +23,36 @@ Roots that apply together each get a provider cache directory of their own.
 
 ## Apply before merge
 
-With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge) in `terragucci.yml`, `init` writes these jobs instead of one apply job per wave on the default branch:
+With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge) in `terragucci.yml`, `init` writes these jobs on GitHub and Forgejo instead of one apply job per wave on the default branch:
 
-| Forge | Applies an open pull request | Releases its locks | After the merge |
-|---|---|---|---|
-| GitHub, Forgejo | the `apply-comment` job, on `/terragucci apply [wave-<n>]` | the `apply-comment` job, on `/terragucci unlock` | the `confirm` job |
-| GitLab | the manual `apply-mr` job of the merge request pipeline, after its `plan` job | the manual `unlock-mr` job | the `confirm` job |
+| Job | Runs on | Does |
+|---|---|---|
+| `apply-comment` | `/terragucci apply [wave-<n>]` or `/terragucci unlock` on an open pull request | applies the pull request's head, or releases its locks |
+| `pr-merge` | with `apply.merge: auto`, after `apply-comment` applied every wave | merges the pull request |
+| `confirm` | each push to the default branch | plans every root and applies nothing |
+
+GitLab has no apply before merge, and `init` and `config check` refuse `apply.when: pull-request` there. GitLab builds a merge request's pipeline from the merge request's own `.gitlab-ci.yml`, so the checks below would run in a job the merge request controls, and the apply role would have to trust every branch of the project. On GitLab a change applies after it merges.
 
 Before anything is applied the job checks, and refuses by name in a reply:
 
-- who asked has write access (on GitLab, the Developer role or more);
+- who asked has write access;
 - the pull request is open and comes from this repository;
 - it targets the default branch;
 - a reviewer other than its author approved it. GitHub and Forgejo count an approval only on the commit it was given on, so a push after the review needs a fresh one. A reviewer whose last review asks for changes holds the apply back;
-- every status and check on the head passed, `terragucci/plan` among them (GitLab starts the job only once the pipeline's `plan` job passed);
+- no status or check on the head failed or is still running, and `terragucci/plan` passed on it ([What the pull request's code can reach](#what-the-pull-requests-code-can-reach) says what this proves);
 - the head contains the default branch as it is now;
 - the pull request does not change the pipeline file, since the job runs the default branch's pipeline;
 - no other open pull request holds a lock on a root the change reaches.
 
-The job then locks those roots and runs `tf-apply` from the head, wave by wave, with the apply role and while no other apply runs. Each wave reads the gate rule, the signers file and its config from the default branch, never from the pull request, so a pull request cannot add a signer who approves its own apply or send the apply's report and telemetry somewhere else. After the last wave, `apply.merge: auto` merges the pull request while its head is still the commit that applied, then releases its locks. It merges with the token in the secret `apply.merge_token_env` names, or with the job's own token when that is unset. Forgejo refuses a merge made with the job's own token, so there the secret is required. With `manual`, the default, a person merges it. A run that stopped at a wave never merges.
+The job then locks those roots and runs `tf-apply` from the head, wave by wave, with the apply role and while no other apply runs. Each wave reads the gate rule, the signers file and its config from the default branch, never from the pull request, so a pull request cannot add a signer who approves its own apply or send the apply's report and telemetry somewhere else. With `manual`, the default, a person merges it. A run that stopped at a wave never merges.
+
+With `apply.merge: auto`, the `apply-comment` job hands the head it applied to the `pr-merge` job, which merges the pull request while its head is still that commit and a reviewer other than its author approved it, then releases its locks. `pr-merge` runs in a fresh container from the default branch's checkout and runs none of the pull request's code. It is the only job that gets the token in the secret `apply.merge_token_env` names, and it merges with the job's own token when that is unset. Forgejo refuses a merge made with the job's own token, so there the secret is required.
+
+### What the pull request's code can reach
+
+Providers, modules and external data sources in the pull request run with the apply role in `apply-comment`. Every stage starts the binary and Terragrunt with no forge token in their environment, as [Environment variables](/terragucci/reference/environment/#forge-tokens) lists. The job's own credentials stay within reach all the same: the checkout keeps them for git, and code running as the same user can read the environment of the processes that started the binary. With `contents: write` granted here, protect the default branch so that a push to it needs a reviewed pull request. The merge token is never in this job.
+
+A status on the head can come from the pull request's own code, since the plan job holds `statuses: write` and every job sets statuses as the same user. Forgejo has statuses alone, and GitHub adds check runs, which GitHub Actions writes itself. So the check holds back a head whose checks failed or are still running, and it proves nothing about checks that passed. The guard is the approval of the head by a reviewer other than its author, read from the forge's reviews.
 
 The locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch, next to the gate records. A lock whose pull request merged or closed counts as released, and the next pull request that needs the root takes it over.
 
@@ -79,7 +90,7 @@ oidc:
     # audience: api://AzureADTokenExchangeUSGov   # a sovereign cloud's audience
 ```
 
-Plan runs the pull request's code, so it gets the read-only identity on every cloud. The config rejects the same identity for both stages. Apply gets the write identity and runs only on the default branch, for a push or for a comment on a merged pull request, at its merge commit. Forks get no plan job, so nothing reaches their pull requests. The drift job takes the plan identities.
+Plan runs the pull request's code, so it gets the read-only identity on every cloud. The config rejects the same identity for both stages. Apply gets the write identity in jobs that run the default branch's pipeline: for a push to the default branch, for a comment on a merged pull request at its merge commit, and, with `apply.when: pull-request`, for a comment on an open pull request at its head. Forks get no plan job, so nothing reaches their pull requests. The drift job takes the plan identities.
 
 With `reports.bucket` set and no `reports.role`, the GitHub and Forgejo plan, re-plan and drift jobs map the repository secrets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` into their env. A secret that does not exist maps to an empty value. No other job maps them. With `reports.role` set, nothing is mapped and the report is written with the role. GitLab reads the project's CI/CD variables without a mapping, so its pipeline has no such lines. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/) says which secrets to create.
 
@@ -105,7 +116,7 @@ Each identity trusts the forge's issuer and checks the token's `sub` claim. [Env
 | GCP | A workload identity pool with an OIDC provider for the issuer that maps `google.subject=assertion.sub` and admits only your repo in its attribute condition. Grant `roles/iam.workloadIdentityUser` on the plan service account to `principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/subject/<pull-request subject>`, and on the apply service account to the principal of the default branch's subject |
 | Azure | A federated identity credential on each app registration or managed identity, for the issuer with audience `api://AzureADTokenExchange` (or the sovereign cloud's, the same as `azure.audience`) and the exact subject: the pull-request subject for the plan client, the default branch's for the apply client |
 
-With `apply.when: pull-request`, the GitHub and Forgejo job that applies a pull request runs on the comment event, which runs on the default branch, so its token carries the default branch's subject and the apply role's trust stays as it is. That job runs the pull request's code with the apply role. On GitLab the `apply-mr` job runs in the merge request pipeline, so its token's subject names the merge request's source branch, and the apply role has to trust any branch of the project (`project_path:<group>/<project>:ref_type:branch:ref:*`). The job deploys to the `terragucci-apply` environment: make it a protected environment to choose who may start it, and on GCP, where the provider's attribute condition can read any claim, require `assertion.environment_protected == "true"` for the apply service account.
+Apply before merge needs no change to the apply role's trust: the `apply-comment` job runs on the comment event, whose workflow is the default branch's, so its OIDC token carries the default branch's subject. Keep that trust to the default branch's subject on every forge. GitLab's `sub` claim names the branch and no environment, so a trust on `ref:*` would let a pipeline on any branch assume the apply role.
 
 ### The agent comment
 

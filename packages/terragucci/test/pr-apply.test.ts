@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decideApplyComment, decideMergeRequestApply, mergePullRequest, type Git } from "../src/comment-apply";
+import { decideApplyComment, mergePullRequest, type Git } from "../src/comment-apply";
 import type { Fetch } from "../src/forge";
 import { describeHeld, LOCKS_PATH, parseLocks, readLocks, releaseLocks, takeLocks } from "../src/locks";
 import { backend, git, tmp, write } from "./helpers";
@@ -252,110 +252,77 @@ describe("root locks", () => {
   });
 });
 
-describe("a GitLab merge request's manual apply", () => {
-  const glEnv = (r: ReturnType<typeof repos>, extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
-    CI_API_V4_URL: "https://gl.test/api/v4", CI_PROJECT_ID: "5", CI_MERGE_REQUEST_IID: "7", CI_COMMIT_SHA: r.head, CI_DEFAULT_BRANCH: "main",
-    GITLAB_USER_LOGIN: "dev", GITLAB_USER_ID: "11", TG_TOKEN: "t", ...extra,
-  });
-  const gl = (o: { access?: number; mr?: Record<string, unknown>; approvedBy?: string[] }, head: string) => {
-    const sent: Sent[] = [];
-    const fetch: Fetch = async (url, init) => {
-      const path = url.replace("https://gl.test/api/v4/projects/5/", "");
-      sent.push({ method: init?.method ?? "GET", path, body: init?.body ? JSON.parse(init.body) : undefined });
-      const answer = (status: number, json: unknown) => ({ ok: status < 300, status, json: async () => json, text: async () => JSON.stringify(json) });
-      if (path.startsWith("members/all/")) return (o.access === undefined ? answer(200, { access_level: 30 }) : o.access === 0 ? answer(404, {}) : answer(200, { access_level: o.access })) as never;
-      if (path.endsWith("/approvals")) return answer(200, { approved_by: (o.approvedBy ?? ["rev"]).map((u) => ({ user: { username: u } })) }) as never;
-      if (path === "merge_requests/7") return answer(200, { state: "opened", sha: head, source_project_id: 5, target_project_id: 5, target_branch: "main", author: { username: "author" }, ...o.mr }) as never;
-      return answer(201, {}) as never;
-    };
-    return { fetch, sent };
-  };
-  const notes = (s: { sent: Sent[] }): string[] => s.sent.filter((x) => x.method === "POST" && x.path.endsWith("/notes")).map((x) => x.body.body as string);
-
-  it("applies an approved, up-to-date merge request started by a Developer, and locks its roots", async () => {
-    const r = repos();
-    const s = gl({}, r.head);
-    const d = await decideMergeRequestApply({ layers, env: glEnv(r), fetch: s.fetch, git: r.git, repo: r.work });
-    expect(d).toMatchObject({ go: true, open: true, pr: 7, sha: r.head, base: "main" });
-    expect(readLocks(r.work).locks.network?.pr).toBe(7);
-  });
-
-  it("refuses a Reporter, an unapproved merge request, one approved by its author only, and a stale one, each with a note", async () => {
-    const r = repos();
-    const reporter = gl({ access: 20 }, r.head);
-    expect((await decideMergeRequestApply({ layers, env: glEnv(r), fetch: reporter.fetch, git: r.git, repo: r.work })).go).toBe(false);
-    expect(notes(reporter)[0]).toContain("dev has no Developer access");
-    for (const approvedBy of [[], ["author"]]) {
-      const s = gl({ approvedBy }, r.head);
-      expect((await decideMergeRequestApply({ layers, env: glEnv(r), fetch: s.fetch, git: r.git, repo: r.work })).go).toBe(false);
-      expect(notes(s)[0]).toContain("merge request 7 is not approved");
-    }
-    const behind = repos({ behind: true });
-    const s = gl({}, behind.head);
-    expect((await decideMergeRequestApply({ layers, env: glEnv(behind), fetch: s.fetch, git: behind.git, repo: behind.work })).go).toBe(false);
-    expect(notes(s)[0]).toContain("is not up to date with main");
-  });
-
-  it("unlock releases the merge request's locks", async () => {
-    const r = repos();
-    await takeLocks(r.work, ["network"], { pr: 7, by: "dev", at: "2026-10-07T00:00:00.000Z", head: r.head }, async () => true);
-    const s = gl({}, r.head);
-    await decideMergeRequestApply({ layers, unlock: true, env: glEnv(r), fetch: s.fetch, git: r.git, repo: r.work });
-    expect(notes(s)[0]).toContain("released the locks merge request 7 held on `network`");
-    expect(readLocks(r.work).locks).toEqual({});
-  });
-});
-
 describe("pr-merge", () => {
+  const ENV = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", TG_TOKEN: "t" };
+  /** The forge as pr-merge reads it: pull request 7 open at `head`, its reviews, and the answer to the merge. */
+  const forgeFor = (head: string, o: { pr?: Record<string, unknown>; reviews?: unknown[]; merge?: { status: number; body: string } } = {}) => {
+    const sent: { url: string; method?: string; body?: unknown; auth?: string }[] = [];
+    const fetch: Fetch = async (u, init) => {
+      sent.push({ url: u, method: init?.method, body: init?.body ? JSON.parse(init.body) : undefined, auth: init?.headers?.authorization });
+      const answer = (status: number, json: unknown, text = JSON.stringify(json)) => ({ ok: status < 300, status, json: async () => json, text: async () => text });
+      if (u.endsWith("/merge")) return (o.merge ? answer(o.merge.status, {}, o.merge.body) : answer(200, {})) as never;
+      if (u.includes("/reviews")) return answer(200, o.reviews ?? approved(head)) as never;
+      if (u.includes("/permission")) return answer(200, { permission: "write" }) as never;
+      if (u.endsWith("/pulls/7")) return answer(200, OPEN(head, o.pr)) as never;
+      return answer(404, {}) as never;
+    };
+    return { fetch, sent, merges: () => sent.filter((x) => x.url.endsWith("/merge")) };
+  };
+
   it("merges only at the head that applied, on each forge, and releases the locks", async () => {
     const r = repos();
     const sha = r.head;
-    for (const [forge, method, url, body] of [
-      ["github", "PUT", "https://forge.test/api/v1/repos/acme/infra/pulls/7/merge", { sha, merge_method: "merge" }],
-      ["forgejo", "POST", "https://forge.test/api/v1/repos/acme/infra/pulls/7/merge", { Do: "merge", head_commit_id: sha }],
-      ["gitlab", "PUT", "https://gl.test/api/v4/projects/5/merge_requests/7/merge", { sha }],
+    for (const [forge, method, body] of [
+      ["github", "PUT", { sha, merge_method: "merge" }],
+      ["forgejo", "POST", { Do: "merge", head_commit_id: sha }],
     ] as const) {
       await takeLocks(r.work, ["network"], { pr: 7, by: "dev", at: "2026-10-07T00:00:00.000Z", head: sha }, async () => true);
-      const sent: { url: string; method?: string; body?: unknown }[] = [];
-      const fetch: Fetch = async (u, init) => {
-        sent.push({ url: u, method: init?.method, body: init?.body ? JSON.parse(init.body) : undefined });
-        return { ok: true, status: 200, json: async () => ({}), text: async () => "{}" } as never;
-      };
-      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", CI_API_V4_URL: "https://gl.test/api/v4", CI_PROJECT_ID: "5", TG_TOKEN: "t" };
-      const said = await mergePullRequest({ pr: 7, sha, forge, env, fetch, repo: r.work });
-      expect(sent).toEqual([{ url, method, body }]);
+      const f = forgeFor(sha);
+      const said = await mergePullRequest({ pr: 7, sha, forge, env: ENV, fetch: f.fetch, repo: r.work });
+      expect(f.merges().map(({ url, method, body }) => ({ url, method, body }))).toEqual([{ url: "https://forge.test/api/v1/repos/acme/infra/pulls/7/merge", method, body }]);
       expect(said).toContain("released its locks on network");
       expect(readLocks(r.work).locks).toEqual({});
     }
   });
 
-  it("merges with TG_MERGE_TOKEN when the job has it, on GitHub and Forgejo", async () => {
+  it("merges with TG_MERGE_TOKEN when the job has it, and reads the pull request with the job's own token", async () => {
     const r = repos();
     for (const forge of ["github", "forgejo"] as const) {
-      const auth: (string | undefined)[] = [];
-      const fetch: Fetch = async (_u, init) => {
-        auth.push(init?.headers?.authorization);
-        return { ok: true, status: 200, json: async () => ({}), text: async () => "{}" } as never;
-      };
-      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", TG_TOKEN: "job", TG_MERGE_TOKEN: "person" };
-      await mergePullRequest({ pr: 7, sha: r.head, forge, env, fetch, repo: r.work });
-      expect(auth).toEqual(["token person"]);
+      const f = forgeFor(r.head);
+      await mergePullRequest({ pr: 7, sha: r.head, forge, env: { ...ENV, TG_TOKEN: "job", TG_MERGE_TOKEN: "person" }, fetch: f.fetch, repo: r.work });
+      expect(f.merges().map((x) => x.auth)).toEqual(["token person"]);
+      expect(f.sent.filter((x) => !x.url.endsWith("/merge")).every((x) => x.auth === "token job")).toBe(true);
+    }
+  });
+
+  it("merges nothing when the head moved, has no approval of its own, or the pull request closed: the sha comes from a job that ran its code", async () => {
+    const r = repos();
+    const other = "a".repeat(40);
+    for (const [o, why] of [
+      [{ pr: { head: { sha: other, ref: "feature", repo: { full_name: "acme/infra" } } } }, "moved after it applied"],
+      [{ reviews: approved(other) }, "no reviewer other than its author approved"],
+      [{ reviews: approved(r.head, "author") }, "no reviewer other than its author approved"],
+      [{ pr: { state: "closed" } }, "is not open"],
+    ] as const) {
+      const f = forgeFor(r.head, o);
+      await expect(mergePullRequest({ pr: 7, sha: r.head, env: ENV, fetch: f.fetch, repo: r.work })).rejects.toThrow(why);
+      expect(f.merges()).toEqual([]);
     }
   });
 
   it("gives the forge's reason for a refused merge", async () => {
     const r = repos();
     const body = JSON.stringify({ message: "PushRejected with remote message: Forgejo: User 'forgejo-actions' is not allowed to push to branch 'main'", url: "x" });
-    const fetch: Fetch = async () => ({ ok: false, status: 409, json: async () => JSON.parse(body), text: async () => body }) as never;
-    await expect(mergePullRequest({ pr: 7, sha: r.head, forge: "forgejo", env: { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", TG_TOKEN: "t" }, fetch, repo: r.work }))
+    const f = forgeFor(r.head, { merge: { status: 409, body } });
+    await expect(mergePullRequest({ pr: 7, sha: r.head, forge: "forgejo", env: ENV, fetch: f.fetch, repo: r.work }))
       .rejects.toThrow("the forge refused the merge (POST answered 409: PushRejected with remote message: Forgejo: User 'forgejo-actions' is not allowed to push to branch 'main')");
   });
 
   it("throws when the forge refuses, and keeps the locks", async () => {
     const r = repos();
     await takeLocks(r.work, ["network"], { pr: 7, by: "dev", at: "2026-10-07T00:00:00.000Z", head: r.head }, async () => true);
-    const fetch: Fetch = async () => ({ ok: false, status: 409, json: async () => ({}), text: async () => "" }) as never;
-    await expect(mergePullRequest({ pr: 7, sha: r.head, env: { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", TG_TOKEN: "t" }, fetch, repo: r.work })).rejects.toThrow(/answered 409/);
+    const f = forgeFor(r.head, { merge: { status: 409, body: "" } });
+    await expect(mergePullRequest({ pr: 7, sha: r.head, env: ENV, fetch: f.fetch, repo: r.work })).rejects.toThrow(/answered 409/);
     expect(readLocks(r.work).locks.network?.pr).toBe(7);
   });
 });

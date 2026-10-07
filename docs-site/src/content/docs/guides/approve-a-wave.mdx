@@ -12,7 +12,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 ## Before you start
 
-- A wave that ran: after a merge reached the default branch, or, with [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), after `/terragucci apply` on the open pull request (on GitLab, its `apply-mr` job).
+- A wave that ran. A merge to the default branch runs one. So does `/terragucci apply` on an open pull request when [`apply.when`](/terragucci/reference/config/#apply-before-merge) is `pull-request`.
 - `gate` set to `on-destroy` (the default) or `always`. A wave that destroys or replaces nothing needs no approval under `on-destroy`, and applies at once on any push to the default branch when `apply.when` is `merge`. With `never`, no wave waits, and the apply runs unattended. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
 - [chant](/terragucci/concepts/glossary/#chant) installed where you approve: `npm i -D @intentius/chant`.
 - Write access to the repo. What you record is a commit on its `chant/lifecycle` branch, which `chant approve` pushes from your machine with your own git credentials. [Who can push to `chant/lifecycle`](#who-can-push-to-chantlifecycle) covers how to protect that branch.
@@ -63,7 +63,7 @@ How you run it depends on [`apply.when`](/terragucci/reference/config/#apply-bef
 
 Under the default `apply.when: merge`, comment `/terragucci apply` on the merged pull request on GitHub or Forgejo. The `apply-comment` job runs `tf-apply` at the merge commit and replies with a link to the run. Add `wave-2` to stop after that wave. You need write access. Re-running the wave's job does the same, and so does another push to the default branch. On GitLab, retry the job.
 
-With `apply.when: pull-request`, comment `/terragucci apply` on the open pull request again. On GitLab, run its `apply-mr` job again. The job checks the pull request as it did the first time and runs `tf-apply` from its head. Each wave reads the gate rule and the signers file from the default branch, so a pull request cannot add a signer who approves its own apply.
+With `apply.when: pull-request`, comment `/terragucci apply` on the open pull request again. The job checks the pull request as it did the first time and runs `tf-apply` from its head. Each wave reads the gate rule and the signers file from the default branch, so a pull request cannot add a signer who approves its own apply.
 
 Either way the comment approves nothing. A wave with no sealed approval of the plans it makes now stays put, and the reply gives its set digest and the `chant approve ... --plan <digest> --sign` command. A wave whose plans changed since you approved is refused. Otherwise the stage finds your approval and the wave goes out. It starts where it stopped and never touches a root twice. A later wave that also has to wait stops at exit code 3 with its own command.
 

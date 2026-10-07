@@ -15,6 +15,13 @@ function withRemote(remote: string): string {
 }
 
 describe("init", () => {
+  it("refuses apply.when pull-request on GitLab, where a merge request's pipeline is its own", async () => {
+    const dir = withRemote("git@gitlab.com:acme/infra.git");
+    write(dir, { "terragucci.yml": "apply:\n  when: pull-request\n" });
+    await expect(init(dir, { binary: "tofu" })).rejects.toThrow(/apply\.when: pull-request is not supported on GitLab/);
+    expect(existsSync(join(dir, ".gitlab-ci.yml"))).toBe(false);
+  });
+
   it.each([
     ["https://github.com/acme/infra.git", ".github/workflows/terragucci.yml"],
     ["git@gitlab.com:acme/infra.git", ".gitlab-ci.yml"],

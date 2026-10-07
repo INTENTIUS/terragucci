@@ -66,7 +66,7 @@ A [Terragrunt](/terragucci/guides/use-terragrunt/) repo gets the same job with t
 
 ## Apply an open pull request
 
-With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies it from its head, before it merges. This is for plain roots: in a Terragrunt repo `init` stops with an error when `apply.when` is `pull-request`, and its pull requests apply after they merge. The same `apply-comment` job reads it. The commenter, a fork and the base are refused as above, before any credential is asked for. The job also refuses when:
+With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies it from its head, before it merges. This is for plain roots on GitHub and Forgejo: in a Terragrunt repo or on GitLab `init` stops with an error when `apply.when` is `pull-request`, and pull requests apply after they merge. The same `apply-comment` job reads it. The commenter, a fork and the base are refused as above, before any credential is asked for. The job also refuses when:
 
 - no reviewer other than the author approved the head;
 - a status or check on the head failed or is still running, or `terragucci/plan` has not passed there;
@@ -74,7 +74,7 @@ With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-mer
 - the change edits the pipeline file;
 - another open pull request holds a lock on a root the change reaches.
 
-When none holds, the job locks the roots the change reaches. It then runs the waves from the head as for a merged pull request. Each wave reads its gate rule and signers from the default branch. With `apply.merge: auto` the job merges once every wave applied. With `manual` you merge, and the locks hold until it merges or closes.
+When none holds, the job locks the roots the change reaches. It then runs the waves from the head as for a merged pull request. Each wave reads its gate rule and signers from the default branch. With `apply.merge: auto` the `pr-merge` job merges it once every wave applied. With `manual` you merge, and the locks hold until it merges or closes.
 
 `/terragucci unlock` releases the locks of the pull request it is written on, for anyone with write access, so another one can apply those roots. The answer names what it released.
 

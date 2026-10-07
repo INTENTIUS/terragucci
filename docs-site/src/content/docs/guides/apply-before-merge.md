@@ -10,7 +10,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 ## Before you start
 
-- A repo of plain roots on GitHub, Forgejo or GitLab, set up as [Get your first plan note](/terragucci/getting-started/) shows. A Terragrunt repo applies after merge.
+- A repo of plain roots on GitHub or Forgejo, set up as [Get your first plan note](/terragucci/getting-started/) shows. A Terragrunt repo, and every repo on GitLab, applies after merge: a GitLab merge request's pipeline comes from the merge request itself, so `init` refuses `apply.when: pull-request` there.
 - Branch protection on the default branch that requires a review.
 - The trade in [Apply before merge](/terragucci/reference/config/#apply-before-merge), read and accepted: the job that applies a change runs its code with the apply role.
 
@@ -27,7 +27,7 @@ apply:
   merge_token_env: MERGE_TOKEN
 ```
 
-With `merge: auto`, add a secret of that name to the repo, holding a token of a user who may push to the default branch. Forgejo refuses a merge made with the job's own token, so it needs one. On GitHub the secret is needed for `confirm` (step 5) to run at all. A merge made without it starts no workflow. On GitLab leave `merge_token_env` out: the merge uses the token the pipeline already has.
+With `merge: auto`, add a secret of that name to the repo, holding a token of a user who may push to the default branch. Forgejo refuses a merge made with the job's own token, so it needs one. On GitHub the secret is needed for `confirm` (step 5) to run at all. A merge made without it starts no workflow. Only the `pr-merge` job gets the secret, and that job runs none of the change's code.
 
 Run `npx terragucci init` and merge the result through a pull request of its own. The comment job runs the default branch's pipeline, so nothing changes until that merge lands. After it, each new commit on the default branch runs the `confirm` job instead of the apply waves.
 
@@ -37,7 +37,7 @@ Open the change as usual; its plan note and `terragucci/plan` status come as bef
 
 ### 3. Ask for the apply
 
-On GitHub or Forgejo, comment `/terragucci apply`. On GitLab, run the manual `apply-mr` job of the merge request pipeline, which starts once its `plan` job passed.
+Comment `/terragucci apply` on the pull request.
 
 Nothing applies when one of these holds, and the reply names it:
 
@@ -51,7 +51,7 @@ A head behind the default branch needs the default branch merged or rebased in, 
 
 ### 4. Approve a waiting wave
 
-A wave the `gate` policy holds stops, and the reply gives its [chant](/terragucci/concepts/glossary/#chant) approve command. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again, or run `apply-mr` again.
+A wave the `gate` policy holds stops, and the reply gives its [chant](/terragucci/concepts/glossary/#chant) approve command. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again.
 
 ### 5. Merge
 
@@ -76,7 +76,7 @@ A change that edits `reports.bucket`, for example, still has its apply report co
 
 ## Locks
 
-Applying locks each root the change reaches. Another open change that reaches one of them is refused, and the reply names the root and its holder. The lock goes when the holder merges or closes. To release it sooner, comment `/terragucci unlock` on the holder (on GitLab, run its `unlock-mr` job).
+Applying locks each root the change reaches. Another open change that reaches one of them is refused, and the reply names the root and its holder. The lock goes when the holder merges or closes. To release it sooner, comment `/terragucci unlock` on the holder.
 
 ## Next
 

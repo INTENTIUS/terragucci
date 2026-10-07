@@ -42,12 +42,12 @@ export type ApplyMerge = (typeof APPLY_MERGE)[number];
 /**
  * `apply:`: when a change applies. `when: merge` (the default) applies the
  * default branch after a merge. `when: pull-request` applies an open pull
- * request's head on `/terragucci apply` (a manual job on GitLab), under the
- * same waves and gates, and the push after the merge plans and reports drift
- * without applying. `merge: auto` merges the pull request once every wave
- * applied, with the token in the secret `merge_token_env` names when it is
+ * request's head on `/terragucci apply`, under the same waves and gates, and
+ * the push after the merge plans and reports drift without applying.
+ * `merge: auto` merges the pull request once every wave applied, in a job of
+ * its own, with the token in the secret `merge_token_env` names when it is
  * set (required on Forgejo, whose job token cannot push to the default
- * branch). Plain roots only.
+ * branch). Plain roots on GitHub and Forgejo only (NO_GITLAB_PR_APPLY).
  */
 export interface ApplySettings {
   when?: ApplyWhen;
@@ -358,6 +358,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems);
+  if (s.forge === "gitlab" && isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.apply.when: ${NO_GITLAB_PR_APPLY}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
   else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
   for (const k of ["version", "url", "token_env"] as const) {
@@ -450,6 +451,15 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
 }
+
+/**
+ * Why GitLab has no apply before merge. GitLab builds a merge request's
+ * pipeline from the merge request's own `.gitlab-ci.yml`, so a job that
+ * applies it would run the checks before the apply (approval, locks, the
+ * pipeline file) inside a pipeline the merge request controls, and the apply
+ * role would have to trust every branch of the project.
+ */
+export const NO_GITLAB_PR_APPLY = "pull-request is not supported on GitLab, where a merge request's pipeline is defined by the merge request itself, so nothing it runs can be trusted with the apply role; leave apply.when unset, and the change applies after it merges";
 
 function checkApply(a: unknown, where: string, problems: string[]): void {
   if (!isObject(a)) {

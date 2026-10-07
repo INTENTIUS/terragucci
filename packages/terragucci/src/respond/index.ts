@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
+import { binaryEnv } from "../binary-env";
 import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, findRoots, globMatch } from "../detect";
 import { defaultBranch, type Fetch } from "../forge";
@@ -256,7 +257,7 @@ async function drift(repo: string, roots: string[], binary: string, imports: { a
   for (const root of roots) {
     const dir = join(repo, root);
     const run = (...args: string[]) => {
-      const p = spawnSync(binary, [`-chdir=${dir}`, args[0]!, "-no-color", ...args.slice(1)], { encoding: "utf-8", maxBuffer: 1 << 29, env });
+      const p = spawnSync(binary, [`-chdir=${dir}`, args[0]!, "-no-color", ...args.slice(1)], { encoding: "utf-8", maxBuffer: 1 << 29, env: binaryEnv(env) });
       if (p.status !== 0 && args[0] !== "query" && !args.some((a) => a.startsWith("-generate"))) throw new ConfigError(`${root}: ${binary} ${args[0]} failed:\n${tail(p.stderr || p.stdout)}`);
       return p;
     };
@@ -308,7 +309,7 @@ async function fmt(repo: string, settings: ResolvedSettings, binary: string, mod
   git(repo, ["fetch", "-q", "origin", branch]);
   const tree = worktree(repo, "FETCH_HEAD");
   try {
-    const f = spawnSync(binary, ["fmt", "-recursive", "-list=true", ...(mode === "apply" ? [] : ["-check"])], { cwd: tree.dir, encoding: "utf-8", env });
+    const f = spawnSync(binary, ["fmt", "-recursive", "-list=true", ...(mode === "apply" ? [] : ["-check"])], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv(env) });
     const files = f.stdout.split("\n").filter(Boolean).sort();
     const data = { branch, files };
     if (files.length === 0) return { text: `${branch}: already formatted`, data };

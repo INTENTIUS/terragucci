@@ -3,7 +3,7 @@ title: How waves and approvals work
 description: Why a change goes out in waves, what an approval binds, and when a wave refuses to apply.
 ---
 
-A change to a shared module can touch hundreds of roots. Applying them all at once means a mistake reaches all of them. Applying them one at a time is slow and gives a reviewer nothing to look at. Waves sit between the two. A small first batch goes out first, and each later batch waits until the one before it has been checked.
+A change to a shared module can touch hundreds of roots. Applying them all at once means a mistake reaches all of them. Applying them one at a time is slow and gives a reviewer nothing to look at. Waves sit between the two. A small first batch goes out first, and each later batch goes out only once the one before it is done. A batch waits for a person only when the [gate policy](#when-a-wave-waits) holds it, which by default means its plans destroy or replace something.
 
 ## How roots are split into waves
 
@@ -13,9 +13,9 @@ In a Terragrunt repo the units `waves.canary` names make up wave 1 and the other
 
 ## What an approval binds
 
-Each wave has its own approval. The approval is bound to the wave's set digest, a hash over the plan digest of every root in that wave. It does not mean that the change is fine. It means that these exact plans are fine. The approval is sealed with the approver's ssh key, and the wave counts it only when the seal verifies against the signers file. The apply job reads the signers file and the gate list in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) from the default branch as it was before the merge being applied. The merge itself cannot add a signer or drop a gate. [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/) explains why.
+Each wave has its own approval. The approval is bound to the wave's set digest, a hash over the plan digest of every root in that wave. It does not mean that the change is fine. It means that these exact plans are fine. The approval is sealed with the approver's ssh key, and the wave counts it only when the seal verifies against the signers file. The apply job reads the signers file and the gate list in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) from the first parent of the commit it applies. After a merge commit or a squash that parent is the default branch from before the merge. A pull request therefore cannot add a signer or drop a gate for itself. A rebase of several commits is the exception: there the parent is the pull request's own next-to-last commit, and its changes to those files judge it. [Approve a waiting wave](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from) says to land such a change with a merge commit or a squash. A pull request applied before it merges reads them from the default branch. [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/) explains why.
 
-If any root's plan changes after the approval, the digest changes and the wave applies nothing. Another merge or a changed data source can cause that. An approval that still covered a plan nobody read would be worth nothing, so the wave refuses.
+If any root's plan changes after the approval, the digest changes. Another merge or a changed data source can cause that. A wave the gate holds then applies nothing, because an approval that still covered a plan nobody read would be worth nothing. This refusal needs the gate to hold the wave as it is planned now. With `on-destroy`, a wave approved for a destroy whose new plans destroy nothing applies without a new approval. With `never` nothing is refused.
 
 ## Plans are made late
 

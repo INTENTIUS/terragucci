@@ -13,6 +13,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
+import { binaryEnv } from "../binary-env";
 
 export const LOCK_FILE = ".terraform.lock.hcl";
 
@@ -74,7 +75,7 @@ export function moveConstraint(text: string, address: string, from: string, to: 
 export type Run = (bin: string, args: string[], cwd: string) => { status: number | null; output: string };
 
 const defaultRun: Run = (bin, args, cwd) => {
-  const r = spawnSync(bin, args, { cwd, encoding: "utf-8", env: { ...process.env, TF_IN_AUTOMATION: "1", TF_INPUT: "0" } });
+  const r = spawnSync(bin, args, { cwd, encoding: "utf-8", env: binaryEnv({ ...process.env, TF_IN_AUTOMATION: "1", TF_INPUT: "0" }) });
   return { status: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? r.error.message : ""}` };
 };
 

@@ -19,6 +19,7 @@ import {
   type TerragruntUnit,
 } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { checkTerragruntVersion, discoverTerragruntUnits, type TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { terragruntExec } from "./binary-env";
 import { ConfigError, type RolePair, type TerragruntSettings } from "./config";
 
 /** The files that mark a Terragrunt repo, in the order detection looks for them. */
@@ -103,7 +104,7 @@ export function walkUnits(repo: string, exclude: readonly string[] = []): Terrag
  */
 export async function discoverUnits(repo: string, options: DiscoverOptions = {}): Promise<UnitDiscovery> {
   const terragrunt = options.terragrunt ?? process.env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-  const run = { dir: repo, terragrunt, ...(options.binary ? { binary: options.binary } : {}), ...(options.exec ? { exec: options.exec } : {}) };
+  const run = { dir: repo, terragrunt, ...(options.binary ? { binary: options.binary } : {}), exec: options.exec ?? terragruntExec };
   let fallback: string;
   try {
     await checkTerragruntVersion(run);
