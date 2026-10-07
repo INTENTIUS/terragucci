@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { checkPolicyTests, checkRoot, diagnosticWhere, hasPolicyTests, parseLiveCheck, parseValidate, policyBase } from "../src/check";
 import type { PolicyExec } from "../src/report/policy";
-import { tmp, write } from "./helpers";
+import { git, tmp, write } from "./helpers";
 
 const bad = JSON.stringify({
   format_version: "1.0",
@@ -170,6 +170,21 @@ describe("policy tests", () => {
     const r = await checkPolicyTests(repo, { exec, env: {}, policy: { exec } });
     expect(r.ok).toBe(true);
     expect(calls.at(-1)).toEqual(["opa", "test", `${repo}/rules`]);
+  });
+
+  it("runs the base's policy tests when the change deletes the policy key", async () => {
+    const repo = repoWith("policy:\n  engine: opa\n", { "policy/p.rego": "package main\n", "policy/p_test.rego": "package main\n" });
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "add", "-A");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main");
+    git(repo, "checkout", "-q", "-b", "pr");
+    write(repo, { "terragucci.yml": "binary: tofu\n" });
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "drop policy");
+    const { exec, calls } = fake({ test: { status: 1, stdout: "FAIL: test_denies" } });
+    const r = await checkPolicyTests(repo, { exec, env: {}, base: "main", policy: { exec } });
+    expect(r.ok).toBe(false);
+    expect(calls.at(-1)?.[1]).toBe("test");
+    expect(r.log[0]).toMatch(/read from main, not from this checkout/);
   });
 
   it("reads the base from the pull request's target, or the default branch for a push to another branch", () => {

@@ -8,7 +8,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { findConfig, loadConfig, resolveRepo } from "./config";
-import { defaultPolicyExec, engineBinary, policyPathExists, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
+import { defaultPolicyExec, engineBinary, governingPolicy, policyPathExists, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
 
 /** Where the check report is written, relative to the checkout. */
 export const CHECK_DIR = "terragucci-check";
@@ -221,27 +221,32 @@ export interface PolicyCheckOptions extends CheckOptions {
 
 /**
  * With `policy:` set, run the policy's own tests (`conftest verify`, or
- * `opa test`) over the trusted policy directory. No `policy:` key is a pass
- * with no output; a directory with no tests is a pass with a note.
+ * `opa test`) over the trusted policy directory. The key, like the
+ * directory, is read from the base when there is one, so a change that
+ * deletes or edits it still runs the base's tests. No key on either side is
+ * a pass with no output; a directory with no tests is a pass with a note.
  */
 export async function checkPolicyTests(repo: string, options: PolicyCheckOptions = {}): Promise<CheckResult> {
   const env = options.env ?? process.env;
   const path = options.config ?? findConfig(repo);
   const settings = resolveRepo(path ? await loadConfig(resolve(repo, path)) : {});
-  if (!settings.policy) return { ok: true, log: [], report: [] };
-  const exec = options.exec ?? defaultPolicyExec;
-  const engine = settings.policy.engine ?? "conftest";
   const base = options.base ?? policyBase(env);
+  // The base's policy key decides whether the tests run, so a change that deletes the key still runs the base's tests.
+  const governing = await governingPolicy(repo, settings.policy, base, path ? { config: resolve(repo, path) } : {});
+  const policy = governing.policy;
+  if (!policy) return { ok: true, log: governing.note ? [governing.note] : [], report: [] };
+  const exec = options.exec ?? defaultPolicyExec;
   // Without a resolvable base the checkout's policy would be the pull request's own; fail closed instead.
-  const trusted = await trustedPolicy(repo, settings.policy, base, path ? { config: resolve(repo, path) } : {});
+  const trusted = await trustedPolicy(repo, policy, base, governing.trust);
+  const engine = trusted.policy.engine ?? "conftest";
   const fail = (msg: string): CheckResult => ({ ok: false, log: [`FAILED policy tests: ${msg}`], report: ["### Policy tests", "", `- failed: ${msg}`, ""] });
   try {
     if (trusted.error) return fail(trusted.error);
-    if (!policyPathExists(trusted.policy, repo)) return fail(`the policy directory ${settings.policy.path ?? "policy"} does not exist`);
+    if (!policyPathExists(trusted.policy, repo)) return fail(`the policy directory ${policy.path ?? "policy"} does not exist`);
     const dir = resolve(repo, trusted.policy.path ?? "policy");
     const from = trusted.from === "base" ? ` (read from ${base}, not from this checkout)` : "";
     if (!hasPolicyTests(dir)) {
-      const note = `policy tests skipped: ${settings.policy.path ?? "policy"} has no *_test.rego files${from}`;
+      const note = `policy tests skipped: ${policy.path ?? "policy"} has no *_test.rego files${from}`;
       return { ok: true, log: [note], report: ["### Policy tests", "", `- ${note}`, ""] };
     }
     let binary: string;
