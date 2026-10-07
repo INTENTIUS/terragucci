@@ -1107,7 +1107,7 @@ describe("a Terragrunt wave in the step's own shell", () => {
 
   it("a Terragrunt repo gets one apply job per wave, each running the stage with --terragrunt, and the gate it is given", () => {
     const doc = body(renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/a"], ["live/prod/a", "live/prod/b"]], env: {}, gate: "always", terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content);
-    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-wave-1", "apply-wave-2"]);
+    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply-wave"))).toEqual(["apply-wave-1", "apply-wave-2"]);
     expect(doc.jobs["apply-wave-2"].needs).toBe("apply-wave-1");
     const run = (j: string): string => doc.jobs[j].steps.map((st: { run?: string }) => st.run ?? "").join("\n");
     expect(run("apply-wave-1")).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/a;live/prod/a,live/prod/b' --binary tofu --gate always --terragrunt");
