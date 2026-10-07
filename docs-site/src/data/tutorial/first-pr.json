@@ -4,7 +4,7 @@
   "commands": [
     {
       "cmd": "just example change one-root",
-      "output": "[example] pushed change/one-root at bfd438b5\n[example] run 2 for bfd438b5 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1)\n[example] run 3 for bfd438b5 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/one-root at a536718e\n[example] run 2 for a536718e (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1)\n[example] run 3 for a536718e (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/2/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/0/attempt/1 (success)",
       "exit": 0
     }
   ],
