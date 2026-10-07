@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 RUN case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac && curl -fsSLo "/tmp/tofu_1.13.1_linux_$a.tar.gz" "https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_$a.tar.gz" && curl -fsSLo /tmp/SHA256SUMS "https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_SHA256SUMS" && (cd /tmp && grep " \*\?tofu_1.13.1_linux_$a.tar.gz$" SHA256SUMS | sed 's/ \*/  /' | sha256sum -c -) && mkdir -p /out && tar -xzf "/tmp/tofu_1.13.1_linux_$a.tar.gz" -C /out tofu
 FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN git config --system --add safe.directory '*'
 RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@0.24.0 && npm cache clean --force
 COPY --from=fetch /out/ /usr/local/bin/
 COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci

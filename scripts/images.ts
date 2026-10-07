@@ -27,6 +27,26 @@ const PROBES: Record<Name, Array<[string[], string]>> = {
   choudoufu: [[["choudoufu", "version"], TOOL_VERSIONS.choudoufu]],
 };
 
+/**
+ * git in a checkout another user owns, both ways round: root in one uid 1001
+ * owns (a github.com container job and its runner's workspace), and uid 1001
+ * in one root owns. Each reads HEAD and fetches from a local remote, whose
+ * upload-pack checks ownership again. Prints "git: safe" when git refused none.
+ */
+const FOREIGN_CHECKOUT = [
+  "set -e",
+  "git init -q -b main /src",
+  "git -C /src -c user.name=check -c user.email=check@localhost commit -q --allow-empty -m one",
+  "git clone -q /src /repo",
+  "chown -R 1001:1001 /src /repo",
+  "git -C /repo rev-parse -q --verify HEAD >/dev/null",
+  "git -C /repo fetch -q origin",
+  "chown -R 0:0 /src /repo",
+  "HOME=/tmp setpriv --reuid 1001 --regid 1001 --clear-groups git -C /repo rev-parse -q --verify HEAD >/dev/null",
+  "HOME=/tmp setpriv --reuid 1001 --regid 1001 --clear-groups git -C /repo ls-remote -q origin >/dev/null",
+  "echo 'git: safe'",
+].join(" && ");
+
 const args = process.argv.slice(2);
 const cmd = args[0];
 const platform = args.includes("--platform") ? args[args.indexOf("--platform") + 1] : undefined;
@@ -50,12 +70,12 @@ if (cmd === "tags") {
   let failed = false;
   for (const n of NAMES) {
     const plat = platform ? ["--platform", platform] : [];
-    for (const [argv, want] of [...PROBES[n], [["terragucci", "--help"], "terragucci init"]] as Array<[string[], string]>) {
+    for (const [argv, want] of [...PROBES[n], [["terragucci", "--help"], "terragucci init"], [["sh", "-c", FOREIGN_CHECKOUT], "git: safe"]] as Array<[string[], string]>) {
       const out = spawnSync("docker", ["run", "--rm", ...plat, ref(n), ...argv], { encoding: "utf-8" });
       const text = `${out.stdout}${out.stderr}`;
       const ok = out.status === 0 && text.includes(want);
       if (!ok) failed = true;
-      console.log(`${ok ? "ok  " : "FAIL"} ${n}: ${argv.join(" ")}${ok ? "" : `\n${text}`}`);
+      console.log(`${ok ? "ok  " : "FAIL"} ${n}: ${argv[0] === "sh" ? "git in a checkout another user owns" : argv.join(" ")}${ok ? "" : `\n${text}`}`);
     }
     const bytes = Number(execFileSync("docker", ["image", "inspect", "--format", "{{.Size}}", ref(n)], { encoding: "utf-8" }).trim());
     const mb = (b: number) => (b / 1e6).toFixed(0);
