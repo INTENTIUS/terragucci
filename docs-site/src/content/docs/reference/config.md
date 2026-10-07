@@ -56,7 +56,7 @@ projects:
 | Key | Default | Meaning |
 |---|---|---|
 | `roots` | detected | globs of root directories |
-| `binary` | detected: a version file, then `.tofu` files, then the path, then `tofu`; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu`, [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) or `cdktn` |
+| `binary` | detected: a version file, then `.tofu` files, then the path, then `tofu`; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
 | `apply` | `when: merge` | `when`: `merge` applies the default branch after a merge; `pull-request` applies an open pull request on request, before it merges. `merge`, with `when: pull-request` only: `manual` (default) leaves the merge to a person, `auto` merges once every wave applied. `merge_token_env`, with `merge: auto` only: the secret the merge is made with, required on Forgejo. Plain roots only. See [Apply before merge](#apply-before-merge) |

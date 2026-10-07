@@ -8,7 +8,7 @@
     "ok": false,
     "problems": [
       "config.bogus is not a setting (settings: roots, binary, version, forge, url, gate, apply, waves, drift, runtime, reports, token_env, env, telemetry, tips, modules, oidc, parallelism, terragrunt, policy, respond, agent, decide, audit_region, dashboards)",
-      "config.binary is \"nope\"; use one of terraform, tofu, choudoufu, cdktn",
+      "config.binary is \"nope\"; use one of terraform, tofu, choudoufu",
       "config.forge is \"svn\"; use one of github, gitlab, forgejo"
     ]
   }

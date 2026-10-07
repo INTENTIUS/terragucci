@@ -87,7 +87,7 @@ A local stand-in for the AWS API. The tutorial's example applies its roots to fl
 
 ### choudoufu
 
-A fork of OpenTofu that keeps no state file. Each resource it manages carries tags that name its owner. With `binary: choudoufu`, terragucci adds its own checks and stages. [Use OpenTofu, choudoufu or CDK Terrain](/terragucci/guides/use-a-binary/#choudoufu) covers them, and [its repository](https://github.com/INTENTIUS/choudoufu) has the rest.
+A fork of OpenTofu that keeps no state file. Each resource it manages carries tags that name its owner. With `binary: choudoufu`, terragucci adds its own checks and stages. [Use OpenTofu or choudoufu](/terragucci/guides/use-a-binary/#choudoufu) covers them, and [its repository](https://github.com/INTENTIUS/choudoufu) has the rest.
 
 ## Words that mean something else in Terraform
 
