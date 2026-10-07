@@ -53,11 +53,11 @@ chant's file at the root of your repository, which `init` writes. For terragucci
 
 ### identity.gates
 
-The key in `chant.workspace.json` that lists gates whose approvals must be sealed. For a gate listed there, the apply job counts an approval only when its seal verifies against `.chant/allowed_signers` on the default branch. `init` lists every wave's gate.
+The key in `chant.workspace.json` that lists gates whose approvals must be sealed. `init` lists every wave's gate. Once the list names any gate, the apply job counts an approval only when its seal verifies against `.chant/allowed_signers` at base, the commit before the one it applies.
 
 ### .chant/allowed_signers
 
-The signers file. It has one line per person who may approve, with their ssh public key, in ssh-keygen's allowed_signers format. The job reads it from the default branch, so a pull request cannot change the rule that judges it. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) shows one.
+The signers file. It has one line per person who may approve, with their ssh public key, in ssh-keygen's allowed_signers format. The job reads it from the commit before the one it applies, so a change cannot loosen the rule that judges it. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) shows one.
 
 ### seal
 

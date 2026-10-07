@@ -27,7 +27,7 @@ Nothing applies before the merge. The merge to the default branch starts `tf-app
 
 ### 5. The approval
 
-The `gate` setting decides which waves wait for a person: by default, a wave whose plans destroy something. A waiting wave's job stops with exit code 3 and prints a `chant approve` command naming the wave's [set digest](/terragucci/concepts/glossary/#set-digest). A person reads the wave's plans in the report and runs that command on their own machine, which seals the approval with their ssh key and commits it to the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The apply job counts it only when the seal verifies against `.chant/allowed_signers` on the default branch.
+The `gate` setting decides which waves wait for a person: by default, a wave whose plans destroy something. A waiting wave's job stops with exit code 3 and prints a `chant approve` command naming the wave's [set digest](/terragucci/concepts/glossary/#set-digest). A person reads the wave's plans in the report and runs that command on their own machine, which seals the approval with their ssh key and commits it to the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The apply job counts it only when the seal verifies against `.chant/allowed_signers` as it stood before the commit being applied.
 
 ### 6. The apply
 
@@ -54,4 +54,5 @@ The plan identity is read-only, because a pull request's code runs with it. Only
 - [Get your first plan note](/terragucci/getting-started/) sets it up on your repository.
 - [The tutorial](/terragucci/tutorial/) runs each step above on a 15-root example on your laptop.
 - [How waves and approvals work](/terragucci/concepts/waves-and-approvals/) explains the waves and the gate.
+- [The approvals runbook](/terragucci/guides/approvals-runbook/) has the commands for signers, pending waves and refusals.
 - [The glossary](/terragucci/concepts/glossary/) defines the chant words and lists the ones that mean something else in Terraform.
