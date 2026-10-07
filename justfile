@@ -194,8 +194,9 @@ validate forge="forgejo" claim="apply":
 
 # ── the example and its smoke claims ───────────────────────────────────────
 # example/ is the shop's 15 roots; stack/example.sh runs them on the forgejo
-# profile against floci. example-terragrunt/ is the same shop as 15 Terragrunt
-# units, run by stack/example-terragrunt.sh. stack/smoke.sh holds one claim per feature.
+# profile against floci, stack/example-gitlab.sh on the gitlab profile.
+# example-terragrunt/ is the same shop as 15 Terragrunt units, run by
+# stack/example-terragrunt.sh. stack/smoke.sh holds one claim per feature.
 
 [doc("Run every claim of one forge plain and under BREAK=1 on a running profile; fails when one is not as expected.")]
 validate-forge forge:
@@ -208,6 +209,10 @@ validation-record *forges:
 [doc("The example: up [--fresh], verify, change <scenario>, reset, down.")]
 example *args="up":
     stack/example.sh {{args}}
+
+[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], logs, reset, shot <url> <out.png> [light|dark], down.")]
+example-gitlab *args="up":
+    stack/example-gitlab.sh {{args}}
 
 [doc("The Terragrunt example: up, verify, change <scenario>, reset.")]
 example-terragrunt *args="up":

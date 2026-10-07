@@ -5,6 +5,8 @@
 #
 #   URL TOKEN USER FLOCI       the stack's Forgejo, admin token, admin and floci
 #   api ARGS...                curl with the admin token
+#   verify_tree DIR            every resource the example's roots in DIR declare
+#                              is in floci (expected lists them)
 #   push_tree DIR REPO BRANCH MESSAGE   commit DIR as one commit and force-push it;
 #                              prints the sha. TG_FIXED_DATE=1 pins the commit
 #                              dates so the same tree always gets the same sha.
@@ -12,6 +14,12 @@
 #                              or the one EVENT started); sets RUN_ID,
 #                              RUN_INDEX, RUN_STATUS and RUN_URL
 #   print_logs REPO RUN_ID     every job's log tail, for a run that went wrong
+#
+# LIB_FORGE=gitlab reads stack/.state/gitlab.env instead: URL, TOKEN and USER
+# are the stack's GitLab, its root token and root, and api sends the token as
+# GitLab asks. push_tree, remote_head, file_at and verify_tree work the same;
+# wait_run and print_logs read Forgejo's Actions API, so they are Forgejo's
+# alone (example-gitlab.sh has its own).
 #
 # Callers define log() and fail() before sourcing.
 
@@ -21,17 +29,33 @@ declare -F fail >/dev/null || fail() { echo "$*" >&2; return 1; }
 LIB_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMEOUT="${TERRAGUCCI_VALIDATE_TIMEOUT:-900}"
 
-if [ -z "${TERRAGUCCI_FORGEJO_TOKEN:-}" ]; then
-  [ -f "$LIB_HERE/.state/forgejo.env" ] || fail "no stack/.state/forgejo.env; run 'just stack-up forgejo' first" || return 1
-  # shellcheck disable=SC1091
-  . "$LIB_HERE/.state/forgejo.env"
+if [ "${LIB_FORGE:-forgejo}" = gitlab ]; then
+  if [ -z "${TERRAGUCCI_GITLAB_TOKEN:-}" ]; then
+    [ -f "$LIB_HERE/.state/gitlab.env" ] || fail "no stack/.state/gitlab.env; run 'just stack-up gitlab' first" || return 1
+    # shellcheck disable=SC1091
+    . "$LIB_HERE/.state/gitlab.env"
+  fi
+  URL="$TERRAGUCCI_GITLAB_URL"
+  TOKEN="$TERRAGUCCI_GITLAB_TOKEN"
+  USER="$TERRAGUCCI_GITLAB_USER"
+  FLOCI="$TERRAGUCCI_FLOCI_URL"
+  api() { curl -fsS -H "PRIVATE-TOKEN: $TOKEN" "$@"; }
+  api -o /dev/null "$URL/api/v4/user" 2>/dev/null \
+    || fail "GitLab at $URL does not accept the token; run 'just stack-up gitlab' again" || return 1
+else
+  if [ -z "${TERRAGUCCI_FORGEJO_TOKEN:-}" ]; then
+    [ -f "$LIB_HERE/.state/forgejo.env" ] || fail "no stack/.state/forgejo.env; run 'just stack-up forgejo' first" || return 1
+    # shellcheck disable=SC1091
+    . "$LIB_HERE/.state/forgejo.env"
+  fi
+  URL="$TERRAGUCCI_FORGEJO_URL"
+  TOKEN="$TERRAGUCCI_FORGEJO_TOKEN"
+  USER="$TERRAGUCCI_FORGEJO_USER"
+  FLOCI="$TERRAGUCCI_FLOCI_URL"
+  api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
+  api -o /dev/null "$URL/api/v1/user" 2>/dev/null \
+    || fail "Forgejo at $URL does not accept the token; run 'just stack-up forgejo' again" || return 1
 fi
-URL="$TERRAGUCCI_FORGEJO_URL"
-TOKEN="$TERRAGUCCI_FORGEJO_TOKEN"
-USER="$TERRAGUCCI_FORGEJO_USER"
-FLOCI="$TERRAGUCCI_FLOCI_URL"
-
-api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
 # Forgejo fills GET /repos/<repo>/branches/<name> from a push queue, so it can
 # 404 or lag for seconds after a push. A head is read from git itself instead.
 remote_head() { # repo, branch -> prints the branch's sha (empty when it is gone)
@@ -48,9 +72,6 @@ file_at() { # repo, branch, sha, path -> prints the file as the sha holds it
   rm -rf "$dir"
   return $rc
 }
-
-api -o /dev/null "$URL/api/v1/user" 2>/dev/null \
-  || fail "Forgejo at $URL does not accept the token; run 'just stack-up forgejo' again" || return 1
 
 push_tree() { # dir, repo, branch, message -> prints the pushed sha
   local dir="$1" repo="$2" branch="$3" message="$4"
@@ -126,4 +147,48 @@ wait_run() { # repo, sha, [event]
     | jq -r 'sort_by(.id) | to_entries | map(select(.value.status != "skipped")) | .[0].key // empty' 2>/dev/null || true)"
   [ -z "$pos" ] || RUN_URL="$RUN_URL/jobs/$pos/attempt/1"
   log "run $RUN_INDEX for ${sha:0:8}${event:+ ($event)}: $status ($RUN_URL)"
+}
+
+# The example's resources (example.sh, example-gitlab.sh).
+# What the 15 roots declare, by name. prod payments adds a dead-letter queue;
+# a scenario applied to main changes this, so verify reads main's tree.
+expected() { # dir -> lines "kind name"
+  local dir="$1" env svc
+  for env in dev staging prod; do
+    echo "bucket shop-$env-logs"
+    for svc in orders payments search email; do
+      echo "bucket shop-$env-$svc-files"
+      echo "queue shop-$env-$svc-jobs"
+      if ! grep -q 'records_table = false' "$dir/envs/$env/$svc/main.tf"; then
+        echo "table shop-$env-$svc-records"
+      fi
+      if grep -q 'dead_letter_queue = true' "$dir/envs/$env/$svc/main.tf"; then
+        echo "queue shop-$env-$svc-dead-letter"
+      fi
+    done
+  done
+}
+
+floci_json() { # target, body
+  curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: $1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"
+}
+
+verify_tree() { # dir
+  if [ -n "${SMOKE_AWS:-}" ]; then expected "$1" | smoke_aws_verify; return; fi
+  local queues tables missing=0 kind name
+  queues="$(floci_json AmazonSQS.ListQueues '{}' | jq -r '.QueueUrls[]? | split("/") | last')"
+  tables="$(floci_json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?')"
+  while read -r kind name; do
+    case "$kind" in
+      bucket) [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -I "$FLOCI/$name")" = 200 ] ;;
+      queue)  grep -qx "$name" <<<"$queues" ;;
+      table)  grep -qx "$name" <<<"$tables" ;;
+    esac || { echo "missing $kind $name"; missing=$((missing + 1)); }
+  done < <(expected "$1")
+  local total; total="$(expected "$1" | wc -l | tr -d ' ')"
+  if [ "$missing" -gt 0 ]; then
+    log "$missing of $total resources are missing from floci"
+    return 1
+  fi
+  log "all $total resources are in floci"
 }

@@ -105,49 +105,6 @@ ensure_repo() {
     -d '{"has_actions":true}' "$URL/api/v1/repos/$REPO"
 }
 
-# What the 15 roots declare, by name. prod payments adds a dead-letter queue;
-# a scenario applied to main changes this, so verify reads main's tree.
-expected() { # dir -> lines "kind name"
-  local dir="$1" env svc
-  for env in dev staging prod; do
-    echo "bucket shop-$env-logs"
-    for svc in orders payments search email; do
-      echo "bucket shop-$env-$svc-files"
-      echo "queue shop-$env-$svc-jobs"
-      if ! grep -q 'records_table = false' "$dir/envs/$env/$svc/main.tf"; then
-        echo "table shop-$env-$svc-records"
-      fi
-      if grep -q 'dead_letter_queue = true' "$dir/envs/$env/$svc/main.tf"; then
-        echo "queue shop-$env-$svc-dead-letter"
-      fi
-    done
-  done
-}
-
-json() { # target, body
-  curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: $1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"
-}
-
-verify_tree() { # dir
-  if [ -n "${SMOKE_AWS:-}" ]; then expected "$1" | smoke_aws_verify; return; fi
-  local queues tables missing=0 kind name
-  queues="$(json AmazonSQS.ListQueues '{}' | jq -r '.QueueUrls[]? | split("/") | last')"
-  tables="$(json DynamoDB_20120810.ListTables '{}' | jq -r '.TableNames[]?')"
-  while read -r kind name; do
-    case "$kind" in
-      bucket) [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -I "$FLOCI/$name")" = 200 ] ;;
-      queue)  grep -qx "$name" <<<"$queues" ;;
-      table)  grep -qx "$name" <<<"$tables" ;;
-    esac || { echo "missing $kind $name"; missing=$((missing + 1)); }
-  done < <(expected "$1")
-  local total; total="$(expected "$1" | wc -l | tr -d ' ')"
-  if [ "$missing" -gt 0 ]; then
-    log "$missing of $total resources are missing from floci"
-    return 1
-  fi
-  log "all $total resources are in floci"
-}
-
 clone_main() { # dir
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git" "$1" 2>/dev/null \
     || fail "could not clone $REPO; run 'just example up' first"
