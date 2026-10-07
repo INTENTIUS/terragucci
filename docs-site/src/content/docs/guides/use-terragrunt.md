@@ -1,12 +1,12 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
-claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse]
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed]
 ---
 
 ## What you end up with
 
-A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the units a pull request reaches, and applies a wave at a time with one `terragrunt run --all`.
+A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the units a pull request reaches, and applies a wave at a time behind the same gate as plain roots: the wave's plans saved, approved by their set digest, and applied as saved.
 
 ## Before you start
 
@@ -50,7 +50,7 @@ terragrunt:
 npx terragucci init
 ```
 
-Commit the file and open a pull request. Only the units the change reaches are planned.
+Commit the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists each wave's gate, and open a pull request. Only the units the change reaches are planned. Before the first wave waits for you, set up the signers file as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes.
 
 ## What is different in a Terragrunt repo
 
@@ -58,8 +58,9 @@ Commit the file and open a pull request. Only the units the change reaches are p
 |---|---|
 | Which units a change reaches | Terragrunt's own change detection, plus files a module reads with `file()`, modules called from inside modules, and stack templates |
 | Units that depend on a changed unit | they go out in later waves, planned only after the units they read from have applied |
-| `mock_outputs` | a unit whose plan would read mock values is not planned; it waits for its upstream to apply, so no approval covers a placeholder |
-| Each wave | one `terragrunt run --all` over exactly that wave's units |
+| `mock_outputs` | a unit whose plan would read mock values is not planned; it waits for its upstream to apply, so no approval covers a made-up value |
+| Each wave | one apply job: the canary units are wave 1 and the rest wave 2. The job plans the wave's units with one `terragrunt run --all`, saving each plan, and applies the saved plans with a second one |
+| The gate | `gate` works as for plain roots, and an approval is sealed the same way. The set digest covers the units whose plan changes something. A unit that reads another unit of its wave, whose plan changes its outputs, plans and goes through the gate in a second pass, after that unit applied |
 | Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
 
 ## Next

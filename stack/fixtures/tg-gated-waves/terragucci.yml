@@ -1,0 +1,5 @@
+forge: forgejo
+binary: tofu
+gate: always
+waves:
+  canary: ["live/canary/**"]

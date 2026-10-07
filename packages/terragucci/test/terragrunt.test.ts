@@ -265,7 +265,7 @@ describe("init in a Terragrunt repo", () => {
     expect(r.notes.join("\n")).toMatch(/Terragrunt discovery did not run/);
   });
 
-  it("writes a pipeline that checks with hcl fmt and validate, plans through the stage, and applies each wave with one run --all", async () => {
+  it("writes a pipeline that checks with hcl fmt and validate, plans through the stage, and applies each wave in its own job behind the gate", async () => {
     const repo = liveRepo({ "terragucci.yml": "binary: tofu\nwaves:\n  canary: [\"live/dev/**\"]\n" });
     const r = await init(repo, { terragrunt: "/nonexistent/terragrunt" });
     const text = r.files[0].content;
@@ -277,12 +277,14 @@ describe("init in a Terragrunt repo", () => {
     expect(check).toContain("terragucci check-policy");
     const plan = doc.jobs.plan.steps.at(-2).run as string;
     expect(plan).toMatch(/terragucci stage tf-plan .*--layers 'live\/dev\/app,live\/dev\/vpc;live\/prod\/app,live\/prod\/vpc' .*--terragrunt/);
-    const apply = doc.jobs.apply.steps.find((s: { run?: string }) => s.run?.includes("apply_wave")).run as string;
-    expect(apply.match(/^apply_wave /gm)).toHaveLength(2);
-    expect(apply).toContain("apply_wave --filter '{./live/dev/app}' --filter '{./live/dev/vpc}' || failed");
-    expect(apply).toContain("--no-filters-file");
+    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-wave-1", "apply-wave-2"]);
+    const apply = doc.jobs["apply-wave-1"].steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-apply")).run as string;
+    expect(apply).toContain("terragucci stage tf-apply --wave 1 --layers 'live/dev/app,live/dev/vpc;live/prod/app,live/prod/vpc' --binary tofu --gate on-destroy --terragrunt");
+    expect(apply).not.toContain("-auto-approve");
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
-    for (const job of ["plan", "apply"]) {
+    // Each wave's gate is declared, so an approval of it counts only when sealed.
+    expect(JSON.parse(r.files.find((f) => f.path.endsWith("chant.workspace.json"))!.content).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
+    for (const job of ["plan", "apply-wave-1", "apply-wave-2"]) {
       expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === "actions/cache@v4")?.with.path).toBe(".terragrunt-cache");
     }
     expect(text).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
@@ -295,7 +297,7 @@ describe("init in a Terragrunt repo", () => {
       const repo = liveRepo({ "terragucci.yml": `forge: ${forge}\n${yml}` });
       const doc = body((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
       const plan = forge === "github" ? doc.jobs.plan : doc.plan;
-      const apply = forge === "github" ? doc.jobs.apply : doc.apply;
+      const apply = forge === "github" ? doc.jobs["apply-wave-1"] : doc["apply-wave-1"];
       const script = (job: Record<string, any>): string => (forge === "github" ? (job === plan ? job.steps.at(-2) : job.steps.find((s: { run?: string }) => s.run?.includes("TERRAGUCCI_PHASE=apply"))).run : job.script.join("\n"));
       if (forge === "github") {
         expect(plan.permissions["id-token"]).toBe("write");
@@ -340,7 +342,7 @@ describe("init in a Terragrunt repo", () => {
   it("running it twice changes nothing", async () => {
     const repo = liveRepo();
     await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" });
-    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged"]);
+    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 });
 
@@ -638,7 +640,7 @@ describe("the Terragrunt example", () => {
     const r = await init(repo, { dryRun: true });
     expect(r.roots).toHaveLength(15);
     expect(r.layers.map((w) => w.length)).toEqual([5, 10]);
-    expect(r.files[0].status).toBe("unchanged");
+    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 
   it("every scenario applies to the example as committed", () => {

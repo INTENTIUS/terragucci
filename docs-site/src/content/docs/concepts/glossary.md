@@ -23,7 +23,7 @@ One step of the dependency order. A root that reads another through `terraform_r
 
 ### wave
 
-A batch of roots that `tf-apply` applies together, behind its own approval. Waves are built from layers. The roots named in `waves.canary` go first in waves of their own, and the rest follow layer by layer, so nothing in a wave reads anything else in it. In a Terragrunt repo a wave is one `terragrunt run --all` over its units, and Terragrunt orders the units inside it. The gates take the waves' names: `wave-1`, `wave-2` and so on.
+A batch of roots that `tf-apply` applies together, behind its own approval. Waves are built from layers. The roots named in `waves.canary` go first in waves of their own, and the rest follow layer by layer, so nothing in a wave reads anything else in it. In a Terragrunt repo the canary units are wave 1 and the rest wave 2. The wave's job plans its units with one `terragrunt run --all`, and Terragrunt orders the units inside it. The gates take the waves' names: `wave-1`, `wave-2` and so on.
 
 ### plan digest
 

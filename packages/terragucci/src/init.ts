@@ -174,7 +174,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   let tgInput: PipelineInput["terragrunt"];
   if (terragrunt) {
     if (binary.value !== "tofu" && binary.value !== "terraform") {
-      throw new RenderError(`Terragrunt runs tofu or terraform in terragucci's pipeline; ${binary.value} is not supported with Terragrunt yet`);
+      throw new RenderError(`Terragrunt runs tofu or terraform in terragucci's pipeline; ${binary.value} is not supported with Terragrunt`);
     }
     ref = terragruntImage();
     tgInput = {
@@ -206,7 +206,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
-    ...(!tgInput ? { gate: settings.gate } : {}),
+    gate: settings.gate,
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
@@ -229,8 +229,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
 
-  // Every tf-apply wave gate needs a sealed approval (chant approve --sign).
-  if (!tgMode) files.push(declaration(repo, applyWaves(layers, settings.waves?.canary).length, options.name));
+  // Every tf-apply wave gate needs a sealed approval (chant approve --sign). A Terragrunt repo's layers are its waves.
+  files.push(declaration(repo, tgMode ? layers.length : applyWaves(layers, settings.waves?.canary).length, options.name));
 
   // A command-line choice is saved when detection would not reach it on its own,
   // so the next run, and the next person, gets the same pipeline.
@@ -258,7 +258,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     notes.push(`drift is set: add a pipeline schedule with the cron ${settings.drift} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope so the drift issue can be kept`);
   }
   if (settings.waves?.canary?.length && terragrunt) {
-    notes.push("waves.canary is set; the canary units apply first, then the rest; Terragrunt waves apply one after another with no approval between them");
+    notes.push("waves.canary is set; the canary units apply first, then the rest, each wave behind the gate");
   }
 
   if (!options.dryRun) {

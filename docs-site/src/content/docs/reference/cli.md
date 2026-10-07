@@ -56,7 +56,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
     [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
-    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>]
+    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt]
 ```
 
 | Flag | Meaning |
@@ -68,14 +68,14 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--report-url` | where the note links the HTML report, when it is not beside the note. A URL that is not an `.html` file is read as the run's page, which holds the report in its artifacts, and the note says so |
 | `--layers`, `--binary`, `--canary`, `--bucket` | the roots in apply order (layers split by `;`), binary, canary wave and bucket the pipeline was written with; each overrides `terragucci.yml` |
 | `--bucket-endpoint`, `--bucket-prefix`, `--bucket-url` | the store's endpoint, the key prefix, and the address that serves the bucket to a browser; with an address, the note links the bucket's copy |
-| `--terragrunt` | plan Terragrunt units, one `run --all` per wave |
+| `--terragrunt` | run Terragrunt units: `tf-plan` and `tf-drift` plan them with one `run --all` per wave; `tf-apply` plans the wave's units, saving each plan, and applies the saved plans |
 | `--base` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
 | `--forge` | `github`, `forgejo` or `gitlab`, when the environment alone cannot tell the forge; used by `tf-drift` to file its issue |
 | `--parallelism` | how many roots of one dependency layer plan at once (`tf-plan`, `tf-drift`), or of one wave (`tf-apply`); overrides `parallelism` in `terragucci.yml`. `--parallelism 1` plans one root at a time |
 
 `stage tf-plan` and `stage tf-drift` exit 1 when a root refuses to plan, and still write the report. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Its flags are `--wave`, `--layers`, `--canary`, `--binary`, `--gate` (`always`, `on-destroy` or `never`, default `on-destroy`), `--config` and `--parallelism`. Exit 3 means the wave waits for an approval, and exit 4 that its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Its flags are `--wave`, `--layers`, `--canary`, `--binary`, `--gate` (`always`, `on-destroy` or `never`, default `on-destroy`), `--config`, `--parallelism` and `--terragrunt`. Exit 3 means the wave waits for an approval, and exit 4 that its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
 
 ## publish
 
