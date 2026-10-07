@@ -59,7 +59,7 @@ projects:
 | `binary` | detected: a version file, then `.tofu` files, then the path, then `tofu`; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu`, [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) or `cdktn` |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
-| `apply` | `when: merge` | `when`: `merge` applies the default branch after a merge; `pull-request` applies an open pull request on request, before it merges. `merge`, with `when: pull-request` only: `manual` (default) leaves the merge to a person, `auto` merges once every wave applied. Plain roots only. See [Apply before merge](#apply-before-merge) |
+| `apply` | `when: merge` | `when`: `merge` applies the default branch after a merge; `pull-request` applies an open pull request on request, before it merges. `merge`, with `when: pull-request` only: `manual` (default) leaves the merge to a person, `auto` merges once every wave applied. `merge_token_env`, with `merge: auto` only: the secret the merge is made with, required on Forgejo. Plain roots only. See [Apply before merge](#apply-before-merge) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
@@ -90,11 +90,14 @@ projects:
 apply:
   when: pull-request   # default: merge
   merge: auto          # default: manual
+  merge_token_env: MERGE_TOKEN   # the secret the merge is made with
 ```
 
 With `when: merge`, the default, only merged code applies: the push to the default branch runs the waves, and `/terragucci apply` on a merged pull request runs them again. The apply role never meets a pull request's code.
 
 With `when: pull-request`, a pull request applies before it merges, as Atlantis does. On GitHub and Forgejo a person with write access comments `/terragucci apply [wave-<n>]` on the open pull request; on GitLab, which starts no pipeline for a comment, they start the merge request pipeline's manual `apply-mr` job. The waves, the set digests, the `gate` policy and the sealed approvals are the same as after a merge. The gate rule and the signers are read from the default branch, and so is this file: a pull request that changes `terragucci.yml` gets the new settings once it merges. Before anything applies, the pull request must be approved by a reviewer other than its author, its checks must have passed, its head must contain the default branch, and no other open pull request may hold a lock on a root it reaches; each is refused by name. Applying locks those roots until the pull request merges or closes, and `/terragucci unlock` (on GitLab, the `unlock-mr` job) releases them. After the last wave, `merge: auto` merges the pull request; a pull request whose apply stopped partway is never merged. The push after the merge plans every root and applies nothing; its `terragucci/apply` status fails, naming the roots, if any still plans a change.
+
+`merge_token_env` names the secret whose token makes the merge, a user's token that may push to the default branch. Forgejo refuses a merge made with the job's own token, so there it is required. On GitHub it is optional; with it, the merge starts the default branch's workflow. GitLab merges with `token_env`'s token, and `init` refuses the key there.
 
 The trade is the apply role: the job that applies a pull request runs that pull request's code with it, before anyone merged it. A provider, an external data source or a module in the pull request runs with write access to your cloud. That is why `merge` is the default. With `when: pull-request`, keep forks out (they never apply), require reviews in branch protection, and on GitLab protect the `terragucci-apply` environment. [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) lists the jobs and the checks.
 

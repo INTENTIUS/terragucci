@@ -396,8 +396,8 @@ describe("the comment trigger", () => {
 });
 
 describe("apply before merge (apply.when: pull-request)", () => {
-  const renderPr = (forge: ForgeName, merge?: "auto" | "manual"): Record<string, any> =>
-    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, applyWhen: "pull-request", ...(merge ? { applyMerge: merge } : {}) }).content);
+  const renderPr = (forge: ForgeName, merge?: "auto" | "manual", mergeToken?: string): Record<string, any> =>
+    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, applyWhen: "pull-request", ...(merge ? { applyMerge: merge } : {}), ...(mergeToken ? { applyMergeTokenEnv: mergeToken } : {}) }).content);
 
   it.each(["github", "forgejo"] as const)("%s: the comment job takes apply and unlock, and the push after the merge confirms instead of applying", (forge) => {
     const doc = renderPr(forge);
@@ -464,6 +464,16 @@ describe("apply before merge (apply.when: pull-request)", () => {
     expect(mergeRequestApplyScript("tofu", layers, OIDC, { when: "pull-request" })).toContain("run the apply-mr job of this merge request again");
   });
 
+  it("apply.merge auto merges with apply.merge_token_env's secret, which Forgejo needs and GitLab refuses", () => {
+    // Forgejo pushes a merge as its doer, and refuses a push to a branch from the job's own token.
+    expect(() => renderPr("forgejo", "auto")).toThrow(/apply\.merge: auto on Forgejo needs apply\.merge_token_env/);
+    expect(renderPr("forgejo", "auto", "MERGE_TOKEN").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBe("${{ secrets.MERGE_TOKEN }}");
+    expect(renderPr("github", "auto", "MERGE_TOKEN").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBe("${{ secrets.MERGE_TOKEN }}");
+    expect(renderPr("github", "auto").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBeUndefined();
+    expect(renderPr("forgejo", "manual").jobs["apply-comment"].env.TG_MERGE_TOKEN).toBeUndefined();
+    expect(() => renderPr("gitlab", "auto", "MERGE_TOKEN")).toThrow(/merge_token_env is for GitHub and Forgejo/);
+  });
+
   it("a Terragrunt repo refuses apply.when pull-request", () => {
     expect(() => renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] }, applyWhen: "pull-request" })).toThrow(/needs plain roots/);
   });
@@ -473,7 +483,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
       terragucci: [
         "#!/usr/bin/env bash",
         'if [ "$1" = comment-apply ]; then while [ $# -gt 0 ]; do [ "$1" = --out ] && out="$2"; shift; done; printf \'%s\\n\' "$DECISION" > "$out"; exit 0; fi',
-        'if [ "$1" = pr-merge ]; then echo "$*" >> "$LOG"; echo "terragucci pr-merge: merged pull request 7 at abcdef12"; exit 0; fi',
+        'if [ "$1" = pr-merge ]; then echo "$*" >> "$LOG"; if [ -n "${MERGE_FAILS:-}" ]; then echo "terragucci pr-merge: not merged: the forge refused the merge (POST answered 409)"; exit 1; fi; echo "terragucci pr-merge: merged pull request 7 at abcdef12"; exit 0; fi',
         'if [ "$1" = stage ] && [ "$2" = tf-plan ]; then mkdir -p terragucci-report; printf \'%s\' "$REPORT" > terragucci-report/report.json; exit 0; fi',
         'echo "$*" >> "$LOG"',
         "exit 0",
@@ -501,6 +511,20 @@ describe("apply before merge (apply.when: pull-request)", () => {
         expect(log.at(-1)).toBe(`pr-merge --pr 7 --sha ${sha}`);
         const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
         expect(reply).toBe(`terragucci: applied wave 1, 2 of pull request 7 at ${sha.slice(0, 8)}, and merged pull request 7 at abcdef12. https://forge.test/acme/infra/actions/runs/9`);
+      } finally {
+        api.close();
+      }
+    });
+
+    it("a refused merge fails the job, and the reply gives the forge's reason once", async () => {
+      const { work, sha } = head();
+      const { dir, env } = fake();
+      const api = await stubApi(() => ({}));
+      try {
+        const r = await runStep(`cd ${work} && ${commentApplyScript("tofu", layers, "github", undefined, { when: "pull-request", merge: "auto" })}`, { ...env, ...envFor(api.url, dir, { go: true, open: true, pr: 7, sha, base: "main" }), MERGE_FAILS: "1" });
+        expect(r.status, r.out).toBe(1);
+        const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
+        expect(reply).toBe(`terragucci: applied wave 1, 2 of pull request 7 at ${sha.slice(0, 8)}, and it was not merged: the forge refused the merge (POST answered 409). Merge it by hand. https://forge.test/acme/infra/actions/runs/9`);
       } finally {
         api.close();
       }

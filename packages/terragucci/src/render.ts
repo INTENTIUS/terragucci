@@ -112,6 +112,8 @@ export interface PipelineInput {
   applyWhen?: ApplyWhen;
   /** `apply.merge`: with `auto`, a pull request whose every wave applied is merged. */
   applyMerge?: ApplyMerge;
+  /** `apply.merge_token_env`: the secret whose token `pr-merge` merges with on GitHub and Forgejo, in place of the job's own. */
+  applyMergeTokenEnv?: string;
 }
 
 export interface RenderedPipeline {
@@ -644,7 +646,7 @@ function openReply(forge: ForgeName, count: number, merge: ApplyMerge | undefine
           `  if merged="$(terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA"${forge === "github" ? "" : ` --forge ${forge}`} 2>&1)"; then`,
           `    tg reply "${applied}, and \${merged#terragucci pr-merge: }. $run_url"`,
           "  else",
-          `    tg reply "${applied}, and it was not merged: \${merged#terragucci pr-merge: }. Merge it by hand. $run_url"`,
+          `    tg reply "${applied}, and it was not merged: \${merged#terragucci pr-merge: not merged: }. Merge it by hand. $run_url"`,
           "    exit 1",
           "  fi",
         ]
@@ -1071,6 +1073,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
   if (prApply && tg) throw new RenderError("apply.when: pull-request needs plain roots: a Terragrunt repo applies after merge, so leave apply.when unset");
+  // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
+  if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
+  if (input.applyMergeTokenEnv && forge === "gitlab") throw new RenderError("apply.merge_token_env is for GitHub and Forgejo: on GitLab the merge is made with token_env's token, so drop merge_token_env");
   const pushApplyJobs = prApply ? [] : applyJobs;
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}) } : {}) };
@@ -1369,7 +1374,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     permissions: { contents: writesLedger || prApply ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: applyConcurrency(forge),
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+    env: { TG_TOKEN: "${{ github.token }}", ...(prApply && input.applyMerge === "auto" && input.applyMergeTokenEnv ? { TG_MERGE_TOKEN: `\${{ secrets.${input.applyMergeTokenEnv} }}` } : {}), ...headersEnv },
     steps: [
       ...steps(new Step({ name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) }), true, true),
       new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
