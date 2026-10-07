@@ -16,6 +16,8 @@ const ORDER = [
 	'guides/add-to-forgejo',
 	'guides/approve-a-wave',
 	'guides/fix-a-refused-wave',
+	'guides/approvals-runbook',
+	'guides/re-plan-from-a-comment',
 	'guides/roll-out-a-module-version',
 	'guides/publish-modules',
 	'guides/turn-on-drift-checks',
@@ -24,6 +26,7 @@ const ORDER = [
 	'guides/use-a-binary',
 	'guides/use-terragrunt',
 	'guides/agent-refused-wave',
+	'guides/agent-change-a-pull-request',
 	'reference/config',
 	'reference/cli',
 	'reference/stages',
@@ -36,6 +39,7 @@ const ORDER = [
 	'concepts/why-plans-are-grouped',
 	'concepts/approvals-as-records',
 	'concepts/glossary',
+	'compare',
 ];
 
 export async function pages() {
