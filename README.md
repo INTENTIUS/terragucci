@@ -1,6 +1,6 @@
 # terragucci
 
-The whole Terraform and Terragrunt lifecycle, handled. Every pull request gets one grouped plan note, and every merge goes out in approved waves while terragucci watches for drift.
+CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. Every pull request gets one grouped plan note, and every merge goes out in approved waves while terragucci watches for drift.
 
 It runs whichever binary you already use; [Use OpenTofu, choudoufu or CDK Terrain](https://intentius.io/terragucci/guides/use-a-binary/) lists them. Pipelines run on your forge's CI.
 
@@ -9,7 +9,7 @@ npm i -D @intentius/terragucci
 npx terragucci init
 ```
 
-The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Its [validation page](https://intentius.io/terragucci/reference/validation/) lists every check the generated pipelines pass.
+The site is [intentius.io/terragucci](https://intentius.io/terragucci/), and [How terragucci works](https://intentius.io/terragucci/concepts/how-it-works/) follows one change from pull request to drift. Its [validation page](https://intentius.io/terragucci/reference/validation/) lists every check the generated pipelines pass.
 
 [How terragucci compares](https://intentius.io/terragucci/compare/) sets it beside Atlantis, HCP Terraform, Spacelift and Digger.
 

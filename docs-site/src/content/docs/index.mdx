@@ -1,6 +1,6 @@
 ---
 title: terragucci
-description: CI and observability for Terraform, Terragrunt, and OpenTofu. Grouped plans on every pull request, applies in gated waves, and drift reports.
+description: CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. Grouped plans on every pull request, applies in gated waves, and drift reports.
 template: splash
 ---
 
@@ -17,7 +17,7 @@ import Validated from '../../components/Validated.astro';
 
 ## The lifecycle around your roots
 
-terragucci carries a root through review, rollout and the watch that follows, and you write none of the pipeline. The stages are built on [chant](https://intentius.io/chant/), which renders each one into a workflow for your forge. Your Terraform code and its state stay yours.
+terragucci carries a root through review, rollout and the watch that follows, and you write none of the pipeline. The stages are built on [chant](/terragucci/concepts/glossary/#chant), which renders each one into a workflow for your forge. [How terragucci works](/terragucci/concepts/how-it-works/) follows one change through all of them. Your Terraform code and its state stay yours.
 
 <Lifecycle />
 
@@ -31,7 +31,7 @@ The note links to the full report. It opens on the destroys and the outliers wit
 
 ## Rollouts in waves
 
-The change goes out a few roots at a time. Each wave waits for its own approval, and that approval covers exactly the plans it was given.
+The change goes out a few roots at a time. A wave can wait for its own approval, and that approval covers exactly the plans it was given.
 
 <Waves />
 
@@ -49,14 +49,12 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 
 <Validated />
 
-## Three ways in
+## Hand the setup to your agent
 
-| You want to | Start here |
-|---|---|
-| see it work first | [The tutorial](/terragucci/tutorial/) runs a 15-root example on your laptop, with a local forge and an AWS stand-in |
-| use it on your own repo | [Get your first plan note](/terragucci/getting-started/) takes `npm i -D @intentius/terragucci` and `npx terragucci init` to a plan note on a pull request |
-| hand the setup to your agent | paste the prompt at the top of this page into Claude Code, Codex or Cursor; [the agent page](/terragucci/getting-started/agents/) says what it does. It never applies and never approves |
+Paste this into Claude Code, Codex or Cursor in your Terraform repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.
 
-Once it runs, the [how-to guides](/terragucci/guides/add-to-github/) cover the tasks, the [reference](/terragucci/reference/config/) the details, and the [concepts](/terragucci/concepts/waves-and-approvals/) the reasons behind them.
+<Landing part="agent" />
+
+Once it runs, the [how-to guides](/terragucci/guides/add-to-github/) cover the tasks, the [reference](/terragucci/reference/config/) the details, and the [concepts](/terragucci/concepts/how-it-works/) the reasons behind them. The [glossary](/terragucci/concepts/glossary/) defines the words that come from chant.
 
 [How terragucci compares](/terragucci/compare/) sets it beside Atlantis, HCP Terraform, Spacelift and Digger.

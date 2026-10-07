@@ -31,6 +31,8 @@ wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
+[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists the approval gate of each wave. Commit it with the pipeline.
+
 terragucci recognises gitlab.com and hostnames that start with `gitlab.`. For any other host, pass `--forge gitlab`. It then writes `terragucci.yml` with the forge recorded, so the next run needs no flag.
 
 ### 2. Add the token
@@ -66,7 +68,7 @@ In Settings, Merge requests, turn on "Pipelines must succeed". A failed plan the
 
 ### 6. Make approval possible
 
-Approvals are sealed with a key. Until your key is in `.chant/allowed_signers` on the default branch and chant is installed, a waiting wave cannot be approved. The [getting-started page](/terragucci/getting-started/#before-your-first-approval) has both steps.
+Approvals are sealed with a key. Until your key is in `.chant/allowed_signers` on the default branch and [chant](/terragucci/concepts/glossary/#chant) is installed, a waiting wave cannot be approved. The [getting-started page](/terragucci/getting-started/#before-your-first-approval) has both steps.
 
 ## Next
 

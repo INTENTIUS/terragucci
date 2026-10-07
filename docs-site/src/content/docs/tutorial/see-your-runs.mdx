@@ -21,7 +21,7 @@ just see-runs
 
 <Captured step="see-runs" />
 
-It starts the profile, then runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set, as a pipeline job would have it. The first plans the module-bump change for pull request 1. The second is a drift run, after deleting staging orders' jobs queue from floci the way the [Drift](/terragucci/tutorial/drift/) page does (`just example reset` puts it back). The third runs the apply's waves in order with the gate set to `always`, as the pipeline would.
+It starts the profile, then runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set, as a pipeline job would have it. The first plans the module-bump change for pull request 1. The second is a drift run, after deleting staging orders' jobs queue from [floci](/terragucci/concepts/glossary/#floci) the way the [Drift](/terragucci/tutorial/drift/) page does (`just example reset` puts it back). The third runs the apply's waves in order with the gate set to `always`, as the pipeline would.
 
 Wave 1 holds only the dev platform, which the bump leaves alone, so it has nothing to approve and passes. Wave 2 plans the dev services and waits for an approval. The approval ledger goes to a scratch repo, so the example on Forgejo stays as it was. The command returns once Grafana shows the runs.
 
