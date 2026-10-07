@@ -135,6 +135,7 @@ export default defineConfig({
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
 					],
 				},
+				{ label: 'How terragucci compares', slug: 'compare' },
 				{ label: 'Validation', slug: 'reference/validation' },
 			],
 		}),
