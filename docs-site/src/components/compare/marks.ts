@@ -16,7 +16,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	'json-report': {
 		mark: 'good',
-		text: 'report.json beside the HTML report, with every root, group, policy result and wave, and each root\'s full plan as JSON',
+		text: 'report.json beside the HTML report, with every root, group, policy result and wave, linking each root\'s full plan as JSON',
 		page: 'reference/report-schema/',
 	},
 	policy: {
@@ -26,12 +26,12 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	override: {
 		mark: 'bad',
-		text: 'No bypass, by design: a denial changes only through a reviewed pull request to the code or the policy',
+		text: 'No bypass, by design: a denied change goes through only after a reviewed policy change merges, or the code changes',
 		page: 'reference/policy/',
 	},
 	'apply-when': {
 		mark: 'good',
-		text: 'Both, per project: apply.when merge (default) or pull-request; before merge on plain roots on GitHub and Forgejo only',
+		text: 'Both, per project: apply.when merge (default) or pull-request; before merge on plain roots on GitHub and Forgejo, after merge on GitLab and in Terragrunt repos',
 		page: 'reference/config/#apply-before-merge',
 	},
 	'approval-binds': {
@@ -41,7 +41,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	waves: {
 		mark: 'good',
-		text: 'Canary roots first, then one dependency layer per wave, each wave planned once the wave before it has applied, and gated by policy',
+		text: 'Canary roots first, then one dependency layer per wave, each one plans once the one before has applied; a wave waits for its own sealed approval when it destroys or replaces something, or always with gate: always',
 		page: 'concepts/waves-and-approvals/',
 	},
 	'refuse-changed': {
