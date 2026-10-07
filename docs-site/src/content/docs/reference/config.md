@@ -1,6 +1,11 @@
 ---
 title: terragucci.yml keys
 description: Every key of the config file, its default, and the defaults terragucci uses when there is no file.
+prompt: |
+  Read https://intentius.io/terragucci/reference/config/.
+  Run `npx terragucci config check --json` on this repo's terragucci.yml and list each problem it finds.
+  Propose the smallest file that keeps current behaviour, run config check again, and open a pull request with it.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root; two is an error. `terragucci config check` lists every problem.
@@ -51,6 +56,61 @@ projects:
   codeberg.org/acme/edge: {}
 ```
 
+## Every key
+
+Each key set away from its default; keep only the lines you need. This file passes `config check`.
+
+```yaml
+roots: ["envs/*/*"]
+binary: tofu
+version: 1.10.6
+forge: forgejo
+url: https://git.example.com:3000/acme/infra
+gate: always
+apply:
+  when: merge                 # pull-request: see Apply before merge
+waves:
+  canary: [envs/dev/core]
+drift: "17 4 * * *"
+runtime: forge
+reports:
+  bucket: acme-terragucci-reports
+  prefix: infra
+  url: https://reports.example.com
+  role: arn:aws:iam::111122223333:role/terragucci-reports
+env:
+  TF_LOG: WARN
+telemetry:
+  headers_secret: OTLP_HEADERS
+  trace_url: https://grafana.example.com/explore?trace={trace_id}
+token_env: FORGE_TOKEN
+oidc:
+  plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+  apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+parallelism: 8
+terragrunt:                   # read in a Terragrunt repo only
+  version: 1.1.6
+policy:
+  engine: conftest
+  path: policy
+modules:
+  path: "modules/*"
+  publish: git-tags
+tips: false
+respond:
+  drift: attribute
+  version-bump: suggest
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  comment: true
+decide:
+  backend: laya
+  url: http://decide:8790
+audit_region: eu-west-1
+dashboards: true
+```
+
 ## Keys
 
 | Key | Default | Meaning |
@@ -93,17 +153,17 @@ apply:
   merge_token_env: MERGE_TOKEN   # the secret the merge is made with
 ```
 
-With `when: merge`, only merged code applies, and the apply role never meets a pull request's code.
+| Setting | Does | Allowed on |
+|---|---|---|
+| `when: merge` | only merged code applies, and the apply role never meets a pull request's code | every forge |
+| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; roots stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | GitHub and Forgejo, plain roots; `init` and `config check` refuse it on GitLab, `init` refuses it in a Terragrunt repo |
+| `merge: manual` | a person merges | `when: pull-request` only; `config check` refuses `merge` without it |
+| `merge: auto` | `pr-merge` merges once every wave applied, never after a partial apply | `when: pull-request` only |
+| `merge_token_env` | the secret the merge is made with; only `pr-merge`, which runs no pull request code, gets it | required on Forgejo |
 
-With `when: pull-request` (GitHub and Forgejo, plain roots), a writer comments `/terragucci apply [wave-<n>]` on the open pull request. Gate, signers and this file come from the default branch. It needs another reviewer's approval, no failed or running check, the default branch in its head, and no other pull request's lock on its roots. Roots stay locked until merge or close, or `/terragucci unlock`. `merge: auto` never merges a partial apply. After the merge, `terragucci/apply` fails if any root still plans a change.
+Gate, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check an apply comment must pass.
 
-`merge_token_env` is required on Forgejo; only `pr-merge`, which runs no pull request code, gets it.
-
-`init` and `config check` refuse `when: pull-request` on GitLab.
-
-Unmerged pull request code runs with the apply role. Forks never apply; require reviews in branch protection. [The jobs](/terragucci/reference/pipeline/#apply-before-merge).
-
-`config check` refuses `merge` without `when: pull-request`, and `init` refuses `when: pull-request` in a Terragrunt repo.
+Unmerged pull request code runs with the apply role. Forks never apply; require reviews in branch protection. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
 
 ## A TypeScript file
 

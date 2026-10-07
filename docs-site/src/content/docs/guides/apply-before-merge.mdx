@@ -1,0 +1,94 @@
+---
+title: Apply a pull request before it merges
+description: Turn on apply.when pull-request, apply an approved change from a comment or a manual job, and merge it once every wave applied.
+claims: [pr-apply, pr-apply-lock, pr-apply-stale]
+prompt: |
+  Read https://intentius.io/terragucci/guides/apply-before-merge/.
+  Add `apply.when: pull-request` to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with the result.
+  List the merge token and the branch protection I must set; do not create tokens or change branch protection yourself.
+  Never comment `/terragucci apply` or `/terragucci unlock`, never run `chant approve` or `--mode apply`, and never merge.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+An open change that applies from its head in the same waves and gates as a merge. It merges once every wave applied, and the push after the merge applies nothing.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| Plain roots on GitHub or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/) | Terragrunt repos and GitLab apply after merge; `init` refuses `apply.when: pull-request` there |
+| Branch protection on the default branch that requires a review | the review is the guard: the applying job runs the change's code with the apply role |
+| The [trade](/terragucci/reference/config/#apply-before-merge) accepted | [what the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) with the apply role |
+
+## Steps
+
+<Steps>
+
+1. Turn it on. Add the `apply` block to `terragucci.yml`:
+
+   ```yaml
+   apply:
+     when: pull-request
+     merge: auto      # or manual, the default, to merge by hand
+     merge_token_env: MERGE_TOKEN
+   ```
+
+   With `merge: auto`, add that secret, holding a token of a user who may push to the default branch. Only `pr-merge`, which runs none of the change's code, gets it.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+   The token is optional. Without it the merge uses the job's own token and starts no `confirm`; the next push confirms it.
+   </TabItem>
+   <TabItem label="GitLab">
+   `init` and `config check` refuse `apply.when: pull-request` on GitLab, because it builds a merge request's pipeline from its own `.gitlab-ci.yml`.
+   </TabItem>
+   <TabItem label="Forgejo">
+   The token is required. Forgejo refuses a merge made with the job's own token.
+   </TabItem>
+   </Tabs>
+
+2. Run `npx terragucci init` and merge the result in its own pull request. Nothing changes until it lands; after that, default-branch commits run `confirm` instead of the apply waves.
+
+3. Open the change as usual and get its head approved on the forge by a reviewer other than its author. A push after the review needs a fresh approval.
+
+4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#when-a-comment-runs-nothing). A head behind the default branch needs it merged or rebased in, then a new plan and approval.
+
+5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives its [chant](/terragucci/concepts/glossary/#chant) approve command; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again.
+
+6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
+
+   After the merge, `confirm` plans every root. Its `terragucci/apply` status passes when nothing plans a change.
+
+</Steps>
+
+## Which config applies
+
+An open change's apply reads its settings from the default branch. Edits to `terragucci.yml` in the change count once it merges.
+
+| Setting | Read from |
+|---|---|
+| Waves, `binary`, `gate`, `canary`, the apply role | the default branch's pipeline |
+| `policy` and the policy directory | the default branch; if it has no `policy` key, a change adding one is checked against its own |
+| The gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
+| `reports`, `telemetry`, `parallelism` and every other key of `terragucci.yml` | the default branch |
+| `respond` | the default branch; if unreadable, no response |
+| The roots, modules and code that plan and apply | the change's head |
+
+An unreadable default-branch config fails the wave before anything applies.
+
+## Locks
+
+| Event | Lock |
+|---|---|
+| The change applies | each root it reaches is locked |
+| Another change reaches a locked root | refused; the reply names the holder |
+| The holder merges or closes | released |
+| `/terragucci unlock` on the holder, by anyone with write access | released; the reply names what it released |
+
+## Next
+
+- [The generated pipeline](/terragucci/reference/pipeline/#apply-before-merge) lists the jobs, the checks and the credentials.
+- [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/) has every comment command.
