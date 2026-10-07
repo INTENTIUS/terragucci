@@ -1,0 +1,416 @@
+---
+// The comparison grid: products as columns, properties as rows in three
+// bands, a mark per cell. Each row opens to what every product does, and
+// every competitor's line carries a numbered note that links the page of
+// its own docs the mark was read from. The data is in ./compare/.
+import { bands, products, rows } from './compare/grid';
+import { terragucci } from './compare/marks';
+import type { Mark } from './compare/types';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const href = (page: string) => (/^https?:/.test(page) ? page : `${base}/${page}`);
+
+const glyph: Record<Mark, string> = { good: '●', warn: '◐', bad: '✗', na: '–' };
+const said: Record<Mark, string> = {
+	good: 'meets by design',
+	warn: 'partial, by hand or with a caveat',
+	bad: 'misses',
+	na: 'out of scope',
+};
+
+// Notes are numbered in reading order, one per page, so two marks read from
+// the same page share a number.
+const notes: { title: string; url: string; product: string }[] = [];
+const noteOf = new Map<string, number>();
+for (const row of rows) {
+	for (const p of products) {
+		const { source } = row.cells[p.id];
+		if (!noteOf.has(source.url)) {
+			notes.push({ ...source, product: p.name });
+			noteOf.set(source.url, notes.length);
+		}
+	}
+}
+const columns = products.length + 1;
+---
+<section class="scorecard not-content" aria-label="How terragucci compares" style={`--sc-columns: ${columns}`}>
+	<div class="sc-bands">
+		{bands.map((b) => (
+			<div><h3>{b.label}</h3><p>{b.summary}</p></div>
+		))}
+	</div>
+
+	<div class="sc-legend" role="note" aria-label="Legend">
+		{(Object.keys(glyph) as Mark[]).map((m) => (
+			<span><b class={`sc-dot ${m}`} aria-hidden="true">{glyph[m]}</b> {said[m]}</span>
+		))}
+		<span class="sc-hint">Open a row for what each product does and the page that says so</span>
+	</div>
+
+	<div class="sc-grid">
+		<div class="sc-head" aria-hidden="true">
+			<span class="sc-corner"></span>
+			<span class="sc-tool own">terragucci</span>
+			{products.map((p) => <span class="sc-tool">{p.short ?? p.name}</span>)}
+		</div>
+
+		{bands.map((b) => (
+			<Fragment>
+				<p class="sc-bandhead">{b.label}</p>
+				{rows.filter((r) => r.band === b.id).map((row) => {
+					const own = terragucci[row.id];
+					return (
+						<details class="sc-row" id={`row-${row.id}`}>
+							<summary>
+								<span class="sc-factor"><span class="sc-fname">{row.label}</span></span>
+								<span class={`sc-cell ${own.mark}`} title={`terragucci: ${own.text}`}>
+									<span aria-hidden="true">{glyph[own.mark]}</span>
+									<span class="sc-sr">terragucci {said[own.mark]};</span>
+								</span>
+								{products.map((p) => {
+									const c = row.cells[p.id];
+									return (
+										<span class={`sc-cell ${c.mark}`} title={`${p.name}: ${c.text}`}>
+											<span aria-hidden="true">{glyph[c.mark]}</span>
+											<span class="sc-sr">{p.name} {said[c.mark]};</span>
+										</span>
+									);
+								})}
+							</summary>
+							<div class="sc-detail">
+								<p class="sc-statement">{row.statement}</p>
+								<p>
+									<b>terragucci</b>
+									<span><span class={`sc-dot ${own.mark}`} aria-hidden="true">{glyph[own.mark]}</span> {own.text}. <a href={href(own.page)}>Docs</a></span>
+								</p>
+								{products.map((p) => {
+									const c = row.cells[p.id];
+									const n = noteOf.get(c.source.url);
+									return (
+										<p>
+											<b>{p.name}</b>
+											<span><span class={`sc-dot ${c.mark}`} aria-hidden="true">{glyph[c.mark]}</span> {c.text}.<sup><a href={`#note-${n}`} aria-label={`Note ${n}`}>{n}</a></sup></span>
+										</p>
+									);
+								})}
+							</div>
+						</details>
+					);
+				})}
+			</Fragment>
+		))}
+	</div>
+
+	<div class="sc-notes">
+		<h4>Notes</h4>
+		<ol>
+			{notes.map((n, i) => (
+				<li id={`note-${i + 1}`}>{n.product}: <a href={n.url}>{n.title}</a></li>
+			))}
+		</ol>
+	</div>
+</section>
+
+<script>
+	// Following a note's number from an open row lands on the note; following a
+	// link to a row (#row-locks) opens it.
+	const open = () => {
+		const target = location.hash && document.getElementById(location.hash.slice(1));
+		if (target instanceof HTMLDetailsElement) target.open = true;
+	};
+	open();
+	window.addEventListener('hashchange', open);
+</script>
+
+<style>
+	.scorecard {
+		--sc-good: var(--sl-color-accent);
+		--sc-warn: var(--sl-color-gray-2);
+		--sc-bad: var(--tg-warn);
+		--sc-na: var(--sl-color-gray-4);
+		--sc-ink: var(--sl-color-white);
+		--sc-muted: var(--sl-color-gray-2);
+		--sc-faint: var(--sl-color-gray-3);
+		--sc-link: var(--sl-color-accent-high);
+		--sc-label: minmax(9rem, 1.7fr);
+		--sc-cellw: minmax(2.6rem, 1fr);
+		margin: 1.5rem 0 0;
+	}
+	.sc-bands {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1px;
+		background: var(--tg-rule);
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.5rem;
+		overflow: hidden;
+		margin: 0 0 1rem;
+	}
+	.sc-bands > div {
+		background: var(--sl-color-black);
+		padding: 0.6rem 0.75rem;
+	}
+	.sc-bands h3 {
+		margin: 0 0 0.2rem;
+		font-size: 0.68rem;
+		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--sc-link);
+		font-weight: 700;
+	}
+	.sc-bands p {
+		margin: 0;
+		font-size: 0.78rem;
+		color: var(--sc-faint);
+		line-height: 1.35;
+	}
+	@media (max-width: 40rem) {
+		.sc-bands {
+			grid-template-columns: 1fr;
+		}
+	}
+	.sc-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem 1.3rem;
+		align-items: baseline;
+		margin: 0 0 1rem;
+		font-size: 0.83rem;
+		color: var(--sc-muted);
+	}
+	.sc-legend span {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.45rem;
+	}
+	.sc-legend .sc-hint {
+		color: var(--sc-faint);
+		font-style: italic;
+	}
+	.sc-dot {
+		font-weight: 700;
+		display: inline-block;
+		width: 1em;
+		text-align: center;
+	}
+	.good { color: var(--sc-good); }
+	.warn { color: var(--sc-warn); }
+	.bad { color: var(--sc-bad); }
+	.na { color: var(--sc-na); }
+
+	/* The grid scrolls inside its own box on a narrow screen, with the row
+	   names held at the left. An opened row's detail stays the width of the
+	   box, so it reads without scrolling. */
+	.sc-grid {
+		overflow-x: auto;
+		container-type: inline-size;
+	}
+	.sc-head,
+	.sc-row > summary {
+		display: grid;
+		grid-template-columns: var(--sc-label) repeat(var(--sc-columns), var(--sc-cellw));
+		align-items: center;
+		gap: 0.15rem;
+		min-width: 30rem;
+	}
+	@media (max-width: 40rem) {
+		.scorecard {
+			--sc-label: minmax(7.5rem, 1.4fr);
+			--sc-cellw: minmax(2.4rem, 1fr);
+		}
+	}
+	.sc-head {
+		align-items: end;
+		padding: 0 0 0.5rem;
+		border-bottom: 2px solid var(--sl-color-gray-4);
+	}
+	.sc-tool {
+		font-size: 0.7rem;
+		font-weight: 700;
+		color: var(--sc-ink);
+		text-align: center;
+		line-height: 1.2;
+		padding: 0 0.1rem;
+	}
+	.sc-tool.own {
+		color: var(--sc-link);
+	}
+	.sc-corner,
+	.sc-factor,
+	.sc-bandhead {
+		position: sticky;
+		left: 0;
+		background: var(--sl-color-black);
+		z-index: 1;
+	}
+	.sc-corner {
+		align-self: stretch;
+	}
+	.sc-bandhead {
+		width: max-content;
+		margin: 1rem 0 0;
+		padding: 0.45rem 0.5rem 0.3rem 0;
+		font-size: 0.7rem;
+		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--sc-link);
+		font-weight: 700;
+	}
+	.sc-row {
+		border-top: 1px solid var(--tg-rule);
+		min-width: 30rem;
+	}
+	.sc-row > summary {
+		list-style: none;
+		cursor: pointer;
+		padding: 0.5rem 0;
+	}
+	.sc-row > summary::-webkit-details-marker {
+		display: none;
+	}
+	.sc-row > summary::marker {
+		content: '';
+	}
+	.sc-row > summary:hover,
+	.sc-row > summary:hover .sc-factor {
+		background: var(--tg-panel);
+	}
+	.sc-row > summary:focus-visible {
+		outline: 2px solid var(--sl-color-accent);
+		outline-offset: -2px;
+	}
+	.sc-row[open] {
+		box-shadow: inset 3px 0 0 var(--sl-color-accent);
+	}
+	.sc-row[open] > summary,
+	.sc-row[open] > summary .sc-factor {
+		background: var(--sl-color-gray-6);
+	}
+	.sc-factor {
+		align-self: stretch;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--sc-ink);
+		line-height: 1.25;
+		padding: 0 0.5rem 0 0.35rem;
+	}
+	.sc-factor::before {
+		content: '';
+		flex: none;
+		width: 0;
+		height: 0;
+		border-left: 5px solid var(--sc-faint);
+		border-top: 4px solid transparent;
+		border-bottom: 4px solid transparent;
+		transition: transform 0.15s ease;
+	}
+	.sc-row[open] .sc-factor::before {
+		transform: rotate(90deg);
+		border-left-color: var(--sl-color-accent);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sc-factor::before {
+			transition: none;
+		}
+	}
+	.sc-cell {
+		text-align: center;
+		font-weight: 700;
+		font-family: var(--sl-font-mono);
+		font-size: 1rem;
+	}
+	.sc-sr {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.sc-detail {
+		position: sticky;
+		left: 0;
+		box-sizing: border-box;
+		width: min(100cqw, 46rem);
+		margin: 0.4rem 0 0.8rem;
+		padding: 0.6rem 0.85rem;
+		background: var(--sl-color-black);
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.4rem;
+		display: grid;
+		gap: 0.35rem;
+	}
+	.sc-detail p {
+		margin: 0;
+		font-size: 0.84rem;
+		color: var(--sc-muted);
+		line-height: 1.45;
+	}
+	.sc-detail p:not(.sc-statement) {
+		display: grid;
+		grid-template-columns: 7.5rem 1fr;
+		column-gap: 0.5rem;
+	}
+	@media (max-width: 40rem) {
+		.sc-detail p:not(.sc-statement) {
+			grid-template-columns: 1fr;
+		}
+	}
+	.sc-detail b {
+		color: var(--sc-ink);
+		font-weight: 600;
+	}
+	.sc-detail .sc-dot {
+		margin-right: 0.2rem;
+	}
+	.sc-detail .sc-statement {
+		margin: 0 0 0.4rem;
+		padding: 0 0 0.5rem;
+		border-bottom: 1px solid var(--tg-rule);
+		font-size: 0.9rem;
+		color: var(--sc-ink);
+		font-weight: 500;
+	}
+	.sc-detail a,
+	.sc-notes a {
+		color: var(--sc-link);
+	}
+	.sc-detail sup {
+		margin-left: 0.15rem;
+		font-size: 0.7em;
+	}
+	.sc-detail sup a {
+		text-decoration: none;
+		font-weight: 700;
+	}
+	.sc-notes {
+		margin: 2rem 0 0;
+	}
+	.sc-notes h4 {
+		font-size: 0.7rem;
+		letter-spacing: 0.13em;
+		text-transform: uppercase;
+		color: var(--sc-faint);
+		margin: 0 0 0.6rem;
+		font-weight: 700;
+	}
+	.sc-notes ol {
+		margin: 0;
+		padding-left: 1.6rem;
+		display: grid;
+		gap: 0.3rem;
+	}
+	.sc-notes li {
+		font-size: 0.83rem;
+		color: var(--sc-muted);
+		line-height: 1.5;
+		overflow-wrap: anywhere;
+	}
+	.sc-notes li:target {
+		color: var(--sc-ink);
+		background: var(--sl-color-accent-low);
+	}
+</style>
