@@ -649,7 +649,9 @@ provider "aws" {
   # The same settings as the control repo's defaults, so init writes what reconcile would.
   printf 'forge: forgejo\nbinary: tofu\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' > "$work/in-line/terragucci.yml"
   (cd "$work/in-line" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
-  push_tree "$work/in-line" "$USER/in-line" main "Two roots, pipeline in line" >/dev/null
+  # in-line must hold exactly what init writes, digest pins included, or reconcile
+  # sees a change; its push runs a pipeline the claim never waits on.
+  TG_KEEP_DIGESTS=1 push_tree "$work/in-line" "$USER/in-line" main "Two roots, pipeline in line" >/dev/null
   push_tree "$work/two-roots" "$repo" main "Two roots, no pipeline" >/dev/null
   [ -n "$(remote_head "$USER/in-line" main)" ] && [ -n "$(remote_head "$repo" main)" ] || { log "a pushed main is not listed by git"; return 1; }
   settle "repos/$repo/pulls?state=open" 200 || return 1
