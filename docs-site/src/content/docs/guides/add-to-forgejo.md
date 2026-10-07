@@ -26,6 +26,7 @@ npx terragucci init
 ```text
 found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge forgejo (the origin remote (codeberg.org))
 wrote .forgejo/workflows/terragucci.yml
+wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
@@ -51,7 +52,7 @@ The token's issuer is your Forgejo URL followed by `/api/actions`, and the role'
 
 ```bash
 git switch -c add-terragucci
-git add .forgejo package.json package-lock.json
+git add .forgejo chant.workspace.json package.json package-lock.json
 git commit -m "Add terragucci"
 git push -u origin add-terragucci
 ```
@@ -61,6 +62,10 @@ Change a line in one root and open a pull request. The check job runs, then the 
 ### 5. Require the status
 
 In the repo's branch protection, require the `terragucci/plan` status context.
+
+### 6. Make approval possible
+
+Approvals are sealed with a key. Until your key is in `.chant/allowed_signers` on the default branch and chant is installed, a waiting wave cannot be approved. The [getting-started page](/terragucci/getting-started/#before-your-first-approval) has both steps.
 
 ## Next
 

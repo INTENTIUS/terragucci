@@ -1,6 +1,7 @@
 ---
 title: Get your first plan note
 description: Add terragucci to a Terraform, OpenTofu or Terragrunt repo and see one grouped plan note on a pull request.
+claims: [zero-config]
 ---
 
 import PlanNote from '../../../components/PlanNote.astro';
@@ -41,6 +42,7 @@ It writes nothing and prints what it found, with the reason for each choice:
 ```text
 found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
 would write .github/workflows/terragucci.yml
+would write chant.workspace.json
 no terragucci.yml needed (defaults fit)
 dry run: nothing was written
 ```
@@ -56,10 +58,13 @@ npx terragucci init
 ```text
 found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
 wrote .github/workflows/terragucci.yml
+wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
-The file differs by forge. On GitLab it is `.gitlab-ci.yml`, and on Forgejo it is `.forgejo/workflows/terragucci.yml`. Open the file and read it once. Every job runs in terragucci's CI image for your binary, so no job downloads a tool.
+The file differs by forge. On GitLab it is `.gitlab-ci.yml`, and on Forgejo it is `.forgejo/workflows/terragucci.yml`. Open the file and read it once. Every job runs in terragucci's CI image for your binary. A job downloads a tool only if you pin a version the image lacks, which makes it run `terragucci install` first, or if you set a policy, which fetches conftest on first use.
+
+`chant.workspace.json` declares the approval gate of each wave. Commit it with the pipeline: the apply job reads it from the default branch. A Terragrunt repo gets no such file.
 
 Most repos need no `terragucci.yml`. When you do want one, [Your config file](/terragucci/reference/config/) lists every key.
 
@@ -71,10 +76,13 @@ GitHub and Forgejo jobs use the run's own token. On GitLab, add a project access
 
 ```bash
 git switch -c add-terragucci
-git add .github package.json package-lock.json
+git status
+git add -A
 git commit -m "Add terragucci"
 git push -u origin add-terragucci
 ```
+
+`git status` should show the pipeline file for your forge, `chant.workspace.json`, `package.json` and `package-lock.json`. Anything else, such as `node_modules`, belongs in `.gitignore`.
 
 Open the pull request on your forge. The check and plan jobs start on their own. If the pull request touches no root, there is nothing to plan, so change a line in one root first and push again.
 
@@ -85,6 +93,15 @@ When the plan job finishes, the pull request gets one comment and a `terragucci/
 <PlanNote />
 
 The note links to the full report, and every root in it links to its plan. [The plan report](/terragucci/reference/report/) shows what each part holds.
+
+## Before your first approval
+
+The plan note works without this. Approving a wave needs it, and a change that destroys something leaves a wave waiting. Approvals are sealed with an ssh key, so before the first one:
+
+1. Install chant where you approve: `npm i -D @intentius/chant`.
+2. Add your public key to `.chant/allowed_signers` through a reviewed pull request to the default branch, one line per person who approves. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) gives the format and the branch protection to set.
+
+Without a listed key, a waiting wave has nobody who can approve it.
 
 ## Next
 
