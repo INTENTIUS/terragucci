@@ -587,7 +587,9 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
       }
       console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
       console.log(`  ${approveLine(wave, digest)}`);
-      console.log("and run this job again.");
+      // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
+      console.log("chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>.");
+      console.log("Then run this job again.");
       writeOutcome(options.env, `wave ${wave} waits: ${approveLine(wave, digest)}`);
       return EXIT.waiting;
     }
