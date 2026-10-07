@@ -244,7 +244,7 @@ export async function main(argv: string[]): Promise<number> {
         const s = (k: string) => str(flags, k);
         const log = s("log");
         const result = await respond(event, cwd, {
-          ...Object.fromEntries(["config", "project", "out", "report", "approved", "current", "root", "binary", "branch", "module", "version", "title", "description", "since", "attributions"].map((k) => [k, s(k)])),
+          ...Object.fromEntries(["config", "project", "base", "out", "report", "approved", "current", "root", "binary", "branch", "module", "version", "title", "description", "since", "attributions"].map((k) => [k, s(k)])),
           mode: (s("mode") ?? "dry-run") as "dry-run",
           ...(s("wave") ? { wave: Number(s("wave")) } : {}),
           ...(log ? { log: readFileSync(log === "-" ? 0 : resolve(cwd, log), "utf-8") } : {}),

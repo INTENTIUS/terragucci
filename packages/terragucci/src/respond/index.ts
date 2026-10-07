@@ -6,10 +6,11 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
-import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings } from "../config";
+import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, findRoots, globMatch } from "../detect";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
+import { configAtBase } from "../report/policy";
 import type { Report } from "../report/schema";
 import { S3Client, s3FromEnv, type S3Fetch } from "../report/s3";
 import { copyToRun } from "../report/store";
@@ -31,6 +32,8 @@ export const EVENTS = Object.keys(RESPONSES) as RespondEvent[];
 export interface RespondOptions {
   config?: string;
   project?: string;
+  /** A ref (`origin/main`): read the settings from the config there, not from the checkout. A base that cannot be read gives no response. For a job running an open pull request's head. */
+  base?: string;
   mode?: "dry-run" | "apply";
   /** Where the response writes its files. Default `terragucci-respond`. */
   out?: string;
@@ -141,7 +144,16 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   const ev = event as RespondEvent;
   const env = o.env ?? process.env;
   const path = o.config ?? findConfig(repo);
-  const config = path ? await loadConfig(resolve(path)) : {};
+  let config: TerragucciConfig = {};
+  if (o.base) {
+    // An open pull request's head is checked out: its own terragucci.yml is not trusted to say how to respond. Fail closed when the base cannot be read.
+    const read = await configAtBase(repo, o.base, path ? { config: path } : {});
+    if ("error" in read) {
+      const why = `respond ${ev} reads its settings from ${o.base} and that config could not be read (${read.error}), so there is no response`;
+      return { event: ev, response: "off", skipped: why, text: why };
+    }
+    config = read.config;
+  } else if (path) config = await loadConfig(resolve(path));
   const settings = o.project ? resolveProject(config, o.project) : resolveRepo(config);
   const response = responseTo(settings, ev);
   if (response === "off") return { event: ev, response, skipped: `respond.${ev} is off`, text: `respond.${ev} is off` };
