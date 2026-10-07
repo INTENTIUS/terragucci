@@ -30,7 +30,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 		page: 'reference/policy/',
 	},
 	'apply-when': {
-		mark: 'warn',
+		mark: 'good',
 		text: 'Both, per project: apply.when merge (default) or pull-request; before merge on plain roots on GitHub and Forgejo only',
 		page: 'reference/config/#apply-before-merge',
 	},
