@@ -2,11 +2,13 @@
 #
 # Claims on the github and gitlab profiles, run with the pipeline terragucci
 # generates for the forge rather than a hand-written one. validate.sh hands
-# over here for those forges.
+# over here for those forges, and for the forgejo profile's tg-* and cdf-*
+# claims (its check and apply run validate.sh's hand-written workflow).
 #
 #   stack/validate-generated.sh github check
 #   stack/validate-generated.sh gitlab apply
 #   stack/validate-generated.sh github reconcile
+#   stack/validate-generated.sh gitlab tg-check
 #   BREAK=1 stack/validate-generated.sh gitlab check    must fail
 #
 #   check      the fmt check passes a formatted root and fails an unformatted
@@ -18,10 +20,24 @@
 #              request, the one already in line is left alone, the request's
 #              check goes green, and merged, its pipeline applies both roots
 #              in order (app reads network's state).
+#   tg-check   check, on a Terragrunt repo (fixtures/terragrunt-buckets: two
+#              units, an implicit stack): the pipeline init writes runs in the
+#              terragrunt image, and an unformatted .hcl file in a unit fails
+#              it with the file named.
+#   tg-apply   apply, on the same repo: both units' buckets exist afterwards.
+#   cdf-check  check, on a choudoufu estate (fixtures/choudoufu-estate): the
+#              pipeline runs in the choudoufu image, and a resource whose
+#              lifecycle ignores its tags, which live-check refuses, fails it
+#              with the resource named.
+#   cdf-apply  apply, on the same estate: the bucket exists afterwards and
+#              carries the estate marker choudoufu writes.
 #
-# BREAK=1 breaks the property each claim is about: check puts the unformatted
-# file in the clean push; apply drops the apply job so the run stays green;
-# reconcile runs a dry run, which opens nothing.
+# The images are the ones the generated pipeline pins by digest; the runner
+# (gitlab-runner, or act on the host) pulls each the first time.
+#
+# BREAK=1 breaks the property each claim is about: a check claim puts its bad
+# file in the clean push; an apply claim drops the apply job so the run stays
+# green; reconcile runs a dry run, which opens nothing.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +53,9 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply)" >&2; exit 2 ;; esac
+
+case "$FORGE:$CLAIM" in forgejo:check|forgejo:apply|forgejo:reconcile) echo "forgejo's $CLAIM is validate.sh's own; this script runs its tg-* and cdf-* claims" >&2; exit 2 ;; esac
 
 # shellcheck source=forge-github.sh
 . "$HERE/forge-$FORGE.sh"
@@ -73,6 +91,22 @@ prepare() { # dir
   (cd "$1" && git init -q -b main && "$TERRAGUCCI" init --forge "$FORGE" --binary tofu >/dev/null && rm -f terragucci.yml)
 }
 
+# The Terragrunt and choudoufu fixtures, with the pipeline and the
+# terragucci.yml init writes for them, as a repo of either kind commits both.
+prepare_tg() { # dir
+  rm -rf "$1"; mkdir -p "$1"
+  cp -R "$HERE/fixtures/terragrunt-buckets/." "$1/"
+  (cd "$1" && git init -q -b main && "$TERRAGUCCI" init --forge "$FORGE" --binary tofu >/dev/null)
+  grep -q 'terragucci-terragrunt:' "$1/$PIPELINE_FILE" || fail "the pipeline init wrote for the Terragrunt repo does not run in the terragrunt image"
+}
+
+prepare_cdf() { # dir
+  rm -rf "$1"; mkdir -p "$1"
+  cp -R "$HERE/fixtures/choudoufu-estate/." "$1/"
+  (cd "$1" && git init -q -b main && "$TERRAGUCCI" init --forge "$FORGE" --binary choudoufu >/dev/null)
+  grep -q 'terragucci-choudoufu:' "$1/$PIPELINE_FILE" || fail "the pipeline init wrote for the choudoufu estate does not run in the choudoufu image"
+}
+
 add_unformatted() {
   cat > "$1/infra/unformatted.tf" <<'TF'
 locals {
@@ -82,52 +116,99 @@ locals {
 TF
 }
 
+# A Terragrunt file that terragrunt hcl fmt would rewrite, in one unit.
+add_unformatted_hcl() {
+  cat > "$1/live/one/owner.hcl" <<'HCL'
+locals {
+    team   = "validate"
+  owner = "terragucci"
+}
+HCL
+}
+
+# A formatted, valid resource that choudoufu live-check refuses: ignoring
+# changes to tags would ignore the ownership markers too.
+add_refused() {
+  cat > "$1/infra/ignored.tf" <<'TF'
+resource "aws_s3_bucket" "ignored" {
+  bucket = "terragucci-validate-cdf-ignored"
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
+}
+TF
+}
+
 bucket_code() { curl -s -o /dev/null -m 5 -w '%{http_code}' -I "$FLOCI/$1" || true; }
 msg() { echo "validate $CLAIM $(date -u +%Y-%m-%dT%H:%M:%SZ) $$"; }
+
+# A clean push to a branch must go green, and the same tree plus a bad file
+# must go red with PATTERN in the job log.
+run_check() { # repo prepare-fn bad-fn pattern what-it-names
+  local repo="$1" prep="$2" bad="$3" pattern="$4" what="$5" sha
+  forge_reset_repo "$repo"
+  "$prep" "$WORK/clean"
+  [ -n "$BREAK" ] && "$bad" "$WORK/clean"
+  sha="$(forge_push "$WORK/clean" "$repo" validate/check "$(msg)")"
+  log "pushed the clean tree to $repo validate/check at ${sha:0:8}"
+  forge_run "$repo" validate/check "$sha"
+  if [ "$RUN_STATUS" != success ]; then forge_logs; fail "the clean tree's run ended '$RUN_STATUS'; expected success"; fi
+
+  "$prep" "$WORK/dirty"
+  "$bad" "$WORK/dirty"
+  sha="$(forge_push "$WORK/dirty" "$repo" validate/check "$(msg)")"
+  log "pushed $what to $repo validate/check at ${sha:0:8}"
+  forge_run "$repo" validate/check "$sha"
+  [ "$RUN_STATUS" = failure ] || fail "the run with $what ended '$RUN_STATUS'; expected failure"
+  grep -Eq "$pattern" "$RUN_LOG" || { forge_logs; fail "the run failed, but its log does not name $what, so it failed somewhere other than the check"; }
+  log "the run failed at the check and named $what"
+}
+
+# With BUCKETS deleted from floci, a push to main must go green and each
+# bucket must then exist. BREAK drops the apply jobs from the pipeline.
+run_apply() { # repo prepare-fn bucket...
+  local repo="$1" prep="$2" b f sha code; shift 2
+  forge_reset_repo "$repo"
+  for b in "$@"; do
+    curl -s -o /dev/null -X DELETE "$FLOCI/$b" || true
+    [ "$(bucket_code "$b")" = 404 ] || fail "could not clear $b from floci before the run"
+  done
+  log "$* absent from floci"
+  "$prep" "$WORK/main"
+  if [ -n "$BREAK" ]; then
+    f="$WORK/main/$PIPELINE_FILE"
+    sed -E '/^ {0,2}apply(-wave-[0-9]+)?:$/,$d' "$f" > "$f.new" && mv "$f.new" "$f"
+    ! grep -qE '^ {0,2}apply(-wave-[0-9]+)?:$' "$f" || fail "could not drop the apply jobs from $PIPELINE_FILE"
+  fi
+  sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
+  log "pushed to $repo main at ${sha:0:8}"
+  forge_run "$repo" main "$sha"
+  if [ "$RUN_STATUS" != success ]; then forge_logs; fail "the apply run ended '$RUN_STATUS'; expected success"; fi
+  for b in "$@"; do
+    code="$(bucket_code "$b")"
+    if [ "$code" != 200 ]; then forge_logs; fail "the run went green but $b is not in floci (HEAD answered $code)"; fi
+    log "$b exists in floci (HEAD $FLOCI/$b answered 200)"
+  done
+}
 
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
 case "$CLAIM" in
-  check)
-    forge_reset_repo validate
-    prepare "$WORK/clean"
-    [ -n "$BREAK" ] && add_unformatted "$WORK/clean"
-    sha="$(forge_push "$WORK/clean" validate validate/check "$(msg)")"
-    log "pushed the formatted root to validate/check at ${sha:0:8}"
-    forge_run validate validate/check "$sha"
-    if [ "$RUN_STATUS" != success ]; then forge_logs; fail "the formatted root's run ended '$RUN_STATUS'; expected success"; fi
-
-    prepare "$WORK/dirty"
-    add_unformatted "$WORK/dirty"
-    sha="$(forge_push "$WORK/dirty" validate validate/check "$(msg)")"
-    log "pushed an unformatted file to validate/check at ${sha:0:8}"
-    forge_run validate validate/check "$sha"
-    [ "$RUN_STATUS" = failure ] || fail "the unformatted root's run ended '$RUN_STATUS'; expected failure"
-    grep -q "unformatted.tf" "$RUN_LOG" || { forge_logs; fail "the run failed, but its log does not name unformatted.tf, so it failed somewhere other than the fmt check"; }
-    log "the run failed at the fmt check and named infra/unformatted.tf"
+  check) run_check validate prepare add_unformatted 'unformatted\.tf' "infra/unformatted.tf" ;;
+  apply) run_apply validate prepare "$BUCKET" ;;
+  tg-check) run_check validate-tg prepare_tg add_unformatted_hcl 'owner\.hcl' "live/one/owner.hcl" ;;
+  tg-apply) run_apply validate-tg prepare_tg terragucci-validate-tg-one terragucci-validate-tg-two ;;
+  cdf-check) run_check validate-cdf prepare_cdf add_refused 'refused: infra: .*(aws_s3_bucket\.ignored|ignored\.tf)' "the refused aws_s3_bucket.ignored" ;;
+  cdf-apply)
+    run_apply validate-cdf prepare_cdf terragucci-validate-cdf
+    # The bucket choudoufu created carries the estate's marker, so the apply
+    # ran with live markers on rather than as stock OpenTofu.
+    tags="$(curl -s -m 5 "$FLOCI/terragucci-validate-cdf?tagging" || true)"
+    grep -q 'tofu-estate' <<<"$tags" || { echo "$tags"; fail "terragucci-validate-cdf carries no tofu-estate tag, so choudoufu did not apply it as an estate"; }
+    log "terragucci-validate-cdf carries the tofu-estate marker"
     ;;
-
-  apply)
-    forge_reset_repo validate
-    curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
-    [ "$(bucket_code "$BUCKET")" = 404 ] || fail "could not clear $BUCKET from floci before the run"
-    log "$BUCKET is absent from floci"
-    prepare "$WORK/main"
-    if [ -n "$BREAK" ]; then
-      f="$WORK/main/$PIPELINE_FILE"
-      sed -E '/^ {0,2}apply(-wave-[0-9]+)?:$/,$d' "$f" > "$f.new" && mv "$f.new" "$f"
-      ! grep -qE '^ {0,2}apply(-wave-[0-9]+)?:$' "$f" || fail "could not drop the apply jobs from $PIPELINE_FILE"
-    fi
-    sha="$(forge_push "$WORK/main" validate main "$(msg)")"
-    log "pushed to main at ${sha:0:8}"
-    forge_run validate main "$sha"
-    if [ "$RUN_STATUS" != success ]; then forge_logs; fail "the apply run ended '$RUN_STATUS'; expected success"; fi
-    code="$(bucket_code "$BUCKET")"
-    if [ "$code" != 200 ]; then forge_logs; fail "the run went green but $BUCKET is not in floci (HEAD answered $code)"; fi
-    log "$BUCKET exists in floci (HEAD $FLOCI/$BUCKET answered 200)"
-    ;;
-
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done
