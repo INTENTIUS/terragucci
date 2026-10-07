@@ -6,7 +6,7 @@ claims: []
 
 ## What you end up with
 
-The workflow file `.github/workflows/terragucci.yml`, a `terragucci/plan` status on every pull request and an apply job on the default branch.
+`.github/workflows/terragucci.yml`, a `terragucci/plan` status on every pull request and an apply job on the default branch.
 
 ## Before you start
 
@@ -30,17 +30,15 @@ wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
-[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists the approval gate of each wave. Commit it with the pipeline.
-
-The forge comes from the `origin` remote. Add `--forge github` when your remote does not say.
+Commit [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) with the pipeline. The forge comes from the `origin` remote; add `--forge github` when it does not say.
 
 ### 2. Read the permissions it asks for
 
-The workflow reads the repo by default. The plan job adds `statuses: write` and `pull-requests: write` to post the note and the status. It runs only for pull requests from branches in the same repo, so a fork's pull request reaches no job with those permissions. Nothing in the file needs a secret you create: the jobs use the run's `github.token`.
+The workflow reads the repo by default; the plan job adds `statuses: write` and `pull-requests: write`, and runs only for pull requests from branches in the same repo, so a fork reaches no job with them. The jobs use the run's `github.token`, so you create no secret.
 
 ### 3. Give the jobs cloud access
 
-The plan job runs `plan`, so it needs to read your state and providers. To avoid long-lived keys, set `oidc` in `terragucci.yml` and run `init` again. The jobs then exchange GitHub's identity token for roles.
+The plan job must read your state and providers. To avoid long-lived keys, set `oidc` in `terragucci.yml` and run `init` again; the jobs then exchange GitHub's identity token for roles.
 
 ```yaml
 oidc:
@@ -48,7 +46,7 @@ oidc:
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
 ```
 
-The role's trust policy must accept your repo. [Environment variables and credentials](/terragucci/reference/environment/) has the details.
+The role's trust policy must accept your repo ([details](/terragucci/reference/environment/)).
 
 ### 4. Commit and open a pull request
 
@@ -59,7 +57,7 @@ git commit -m "Add terragucci"
 git push -u origin add-terragucci
 ```
 
-Change a line in one root so the pull request has something to plan. The plan job finishes with one terragucci comment on the pull request and a `terragucci/plan` status.
+Change a line in one root. The plan job posts one comment and a `terragucci/plan` status.
 
 ### 5. Require the status
 
@@ -67,7 +65,7 @@ In the repo's branch protection for the default branch, require `terragucci/plan
 
 ### 6. Make approval possible
 
-Approvals are sealed with a key. Until your key is in `.chant/allowed_signers` on the default branch and [chant](/terragucci/concepts/glossary/#chant) is installed, a waiting wave cannot be approved. The [getting-started page](/terragucci/getting-started/#before-your-first-approval) has both steps.
+A waiting wave cannot be approved until your key is in `.chant/allowed_signers` on the default branch and [chant](/terragucci/concepts/glossary/#chant) is installed ([both steps](/terragucci/getting-started/#before-your-first-approval)).
 
 ## Next
 

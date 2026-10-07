@@ -12,31 +12,31 @@ A comment such as this one on a pull request:
 /terragucci agent rename var.bucket to var.bucket_name in app and its callers
 ```
 
-A coding agent makes the change. terragucci commits it to the pull request's head and replies with a link to the commit. The new commit is planned again like any other, and nothing is ever applied or merged by it.
+A coding agent makes the change and terragucci commits it to the pull request's head. The commit is planned like any other; nothing is applied or merged.
 
 ## Before you start
 
 - The pipeline from [Get your first plan note](/terragucci/getting-started/), on GitHub or Forgejo. GitLab starts no pipeline for a merge request note, so it has no agent comment.
-- An API key for the model in your forge's secrets. The default command needs an Anthropic API key.
-- A token for the agent's commits in your forge's secrets. Step 1 makes it.
+- An Anthropic API key (for the default command) in your forge's secrets.
+- A token for the agent's commits in your forge's secrets (step 1).
 
 ## Steps
 
 ### 1. Make the agent's token
 
-The token writes to a pull request's branch and comments on it. Branch rules on the forge keep it off everything else. The job's own token will not do: a commit sent with it starts no workflow run, so the change would never be planned.
+The job's own token will not do: a commit sent with it starts no workflow run, so the change would not be planned.
 
-On GitHub, use a machine user with write access to the repository. Give it a fine-grained personal access token for that repository alone with these permissions:
+On GitHub, give a machine user with write access a fine-grained token for this repository alone:
 
 - Contents: read and write
 - Pull requests: read and write
 - no Workflows permission, so GitHub refuses any change it sends to `.github/workflows/`
 
-A token's permissions cannot name a branch. Add a ruleset on the default branch that requires a pull request and one approval of the most recent reviewable change, and give the machine user no bypass. GitHub then keeps it off the default branch and does not count its approval of its own commit. It cannot merge without a person's approval either. If you use code owners, leave the machine user out of `CODEOWNERS`.
+Add a ruleset on the default branch requiring a pull request and one approval of the latest change, with no bypass for the machine user, which stays out of `CODEOWNERS`.
 
-On Forgejo, add a machine user as a collaborator with Write access. Its access token needs the `write:repository` and `write:issue` scopes. In the default branch's protection, leave the machine user out of the push allowlist, the approval allowlist and the merge allowlist. Forgejo then refuses its commits to the default branch and counts none of its approvals.
+On Forgejo, add a machine user as a collaborator with Write access and a token scoped `write:repository` and `write:issue`. Keep it off the default branch's push allowlist, approval allowlist and merge allowlist.
 
-Keep the token in a secret such as `AGENT_FORGE_TOKEN`. The model's key goes in another, such as `ANTHROPIC_API_KEY`.
+Keep the token in a secret such as `AGENT_FORGE_TOKEN` and the model's key in `ANTHROPIC_API_KEY`.
 
 ### 2. Turn it on
 
@@ -52,7 +52,7 @@ agent:
     timeout: 30
 ```
 
-`token_env` names the secret that holds the agent's token. `comment: true` takes every default, and [terragucci.yml keys](/terragucci/reference/config/#the-agent-comment) lists them.
+`token_env` names the secret with the agent's token. `comment: true` takes every default, listed in [terragucci.yml keys](/terragucci/reference/config/#the-agent-comment).
 
 ### 3. Check the file and write the pipeline
 
@@ -61,21 +61,28 @@ npx terragucci config check
 npx terragucci init
 ```
 
-Merge the result to the default branch. GitHub and Forgejo run comment workflows from the default branch, so nothing happens before then.
+Merge the result to the default branch, where comment workflows run from.
 
 ### 4. Ask
 
-Write `/terragucci agent` and the ask on one line, with one space between them. The reply links the commit and names the files it changed. The plan note updates when the new plan finishes.
+Write `/terragucci agent` and the ask on one line. The reply links the commit and names the files it changed.
 
 ## What the agent can and cannot do
 
 Two jobs answer the comment.
 
-The `agent` job runs the agent. `terragucci comment` reads the comment first and applies the checks a re-plan applies. Only an author with write access gets an agent, and only on an open pull request whose branch is in this repository. The ask goes into the prompt file and the commit message, and no shell ever sees it. The checkout keeps no credentials. The model's key is in the agent's step alone. This job's own token can read and comment, and the agent's step runs without it: the step clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables before the command starts. Forgejo ignores a workflow's `permissions:` and gives the job's token the forge's default scope, so on Forgejo this is what keeps that token from the agent. Whatever the agent changed leaves the job as a patch.
+The `agent` job runs the agent for an author with write access on an open pull request from this repository. The ask never reaches a shell and the checkout keeps no credentials. The model's key is in the agent's step alone. That step first clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables. Its changes leave the job as a patch.
 
-The `agent-push` job never runs the agent. In a fresh container it checks out the same head and applies the patch. A patch that touches CI files, `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/`, the signers file `.chant/trust.json` names, or the policy directory is refused with a reply naming the paths. A patch to a file that decides who reviews or how an agent behaves is refused the same way: `CODEOWNERS`, `.claude/`, `.cursor/`, `.cursorrules`, `.mcp.json`, and `CLAUDE.md`, `AGENTS.md`, `.gitattributes` or `.gitmodules` in any directory. [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists every path the job guards. Any other patch becomes one commit on top of the head, sent to the head branch without force. A branch that moved meanwhile keeps what it has.
+The `agent-push` job applies the patch to the same head in a fresh container. It refuses a patch that touches any of these, with a reply naming the paths:
 
-Neither job has a cloud role, whatever `oidc` says. The agent cannot plan or apply. Its change is planned by the plan job, with that job's read-only role.
+- CI files, `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) and `.chant/`
+- the signers file `.chant/trust.json` names, and the policy directory
+- `CODEOWNERS`, `.claude/`, `.cursor/`, `.cursorrules` and `.mcp.json`
+- `CLAUDE.md`, `AGENTS.md`, `.gitattributes` and `.gitmodules` in any directory
+
+[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists every guarded path. Any other patch is pushed as one commit without force; a branch that moved keeps what it has.
+
+Neither job has a cloud role, whatever `oidc` says. The plan job plans the change with its read-only role.
 
 The default command is Claude Code in print mode, pinned to one release:
 
@@ -87,18 +94,17 @@ npx -y @anthropic-ai/claude-code@<version> -p --max-turns "$TG_AGENT_MAX_TURNS"
   --disallowedTools "WebFetch" "WebSearch" "mcp__*" "Edit(.git/**)"
 ```
 
-The agent edits files and may run two read-only terragucci commands. Nobody is there to answer a permission prompt, so any other command is denied. No MCP server loads, and neither do the repository's own Claude Code settings, which the pull request could have changed. The flags come from the [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
+The agent edits files and may run two read-only terragucci commands; any other command is denied. No MCP server and none of the repository's own Claude Code settings load. The flags are in the [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
 
-Some comments get no agent:
+These get no agent:
 
-- a comment whose author lacks write access, which gets no reply either
-- a comment on a pull request from a fork, which gets a reply saying why
-- a comment on a pull request whose head is the default branch
-- an ask longer than one line or 2000 characters
-- an ask with control characters in it
+- an author without write access (no reply either)
+- a pull request from a fork (the reply says why)
+- a pull request whose head is the default branch
+- an ask over one line or 2000 characters, or with control characters
 - an edited comment, since only a new one runs
 
-When the agent fails or reaches its turn limit, the reply says so and the branch stays as it was. If the pull request moves while the agent works, the branch also stays as it was.
+The branch stays as it was when the agent fails or hits its turn limit, or when the pull request moves.
 
 ## Use another agent
 
@@ -113,7 +119,7 @@ agent:
     key_secret: MY_AGENT_KEY
 ```
 
-The prompt's path is also in `TG_AGENT_PROMPT`, and the turn limit in `TG_AGENT_MAX_TURNS`. The secret that `key_secret` names reaches the command's environment under its own name. The guard in `agent-push` holds for whatever it changes.
+The prompt's path is in `TG_AGENT_PROMPT` and the turn limit in `TG_AGENT_MAX_TURNS`. The `key_secret` secret reaches the command under its own name. The `agent-push` guard holds for any agent.
 
 ## Next
 

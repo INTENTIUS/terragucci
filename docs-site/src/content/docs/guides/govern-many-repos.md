@@ -6,12 +6,12 @@ claims: [reconcile]
 
 ## What you end up with
 
-A control repo whose `terragucci.yml` lists every project. One command previews what each project's pipeline would become, and another opens a pull request in each project that changes. The projects' own pipelines do the applying.
+A control repo whose `terragucci.yml` lists every project. One command previews each project's pipeline and another opens a pull request in each project that changes. The projects' own pipelines apply.
 
 ## Before you start
 
 - A repo to act as the control repo. It holds only `terragucci.yml`.
-- A token for each forge, with permission to push branches and open pull requests in the listed projects. By default terragucci reads `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`; `token_env` names another variable for a project.
+- A token per forge that can push branches and open pull requests: `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, or the variable a project's `token_env` names.
 - Projects on GitHub, GitLab or Forgejo. They can be mixed.
 
 ## Steps
@@ -51,7 +51,7 @@ terragucci.yml: ok
 npx terragucci reconcile --config terragucci.yml
 ```
 
-The dry run is the default. For each project it says whether the pipeline would change and prints the files. It also lists the tips for each project's setup, such as pins and lock files. `--project github.com/acme/infra` narrows the run to one project, and `--json` prints the same as one object ([JSON output](/terragucci/reference/cli-json/#reconcile)).
+This dry run says per project whether the pipeline would change, prints the files and lists setup tips. `--project github.com/acme/infra` narrows it to one project; `--json` prints one object ([JSON output](/terragucci/reference/cli-json/#reconcile)).
 
 ### 4. Open the pull requests
 
@@ -59,13 +59,13 @@ The dry run is the default. For each project it says whether the pipeline would 
 npx terragucci reconcile --config terragucci.yml --mode apply
 ```
 
-terragucci writes to each project through a pull request, never straight to its main branch. Despite its name, `--mode apply` runs no `terraform apply`. A project whose pipeline is already current is left alone. The exit code is 1 when any project failed.
+Each project gets a pull request, never a push to its main branch; `--mode apply` runs no `terraform apply`. Current projects are left alone. The exit code is 1 when any project failed.
 
 ### 5. Merge in each project
 
-Each project's team reviews its pull request like any other. Run `reconcile` again later and it opens one only where something changed, for example after you edit `defaults`.
+Each team reviews its pull request. Run `reconcile` again later, for example after editing `defaults`, and it opens one only where something changed.
 
 ## Next
 
-- [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) works across projects: wave 1 holds the canaries of every project.
+- [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) works across projects.
 - [Environment variables and credentials](/terragucci/reference/environment/) lists the tokens.
