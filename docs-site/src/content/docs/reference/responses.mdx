@@ -5,14 +5,14 @@ description: What terragucci does when a plan finishes, a wave is refused, an ap
 
 import Shot from '../../../components/Shot.astro';
 
-Every pipeline event has a response that needs no model, and that response is the default. Some opt-in choices ask a typed-decision service. No response runs a coding agent. Approving, applying and merging stay with people.
+Every event has a default response that needs no model. No response runs a coding agent, and approving, applying and merging stay with people.
 
 | Event | Response (default) | Other choices |
 |---|---|---|
 | plan finished | the grouped summary as the pull-request note | none |
 | wave refused | a root-by-root diff of the approved plan against the current one, naming the attributes that moved | `off` |
 | apply failed | triage from a table of known provider errors, each with its likely fix | `off` |
-| drift found | a pull request that writes the live value where the root sets a literal, and import blocks with generated config for resources the state does not hold | `attribute`, which also names who changed each drifted attribute; `off` |
+| drift found | a pull request writing the live value where the root sets a literal, and import blocks for resources the state does not hold | `attribute`, which also names who changed each drifted attribute; `off` |
 | tip raised | one small pull request per tip: pin a provider from its lock file, add a lock file, add a canary | `off` |
 | format check failed | a `fmt` commit on the pull request's branch, on request | `off` |
 | module published | release notes from conventional commits | `off` |
@@ -64,11 +64,9 @@ terragucci respond version-bump --module modules/network --mode apply
 
 ## Refused waves and failed applies
 
-Both events stop a run, and the response says what moved or what to do next.
-
 ### Wave refused
 
-An approval binds a wave's set digest. When a root's plan changes after the approval, the wave applies nothing. The diff reads the report the approval was given on and the current one. A waiting wave keeps the first on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch next to its pending gate record, and the refused apply job writes both to `terragucci-report/approved` and `terragucci-report/current` before it runs this response. It lists each root whose plan digest moved and the changes and attributes that moved inside it. Approve again only once the new plan is the one you want.
+An approval binds a wave's set digest, so a wave whose root plan changed after approval applies nothing. The diff reads `terragucci-report/approved` and `terragucci-report/current` and lists each root whose plan digest moved. Approve again only once the new plan is the one you want.
 
 <Shot step="wave-refused" view="log" alt="A refused wave's apply job in Forgejo: the approved digest beside the planned one, and the roots whose plans moved since the approval" optional />
 
@@ -85,13 +83,13 @@ The triage table knows these classes of provider error:
 | dependency | `DependencyViolation`, `DeleteConflict`, `BucketNotEmpty` | remove what depends on it first |
 | state lock | `Error acquiring the state lock` | wait; a person runs `force-unlock` if no run holds it |
 
-Each error is read from the log with the resource it is about. The table holds AWS provider errors, plus Terraform's state lock message. An error from another provider, such as GCP or Azure, is listed as not a known error, with its summary and its resource, for a person to read.
+The table holds AWS provider errors and Terraform's state lock message. Another provider's error is listed as unknown.
 
 ## Drift
 
-A refresh-only plan of each root finds what changed. Where the changed attribute is a literal in the root's own resource block, the pull request writes the live value there. Merging it accepts the change made outside Terraform, so read it first.
+A refresh-only plan finds the drift, and the pull request writes the live value where the root's own resource block holds a literal. Merging it accepts the change made outside Terraform, so read it first.
 
-Some changes are only reported, each with its reason:
+Other changes are only reported:
 
 | The value | Why it stays |
 |---|---|
@@ -101,7 +99,7 @@ Some changes are only reported, each with its reason:
 | never set in the root | it comes from a default |
 | on a resource deleted outside Terraform | the next apply makes it again |
 
-For a resource the state does not hold, pass `--import <address>=<id>`. terragucci writes the import block, and `plan -generate-config-out` writes its config. On Terraform 1.14 and later, a root with a `.tfquery.hcl` file gets both from `terraform query`.
+For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
 
 <Shot step="responses" view="drift" alt="The Codify drift pull request in Forgejo, from the terragucci/drift branch: its body lists the queue timeout written from its live value and the queue to import" optional />
 
@@ -109,27 +107,27 @@ For a resource the state does not hold, pass `--import <address>=<id>`. terraguc
 
 ### Drift attribution
 
-With `respond.drift: attribute`, each drifted attribute is attributed before the pull request is written. The first of three steps that answers ends the question for that attribute.
+With `respond.drift: attribute`, each drifted attribute goes through three steps; the first to answer wins.
 
-1. A table of writes that a controller or a service makes by design. It holds an ECS service's task count, an autoscaling group's desired capacity, a node group's desired size and a provisioned DynamoDB table's capacity. It also holds RDS minor engine upgrades and tags in a service's own namespace, such as `aws:` and `karpenter.sh/`.
-2. The cloud audit log. For `aws_` resources terragucci reads CloudTrail's LookupEvents with the `aws` CLI and the job's own credentials, over the last 14 days. The newest write that Terraform did not make decides. An AWS service principal is a controller. An IAM user, the root user or an Identity Center session is a person. A role session with a machine name answers nothing.
-3. A typed decision, when `decide` is set and the first two steps are silent for that attribute. It picks controller write, human edit or provider default change. An answer below the `choice` threshold leaves the attribute unattributed. The model reads numbers and booleans as they are and every other value by its shape. A value the plan marks sensitive is never shown.
+1. A table of by-design writes: ECS task count, autoscaling and node group sizes, provisioned DynamoDB capacity, RDS minor upgrades and `aws:` tags.
+2. CloudTrail LookupEvents over 14 days, for `aws_` resources. The newest write Terraform did not make decides: a service principal is a controller, a user is a person.
+3. A typed decision when `decide` is set. Below the `choice` threshold the attribute stays unattributed. Sensitive values are never shown.
 
 ### Reading the audit log
 
-The audit log step reads CloudTrail only, and only through the `aws` CLI (version 2). The CI images do not carry it, since it would add about 250 MB to every job's image; when `respond.drift` is `attribute`, the generated drift job installs AWS CLI v2 before `tf-drift` runs, unless the job already has `aws` on its path. The step downloads the pinned release's zip for the runner's architecture and unpacks it only when its SHA-256 matches the pinned value. A pipeline you write yourself installs it the same way. Without the CLI the step reports "audit log unavailable: the aws CLI is not installed" and goes on. No other cloud's CLI is read, so a resource of another provider (`google_`, `azurerm_`) skips this step with "no audit log reader" and goes on to the third. A log that cannot be read is reported as "audit log unavailable" and the run goes on. The role the job assumes needs `cloudtrail:LookupEvents`. The region comes from `audit_region` in `terragucci.yml`, and from the `aws` CLI's own settings when that is not set.
+The audit log step needs the `aws` CLI (version 2) and `cloudtrail:LookupEvents` on the job's role. The generated drift job installs the CLI against a pinned SHA-256 unless it is on the path; a pipeline you write installs it the same way. The region is `audit_region`, else the CLI's. Where the step cannot run, it says so and step 3 follows.
 
-The scheduled drift run attributes as well. With `respond.drift: attribute`, `terragucci stage tf-drift` runs the same three steps on every drifted root of a plain-root repo and lists who changed each attribute under the root in the drift issue, whether or not a pull request follows. A Terragrunt repo's drift run does not attribute. On GitHub and Forgejo the drift job receives the secret named by `decide.token_env`, so the third step can ask the service.
+`terragucci stage tf-drift` attributes drifted roots of a plain-root repo too, listing who changed each attribute in the drift issue; a Terragrunt repo's drift run does not. On GitHub and Forgejo it receives the `decide.token_env` secret.
 
-The answer picks the response. A controller write is reported with a suggested `lifecycle { ignore_changes = [...] }` and left out of the pull request. A provider default change is reported with a suggestion to pin the provider version or set the value, and also left out. A human edit stays in the codify pull request with the actor named when the audit log gave one, so the owner can accept or revert it. An unattributed attribute gets the default response. Nothing here applies or merges anything, and nothing changes state.
+Controller writes and provider default changes are reported with a suggestion (`ignore_changes`, or pin the provider) and left out of the pull request. A human edit stays in it, with the actor when known. Nothing here applies or merges.
 
 ## Pull request and release events
 
 ### Description check
 
-With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the decision service one yes-or-no question before it posts the note: does the pull request's title and description describe what the plan does? The service reads the title, the description and the redacted report's summary (counts by action, the named destroys and replacements, the groups). When it answers yes with a probability at or above the threshold, the note starts with a line asking the author to check the description and naming the destroys and replacements the text does not mention. The same line sits at the top of `report.html`, and `intent.json` in the report directory records the decision, its probability and the model.
+With `respond.description: check` and a [`decide` block](/terragucci/reference/config/#the-decide-block), the plan job asks the service whether the title and description fit the plan. On a yes at or above the threshold the note starts with a line naming the destroys and replacements the text omits. `intent.json` records the decision.
 
-Below the threshold, with no `decide` block, or with a service that does not answer, the note is the one it would be without the check, and `intent.json` says why. The flag never blocks a merge and changes no gate, digest or group. The title and description come from the job's event. A re-plan started by a comment reads them from that comment's event and asks the forge only when the event has none.
+Otherwise the note is unchanged and `intent.json` says why. The flag never blocks a merge and changes no gate.
 
 ```bash
 terragucci respond description --report terragucci-report --title "retag email" --description "Tags only." --mode apply
@@ -147,24 +145,22 @@ Each tip is its own pull request.
 
 <Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
 
-`fmt` runs on request. It formats the pull request's branch and pushes one commit there, and it refuses the default branch.
+`fmt` runs on request and pushes one commit to the pull request's branch. It refuses the default branch.
 
 <Shot step="responses" view="fmt" alt="The style: tofu fmt commit on a pull request's branch in Forgejo, realigning the locals in app/locals.tf" optional />
 
-Release notes cover the commits that touched a module between its last two tags. Breaking changes are listed first.
+Release notes cover the commits that touched a module between its last two tags, breaking changes first.
 
 ### Version bump
 
-Conventional commits decide a module's bump, and a `version` file in the module overrides it. `version-bump: suggest` adds one case: when none of the commits since the module's last release carries a conventional type, the typed-decision service reads the commit messages and a summary of the module's diff, and picks major, minor or patch. This needs [`decide`](/terragucci/reference/config/) in `terragucci.yml`. A project with only conventional commits never calls the service.
+Conventional commits decide a module's bump, and a `version` file overrides it. With `version-bump: suggest` and no conventional commit since the last release, the typed-decision service picks the bump. This needs [`decide`](/terragucci/reference/config/).
 
-A module is released from its git tags (`<module>/v1.2.0`). A project that publishes to a registry alone has none, and gives `--since <ref>` instead: changes are counted from that ref, and the module's `version` file at the ref is the last release (0.0.0 when there was none). A module that has tags uses them.
+A module's releases are its git tags (`<module>/v1.2.0`). A registry-only project passes `--since <ref>`; the `version` file at that ref is the last release (0.0.0 if none).
 
-With `respond.version-bump: suggest` the pipeline gets a `version-bump` job. It runs `terragucci respond version-bump --mode apply` from the default branch once every apply wave has finished, with the full history and the tags, and receives the secret named by `decide.token_env` on GitHub and Forgejo. It needs permission to push a branch and open a pull request, and a response that fails never fails the job.
+The `version-bump` job runs `terragucci respond version-bump --mode apply` on the default branch after every apply wave, with full history. It needs permission to push a branch and open a pull request. A failed response never fails the job.
 
-The suggestion goes into a release pull request that writes the module's `version` file. The pull request body shows the bump with the probability the service gave it. Merging it confirms the version, and the next `tf-publish` run publishes it. Nothing publishes before that. When the probability is below the threshold, or the service is off or unreachable, the pull request proposes a patch and says why. The last release is read from the module's git tags.
+The release pull request writes the `version` file with the bump and its probability. Merging it confirms the version, and the next `tf-publish` publishes it. Below the threshold or without the service it proposes a patch.
 
 ## Where it runs
 
-The responses are terragucci commands. They run in the forge's CI jobs and need no model.
-
-To hand a response's result to a coding agent of your own, add a job that runs the command with `--json`. Give that job a token that can only comment. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) shows such a job. The agent never holds an apply role or a gate's signing key.
+Responses run in CI with no model. To hand a result to your own agent, run the command with `--json` in a job whose token can only comment, as in [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/). The agent never holds an apply role or a gate's signing key.
