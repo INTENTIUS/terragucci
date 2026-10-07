@@ -5,6 +5,7 @@
 // environment.md. Exits 1 on a mismatch.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { docPage } from "./docs-pages.mjs";
 
 const problems = [];
 
@@ -14,7 +15,7 @@ const block = config.match(/const SETTING_KEYS = new Set\(\[([\s\S]*?)\]\)/);
 if (!block) throw new Error("SETTING_KEYS not found in config.ts");
 const keys = new Set([...block[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
 
-const configPage = readFileSync("docs-site/src/content/docs/reference/config.md", "utf8");
+const configPage = readFileSync(docPage("reference/config"), "utf8");
 const keysTable = configPage.split(/^## Keys$/m)[1]?.split(/^## /m)[0] ?? "";
 const rows = new Set([...keysTable.matchAll(/^\| `([a-z_]+)(?:\.[a-z_]+)?` \|/gm)].map((m) => m[1]));
 for (const k of keys) if (!rows.has(k)) problems.push(`config.ts accepts \`${k}\` and the Keys table of config.md has no row for it`);
@@ -42,7 +43,7 @@ for (const file of collect("packages/terragucci/src")) {
     if (!used.has(m[0])) used.set(m[0], file);
   }
 }
-const envPage = readFileSync("docs-site/src/content/docs/reference/environment.md", "utf8");
+const envPage = readFileSync(docPage("reference/environment"), "utf8");
 const listed = new Set(envPage.match(NAME) ?? []);
 // The signal-specific OTLP variables and TF_CLI_ARGS_<command> are written as families on the pages.
 for (const [name, file] of [...used].sort()) {

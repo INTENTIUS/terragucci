@@ -1,0 +1,69 @@
+---
+// Starlight's page title, then the tools for an agent reading the page: a
+// "Copy page as Markdown" button (the same text llms-full.txt carries for this
+// page) and a pointer to llms.txt. A page with a `prompt:` shows it under them.
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+import AgentPrompt from './AgentPrompt.astro';
+import { bodyMarkdown, pageMarkdown, pageUrl } from '../markdown';
+
+const { entry } = Astro.locals.starlightRoute;
+const body = entry.body ?? '';
+const real = entry.id !== '404';
+const markdown = pageMarkdown({ title: entry.data.title, url: pageUrl(entry.id), prompt: entry.data.prompt, body: bodyMarkdown(body) });
+// A page that places the prompt itself does not get a second one here.
+const placed = /^\s*<AgentPrompt\b/m.test(body);
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+<Default />
+{real && (
+	<div class="tg-page-tools not-content">
+		<button type="button" class="tg-page-copy" data-copy={markdown}>Copy page as Markdown</button>
+		<a href={`${base}/llms.txt`}>llms.txt</a>
+		<span>lists every page for an agent</span>
+	</div>
+)}
+{real && !placed && <AgentPrompt />}
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('.tg-page-copy')) {
+		const label = button.textContent;
+		button.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(button.dataset.copy ?? '');
+				button.textContent = 'Copied';
+			} catch {
+				button.textContent = 'Copy failed; use llms-full.txt';
+			}
+			setTimeout(() => (button.textContent = label), 2000);
+		});
+	}
+</script>
+
+<style>
+	.tg-page-tools {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem 0.6rem;
+		margin-top: 0.75rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	button {
+		font: inherit;
+		font-weight: 500;
+		color: var(--sl-color-white);
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.4rem;
+		padding: 0.2rem 0.7rem;
+		cursor: pointer;
+	}
+	button:hover {
+		border-color: var(--tg-accent);
+	}
+	a {
+		color: var(--sl-color-accent-high);
+		font-weight: 500;
+	}
+</style>

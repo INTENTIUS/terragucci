@@ -1,8 +1,8 @@
 // The agent index, built from the docs collection so it never drifts from the
 // site. llms.txt lists every page; llms-full.txt carries their text.
 import { getCollection } from 'astro:content';
-
-const SITE = 'https://intentius.io/terragucci';
+import { bodyMarkdown, pageUrl } from '../markdown';
+import { SITE } from '../prompts';
 
 // Sidebar order, with the agent page first.
 const ORDER = [
@@ -55,9 +55,9 @@ export async function pages() {
 			id: d.id,
 			title: d.data.title,
 			description: d.data.description ?? '',
-			url: d.id === 'index' ? `${SITE}/` : `${SITE}/${d.id}/`,
-			// MDX import lines and component tags are code, not text.
-			body: (d.body ?? '').replace(/^(import .*|<[A-Z][^>]*\/>)\n?/gm, '').trim(),
+			url: pageUrl(d.id),
+			prompt: d.data.prompt,
+			body: bodyMarkdown(d.body ?? ''),
 		}));
 }
 
@@ -67,4 +67,6 @@ export const PREAMBLE = `# terragucci
 
 Every page is true as written: a command or key on this site works as the page says. A key that \`terragucci config check\` refuses is not part of terragucci. The validation page (${SITE}/reference/validation/) lists the checks every generated pipeline passes.
 
-Agents adopting terragucci in a repository: start with ${SITE}/getting-started/agents/.`;
+Agents adopting terragucci in a repository: start with ${SITE}/getting-started/agents/.
+
+A page with a prompt carries it under "Hand this to your agent", and llms.txt lists it under the page. Every prompt forbids apply, approve and merge; those stay with the person.`;

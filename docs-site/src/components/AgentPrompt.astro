@@ -1,0 +1,88 @@
+---
+// "Hand this to your agent": a prompt to paste into a coding agent, with a Copy
+// button. The text is the page's `prompt:` front matter, or `text` when given
+// (the home page passes the setup prompt). The page header (PageTitle.astro)
+// renders it under the title of every page with a `prompt:`, so a page needs
+// no import for it; a page that places <AgentPrompt /> itself gets it there
+// instead. Every prompt forbids apply, approve and merge (lint-prompts.mjs).
+import { promptText } from '../prompts';
+
+interface Props {
+	label?: string;
+	text?: string;
+}
+const { label = 'Hand this to your agent', text } = Astro.props;
+const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt);
+---
+{prompt && (
+	<figure class="tg-prompt not-content">
+		<figcaption>
+			<span>{label}</span>
+			<button type="button" class="tg-prompt-copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
+		</figcaption>
+		<pre><code>{prompt}</code></pre>
+	</figure>
+)}
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('.tg-prompt-copy')) {
+		button.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(button.dataset.copy ?? '');
+				button.textContent = 'Copied';
+			} catch {
+				// No clipboard (an insecure origin, a denied permission): select the
+				// text so the reader can copy it by hand.
+				const code = button.closest('figure')?.querySelector('code');
+				if (code) window.getSelection()?.selectAllChildren(code);
+				button.textContent = 'Selected';
+			}
+			setTimeout(() => (button.textContent = 'Copy'), 1600);
+		});
+	}
+</script>
+
+<style>
+	.tg-prompt {
+		margin: 1.25rem 0 0;
+		width: min(100%, 44rem);
+		text-align: left;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.75rem;
+		background: var(--tg-panel);
+		overflow: hidden;
+	}
+	figcaption {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.6rem 0.9rem;
+		border-bottom: 1px solid var(--tg-rule);
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
+	}
+	button {
+		font: inherit;
+		font-weight: 500;
+		color: var(--sl-color-white);
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.4rem;
+		padding: 0.2rem 0.7rem;
+		cursor: pointer;
+	}
+	button:hover {
+		border-color: var(--tg-accent);
+	}
+	pre {
+		margin: 0;
+		padding: 1rem 1.1rem;
+		font-family: var(--sl-font-mono);
+		font-size: 0.85rem;
+		line-height: 1.65;
+		color: var(--sl-color-gray-1);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+</style>

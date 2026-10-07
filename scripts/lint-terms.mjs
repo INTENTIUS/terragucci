@@ -3,11 +3,13 @@
 // entry, or the page or site that is that word's home.
 //   import { termProblems } from "./lint-terms.mjs"
 import { readFileSync } from "node:fs";
+import { pageName, prose } from "./docs-pages.mjs";
 
-const GLOSSARY = "docs-site/src/content/docs/concepts/glossary.md";
+const GLOSSARY = "concepts/glossary";
 
 // `re` finds a use; `links` are the hrefs (substrings) that count as defining
-// it; `defines` are pages that explain the word in their own text.
+// it; `defines` are pages, named without .md or .mdx, that explain the word in
+// their own text.
 export const TERMS = [
   {
     term: "chant",
@@ -29,19 +31,19 @@ export const TERMS = [
     term: "floci",
     re: /\bfloci\b/i,
     links: ["/terragucci/concepts/glossary/#floci"],
-    defines: ["docs-site/src/content/docs/tutorial/index.mdx"],
+    defines: ["tutorial/index"],
   },
   {
     term: "choudoufu",
     re: /\bchoudoufu\b/i,
     links: ["/terragucci/concepts/glossary/#choudoufu", "https://github.com/INTENTIUS/choudoufu", "/terragucci/guides/use-a-binary/#choudoufu"],
-    defines: ["docs-site/src/content/docs/guides/use-a-binary.md"],
+    defines: ["guides/use-a-binary"],
   },
   {
     term: "chant/lifecycle",
     re: /chant\/lifecycle/,
     links: ["/terragucci/concepts/glossary/#chantlifecycle", "/terragucci/concepts/approvals-as-records/"],
-    defines: ["docs-site/src/content/docs/concepts/approvals-as-records.md"],
+    defines: ["concepts/approvals-as-records"],
   },
   {
     term: "chant.workspace.json",
@@ -62,15 +64,16 @@ export const TERMS = [
 export function termProblems(files) {
   const problems = [];
   for (const file of files) {
-    if (file === GLOSSARY || !file.startsWith("docs-site/")) continue;
+    const name = pageName(file);
+    if (!name || name === GLOSSARY) continue;
     const whole = readFileSync(file, "utf8");
     const front = /^---\n[\s\S]*?\n---\n/.exec(whole)?.[0] ?? "";
     const raw = whole.slice(front.length);
     // Component tags, a screenshot's alt text among them, are not prose.
-    const text = file.endsWith(".mdx") ? raw.replace(/^(import .*|<[A-Z][^>]*\/>)$/gm, "") : raw;
+    const text = prose(raw);
     for (const t of TERMS) {
       const m = t.re.exec(text);
-      if (!m || t.defines?.includes(file) || t.links.some((l) => text.includes(`](${l}`) || text.includes(`href="${l}`))) continue;
+      if (!m || t.defines?.includes(name) || t.links.some((l) => text.includes(`](${l}`) || text.includes(`href="${l}`))) continue;
       const line = front.split("\n").length - 1 + text.slice(0, m.index).split("\n").length;
       problems.push(`${file}:${line}: "${t.term}" is neither defined nor linked on this page; link ${t.links[0]}`);
     }
