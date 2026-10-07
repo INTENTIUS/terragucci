@@ -20,12 +20,24 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAIMS='aws|s3|floci starts and answers S3
 forgejo|check|a push that is formatted goes green, and one with an unformatted file goes red naming the file
 forgejo|apply|a push to main applies the root, and the bucket exists afterwards
+forgejo|tg-check|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
+forgejo|tg-apply|the generated workflow for a Terragrunt repo applies both of its units on the default branch
+forgejo|cdf-check|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
+forgejo|cdf-apply|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
 github|check|the generated workflow fails an unformatted root and names the file
 github|apply|the generated workflow applies the root on the default branch
 github|reconcile|a control repo opens one pull request per project that changes, and the merged pipeline applies both roots
+github|tg-check|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
+github|tg-apply|the generated workflow for a Terragrunt repo applies both of its units on the default branch
+github|cdf-check|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
+github|cdf-apply|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
 gitlab|check|the generated pipeline fails an unformatted root and names the file
 gitlab|apply|the generated pipeline applies the root on the default branch
-gitlab|reconcile|a control repo opens one merge request per project that changes, and the merged pipeline applies both roots'
+gitlab|reconcile|a control repo opens one merge request per project that changes, and the merged pipeline applies both roots
+gitlab|tg-check|the generated pipeline for a Terragrunt repo fails an unformatted unit file and names it
+gitlab|tg-apply|the generated pipeline for a Terragrunt repo applies both of its units on the default branch
+gitlab|cdf-check|the generated pipeline for a choudoufu estate fails a resource that live-check refuses and names it
+gitlab|cdf-apply|the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }

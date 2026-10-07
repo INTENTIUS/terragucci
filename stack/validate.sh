@@ -6,7 +6,8 @@
 #   stack/validate.sh forgejo apply
 #   BREAK=1 stack/validate.sh forgejo check     must fail
 #
-# Implemented today (forgejo only):
+# Implemented here (forgejo only; validate-generated.sh holds forgejo's tg-*
+# and cdf-* claims and every github and gitlab claim):
 #
 #   check  The fmt check passes on a formatted root and fails on an
 #          unformatted one. Two pushes to a branch: the fixture as it is,
@@ -40,7 +41,7 @@ BUCKET="terragucci-validate"
 
 log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
-usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: aws s3, forgejo check|apply, github and gitlab check|apply|reconcile)" >&2; exit 2; }
+usage() { echo "usage: stack/validate.sh <forge> <claim>   (implemented: aws s3, forgejo check|apply|tg-check|tg-apply|cdf-check|cdf-apply, github and gitlab those and reconcile)" >&2; exit 2; }
 
 command -v docker >/dev/null 2>&1 || { echo "SKIP: docker is not installed"; exit 0; }
 docker info >/dev/null 2>&1 || { echo "SKIP: the docker daemon is not reachable"; exit 0; }
@@ -62,11 +63,11 @@ fi
 
 case "$FORGE:$CLAIM" in
   forgejo:check|forgejo:apply) ;;
-  github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
+  forgejo:tg-*|forgejo:cdf-*|github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
   fountain:*)
     echo "the $FORGE profile has no validate.sh claims; the steward smoke claim checks it (just smoke steward)" >&2; exit 2 ;;
   forgejo:*)
-    echo "claim '$CLAIM' is not implemented for forgejo yet (implemented: check, apply)" >&2; exit 2 ;;
+    echo "claim '$CLAIM' is not implemented for forgejo yet (implemented: check, apply, tg-check, tg-apply, cdf-check, cdf-apply)" >&2; exit 2 ;;
   *) usage ;;
 esac
 

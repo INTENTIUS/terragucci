@@ -61,12 +61,12 @@ export const validateAws = new Job({
 
 export const validateForgejo = new Job({
   "runs-on": "ubuntu-latest",
-  timeoutMinutes: 30,
+  timeoutMinutes: 45,
   steps: [...prelude, start("forgejo"), claims("forgejo"), stop],
 });
 
 export const validateGithub = new Job({
   "runs-on": "ubuntu-latest",
-  timeoutMinutes: 30,
+  timeoutMinutes: 45,
   steps: [...prelude, installAct(), start("github"), claims("github"), stop],
 });

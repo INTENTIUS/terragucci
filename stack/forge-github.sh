@@ -60,11 +60,13 @@ forge_branch_sha() { gh "$URL/api/v3/repos/$USER/$1/branches/$2" | jq -r .commit
 #
 # act checks out with the local tree. --github-instance makes act fetch every
 # other action from the mock, which serves none and has no name on the host,
-# so the actions the workflow uses (actions/upload-artifact; add any new one)
-# come from github.com, as on GitHub. GITHUB_SERVER_URL is
-# github.com's, which the workflow is written for: upload-artifact@v4
-# refuses to run against a server it takes for GitHub Enterprise Server. Its
-# uploads go to act's artifact server under WORK.
+# so the actions the workflow uses (actions/upload-artifact, and actions/cache
+# in a Terragrunt repo's plan and apply jobs; add any new one) come from
+# github.com, as on GitHub. actions/cache talks to act's own cache server and
+# reports a miss or a server it cannot reach as a warning, so its step does
+# not fail. GITHUB_SERVER_URL is github.com's, which the workflow is written
+# for: upload-artifact@v4 refuses to run against a server it takes for GitHub
+# Enterprise Server. Its uploads go to act's artifact server under WORK.
 forge_run() { # name branch sha [source: unused here; act runs a push event]
   local name="$1" branch="$2" sha="$3" dir="$WORK/run-$RANDOM" image
   image="$(ci_image)"
@@ -88,6 +90,7 @@ forge_run() { # name branch sha [source: unused here; act runs a push event]
         --secret GITHUB_TOKEN="$TOKEN" \
         --github-instance mock-github:8188 \
         --replace-ghe-action-with-github-com actions/upload-artifact \
+        --replace-ghe-action-with-github-com actions/cache \
         --artifact-server-path "$WORK/artifacts") >"$RUN_LOG" 2>&1; then
     RUN_STATUS=success
   else
