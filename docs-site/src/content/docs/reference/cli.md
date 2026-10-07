@@ -76,7 +76,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 
 `stage tf-plan` and `stage tf-drift` exit 1 when a root refuses to plan, and still write the report. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Its flags are `--wave`, `--layers`, `--canary`, `--binary`, `--gate` (`always`, `on-destroy` or `never`, default `on-destroy`), `--config`, `--parallelism`, `--terragrunt` and `--base`. `--base` names the ref the wave reads its policy, its gate rule and its signers file from; the job that applies an open pull request passes `origin/<default branch>`, and without it the gate rule comes from the commit before the one applied. Exit 3 means the wave waits for an approval, and exit 4 that its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Its flags are `--wave`, `--layers`, `--canary`, `--binary`, `--gate` (`always`, `on-destroy` or `never`, default `on-destroy`), `--config`, `--parallelism`, `--terragrunt` and `--base`. `--base` names the ref the wave reads its policy, its gate rule, its signers file and the rest of its config from; the job that applies an open pull request passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied, and the other settings from the checkout's config. Exit 3 means the wave waits for an approval, and exit 4 that its plans changed after the approval, so nothing applied. `--json` is refused with exit 2.
 
 ## publish
 

@@ -55,13 +55,13 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Gate } from "./config";
+import { ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Gate, type ResolvedSettings } from "./config";
 import { globMatch } from "./detect";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { S3Client, s3FromEnv } from "./report/s3";
-import { checkPlans, governingPolicy, type PolicyOptions } from "./report/policy";
+import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
 import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
 import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts, unitTimes } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
@@ -380,7 +380,7 @@ export interface ApplyWaveOptions {
   parallelism?: number;
   /** The config file; default: the one found from the repo. */
   config?: string;
-  /** The ref the policy is read from (default: TG_BASE, then the checkout), and the gate rule and signers when set (default: the commit before the one applied). */
+  /** The ref the policy is read from (default: TG_BASE, then the checkout), and, when set, the gate rule and signers (default: the commit before the one applied) and every other setting the wave reads (default: the checkout's config). */
   base?: string;
   /** With `policy:` set: how the engine runs and is fetched. Default: the real thing. */
   policy?: PolicyOptions;
@@ -414,6 +414,8 @@ export async function applyWave(repo: string, options: ApplyWaveOptions): Promis
 /** What a wave run leaves for its report. */
 interface WaveRun {
   observer: StageObserver;
+  /** The settings the wave runs with (waveSettings), for its report. */
+  settings?: ResolvedSettings;
   planned?: WavePlan[];
   roots?: string[];
   started?: string;
@@ -432,8 +434,7 @@ interface WaveRun {
  */
 async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Required<WaveRun>, env: NodeJS.ProcessEnv): Promise<void> {
   const { wave, binary } = options;
-  const configPath = options.config ?? findConfig(repo);
-  const settings = resolveRepo(configPath ? await loadConfig(configPath) : {});
+  const settings = w.settings;
   const plans = new Map<string, { json?: string }>();
   let redacted = 0;
   for (const p of w.planned) {
@@ -475,6 +476,31 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   await w.observer.finish(report, env, (l) => console.log(l));
 }
 
+/**
+ * The settings a wave runs with. Without a base, the checkout's config. With
+ * one (a pull request applied before it merges), the config at the base:
+ * reports, telemetry, parallelism and every other key come from the default
+ * branch, so the pull request's own edits to its config take effect once it
+ * merges. The `policy:` key stays the checkout's here because policyGate
+ * reads it through governingPolicy, which takes the base's key and keeps the
+ * checkout's only where the base has none. A base whose config cannot be read
+ * fails the wave.
+ */
+async function waveSettings(repo: string, options: ApplyWaveOptions, configPath: string | undefined): Promise<{ settings: ResolvedSettings } | { error: string }> {
+  const checkout = resolveRepo(configPath ? await loadConfig(configPath) : {});
+  if (!options.base) return { settings: checkout };
+  const read = await configAtBase(repo, options.base, configPath ? { config: configPath } : {});
+  if ("error" in read) return { error: `the settings are read from ${options.base} and its config could not be read (${read.error})` };
+  let atBase: ResolvedSettings;
+  try {
+    atBase = resolveRepo(read.config);
+  } catch (e) {
+    return { error: `the settings are read from ${options.base} and its config could not be read (${(e as Error).message})` };
+  }
+  const { policy: _policy, ...rest } = atBase;
+  return { settings: { ...rest, ...(checkout.policy ? { policy: checkout.policy } : {}) } };
+}
+
 async function runWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun, facts: WaveFacts = {}): Promise<number> {
   const { wave, binary, gate } = options;
   if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
@@ -490,7 +516,12 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   const label = `wave ${wave} of ${waves.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
   const configPath = options.config ?? findConfig(repo);
-  const settings = resolveRepo(configPath ? await loadConfig(configPath) : {});
+  const read = await waveSettings(repo, options, configPath);
+  if ("error" in read) {
+    console.log(`${label}: ${read.error}, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const settings = (w.settings = read.settings);
   if (options.terragrunt) return runTerragruntWave(repo, options, { roots, label, settings, configPath, work }, w, facts);
   let limit: { value: number; reason: string };
   if (options.parallelism !== undefined) {

@@ -41,7 +41,7 @@ Before anything is applied the job checks, and refuses by name in a reply:
 - the pull request does not change the pipeline file, since the job runs the default branch's pipeline;
 - no other open pull request holds a lock on a root the change reaches.
 
-The job then locks those roots and runs `tf-apply` from the head, wave by wave, with the apply role and while no other apply runs. Each wave reads the gate rule and the signers file from the default branch, never from the pull request, so a pull request cannot add a signer who approves its own apply. After the last wave, `apply.merge: auto` merges the pull request while its head is still the commit that applied, then releases its locks. With `manual`, the default, a person merges it. A run that stopped at a wave never merges.
+The job then locks those roots and runs `tf-apply` from the head, wave by wave, with the apply role and while no other apply runs. Each wave reads the gate rule, the signers file and its config from the default branch, never from the pull request, so a pull request cannot add a signer who approves its own apply or send the apply's report and telemetry somewhere else. After the last wave, `apply.merge: auto` merges the pull request while its head is still the commit that applied, then releases its locks. With `manual`, the default, a person merges it. A run that stopped at a wave never merges.
 
 The locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch, next to the gate records. A lock whose pull request merged or closed counts as released, and the next pull request that needs the root takes it over.
 
