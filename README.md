@@ -11,6 +11,8 @@ npx terragucci init
 
 The site is [intentius.io/terragucci](https://intentius.io/terragucci/). Its [validation page](https://intentius.io/terragucci/reference/validation/) lists every check the generated pipelines pass.
 
+[How terragucci compares](https://intentius.io/terragucci/compare/) sets it beside Atlantis, HCP Terraform, Spacelift and Digger.
+
 ## For agents
 
 Setting terragucci up with a coding agent? Paste this prompt into it.
