@@ -200,14 +200,11 @@ run_apply() { # repo prepare-fn bucket...
 }
 
 # With the gate at always, wave 1 waits. GITLAB_TOKEN lets the job post its
-# statuses and push the pending record; the GIT_CONFIG_* variables point the
-# job's https://gitlab/ remote at this GitLab's plain http port.
+# statuses and push the pending record.
 run_gate_wait() {
-  local repo=validate-gate sha f st code kv
+  local repo=validate-gate sha f st code
   forge_reset_repo "$repo"
-  for kv in "GITLAB_TOKEN=$TOKEN" "GIT_CONFIG_COUNT=1" "GIT_CONFIG_KEY_0=url.http://oauth2:${TOKEN}@gitlab:8929/.insteadOf" "GIT_CONFIG_VALUE_0=https://oauth2:${TOKEN}@gitlab/"; do
-    forge_ci_var "$repo" "${kv%%=*}" "${kv#*=}"
-  done
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
   curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
   prepare "$WORK/main"
   f="$WORK/main/$PIPELINE_FILE"

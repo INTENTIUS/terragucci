@@ -1155,7 +1155,7 @@ describe("stale plan notes", () => {
 
 describe("a GitLab wave in the runner's own shell", () => {
   const gitlabEnv = (api: string, bin: Record<string, string>): Record<string, string> => ({
-    ...bin, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", CI_API_V4_URL: api, CI_PROJECT_ID: "9", CI_PIPELINE_URL: "http://gitlab/p/1", CI_SERVER_HOST: "gitlab", CI_PROJECT_PATH: "acme/infra",
+    ...bin, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", CI_API_V4_URL: api, CI_PROJECT_ID: "9", CI_PIPELINE_URL: "http://gitlab/p/1", CI_SERVER_PROTOCOL: "http", CI_SERVER_FQDN: "gitlab", CI_PROJECT_PATH: "acme/infra",
   });
   const waveJob = (wave: number, gate?: "always"): string[] => body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gate }).content)[`apply-wave-${wave}`].script;
   const stage = (code: number, outcome: string): Record<string, string> => ({ terragucci: `#!/usr/bin/env bash\necho ${JSON.stringify(outcome)} > "$TG_OUTCOME"\nexit ${code}\n` });
