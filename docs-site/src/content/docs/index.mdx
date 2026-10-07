@@ -11,9 +11,20 @@ import Waves from '../../components/Waves.astro';
 import Runtimes from '../../components/Runtimes.astro';
 import KeepYours from '../../components/KeepYours.astro';
 import Validated from '../../components/Validated.astro';
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <Landing />
 
+## Start from what you want
+
+<CardGrid>
+<LinkCard title="See a plan note in about 10 minutes" description="A 15-root example on your laptop, with a local forge and an AWS stand-in. No cloud account." href="/terragucci/tutorial/" />
+<LinkCard title="Add terragucci to my repo" description="One page for GitHub, GitLab and Forgejo: install, run init, and read the plan note on your next pull request." href="/terragucci/guides/add-to-a-repo/" />
+<LinkCard title="Hand it to my agent" description="A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies, approves or merges." href="/terragucci/getting-started/agents/" />
+<LinkCard title="Coming from Atlantis, HCP Terraform, Spacelift or Digger" description="Each of them beside terragucci, row by row, with their marks sourced from their own docs." href="/terragucci/compare/" />
+<LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
+<LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
+</CardGrid>
 
 ## The lifecycle around your roots
 

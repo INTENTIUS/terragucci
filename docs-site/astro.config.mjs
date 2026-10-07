@@ -102,7 +102,7 @@ export default defineConfig({
 							label: 'Set it up your way',
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
-								{ label: 'Use OpenTofu or choudoufu', slug: 'guides/use-a-binary' },
+								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
 							],
 						},

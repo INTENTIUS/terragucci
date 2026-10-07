@@ -1,0 +1,128 @@
+---
+title: Choose Terraform, OpenTofu, Terragrunt or choudoufu
+description: Pick the binary your roots run with, and see what each one gives the pipeline.
+claims: [check-diagnostics]
+prompt: |
+  Read https://intentius.io/terragucci/guides/use-a-binary/.
+  Run `npx terragucci init --dry-run --json` and tell me which binary it picked and why.
+  Set `binary:` in terragucci.yml only if that pick is wrong, run `npx terragucci init`, and open a pull request.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import TabFromHash from '../../../components/TabFromHash.astro';
+
+## What each binary gives the pipeline
+
+Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`.
+
+| | Terraform | OpenTofu | Terragrunt | choudoufu |
+|---|---|---|---|---|
+| State | your backend | your backend | each unit's backend | no state file: a tag on each resource |
+| What `tf-check` runs | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) |
+| What the report times | nothing (no traces) | each resource | each unit, from Terragrunt's run report | each resource; [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend |
+| CI image | `terragucci-terraform`, Terraform 1.14.0 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 | `terragucci-choudoufu`, choudoufu 0.22.0 |
+| Version pin | `version`, or an exact `required_version` | `version`, or an exact `required_version` | `terragrunt.version`, or an exact `terragrunt_version_constraint` | `version` only |
+
+A pin the image does not carry is installed in the job, checked against the release's SHA256SUMS. Images are pinned by digest.
+
+## Your binary in `terragucci.yml`
+
+<TabFromHash id="choudoufu" label="choudoufu" />
+
+<Tabs syncKey="binary">
+<TabItem label="Terraform">
+
+```yaml
+binary: terraform
+```
+
+A `.terraform-version` file makes `init` pick it; the table in step 1 below has the full order.
+
+</TabItem>
+<TabItem label="OpenTofu">
+
+```yaml
+binary: tofu
+```
+
+`init` picks it for a `.opentofu-version` file or `.tofu` files, and when nothing points elsewhere.
+
+</TabItem>
+<TabItem label="Terragrunt">
+
+```yaml
+binary: tofu   # or terraform: the tool Terragrunt calls
+```
+
+A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. Under Terragrunt, `binary` is `tofu` or `terraform`; `init` refuses `choudoufu`. Terraform is installed in the job. See [Use Terragrunt](/terragucci/guides/use-terragrunt/).
+
+</TabItem>
+<TabItem label="choudoufu">
+
+```yaml
+binary: choudoufu
+```
+
+[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Three things come with it:
+
+| You get | Where you see it |
+|---|---|
+| A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
+| No state file to host or lose: the apply writes a tag on each resource and the next plan reads it back | your cloud's own tags |
+| How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
+
+`init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
+
+A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
+
+</TabItem>
+</Tabs>
+
+## Steps
+
+<Steps>
+
+1. See what `init` picked. The first line names the binary and why.
+
+   ```bash
+   npx terragucci init --dry-run
+   ```
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   ```
+
+   `binary:` in `terragucci.yml` comes first, then `--binary`, then:
+
+   | Order | Source | Binary |
+   |---|---|---|
+   | 1 | `.opentofu-version` | `tofu` |
+   | 2 | `.terraform-version` | `terraform` |
+   | 3 | `.tofu` files in a root | `tofu` |
+   | 4 | `tofu` on the path | `tofu` |
+   | 5 | `terraform` on the path | `terraform` |
+   | 6 | nothing found | `tofu` |
+
+   If it picked the one you want, stop here.
+
+2. Put your tab's `binary:` line in `terragucci.yml`, or run `npx terragucci init --binary <name>`.
+
+3. Write the pipeline again and commit it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (terragucci.yml), forge github (the origin remote (github.com))
+   updated .github/workflows/terragucci.yml
+   using terragucci.yml
+   ```
+
+</Steps>
+
+## Next
+
+- [Use Terragrunt](/terragucci/guides/use-terragrunt/) if your roots are Terragrunt units.
+- [Stages](/terragucci/reference/stages/) lists the inputs, permissions and outputs of each stage.
