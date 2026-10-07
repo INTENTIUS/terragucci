@@ -20,6 +20,11 @@
 #   stack/example.sh approve [wave-N] approve a waiting wave as the reader, sealed
 #                                     with the reader's key. With no argument, the
 #                                     wave the last run printed an approval for.
+#   stack/example.sh rollout          after 'change pin': open the pull request for the
+#                                     next wave of the modules/service rollout, as
+#                                     'terragucci rollout modules/service --mode apply'
+#                                     would from a clone. Merge each wave's pull
+#                                     request and let its apply finish first.
 #   stack/example.sh logs             the last failed run's failing lines
 #   stack/example.sh reset            close every pull request, put main back to
 #                                     the example as committed, and apply it again
@@ -331,6 +336,23 @@ OUT
     printf '\n  Approved  %s, signed as %s\n' "$wave" "$USER"
     ;;
 
+  rollout)
+    # The next wave of the rollout 'change pin' started. The release config is
+    # the one pin.sh writes: the example's terragucci.yml plus the forge, its
+    # url, the token variable and the modules block.
+    clone_main "$WORK/tree"
+    grep -rq 'modules/service?ref=' "$WORK/tree/envs" 2>/dev/null \
+      || fail "main pins no roots to modules/service; run 'just example change pin' first"
+    {
+      cat "$WORK/tree/terragucci.yml"
+      printf 'forge: forgejo\nurl: %s/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\nmodules:\n  path: modules/*\n  publish: git-tags\n' "$URL" "$REPO"
+    } > "$WORK/release.yml"
+    export TERRAGUCCI_FORGEJO_TOKEN="$TOKEN"
+    out="$(cd "$WORK/tree" && "$HERE/../node_modules/.bin/terragucci" rollout modules/service --config "$WORK/release.yml" --mode apply 2>&1)" \
+      || { echo "$out" >&2; fail "the rollout did not open a wave"; }
+    echo "$out"
+    ;;
+
   logs)
     # The most recent run that failed: each failed job's last lines before it
     # exited, without timestamps or the runner's own messages.
@@ -364,7 +386,7 @@ OUT
     ;;
 
   *)
-    sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,/^set -/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

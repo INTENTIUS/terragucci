@@ -17,13 +17,17 @@ This tutorial runs terragucci against a small shop's estate on your own machine.
 |---|---|
 | Docker, with 4 GB of memory free | the forge, its runner and the AWS stand-in run as containers |
 | [`just`](https://just.systems), `git` and `jq` | the commands below are `just` recipes |
-| about ten minutes | the first boot pulls the images |
+| Node.js 22 or later | `just example up` runs `npx tsx` and builds terragucci from the clone |
+| about ten minutes | the first boot pulls the Forgejo, runner and floci images and builds the pipeline's CI images |
 
 Clone terragucci and move into its directory:
 
 ```bash
 git clone https://github.com/INTENTIUS/terragucci && cd terragucci
+npm ci
 ```
+
+`npm ci` installs terragucci's dependencies in the clone, [chant](/terragucci/concepts/glossary/#chant) among them. The approval step later runs the chant it installs.
 
 ## Boot it
 
@@ -37,7 +41,7 @@ It starts three containers. Forgejo is a forge like GitHub that runs on your lap
 
 <Captured step="boot" />
 
-The last line is how long the boot took. This one ran on a machine that already had the images. A first boot pulls them before it starts anything, so expect three to four minutes, more on a slow connection.
+The last line is how long the boot took. This one ran on a machine that already had every image. A first boot pulls the three service images and builds the pipeline's CI images from the clone before it starts anything, so expect ten minutes, more on a slow connection. Later boots skip both.
 
 ## What you just made
 

@@ -22,11 +22,7 @@ live/dev/orders          a service; its dependency block reads platform's output
 modules/service          the module every service uses; it reads policy.json with file()
 ```
 
-There is no `roots:` setting. `init` sees `root.hcl`, asks Terragrunt for the units and their graph, and writes the pipeline:
-
-```bash
-npx terragucci init
-```
+There is no `roots:` setting. `init` sees `root.hcl`, asks Terragrunt for the units and their graph, and writes the pipeline. `just example-terragrunt up` pushes the pipeline it wrote, so the example already has it. In your own Terragrunt repo you run `npx terragucci init` at the root of the repo, and it prints:
 
 ```
 found Terragrunt (root.hcl): 15 units in 2 waves from terragrunt find, terragrunt 1.1.6 (the image)
