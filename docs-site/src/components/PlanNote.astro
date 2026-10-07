@@ -16,7 +16,14 @@
 			</tbody>
 		</table>
 		<p class="destroy"><span>destroy</span><code>prod-eu/db · aws_db_instance.main</code></p>
-		<p class="foot">wave plan: canary (3) → 2 (97) → 3 (100)</p>
+		<table class="waves">
+			<thead><tr><th>Wave</th><th>Roots</th><th>Approval</th></tr></thead>
+			<tbody>
+				<tr><td>1</td><td>3</td><td>not-requested</td></tr>
+				<tr><td>2</td><td>97</td><td>not-requested</td></tr>
+				<tr><td>3</td><td>100</td><td>not-requested</td></tr>
+			</tbody>
+		</table>
 	</div>
 </figure>
 
@@ -110,12 +117,17 @@
 	.destroy code {
 		color: var(--tg-warn);
 	}
-	.foot {
-		margin: 0;
+	.waves th {
+		text-align: left;
+		padding: 0.3rem 0.5rem 0.3rem 0;
+		border: none;
+		border-bottom: 1px solid var(--tg-rule);
 		color: var(--sl-color-gray-3);
-		font-size: 0.82rem;
+		font-size: 0.78rem;
+		font-weight: 400;
 	}
-	.foot code {
-		color: var(--sl-color-gray-2);
+	.waves td {
+		font-size: 0.82rem;
+		color: var(--sl-color-gray-3);
 	}
 </style>

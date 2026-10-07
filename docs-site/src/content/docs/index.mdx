@@ -31,11 +31,13 @@ The note links to the full report. It opens on the destroys and the outliers wit
 
 ## Rollouts in waves
 
-The change goes out a few roots at a time. A wave can wait for its own approval, and that approval covers exactly the plans it was given.
+The change goes out a few roots at a time, the [canary](/terragucci/concepts/glossary/#canary) roots first. By default a wave that destroys or replaces something waits for an approval, and that approval covers exactly the plans it was given.
 
 <Waves />
 
-Each wave's state and set digest are in the report, linked to the approval record that let it go out. A pinned module rolls out the same way, one pull request per wave, across as many repos as use it.
+The report lists each wave with its [set digest](/terragucci/concepts/glossary/#set-digest) and links the approval record that let it go out.
+
+A pinned module rolls out the same way: one pull request per wave, across as many repos as use it.
 
 ## Runs where you already work
 

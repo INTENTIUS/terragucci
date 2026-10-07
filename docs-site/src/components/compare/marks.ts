@@ -46,7 +46,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	'refuse-changed': {
 		mark: 'good',
-		text: 'If any plan in the wave changed after the approval, the digest changes and the wave applies nothing',
+		text: 'While the gate holds a wave, a plan in it that changed after the approval changes the digest and the wave applies nothing. Under the default on-destroy gate, a re-plan that no longer destroys or replaces applies without a new approval; under gate: never nothing is refused',
 		page: 'concepts/waves-and-approvals/',
 	},
 	locks: {
@@ -55,8 +55,8 @@ export const terragucci: Record<RowId, OwnCell> = {
 		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {
-		mark: 'good',
-		text: 'Waves follow the dependency graph, one terragrunt run --all per wave, and no unit plans against mock outputs; each wave is planned, gated by policy and applied under a sealed approval of its set digest, as plain roots are, and a wave whose plans changed applies nothing. /terragucci apply on a merged pull request re-runs the waves behind the same gate',
+		mark: 'warn',
+		text: 'At most two waves, the canary units and then the rest, each one terragrunt run --all in which Terragrunt orders the units by its graph, and no unit plans against mock outputs; each wave is planned, gated by policy and applied under a sealed approval of its set digest, as plain roots are, and a wave whose plans changed applies nothing. /terragucci apply on a merged pull request re-runs the waves behind the same gate',
 		page: 'guides/use-terragrunt/',
 	},
 	drift: {

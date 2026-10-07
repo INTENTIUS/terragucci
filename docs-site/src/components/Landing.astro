@@ -29,9 +29,12 @@ const prompt = [
 
 		<p class="lede">
 			terragucci writes the pipeline your forge runs. Every pull request gets one grouped plan note. Every merge
-			applies in waves, and a wave that destroys something waits for a signed approval. A scheduled job reports drift. It runs on your own GitHub,
-			GitLab or Forgejo runners with your cloud roles. There is no server to run and no service to pay for.
-			<a href={`${base}/concepts/how-it-works/`}>How it works</a>
+			applies the <a href={`${base}/concepts/glossary/#root`}>roots</a> in waves, and a wave that destroys something waits for an
+			approval signed over its <a href={`${base}/concepts/glossary/#set-digest`}>set digest</a>. A scheduled job reports drift. It runs on the
+			runners of your <a href={`${base}/concepts/glossary/#forge`}>forge</a> (GitHub, GitLab or Forgejo) with your cloud roles.
+			There is no server to run and no service to pay for.
+			<a href={`${base}/concepts/how-it-works/`}>How it works</a> or
+			<a href={`${base}/compare/`}>how it compares</a> with Atlantis, HCP Terraform, Spacelift and Digger.
 		</p>
 
 		<ul class="paths">

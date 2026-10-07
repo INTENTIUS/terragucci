@@ -358,7 +358,7 @@ export async function main(argv: string[]): Promise<number> {
     }
   } catch (e) {
     if (e instanceof ConfigError || e instanceof RenderError || e instanceof S3Error) {
-      if (json) return emit(envelope(cmd, 2, null, e.message));
+      if (json) return emit(envelope(cmd === "config" ? "config check" : cmd, 2, null, e.message));
       console.error(`terragucci: ${e.message}`);
       return 2;
     }

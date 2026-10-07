@@ -75,7 +75,7 @@ The `agent` job runs the agent. `terragucci comment` reads the comment first and
 
 The `agent-push` job never runs the agent. In a fresh container it checks out the same head and applies the patch. A patch that touches CI files, `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/`, the signers file `.chant/trust.json` names, or the policy directory is refused with a reply naming the paths. A patch to a file that decides who reviews or how an agent behaves is refused the same way: `CODEOWNERS`, `.claude/`, `.cursor/`, `.cursorrules`, `.mcp.json`, and `CLAUDE.md`, `AGENTS.md`, `.gitattributes` or `.gitmodules` in any directory. [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists every path the job guards. Any other patch becomes one commit on top of the head, sent to the head branch without force. A branch that moved meanwhile keeps what it has.
 
-Neither job has a cloud role, whatever `oidc` and `agent.role` say. The agent cannot plan or apply. Its change is planned by the plan job, with that job's read-only role.
+Neither job has a cloud role, whatever `oidc` says. The agent cannot plan or apply. Its change is planned by the plan job, with that job's read-only role.
 
 The default command is Claude Code in print mode, pinned to one release:
 

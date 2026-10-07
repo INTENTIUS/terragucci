@@ -3,7 +3,7 @@
 const stages = [
 	{ name: 'tf-check', when: 'every pull request', what: 'Format and validate, before anything plans.' },
 	{ name: 'tf-plan', when: 'every pull request', what: 'Only the roots the change touches, summarised in one note.' },
-	{ name: 'tf-apply', when: 'merge to main', what: 'Wave by wave, each wave behind its own approval.' },
+	{ name: 'tf-apply', when: 'merge to main', what: 'Wave by wave; by default a wave that destroys or replaces waits for its approval.' },
 	{ name: 'tf-drift', when: 'on a schedule', what: 'Every root planned against live state, drift reported grouped.' },
 ];
 ---

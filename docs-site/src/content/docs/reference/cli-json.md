@@ -66,7 +66,7 @@ The exit code is 1 when any project failed.
 
 ## stage
 
-`results` holds `stage`, `change_set` (the run's set digest), `files` (the paths of `report.html`, `report.json` and `note.md`) and `uploaded`, which is null unless `reports.bucket` is set. Then it holds the run's key prefix in the bucket and the indexes it rewrote. The exit code is 1 when a root refused to plan; the report is written either way.
+`results` holds `stage`, `change_set` (the run's set digest), `files` (the paths of `report.html`, `report.json` and `note.md`) and `uploaded`, which is null unless `reports.bucket` is set. Then it holds the run's key prefix in the bucket and the indexes it rewrote. `tf-drift` adds `issue`: an `action` (`opened`, `updated`, `closed`, `left-open` or `none`), the `issue` it acted on, and an `error` when the forge refused the issue call. The exit code is 1 when a root refused to plan; the report is written either way.
 
 ## rollout
 

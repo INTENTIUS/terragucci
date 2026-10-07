@@ -105,6 +105,14 @@ describe("--json", () => {
     expect(out).toBe("terragucci.yml: ok");
   });
 
+  it("config check names itself in the envelope when it cannot run", async () => {
+    const { code, out } = await run(repo(), "config", "--json");
+    const e = JSON.parse(out);
+    expect(code).toBe(2);
+    expect(e.command).toBe("config check");
+    expect(e.results).toBeNull();
+  });
+
   it("--json on a command without it is refused", async () => {
     const { code, out } = await run(repo(), "profiles", "--json");
     expect(code).toBe(2);

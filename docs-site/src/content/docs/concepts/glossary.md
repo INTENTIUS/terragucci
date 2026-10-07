@@ -13,6 +13,10 @@ A directory that Terraform or OpenTofu runs in. Its files declare a `backend` or
 
 A directory with a `cloud` block counts like any other, and the jobs run the binary's own `plan` and `apply` in it. When its HCP Terraform workspace uses remote execution, Terraform carries those runs out on HCP Terraform's workers with the workspace's variables and credentials. The job's `oidc` roles do not reach them there. Set the workspace to local execution to keep the runs in your CI while HCP Terraform holds the state.
 
+### forge
+
+The service that hosts your repository and runs its pipelines: GitHub, GitLab or Forgejo. terragucci writes a workflow for yours, and the jobs run on its runners.
+
 ### unit
 
 In Terragrunt, a directory with a `terragrunt.hcl` is a unit. terragucci treats each unit as a root and takes the list from `terragrunt find`. A directory of units is an implicit stack; it appears as a label in the report.
@@ -24,6 +28,10 @@ One step of the dependency order. A root that reads another through `terraform_r
 ### wave
 
 A batch of roots that `tf-apply` applies together, behind its own approval. Waves are built from layers. The roots named in `waves.canary` go first in waves of their own, and the rest follow layer by layer, so nothing in a wave reads anything else in it. In a Terragrunt repo the canary units are wave 1 and the rest wave 2. The wave's job plans its units with one `terragrunt run --all`, and Terragrunt orders the units inside it. The gates take the waves' names: `wave-1`, `wave-2` and so on.
+
+### canary
+
+The roots named in `waves.canary`. They apply first, in a wave of their own, so a bad change reaches a few roots before it reaches the rest. In a plain repo the canary is wave 1, which is also what the plan note and the report call it. A Terragrunt repo's canary units are wave 1 too.
 
 ### plan digest
 
