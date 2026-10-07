@@ -4,6 +4,10 @@ description: Boot the shop as 15 Terragrunt units, change a file a module reads,
 sidebar:
   order: 9
 claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-mock-lint, tg-refuse, tg-mock-trap]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/terragrunt/.
+  In the terragucci clone, run `just example-terragrunt up`, then `just example-terragrunt change module-bump` and `just example-terragrunt change new-service`. Summarize which units each plan note covers and why, and where it differs from the page.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 :::note[Where the example stands]
@@ -29,13 +33,26 @@ found Terragrunt (root.hcl): 15 units in 2 waves from terragrunt find, terragrun
 calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
 ```
 
-The dev units are the canary wave: `apply-wave-1` applies the five dev units and `apply-wave-2` the other ten. Each job plans with one `terragrunt run --all`, and a second `run --all` applies the saved plans once the gate lets it. With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the two gates.
+Each job plans with one `terragrunt run --all`, and a second `run --all` applies the saved plans once the gate lets it.
+
+| Wave | Units | Job |
+|---|---|---|
+| 1 | the five dev units, the canary | `apply-wave-1` |
+| 2 | the other ten | `apply-wave-2` |
+
+With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the two gates.
 
 A platform applies before the services that read it. When its plan changes its outputs, its services plan again once it has applied.
 
 ## The check stage
 
-The check job runs `terragrunt hcl fmt --check`, `tofu fmt`, and `terragrunt hcl validate --inputs`. An unformatted `.hcl` file fails the job by name:
+The check job runs these, in order:
+
+1. `terragrunt hcl fmt --check`
+2. `tofu fmt`
+3. `terragrunt hcl validate --inputs`
+
+An unformatted `.hcl` file fails the job by name:
 
 ```bash
 just example-terragrunt change unformatted

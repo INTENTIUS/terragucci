@@ -3,6 +3,8 @@ title: Why plans are grouped
 description: What grouping does to two hundred plans, what it never folds away, and why no approval is bound to it.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 A shared module change can reach two hundred roots with near-identical plans, and a reviewer scrolling for the odd one out can miss a destroy.
 
 ## What grouping does
@@ -18,22 +20,20 @@ destroys: prod-eu/db (delete aws_db_instance.main)
 
 A hundred and eighty identical updates become one line with a count. The reviewer reads the change once, and reads the 20 roots that differ.
 
+<Shot step="one-note" view="pull" alt="The plan note on a module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" />
+
 ## What it never folds
 
-Destroys, replacements, refusals, imports and forgets are always named, never grouped; a forget is not counted as a destroy.
-
-The report opens on those and on:
-
-- roots that differ from every group
-- IAM and security group changes
-- KMS and DNS changes
-
-It folds:
-
-- groups of identical changes
-- updates to tags or descriptions only
-- values known after apply
-- roots with no changes
+| Change | In the report |
+|---|---|
+| destroys, replacements, refusals, imports, forgets | named, never grouped; a forget is not counted as a destroy |
+| roots that differ from every group | open |
+| IAM and security group changes | open |
+| KMS and DNS changes | open |
+| groups of identical changes | folded |
+| updates to tags or descriptions only | folded |
+| values known after apply | folded |
+| roots with no changes | folded |
 
 ## Nothing is summarized away
 
