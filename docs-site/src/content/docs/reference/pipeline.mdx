@@ -110,7 +110,7 @@ The job asks the forge for one token per cloud, with the audience that cloud exp
 | GCP | `https://iam.googleapis.com/` followed by `workload_identity_provider` | `GOOGLE_APPLICATION_CREDENTIALS`, an `external_account` file that reads the token from `credential_source.file` and exchanges it at `gcp.token_url` for the stage's service account |
 | Azure | `api://AzureADTokenExchange`, or `azure.audience` | `ARM_USE_OIDC=true` with `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` and `ARM_OIDC_TOKEN_FILE_PATH` |
 
-`gcp.token_url` defaults to `https://sts.googleapis.com/v1/token`. `azure.audience` must match the federated credential, such as `api://AzureADTokenExchangeUSGov` or `api://AzureADTokenExchangeChina`.
+`gcp.token_url` defaults to `https://sts.googleapis.com/v1/token`. `azure.audience` must match the federated credential's: `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China.
 
 The state backend of each cloud reads the same settings as its provider.
 
