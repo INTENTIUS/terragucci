@@ -10,10 +10,15 @@
 //        [--expand TEXT]     open the job step whose summary contains TEXT
 //        [--focus REGEX]     scroll the first log line of that step matching
 //                            REGEX near the top of the picture
-//        [--scroll SELECTOR] scroll the first element matching SELECTOR near
-//                            the top of the picture
+//        [--scroll SELECTOR] start the picture 16px above the first element
+//                            matching SELECTOR: the page is taken at its own
+//                            top, so no sticky header covers the element, and
+//                            clipped from there, --height tall
 //        [--match REGEX]     with --scroll, the first such element whose text
 //                            matches REGEX
+//        [--fit 1]           with --scroll, the picture is the element's own
+//                            height, plus 16px above and below, not --height
+//        [--style CSS]       add this CSS to the page first
 //
 // It exits 0 with the picture taken even when a hook finds nothing (the step
 // or the line), and says so on stderr; it exits 1 when there is no picture.
@@ -86,7 +91,7 @@ try {
   await page("Page.navigate", { url: opts.url });
   await loaded;
 
-  const prepare = async ({ hide, expand, focus, scroll, match }) => {
+  const prepare = async ({ hide, expand, focus, scroll, match, style }) => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const until = async (fn, ms = 15000) => {
       const end = Date.now() + ms;
@@ -100,10 +105,10 @@ try {
       await until(() => document.querySelector(".job-step-summary, .action-view-body"));
       await wait(500);
     }
-    if (hide) {
-      const style = document.createElement("style");
-      style.textContent = `${hide} { display: none !important; }`;
-      document.head.append(style);
+    if (hide || style) {
+      const el = document.createElement("style");
+      el.textContent = `${hide ? `${hide} { display: none !important; }` : ""}${style ?? ""}`;
+      document.head.append(el);
     }
     if (expand) {
       const summary = await until(() => [...document.querySelectorAll(".job-step-summary")].find((s) => s.textContent.includes(expand)));
@@ -126,28 +131,45 @@ try {
         }
       }
     }
+    let box;
     if (scroll) {
       const re = match ? new RegExp(match) : undefined;
       const el = await until(() => [...document.querySelectorAll(scroll)].find((e) => !re || re.test(e.textContent)));
       if (el) {
-        el.scrollIntoView({ block: "start" });
-        window.scrollTo(0, Math.max(0, window.scrollY + el.getBoundingClientRect().top - 80));
+        // The element's box on the page, read at the page's own top.
+        window.scrollTo(0, 0);
+        await wait(300);
+        const r = el.getBoundingClientRect();
+        box = { top: r.top + window.scrollY, height: r.height };
       } else {
         notes.push(`no element ${scroll}${match ? ` matching /${match}/` : ""} on the page`);
       }
     }
     await wait(300);
-    return notes.join("; ");
+    return { notes: notes.join("; "), box };
   };
   const res = await page("Runtime.evaluate", {
-    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus, scroll: opts.scroll, match: opts.match })})`,
+    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus, scroll: opts.scroll, match: opts.match, style: opts.style })})`,
     awaitPromise: true,
     returnByValue: true,
   });
+  // A hook that stops early returns its note alone.
+  const value = res.result?.value;
+  const prepared = typeof value === "string" ? { notes: value } : (value ?? {});
   if (res.exceptionDetails) console.error(`shot: ${opts.url}: ${res.exceptionDetails.exception?.description ?? res.exceptionDetails.text}`);
-  else if (res.result.value) console.error(`shot: ${opts.url}: ${res.result.value}`);
+  else if (prepared.notes) console.error(`shot: ${opts.url}: ${prepared.notes}`);
 
-  const { data } = await page("Page.captureScreenshot", { format: "png" });
+  // A scrolled shot is a clip of the page from 16px above its element, taken
+  // beyond the viewport, so the page never scrolls and nothing sticky moves.
+  const margin = 16;
+  const clip = prepared.box && {
+    x: 0,
+    y: Math.max(0, prepared.box.top - margin),
+    width: +opts.width,
+    height: opts.fit ? Math.ceil(prepared.box.height) + 2 * margin : +opts.height,
+    scale: 1,
+  };
+  const { data } = await page("Page.captureScreenshot", clip ? { format: "png", clip, captureBeyondViewport: true } : { format: "png" });
   writeFileSync(opts.out, Buffer.from(data, "base64"));
   ws.close();
 } catch (e) {

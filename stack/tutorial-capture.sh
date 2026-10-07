@@ -58,7 +58,7 @@ trace|booted|traces|trace|a tf-plan of the one-root change with telemetry on, se
 responses|booted|respond-drift respond-fmt|drift drift-files fmt|the respond-drift and respond-fmt claims; the drift pull request with the live value and an import, its files, and the fmt commit on a pull request'"'"'s branch
 tips|booted|tips respond-tips|pull report fix|just example change float, a tf-plan of it with reports.bucket on floci, and the respond-tips claim; the plan note'"'"'s tip line, the report'"'"'s Tips section, and the files of the pull request one tip opens (the pull request is closed afterwards)
 policy|booted|policy check-diagnostics|pull log|a pull request on the example that adds a policy denying dev orders'"'"' change, and the check-diagnostics claim; the plan note naming the denial, and the check job'"'"'s log naming the failing policy test (the pull request is closed afterwards)
-statuses|booted|grouped comment-apply|checks reply|the comment-apply claim; an open pull request'"'"'s commit statuses under the reply refusing its apply comment, and the replies to /terragucci apply on a merged pull request'
+statuses|booted|grouped comment-apply|checks reply|just example change one-root and the comment-apply claim; the pull request'"'"'s commit statuses, terragucci/plan among them (the pull request is closed afterwards), and the replies to /terragucci apply on a merged pull request'
 
 field() { # step, field number -> that field of the step's row
   awk -F'|' -v s="$1" -v n="$2" '$1 == s { print $n }' <<<"$STEPS"
@@ -146,9 +146,11 @@ run_cmd() { # step, shown command, real command...
 FORGEJO_HIDE='.ui.warning.message.pre-execution-error'
 
 # A job page can open one of its steps and scroll to a log line in it. Any
-# other page can open scrolled to one element: the 5th argument is then a CSS
-# selector, and the 6th a regex the element's text must match.
-shot() { # step, view, url, [height], [job step to open | element to scroll to], [log line | that element's text, a regex]
+# other page can open at one element: the 5th argument is then a CSS selector,
+# and the 6th a regex the element's text must match. The picture starts 16px
+# above that element, and with the height "fit" it is the element's own
+# height. SHOT_STYLE, when set, is CSS added to such a page first.
+shot() { # step, view, url, [height | fit], [job step to open | element to start at], [log line | that element's text, a regex]
   local step="$1" view="$2" url="$3" height="${4:-860}" open="${5:-}" focus="${6:-}" theme scheme png hooks
   [ -z "$REPLAY" ] || return 0
   for theme in light dark; do
@@ -164,8 +166,15 @@ shot() { # step, view, url, [height], [job step to open | element to scroll to],
     elif [ -n "$open" ]; then
       hooks=(--scroll "$open")
       [ -z "$focus" ] || hooks+=(--match "$focus")
-      node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$png" \
-        --width 1280 --height "$height" --scheme "$theme" "${hooks[@]}" || true
+      [ -z "${SHOT_STYLE:-}" ] || hooks+=(--style "$SHOT_STYLE")
+      if [ "$height" = fit ]; then
+        hooks+=(--fit 1)
+        node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$png" \
+          --width 1280 --height 860 --scheme "$theme" "${hooks[@]}" || true
+      else
+        node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$png" \
+          --width 1280 --height "$height" --scheme "$theme" "${hooks[@]}" || true
+      fi
     else
       scheme=1; [ "$theme" = dark ] && scheme=0
       # The virtual time budget lets the page's scripts finish. A URL with a
@@ -553,6 +562,17 @@ open_pull() { # repo, branch
   api "$URL/api/v1/repos/$1/pulls?state=open&limit=50" | jq -r --arg b "$2" '.[] | select(.head.ref == $b) | .number' | head -1
 }
 
+# A pull request's plan note, the picture starting at the note: the page
+# without its #issuecomment- fragment, and that comment as the element.
+note_shot() { # step, view, pull request number, height
+  local url
+  url="$(note_page "$3")"
+  case "$url" in
+    *'#'*) shot "$1" "$2" "${url%%#*}" "$4" "#${url#*#}" ;;
+    *) shot "$1" "$2" "$url" "$4" ;;
+  esac
+}
+
 # Close a scenario's pull request on the example and delete its branch, so
 # the steps after it start from the example as committed.
 close_change() { # pull request number, branch
@@ -619,7 +639,7 @@ step_tips() {
   run_cmd tips "just example change float" "$HERE/example.sh" change float
   local pr top index path repo
   pr="$(pr_in_output)"
-  if [ -n "$pr" ]; then shot tips pull "$(note_page "$pr")" 1400; else log "tips: the output named no pull request"; fi
+  if [ -n "$pr" ]; then note_shot tips pull "$pr" 1000; else log "tips: the output named no pull request"; fi
   close_change "$pr" change/float
   ci_ready tips
   curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
@@ -628,7 +648,7 @@ step_tips() {
   top="$FLOCI/$REPORT_BUCKET/tips"
   index="$(fetch "$top/index.json" || true)"
   path="$(jq -r '.reports[0].path // empty' <<<"${index:-null}" 2>/dev/null || true)"
-  if [ -n "$path" ]; then shot tips report "$top/$path/report.html#tips" 1000; else log "tips: the index at $top lists no run"; fi
+  if [ -n "$path" ]; then shot tips report "$top/$path/report.html" fit "#tips"; else log "tips: the index at $top lists no run"; fi
   if claim_run tips respond-tips; then
     repo="$USER/respond-tips"
     pr="$(open_pull "$repo" terragucci/tip/pin-hashicorp-aws)"
@@ -666,7 +686,7 @@ step_policy() {
     -d "$(jq -n --arg t "$title" --arg h "$branch" '{title: $t, head: $h, base: "main"}')" "$URL/api/v1/repos/$REPO/pulls" | jq -r '.number // empty')"
   if [ -n "$pr" ]; then
     wait_run "$REPO" "$sha" pull_request
-    shot policy pull "$(note_page "$pr")" 1400
+    note_shot policy pull "$pr" 1000
   else
     log "policy: no pull request for $branch"
   fi
@@ -680,27 +700,26 @@ step_policy() {
   fi
 }
 
-# Commit statuses and the apply comment (reference/pipeline), on the repo the
-# comment-apply claim leaves: its open pull request, whose plan job posts
-# terragucci/plan and whose apply comment is refused, and its merged pull
-# request with the replies to /terragucci apply.
+# Commit statuses and the apply comment (reference/pipeline). The one-root
+# change's pull request on the example, once its plan job has posted
+# terragucci/plan: its merge box's list of the head's statuses, opened out
+# (Forgejo shows six and scrolls the rest), then the pull request is closed.
+# And the merged pull request the comment-apply claim leaves, with the
+# replies to /terragucci apply.
+COMMIT_STATUS_PANEL='.commit-status-panel'
+COMMIT_STATUS_STYLE='.commit-status-list { max-height: none !important; overflow: visible !important; }'
 step_statuses() {
   forge
-  local repo="$USER/comment-apply" open merged sha state i
-  claim_run statuses comment-apply || return 0
-  open="$(open_pull "$repo" open-change)"
-  if [ -n "$open" ]; then
-    sha="$(api "$URL/api/v1/repos/$repo/pulls/$open" | jq -r '.head.sha')"
-    for i in $(seq 1 60); do   # up to five minutes for the plan job's status
-      state="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // "pending"')"
-      [ "$state" != pending ] && break
-      sleep 5
-    done
-    log "statuses: terragucci/plan on ${sha:0:8}: $state"
-    shot statuses checks "$URL/$repo/pulls/$open" 1400 '.timeline-item.comment' 'is not merged'
+  local repo="$USER/comment-apply" pr merged
+  run_cmd statuses "just example change one-root" "$HERE/example.sh" change one-root
+  pr="$(pr_in_output)"
+  if [ -n "$pr" ]; then
+    SHOT_STYLE="$COMMIT_STATUS_STYLE" shot statuses checks "$FORGEJO/pulls/$pr" fit "$COMMIT_STATUS_PANEL"
   else
-    log "statuses: no open pull request on $repo"
+    log "statuses: the output named no pull request"
   fi
+  close_change "$pr" change/one-root
+  claim_run statuses comment-apply || return 0
   merged="$(api "$URL/api/v1/repos/$repo/pulls?state=closed&limit=50" | jq -r '.[] | select(.head.ref == "change" and .merged) | .number' | head -1)"
   if [ -n "$merged" ]; then
     shot statuses reply "$URL/$repo/pulls/$merged" 1800 '.timeline-item.comment' 'wave 1 waits'
