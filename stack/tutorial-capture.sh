@@ -23,7 +23,7 @@
 #
 # The steps run in the order below, and each one starts where the one before it
 # left the example. What a step needs (the STEPS table):
-#   fresh    it starts from nothing itself (boot, fountain-apply)
+#   fresh    it starts from nothing itself (boot)
 #   chain    it needs the steps before it: run alone, it boots the example
 #            fresh and replays them unrecorded, so pull request and run
 #            numbers are those of a full capture
@@ -52,7 +52,6 @@ wave-refused|chain|waves sealed refuse|log|just example approve, change module-b
 pin|chain|publish rollout|pull files|just example change pin; the rollout'"'"'s wave 1 pull request and its ref bumps
 report|booted|report highlight|top root plan index|three tf-plan runs of the example with reports.bucket on floci; the module bump'"'"'s report.html, one root'"'"'s row, that root'"'"'s plan.txt, and the project'"'"'s report index
 drift|booted|drift|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
-fountain-apply|fresh|steward||just example up --fresh --fountain and just example verify
 see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves drift runs|just see-runs; four of the dashboards
 trace|booted|traces|trace|a tf-plan of the one-root change with telemetry on, sent to the observability profile; that run'"'"'s trace in Grafana'"'"'s Explore, found by the trace id in its report
 responses|booted|respond-drift respond-fmt|drift drift-files fmt|the respond-drift and respond-fmt claims; the drift pull request with the live value and an import, its files, and the fmt commit on a pull request'"'"'s branch
@@ -517,14 +516,6 @@ step_drift() {
   "$HERE/example.sh" reset >/dev/null 2>&1 || log "drift: reset failed"
 }
 
-# tf-apply on a fountain steward (the move-apply-to-fountain guide): boot the
-# example fresh with the steward taking the apply, and show the thread's turn.
-step_fountain_apply() {
-  run_cmd fountain-apply "just example up --fresh --fountain" "$HERE/example.sh" up --fresh --fountain
-  forge
-  run_cmd fountain-apply "just example verify" "$HERE/example.sh" verify
-}
-
 # The dashboards (the see-your-runs page): three runs of the example sent to
 # the observability profile, and four of the dashboards that show them, over
 # the last hour: see-runs returns once Grafana shows the runs on every panel
@@ -753,7 +744,7 @@ while IFS='|' read -r -u 3 step needs claims _; do
     # --reuse: the example as it stands.
     [ "$needs" = fresh ] || forge
     READY=1
-  elif [ $i -lt $LAST_CHAIN ] && { [ "$needs" = fresh ] || [ "$needs" = chain ]; } && [ "$step" != fountain-apply ]; then
+  elif [ $i -lt $LAST_CHAIN ] && { [ "$needs" = fresh ] || [ "$needs" = chain ]; }; then
     log "$step: replayed, unrecorded"
     rm -f "$STAGE/$step.cmds"
     STEP="$step"; REPLAY=1; "$fn"; REPLAY=""; READY=1
