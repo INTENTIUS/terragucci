@@ -13,7 +13,7 @@ import Shot from '../../../components/Shot.astro';
 Booted with `just example up`. `just example reset` gets you back to that from any step, and removes the release tags this page makes.
 :::
 
-When roots pin a published version, a module change reaches no root until a pin moves. `tf-publish` publishes a module version, and `tf-rollout` moves the pins one wave at a time, each wave its own pull request.
+When roots pin a published version, a module change reaches no root until a pin moves. `tf-publish` publishes a module version, and `tf-rollout` moves the pins with one pull request per wave.
 
 The scenario first tags `modules/service` at `1.0.0` with `tf-publish` and pins the twelve service roots to that tag on main. The changed module is published as `1.1.0`, and the rollout runs:
 
@@ -29,7 +29,7 @@ just example change pin
 
 The last command it ran is `terragucci rollout modules/service --mode apply`. Here `apply` means opening the pull request; no `terraform apply` runs until it merges. It takes the newest version, `1.1.0`, and opens the canary wave, the dev services, moving each `ref` from `modules/service/v1.0.0` to `modules/service/v1.1.0`.
 
-Merge it, and let the apply on the merge commit finish. Then open the next wave's pull request:
+Merge it, and let the apply on the merge commit finish. Then open the next wave:
 
 ```bash
 just example rollout
