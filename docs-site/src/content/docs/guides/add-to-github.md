@@ -26,6 +26,7 @@ npx terragucci init
 ```text
 found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
 wrote .github/workflows/terragucci.yml
+wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
@@ -51,7 +52,7 @@ The role's trust policy must accept your repo. [Environment variables and creden
 
 ```bash
 git switch -c add-terragucci
-git add .github package.json package-lock.json
+git add .github chant.workspace.json package.json package-lock.json
 git commit -m "Add terragucci"
 git push -u origin add-terragucci
 ```
@@ -61,6 +62,10 @@ Change a line in one root so the pull request has something to plan. The plan jo
 ### 5. Require the status
 
 In the repo's branch protection for the default branch, require `terragucci/plan`. Pull requests can no longer merge while the plan fails or is missing.
+
+### 6. Make approval possible
+
+Approvals are sealed with a key. Until your key is in `.chant/allowed_signers` on the default branch and chant is installed, a waiting wave cannot be approved. The [getting-started page](/terragucci/getting-started/#before-your-first-approval) has both steps.
 
 ## Next
 
