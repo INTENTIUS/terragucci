@@ -127,7 +127,7 @@ The steps run in a fixed order (`STEPS` in `stack/tutorial-capture.sh`), each st
 
 | Needs | Steps | Captured alone, the script |
 |---|---|---|
-| `fresh` | boot, fountain-apply | starts the stack from nothing, as the step itself does |
+| `fresh` | boot | starts the stack from nothing, as the step itself does |
 | `chain` | first-pr, check, one-note, wave-waiting, wave-refused, pin | boots the example fresh and replays every step before it without recording anything, so its numbers match a full capture |
 | `booted` | report, drift, see-runs | resets a running example to its committed state, or boots one |
 
