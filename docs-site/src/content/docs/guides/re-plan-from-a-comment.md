@@ -6,12 +6,12 @@ claims: [comment-plan, comment-apply, comment-not-affected, tg-comment-apply]
 
 ## What you end up with
 
-Writing `/terragucci plan` on a pull request plans the change again. The plan note and the `terragucci/plan` status on the pull request's head are updated. `/terragucci plan envs/dev/orders` plans that root alone.
+`/terragucci plan` on a pull request plans it again and updates its plan note and `terragucci/plan` status. `/terragucci plan envs/dev/orders` plans that root alone.
 
 ## Before you start
 
-- The pipeline from [Get your first plan note](/terragucci/getting-started/), written by a terragucci that has this trigger. Run `npx terragucci init` again and merge the result to the default branch. GitHub and Forgejo start this workflow from the default branch, so nothing happens until it is merged.
-- A repo on GitHub or Forgejo. GitLab starts no pipeline for a merge request note, so it has no comment commands.
+- The pipeline from [Get your first plan note](/terragucci/getting-started/), from a terragucci with this trigger: run `npx terragucci init` again and merge the result, since the forge runs this workflow from the default branch.
+- A repo on GitHub or Forgejo. GitLab has no comment commands.
 - Write access to the repo for whoever asks.
 
 ## Steps
@@ -22,32 +22,42 @@ Writing `/terragucci plan` on a pull request plans the change again. The plan no
 /terragucci plan
 ```
 
-The comment is the command and nothing else: one line. The one optional word after `plan` is a root, written as its path from the repository root.
+One line, nothing else. The optional word after `plan` is a root path from the repository root.
 
 ### 2. Read the note
 
-The generated `replan` job checks the pull request out at its head and runs the plan stage that the pull request's own plan job runs. It uses the same read-only role, writes the same note and sets the same status. It plans the roots the change reaches, and a root you name narrows that set. If the change does not reach the root you name, the job replies on the pull request that the root is not affected and names it, and leaves the plan note and the status as they were. There is no form that plans a root the change does not reach.
+The `replan` job plans the head as the plan job does, with its read-only role. It updates the same note and status. A named root the change does not reach gets a "not affected" reply and nothing is updated.
 
 ## What the command can and cannot do
 
-There are two commands, `plan` and `apply`. `plan` changes nothing. `agent` is a third command where `agent.comment` is set in `terragucci.yml`, and `unlock` a fourth where `apply.when` is `pull-request`. A re-plan changes nothing an approval covers, since an approval binds the digests of the plans it was given for. No comment approves.
+`plan` changes nothing. `apply` runs approved waves. `agent` works where `agent.comment` is set, and `unlock` where `apply.when` is `pull-request`. No comment approves, and a re-plan cannot change what an approval binds.
 
-The text is untrusted. The job never puts it in a script: `terragucci comment` reads it from the event file and accepts one grammar, `/terragucci plan`, `/terragucci plan <root>`, `/terragucci apply`, `/terragucci apply wave-<n>` or `/terragucci unlock`. The root must be exactly one of the roots the pipeline was written with. Anything else is answered with the reason and plans nothing. Refused cases include `/terragucci approve`, `/terragucci unlock` where `apply.when` is `merge` (no pull request holds a lock then), a root with a glob, a path trick or shell syntax in it, and text on a second line.
+The text is untrusted and never reaches a script; `terragucci comment` reads it from the event file. It accepts one line in one of these forms, and refuses anything else with the reason.
+
+| Comment | Runs |
+|---|---|
+| `/terragucci plan` | a re-plan |
+| `/terragucci plan <root>` | a re-plan of that root, which must be exactly a root the pipeline knows |
+| `/terragucci apply` | the approved waves |
+| `/terragucci apply wave-<n>` | the approved waves up to wave n |
+| `/terragucci unlock` | a release of this pull request's locks |
 
 A re-plan also requires that:
 
 - the author has write access to the repo. Anyone else gets no answer and no plan;
 - the pull request is open;
-- its head is in this repo and not in a fork, since a fork's code never meets the plan role;
+- its head is in this repo, not a fork;
 - the comment is new. Editing it does not run it again.
 
-An answer that refuses a command is a reply from the job's token that starts with `terragucci:`.
+A refusal is a reply that starts with `terragucci:`.
 
-A comment that asks for nothing ends the job with no error. If the job cannot tell whether to plan because the forge answered 403 or failed, or because the event file is unreadable, it fails and the log gives the cause.
+A comment that asks for nothing ends the job cleanly. A forge 403 or failure, or an unreadable event file, fails the job with the cause in the log.
 
 ## Apply a merged pull request
 
-`/terragucci apply` on a merged pull request re-runs `tf-apply` for waves you approved with [`chant approve --sign`](/terragucci/concepts/glossary/#chant), as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes. The `apply-comment` job reads the comment with `terragucci comment-apply` before any credential is asked for. Its workflow comes from the default branch, and its checkout is the merge commit, never the head. The job holds the apply lock a push holds, and assumes `oidc.apply_role` once the checks pass. Waves run in order from wave 1: one already applied plans no change, and the first that does not apply ends the run. With `wave-<n>` the run stops after wave n.
+`/terragucci apply` on a merged pull request re-runs `tf-apply` for waves approved with [`chant approve --sign`](/terragucci/concepts/glossary/#chant), as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
+
+The `apply-comment` job runs the default branch's workflow at the merge commit, never the head. `terragucci comment-apply` checks the comment before any credential; then the job holds a push's apply lock and assumes `oidc.apply_role`. Waves run from wave 1 until one does not apply; `wave-<n>` stops after wave n.
 
 Nothing applies, and the reply says why, when:
 
@@ -56,17 +66,17 @@ Nothing applies, and the reply says why, when:
 - its head is in a fork;
 - its base is not the default branch;
 - the default branch no longer has the merge commit;
-- more than 50 commits reached the default branch after the merge commit, since the apply of the newest one applies them;
-- a later commit on the default branch has an apply of its own, which the reply links, since going back would undo that newer tree;
+- more than 50 commits reached the default branch after the merge commit;
+- a later commit on the default branch has an apply of its own (the reply links it);
 - the named wave does not exist.
 
-Waiting, refused and failed waves behave as on a push: a refused wave prints its diff (`respond.wave-refused`) and a failed one its triage (`respond.apply-failed`) before the reply. GitLab has no comment trigger, so retry the job there.
+Waiting, refused and failed waves behave as on a push. A refusal prints its diff (`respond.wave-refused`) and a failure its triage (`respond.apply-failed`). On GitLab, retry the job.
 
-A [Terragrunt](/terragucci/guides/use-terragrunt/) repo gets the same job with the same refusals. Its waves are the waves of units its apply jobs run, and each runs `tf-apply --terragrunt` from the merge commit: the wave's units planned and saved, the gate decided on their set digest, and the saved plans applied.
+A [Terragrunt](/terragucci/guides/use-terragrunt/) repo gets the same job and refusals; each wave runs `tf-apply --terragrunt` on its units from the merge commit.
 
 ## Apply an open pull request
 
-With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies it from its head, before it merges. This is for plain roots on GitHub and Forgejo: in a Terragrunt repo or on GitLab `init` stops with an error when `apply.when` is `pull-request`, and pull requests apply after they merge. The same `apply-comment` job reads it. The commenter, a fork and the base are refused as above, before any credential is asked for. The job also refuses when:
+With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies its head before merge (plain roots on GitHub and Forgejo; `init` refuses it for Terragrunt or GitLab). After the commenter, fork and base checks above, the job also refuses when:
 
 - no reviewer other than the author approved the head;
 - a status or check on the head failed or is still running, or `terragucci/plan` has not passed there;
@@ -74,9 +84,9 @@ With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-mer
 - the change edits the pipeline file;
 - another open pull request holds a lock on a root the change reaches.
 
-When none holds, the job locks the roots the change reaches. It then runs the waves from the head as for a merged pull request. Each wave reads its gate rule and signers from the default branch. With `apply.merge: auto` the `pr-merge` job merges it once every wave applied. With `manual` you merge, and the locks hold until it merges or closes.
+Otherwise it locks the roots the change reaches and runs the waves from the head, with gate rule and signers from the default branch. `apply.merge: auto` merges once every wave applied; with `manual`, locks hold until you merge or close.
 
-`/terragucci unlock` releases the locks of the pull request it is written on, for anyone with write access, so another one can apply those roots. The answer names what it released.
+`/terragucci unlock` releases the pull request's locks so another one can apply those roots. Anyone with write access can use it, and the reply names what it released.
 
 ## Next
 

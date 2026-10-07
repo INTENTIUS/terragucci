@@ -10,9 +10,9 @@ An open change that applies from its head in the same waves and gates as a merge
 
 ## Before you start
 
-- A repo of plain roots on GitHub or Forgejo, set up as [Get your first plan note](/terragucci/getting-started/) shows. A Terragrunt repo, and every repo on GitLab, applies after merge: a GitLab merge request's pipeline comes from the merge request itself, so `init` refuses `apply.when: pull-request` there.
+- Plain roots on GitHub or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/). Terragrunt repos and GitLab apply after merge; `init` refuses `apply.when: pull-request` there.
 - Branch protection on the default branch that requires a review.
-- The trade in [Apply before merge](/terragucci/reference/config/#apply-before-merge), read and accepted: the job that applies a change runs its code with the apply role.
+- The trade in [Apply before merge](/terragucci/reference/config/#apply-before-merge) accepted: the applying job runs the change's code with the apply role.
 
 ## Steps
 
@@ -27,9 +27,9 @@ apply:
   merge_token_env: MERGE_TOKEN
 ```
 
-With `merge: auto`, add a secret of that name to the repo, holding a token of a user who may push to the default branch. Forgejo refuses a merge made with the job's own token, so it needs one. On GitHub the secret is needed for `confirm` (step 5) to run at all. A merge made without it starts no workflow. Only the `pr-merge` job gets the secret, and that job runs none of the change's code.
+With `merge: auto`, add that secret, holding a token of a user who may push to the default branch. Forgejo refuses the job's own token, and on GitHub a merge without it starts no `confirm`. Only `pr-merge`, which runs none of the change's code, gets it.
 
-Run `npx terragucci init` and merge the result through a pull request of its own. The comment job runs the default branch's pipeline, so nothing changes until that merge lands. After it, each new commit on the default branch runs the `confirm` job instead of the apply waves.
+Run `npx terragucci init` and merge the result in its own pull request; nothing changes until it lands. Then each new default-branch commit runs `confirm` instead of the apply waves.
 
 ### 2. Get it reviewed
 
@@ -55,28 +55,28 @@ A wave the `gate` policy holds stops, and the reply gives its [chant](/terragucc
 
 ### 5. Merge
 
-With `merge: auto` the job merges after the last wave and releases the locks. With `manual`, you merge, and the locks hold until then. A run that stopped at a wave never merges.
+With `merge: auto` the job merges after the last wave and releases the locks. With `manual` the locks hold until you merge. A run that stopped at a wave never merges.
 
 The `confirm` job then plans every root. Its `terragucci/apply` status on the default branch passes when nothing plans a change.
 
 ## Which config applies
 
-The apply of an open change reads its settings from the default branch, and the change's own edits to `terragucci.yml` take effect after it merges.
+An open change's apply reads its settings from the default branch. Edits to `terragucci.yml` in the change count once it merges.
 
 | Setting | Read from |
 |---|---|
-| Waves, `binary`, `gate`, `canary`, the apply role | the default branch's pipeline, which `init` wrote from its config |
-| `policy` and the policy directory | the default branch; when it has no `policy` key, a change that adds one is checked against its own |
+| Waves, `binary`, `gate`, `canary`, the apply role | the default branch's pipeline |
+| `policy` and the policy directory | the default branch; if it has no `policy` key, a change adding one is checked against its own |
 | The gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
 | `reports`, `telemetry`, `parallelism` and every other key of `terragucci.yml` | the default branch |
-| `respond` (whether a refused wave or a failed apply gets a response) | the default branch; if its config cannot be read, there is no response |
+| `respond` | the default branch; if unreadable, no response |
 | The roots, modules and code that plan and apply | the change's head |
 
-A change that edits `reports.bucket`, for example, still has its apply report copied to the default branch's bucket. If the default branch's config cannot be read, the wave fails and nothing in it applies.
+An unreadable default-branch config fails the wave before anything applies.
 
 ## Locks
 
-Applying locks each root the change reaches. Another open change that reaches one of them is refused, and the reply names the root and its holder. The lock goes when the holder merges or closes. To release it sooner, comment `/terragucci unlock` on the holder.
+Applying locks each root the change reaches. Another change that reaches one is refused, and the reply names the holder. Locks go when the holder merges or closes, or on `/terragucci unlock` there.
 
 ## Next
 
