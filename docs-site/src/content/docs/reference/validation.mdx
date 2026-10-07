@@ -1,12 +1,12 @@
 ---
 title: Validation
-description: Every pipeline terragucci generates runs on a real forge and runner before it ships.
+description: Every pipeline terragucci generates runs on a Forgejo or GitLab server and runner, or on GitHub's workflow engine under act against a mock API, before it ships.
 ---
 
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
-A pipeline that only parses has not been tested. Before a release, every pipeline terragucci generates runs on a real forge, with a real runner, against an AWS emulator. Each feature has a check that must pass, and each check is also broken on purpose to show it fails when it should.
+A pipeline that only parses has not been tested. Before a release, every pipeline terragucci generates runs against an AWS emulator: on a Forgejo or GitLab server with its runner, and on GitHub through `act` against a mock GitHub API. Each feature has a check that must pass, and each check is also broken on purpose to show it fails when it should.
 
 | Forge | What runs |
 |---|---|

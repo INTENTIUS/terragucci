@@ -184,8 +184,8 @@ export const DASHBOARD_DURATION_KEYS = ["drift_age", "wave_wait", "schedule"] as
  * `agent.comment`: the `/terragucci agent <ask>` pull request comment, off
  * unless set. The comment starts a job that runs a coding agent on the pull
  * request's head branch and pushes what it changes with `agent.token_env`'s
- * token. The job gets no cloud credentials: no `oidc` role and not
- * `agent.role`. `true` takes every default.
+ * token. The job gets no cloud credentials: no `oidc` role. `true` takes every
+ * default.
  */
 export interface AgentCommentSettings {
   /** The agent's command line, run in the checkout with the prompt on stdin. Default: Claude Code in print mode with file tools only (AGENT_COMMAND in agent-comment.ts). */
@@ -258,7 +258,7 @@ export interface ProjectSettings {
    * The agent integration behind `agent.comment`. Its token can comment and
    * push to a pull request's branch; its role, when named, is read-only.
    */
-  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; role?: string; comment?: boolean | AgentCommentSettings };
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings };
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
   decide?: DecideSettings;
   /** The AWS region whose CloudTrail drift attribution reads. Default: the region the aws CLI already uses. */
@@ -427,12 +427,11 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const a = s.agent;
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
-      for (const k of Object.keys(a)) if (!["via", "token_env", "role", "comment"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, role, comment)`);
+      for (const k of Object.keys(a)) if (!["via", "token_env", "comment"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment)`);
       if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
       else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
       if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
-      if (a.role !== undefined && typeof a.role !== "string") problems.push(`${where}.agent.role must name a read-only role`);
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
     }
   }
@@ -661,15 +660,6 @@ function checkOidc(o: unknown, where: string, problems: string[]): void {
   if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client", ["audience"]);
 }
 
-/** The agent never holds the apply role: at most a forge token and read-only cloud credentials. */
-function checkAgent(s: Record<string, unknown>, where: string, problems: string[]): void {
-  const agent = isObject(s.agent) ? s.agent : undefined;
-  const oidc = isObject(s.oidc) ? s.oidc : {};
-  if (agent?.role !== undefined && agent.role === oidc.apply_role) {
-    problems.push(`${where}.agent.role is the apply role; an agent gets read-only credentials at most, so name the plan role or a read-only role of its own`);
-  }
-}
-
 /** Check a parsed config and return it typed, or throw with every problem listed. */
 export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   const problems: string[] = [];
@@ -696,10 +686,6 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
   }
   if (defaults !== undefined) checkSettings(defaults, "defaults", problems);
   if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
-  const d = isObject(defaults) ? defaults : {};
-  if (isObject(projects)) {
-    for (const [key, s] of Object.entries(projects)) checkAgent({ ...d, ...(isObject(s) ? s : {}) }, `projects["${key}"]`, problems);
-  } else checkAgent(rest, "config", problems);
   if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
   // JSON's view: an undefined property is the same as an absent one.
   return JSON.parse(JSON.stringify(raw)) as TerragucciConfig;

@@ -5,8 +5,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 <aside class="tg-validated not-content">
 	<p class="claim">Every pipeline terragucci generates has already run.</p>
 	<p>
-		Each one runs on a real Forgejo, GitLab or GitHub runner against an AWS emulator before it ships,
-		and each property is checked twice. Once it must hold, and once, deliberately broken, it must fail.
+		Each one runs against an AWS emulator before it ships: on a Forgejo or GitLab server with its runner,
+		and on GitHub under act against a mock API. Each property is checked twice. Once it must hold, and once, deliberately broken, it must fail.
 	</p>
 	<a href={`${base}/reference/validation/`}>How validation works</a>
 </aside>

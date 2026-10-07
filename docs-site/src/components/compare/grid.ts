@@ -62,7 +62,6 @@ const spacelift = {
 	approval: { title: 'Approval policy', url: 'https://docs.spacelift.io/concepts/policy/approval-policy' },
 	dependencies: { title: 'Stack dependencies', url: 'https://docs.spacelift.io/concepts/stack/stack-dependencies' },
 	run: { title: 'Runs', url: 'https://docs.spacelift.io/concepts/run' },
-	locking: { title: 'Stack locking (self-hosted docs)', url: 'https://docs.spacelift.io/self-hosted/v2.6.1/concepts/stack/stack-locking' },
 	terragrunt: { title: 'Terragrunt limitations', url: 'https://docs.spacelift.io/vendors/terragrunt/limitations' },
 	drift: { title: 'Drift detection', url: 'https://docs.spacelift.io/concepts/stack/drift-detection' },
 	workers: { title: 'Worker pools', url: 'https://docs.spacelift.io/concepts/worker-pools' },
@@ -211,7 +210,7 @@ export const rows: Row[] = [
 		cells: {
 			atlantis: { mark: 'good', text: 'A plan locks the directory and workspace to the pull request until it merges or closes; atlantis unlock releases it', source: atlantis.locking },
 			hcp: { mark: 'good', text: 'A workspace runs one run at a time, and admins can lock, unlock and force unlock it', source: hcp.settings },
-			spacelift: { mark: 'warn', text: 'A stack can be locked to a person, not a pull request; only its creator or an admin releases it', source: spacelift.locking },
+			spacelift: { mark: 'warn', text: 'A stack writer can lock a stack, and only the lock\'s owner can trigger runs while it holds; only its creator and admins release it. The docs tie no lock to a pull request', source: spacelift.creating },
 			digger: { mark: 'good', text: 'Pull request locks hold a project for one pull request; a digger unlock comment releases them', source: digger.commentops },
 		},
 	},

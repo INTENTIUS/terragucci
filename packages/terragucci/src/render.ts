@@ -29,8 +29,7 @@
  *        Read-only role. On GitLab the schedule itself is set in the
  *        project's CI/CD schedules; the job runs for scheduled pipelines.
  *
- * The stages terragucci is building take these jobs' place as they ship;
- * the file stays where it is.
+ * Each stage is one job here; the file holds all of them.
  */
 // Each lexicon's serializer and generated entities, never its entry point: the
 // entry points carry lint rules, codegen and the TypeScript compiler, which the

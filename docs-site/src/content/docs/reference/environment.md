@@ -98,7 +98,7 @@ In a Terragrunt repo, roles can follow unit paths. See [The generated pipeline](
 
 ## Agent integrations
 
-`agent.token_env` names the variable that holds the agent's forge token. The token can comment and open pull requests, and the role is read-only. Naming the apply role there is an error. See [Responses to pipeline events](/terragucci/reference/responses/#where-it-runs).
+`agent.token_env` names the variable that holds the agent's forge token. The token can comment and open pull requests. The agent's jobs hold no cloud role. See [Responses to pipeline events](/terragucci/reference/responses/#where-it-runs).
 
 ## Traces and metrics
 
