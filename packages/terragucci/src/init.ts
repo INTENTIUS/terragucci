@@ -117,7 +117,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       throw new ConfigError(`found no Terragrunt units (${detectedTg.reason} turned Terragrunt mode on): no directory outside catalog/ holds a terragrunt.hcl`);
     }
     if (detectedTg.stacks.length > 0) {
-      notes.push(`explicit stacks are not run yet, so ${detectedTg.stacks.join(", ")} is left out`);
+      notes.push(`explicit stacks (terragrunt.stack.hcl) are not supported, so ${detectedTg.stacks.join(", ")} is left out`);
     }
     rootReasons = found.units.map((u) => ({ root: u.path, reason: found.source === "terragrunt find" ? "terragrunt find" : "terragrunt.hcl" }));
     try {
@@ -260,7 +260,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (settings.waves?.canary?.length && terragrunt) {
     notes.push("waves.canary is set; the canary units apply first, then the rest; Terragrunt waves apply one after another with no approval between them");
   }
-  if (settings.runtime === "fountain") notes.push("runtime fountain is not built yet; the pipeline runs on the forge");
 
   if (!options.dryRun) {
     for (const f of files) {

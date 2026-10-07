@@ -5,7 +5,7 @@ import { main } from "../src/cli";
 import { ConfigError, validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { buildReport, planFiles } from "../src/report/build";
-import { AGENT_NEVER, respond } from "../src/respond";
+import { respond } from "../src/respond";
 import { codify, driftOf, hcl, importBlocks, literal, parseImport } from "../src/respond/drift";
 import { moduleNotes, releaseNotes } from "../src/respond/notes";
 import { describeRefused, refusedDiff } from "../src/respond/refused";
@@ -24,27 +24,35 @@ const problems = (raw: unknown): string[] => {
 
 describe("respond: the config", () => {
   it("takes a response per event, and the deterministic one needs nothing else", () => {
-    expect(problems({ respond: { drift: "pull-request", "apply-failed": "triage", plan: "summary", question: "off" } })).toEqual([]);
+    expect(problems({ respond: { drift: "pull-request", "apply-failed": "triage", plan: "summary" } })).toEqual([]);
   });
 
   it("names a key that is not an event and a response the event does not take", () => {
     expect(problems({ respond: { deploy: "summary", drift: "fix-it" } })).toEqual([
-      "config.respond.deploy is not an event (events: plan, wave-refused, apply-failed, drift, tips, fmt, publish, rollout, question, version-bump, description)",
-      'config.respond.drift is "fix-it"; use one of pull-request, attribute, agent, off',
+      "config.respond.deploy is not an event (events: plan, wave-refused, apply-failed, drift, tips, fmt, publish, rollout, version-bump, description)",
+      'config.respond.drift is "fix-it"; use one of pull-request, attribute, off',
     ]);
   });
 
-  it("refuses agent with no agent integration, and says what is missing", () => {
-    expect(problems({ respond: { "apply-failed": "agent" } })).toEqual([
-      "config.respond.apply-failed is agent, but no agent integration is configured; add agent with via (forge or fountain) and token_env (the variable holding the agent's forge token)",
+  it("refuses an agent response and the question event, with or without an agent block", () => {
+    expect(problems({ respond: { "apply-failed": "agent", question: "off" }, agent: { via: "forge", token_env: "AGENT_TOKEN" } })).toEqual([
+      "config.respond.apply-failed: agent is not supported; remove it, and apply-failed takes its default response, triage",
+      "config.respond.question is not supported; remove it",
     ]);
-    expect(problems({ respond: { "apply-failed": "agent" }, agent: { via: "forge", token_env: "AGENT_TOKEN" } })).toEqual([]);
+  });
+
+  it("refuses runtime fountain and agent.via fountain, and takes forge for both", () => {
+    expect(problems({ runtime: "fountain", agent: { via: "fountain", token_env: "AGENT_TOKEN" } })).toEqual([
+      "config.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime",
+      "config.agent.via: fountain is not supported; the agent runs in a forge job, so use forge",
+    ]);
+    expect(problems({ runtime: "forge", agent: { via: "forge", token_env: "AGENT_TOKEN" } })).toEqual([]);
   });
 
   it("checks the integration itself", () => {
     expect(problems({ agent: { token_env: "" , runs: "x" } })).toEqual([
       "config.agent.runs is not a setting (settings: via, token_env, role, comment)",
-      "config.agent.via is missing; use forge or fountain",
+      "config.agent.via is missing; use forge",
       "config.agent.token_env must name the variable holding the agent's forge token",
     ]);
   });
@@ -53,15 +61,15 @@ describe("respond: the config", () => {
     expect(
       problems({
         oidc: { plan_role: "arn:aws:iam::1:role/plan", apply_role: "arn:aws:iam::1:role/apply" },
-        agent: { via: "fountain", token_env: "AGENT_TOKEN", role: "arn:aws:iam::1:role/apply" },
+        agent: { via: "forge", token_env: "AGENT_TOKEN", role: "arn:aws:iam::1:role/apply" },
       }),
     ).toEqual(["config.agent.role is the apply role; an agent gets read-only credentials at most, so name the plan role or a read-only role of its own"]);
   });
 
-  it("in a control repo, an agent in defaults serves every project", () => {
-    const base = { defaults: { agent: { via: "forge", token_env: "AGENT_TOKEN" } }, projects: { "github.com/acme/a": { respond: { drift: "agent" } } } };
+  it("in a control repo, an agent response in a project is refused by the project's name", () => {
+    const base = { defaults: { agent: { via: "forge", token_env: "AGENT_TOKEN" } }, projects: { "github.com/acme/a": { respond: { drift: "pull-request" } } } };
     expect(problems(base)).toEqual([]);
-    expect(problems({ projects: { "github.com/acme/a": { respond: { drift: "agent" } } } })[0]).toMatch(/^projects\["github.com\/acme\/a"\]\.respond\.drift is agent, but no agent integration/);
+    expect(problems({ projects: { "github.com/acme/a": { respond: { drift: "agent" } } } })[0]).toMatch(/^projects\["github.com\/acme\/a"\]\.respond\.drift: agent is not supported/);
   });
 });
 
@@ -303,23 +311,11 @@ describe("respond: running a response", () => {
     await expect(respond("deploy", tmp(), {})).rejects.toThrow(/the events are plan, wave-refused/);
   });
 
-  it("triages an apply log by default, and with agent writes the agent's input with what it never does", async () => {
+  it("triages an apply log by default", async () => {
     const log = "Error: creating IAM Role (app): operation error IAM: CreateRole, https response error StatusCode: 409, RequestID: r, EntityAlreadyExists: Role with name app already exists.\n\n  with aws_iam_role.app,\n";
     const plain = await respond("apply-failed", tmp(), { log });
     expect(plain.text).toMatch(/^- `aws_iam_role.app`: already-exists \(EntityAlreadyExists\)\. /);
-    expect(plain.agent_input).toBeUndefined();
-
-    const dir = write(tmp(), { "terragucci.yml": "respond:\n  apply-failed: agent\nagent:\n  via: forge\n  token_env: AGENT_TOKEN\n" });
-    const r = await respond("apply-failed", dir, { log });
-    expect(r.response).toBe("agent");
-    const input = JSON.parse(readFileSync(r.agent_input!, "utf-8"));
-    expect(input).toMatchObject({ schema: "terragucci.respond/v1", event: "apply-failed", agent: { via: "forge", token_env: "AGENT_TOKEN", never: AGENT_NEVER } });
-    expect(input.deterministic.data.known[0].class).toBe("already-exists");
-    expect(input.agent.never).toEqual(expect.arrayContaining(["approve", "apply", "resolve or re-approve a gate", "merge"]));
-  });
-
-  it("answers a question only through an agent", async () => {
-    expect((await respond("question", tmp(), { question: "why?" })).skipped).toBe("respond.question is off");
+    expect(plain.response).toBe("triage");
   });
 
   it("drift: a dry run lists the pull request, and apply opens it with the live value written", async () => {

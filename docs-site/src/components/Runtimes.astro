@@ -1,15 +1,9 @@
 ---
-// Where the stages run: three forges, or a fountain steward for durable runs.
+// Where the stages run: the three forges.
 const forges = [
 	{ name: 'GitHub', how: 'GitHub Actions, with environments as a second reviewer.' },
 	{ name: 'GitLab', how: 'GitLab CI, with the summary as the merge-request note.' },
 	{ name: 'Forgejo', how: 'Forgejo Actions, on your own instance.' },
-];
-const durable = [
-	'Each stage converges on the declared state, so a run that dies partway is simply run again.',
-	'An approval is a record in your repository, so nothing stays running while someone decides.',
-	'One steward owns each environment, which keeps two applies to it from overlapping.',
-	'Cloud credentials live in a fountain vault and never reach CI.',
 ];
 ---
 <div class="tg-runtimes not-content">
@@ -21,19 +15,6 @@ const durable = [
 			</li>
 		))}
 	</ul>
-	<section class="steward" aria-labelledby="tg-steward">
-		<h3 id="tg-steward">Durable runs on fountain</h3>
-		<p>
-			Turn it on for a project and its apply and drift run on a <a href="https://github.com/managoat/fountain">fountain</a> steward.
-			There is no workflow cluster to run, no workers, and no history service.
-		</p>
-		<ul>
-			{durable.map((d) => <li>{d}</li>)}
-		</ul>
-		<p class="small">
-			<a href="https://intentius.io/fountain-ops/">fountain-ops</a> deploys your own fountain with chant.
-		</p>
-	</section>
 </div>
 
 <style>
@@ -66,37 +47,5 @@ const durable = [
 		margin: 0.3rem 0 0;
 		color: var(--sl-color-gray-2);
 		font-size: 0.95rem;
-	}
-	.steward {
-		border-left: 2px solid var(--tg-accent);
-		padding-left: 1.25rem;
-		display: grid;
-		gap: 0.75rem;
-	}
-	.steward h3 {
-		margin: 0;
-		font-family: var(--tg-display);
-		font-size: 1.4rem;
-		color: var(--sl-color-white);
-	}
-	.steward p {
-		margin: 0;
-		color: var(--sl-color-gray-2);
-	}
-	.steward ul {
-		margin: 0;
-		padding-left: 1.1rem;
-		display: grid;
-		gap: 0.35rem;
-		color: var(--sl-color-gray-2);
-	}
-	.steward li {
-		margin: 0;
-	}
-	.small {
-		font-size: 0.9rem;
-	}
-	a {
-		color: var(--sl-color-accent-high);
 	}
 </style>

@@ -1,28 +1,18 @@
 ---
 title: Where it runs
-description: Forge CI, a fountain steward, or your own machine, with the same stages.
+description: Every stage runs on your forge's CI, and an approval is a record in your repository.
 ---
 
-The stage declarations do not change between runtimes. A schedule declared on a stage becomes a workflow trigger on a forge, a cron on a steward, or a timer in `chant operator`. Approvals live on the `chant/lifecycle` branch, so an approval recorded in one runtime counts in the others.
+Every stage runs as a job on your forge's CI: GitHub Actions, GitLab CI or Forgejo Actions. A schedule declared on a stage becomes a workflow trigger. `runtime` in [your config file](/terragucci/reference/config/) takes one value, `forge`, which is also the default.
 
-| Runtime | Good for | Credentials |
+| Forge | What runs the jobs | Credentials |
 |---|---|---|
-| Forge CI (GitHub, GitLab, Forgejo) | pull-request stages, and teams with no other runner | per-job OIDC roles or secrets |
-| fountain steward | apply and drift, where one machine should own an environment | a fountain vault, so none reach your CI |
-| `chant operator` | a laptop or a server you run | your shell |
+| GitHub | GitHub Actions, with environments as a second reviewer | per-job OIDC roles or secrets |
+| GitLab | GitLab CI, with the summary as the merge-request note | per-job OIDC roles or CI variables |
+| Forgejo | Forgejo Actions, on your own instance | per-job OIDC roles or secrets |
 
-## Forge CI and a steward together
+## Approvals outside CI
 
-Forge CI is the default, and it runs every stage, gated waves included. A steward is opt-in: set `runtime: fountain` on a project in [your config file](/terragucci/reference/config/).
+Approvals live on the `chant/lifecycle` branch, so an approval recorded with `chant approve` on your laptop counts in the next CI run. Each stage converges on the declared state, so a run that stops partway is simply run again.
 
-Pull-request stages run on the forge, where the pull request lives. The apply stage runs on the steward, started by a small forge job:
-
-```bash
-chant run tf-apply --on fountain
-```
-
-A steward keeps its checkout and provider cache between runs. It runs one stage at a time, so two applies on one environment cannot overlap.
-
-## Running your own fountain
-
-[fountain-ops](https://intentius.io/fountain-ops/) deploys fountain with chant. Its `just up` stands one up on a laptop, and terragucci's steward validation runs against it.
+Each stage also runs from your shell as `terragucci stage <name>`, with your own credentials; [Stages](/terragucci/reference/stages/) lists them.

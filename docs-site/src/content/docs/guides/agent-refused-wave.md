@@ -59,7 +59,26 @@ explain-refusal:
           terragucci or any apply command.
 ```
 
-The paths depend on how your pipeline stores the approved report. Adjust them to match. On GitLab, the job takes the same shape as the one in [Have an agent explain a plan](/terragucci/guides/agent-explain-a-plan/), with `refusal.json` in place of the plan file.
+The paths depend on how your pipeline stores the approved report. Adjust them to match. On GitLab, add a job after the apply job that runs the same command and then starts the agent:
+
+```yaml
+explain-refusal:
+  stage: apply
+  needs: [apply]
+  when: on_failure
+  script:
+    - >
+      npx -y @intentius/terragucci respond wave-refused
+      --approved reports/approved/report.json --current reports/current --wave 2
+      --json > refusal.json
+    - >
+      npx -y @anthropic-ai/claude-code -p
+      "Read refusal.json. Summarize which roots changed since the approval and why
+      the plan moved, in five lines or fewer, as one note on the merge request.
+      Do not run chant approve, terragucci or any apply command."
+```
+
+Give the job `ANTHROPIC_API_KEY` and `AGENT_FORGE_TOKEN` as masked variables. The token is limited to merge-request notes.
 
 ### 3. Read the summary, then decide
 

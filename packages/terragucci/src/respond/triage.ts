@@ -1,8 +1,7 @@
 /**
  * Apply-failed triage: each error in an apply's log is matched against a
  * table of known provider errors, and a known one comes back with its likely
- * fix. An error the table does not know is listed as such, for a person or,
- * when a project opts in, an agent.
+ * fix. An error the table does not know is listed as such, for a person.
  */
 
 export type ErrorClass = "access-denied" | "quota" | "throttling" | "already-exists" | "dependency" | "state-lock";
@@ -119,14 +118,14 @@ export function triage(log: string): Triage {
   return out;
 }
 
-export function describeTriage(t: Triage, agent = false): string {
+export function describeTriage(t: Triage): string {
   if (t.known.length + t.unknown.length === 0) return "No errors found in the log.";
   const lines: string[] = [];
   for (const k of t.known) {
     lines.push(`- ${k.address ? `\`${k.address}\`: ` : ""}${k.class}${k.code ? ` (${k.code})` : ""}. ${k.fix}${k.action ? ` The call needed \`${k.action}\`.` : ""}`);
   }
   for (const u of t.unknown) {
-    lines.push(`- ${u.address ? `\`${u.address}\`: ` : ""}not a known error: ${u.summary}${agent ? " An agent reads this one." : ""}`);
+    lines.push(`- ${u.address ? `\`${u.address}\`: ` : ""}not a known error: ${u.summary}`);
   }
   return lines.join("\n");
 }
