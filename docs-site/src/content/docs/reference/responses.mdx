@@ -62,27 +62,9 @@ terragucci respond version-bump --module modules/network --mode apply
 
 `--json` prints one envelope, as every other command does.
 
-### Version bump
+## Refused waves and failed applies
 
-Conventional commits decide a module's bump, and a `version` file in the module overrides it. `version-bump: suggest` adds one case: when none of the commits since the module's last release carries a conventional type, the typed-decision service reads the commit messages and a summary of the module's diff, and picks major, minor or patch. This needs [`decide`](/terragucci/reference/config/) in `terragucci.yml`. A project with only conventional commits never calls the service.
-
-A module is released from its git tags (`<module>/v1.2.0`). A project that publishes to a registry alone has none, and gives `--since <ref>` instead: changes are counted from that ref, and the module's `version` file at the ref is the last release (0.0.0 when there was none). A module that has tags uses them.
-
-With `respond.version-bump: suggest` the pipeline gets a `version-bump` job. It runs `terragucci respond version-bump --mode apply` from the default branch once every apply wave has finished, with the full history and the tags, and receives the secret named by `decide.token_env` on GitHub and Forgejo. It needs permission to push a branch and open a pull request, and a response that fails never fails the job.
-
-The suggestion goes into a release pull request that writes the module's `version` file. The pull request body shows the bump with the probability the service gave it. Merging it confirms the version, and the next `tf-publish` run publishes it. Nothing publishes before that. When the probability is below the threshold, or the service is off or unreachable, the pull request proposes a patch and says why. The last release is read from the module's git tags.
-
-### Drift attribution
-
-With `respond.drift: attribute`, each drifted attribute is attributed before the pull request is written. The first of three steps that answers ends the question for that attribute.
-
-1. A table of writes that a controller or a service makes by design. It holds an ECS service's task count, an autoscaling group's desired capacity, a node group's desired size and a provisioned DynamoDB table's capacity. It also holds RDS minor engine upgrades and tags in a service's own namespace, such as `aws:` and `karpenter.sh/`.
-2. The cloud audit log. For `aws_` resources terragucci reads CloudTrail's LookupEvents with the `aws` CLI and the job's own credentials, over the last 14 days. The newest write that Terraform did not make decides. An AWS service principal is a controller. An IAM user, the root user or an Identity Center session is a person. A role session with a machine name answers nothing. Only CloudTrail is read, and only through the `aws` CLI (version 2). The CI images do not carry it, since it would add about 250 MB to every job's image; when `respond.drift` is `attribute`, the generated drift job installs AWS CLI v2 before `tf-drift` runs, unless the job already has `aws` on its path. The step downloads the pinned release's zip for the runner's architecture and unpacks it only when its SHA-256 matches the pinned value. A pipeline you write yourself installs it the same way. Without the CLI the step reports "audit log unavailable: the aws CLI is not installed" and goes on. No other cloud's CLI is read, so a resource of another provider (`google_`, `azurerm_`) skips this step with "no audit log reader" and goes on to the third. A log that cannot be read is reported as "audit log unavailable" and the run goes on. The role the job assumes needs `cloudtrail:LookupEvents`. The region comes from `audit_region` in `terragucci.yml`, and from the `aws` CLI's own settings when that is not set.
-3. A typed decision, when `decide` is set and the first two steps are silent for that attribute. It picks controller write, human edit or provider default change. An answer below the `choice` threshold leaves the attribute unattributed. The model reads numbers and booleans as they are and every other value by its shape. A value the plan marks sensitive is never shown.
-
-The scheduled drift run attributes as well. With `respond.drift: attribute`, `terragucci stage tf-drift` runs the same three steps on every drifted root of a plain-root repo and lists who changed each attribute under the root in the drift issue, whether or not a pull request follows. A Terragrunt repo's drift run does not attribute. On GitHub and Forgejo the drift job receives the secret named by `decide.token_env`, so the third step can ask the service.
-
-The answer picks the response. A controller write is reported with a suggested `lifecycle { ignore_changes = [...] }` and left out of the pull request. A provider default change is reported with a suggestion to pin the provider version or set the value, and also left out. A human edit stays in the codify pull request with the actor named when the audit log gave one, so the owner can accept or revert it. An unattributed attribute gets the default response. Nothing here applies or merges anything, and nothing changes state.
+Both events stop a run, and the response says what moved or what to do next.
 
 ### Wave refused
 
@@ -103,9 +85,9 @@ The triage table knows these classes of provider error:
 | dependency | `DependencyViolation`, `DeleteConflict`, `BucketNotEmpty` | remove what depends on it first |
 | state lock | `Error acquiring the state lock` | wait; a person runs `force-unlock` if no run holds it |
 
-Each error is read from the log with the resource it is about. The table holds AWS provider errors, plus Terraform's state lock message. An error from another provider, such as GCP or Azure, is listed as not a known error, with its summary and the resource it is about, and a person reads it.
+Each error is read from the log with the resource it is about. The table holds AWS provider errors, plus Terraform's state lock message. An error from another provider, such as GCP or Azure, is listed as not a known error, with its summary and its resource, for a person to read.
 
-### Drift
+## Drift
 
 A refresh-only plan of each root finds what changed. Where the changed attribute is a literal in the root's own resource block, the pull request writes the live value there. Merging it accepts the change made outside Terraform, so read it first.
 
@@ -124,6 +106,24 @@ For a resource the state does not hold, pass `--import <address>=<id>`. terraguc
 <Shot step="responses" view="drift" alt="The Codify drift pull request in Forgejo, from the terragucci/drift branch: its body lists the queue timeout written from its live value and the queue to import" optional />
 
 <Shot step="responses" view="drift-files" alt="The drift pull request's files: main.tf takes visibility_timeout_seconds = 45, terragucci_imports.tf adds an import block for the other queue, and terragucci_generated.tf holds that queue's generated config" optional />
+
+### Drift attribution
+
+With `respond.drift: attribute`, each drifted attribute is attributed before the pull request is written. The first of three steps that answers ends the question for that attribute.
+
+1. A table of writes that a controller or a service makes by design. It holds an ECS service's task count, an autoscaling group's desired capacity, a node group's desired size and a provisioned DynamoDB table's capacity. It also holds RDS minor engine upgrades and tags in a service's own namespace, such as `aws:` and `karpenter.sh/`.
+2. The cloud audit log. For `aws_` resources terragucci reads CloudTrail's LookupEvents with the `aws` CLI and the job's own credentials, over the last 14 days. The newest write that Terraform did not make decides. An AWS service principal is a controller. An IAM user, the root user or an Identity Center session is a person. A role session with a machine name answers nothing.
+3. A typed decision, when `decide` is set and the first two steps are silent for that attribute. It picks controller write, human edit or provider default change. An answer below the `choice` threshold leaves the attribute unattributed. The model reads numbers and booleans as they are and every other value by its shape. A value the plan marks sensitive is never shown.
+
+### Reading the audit log
+
+The audit log step reads CloudTrail only, and only through the `aws` CLI (version 2). The CI images do not carry it, since it would add about 250 MB to every job's image; when `respond.drift` is `attribute`, the generated drift job installs AWS CLI v2 before `tf-drift` runs, unless the job already has `aws` on its path. The step downloads the pinned release's zip for the runner's architecture and unpacks it only when its SHA-256 matches the pinned value. A pipeline you write yourself installs it the same way. Without the CLI the step reports "audit log unavailable: the aws CLI is not installed" and goes on. No other cloud's CLI is read, so a resource of another provider (`google_`, `azurerm_`) skips this step with "no audit log reader" and goes on to the third. A log that cannot be read is reported as "audit log unavailable" and the run goes on. The role the job assumes needs `cloudtrail:LookupEvents`. The region comes from `audit_region` in `terragucci.yml`, and from the `aws` CLI's own settings when that is not set.
+
+The scheduled drift run attributes as well. With `respond.drift: attribute`, `terragucci stage tf-drift` runs the same three steps on every drifted root of a plain-root repo and lists who changed each attribute under the root in the drift issue, whether or not a pull request follows. A Terragrunt repo's drift run does not attribute. On GitHub and Forgejo the drift job receives the secret named by `decide.token_env`, so the third step can ask the service.
+
+The answer picks the response. A controller write is reported with a suggested `lifecycle { ignore_changes = [...] }` and left out of the pull request. A provider default change is reported with a suggestion to pin the provider version or set the value, and also left out. A human edit stays in the codify pull request with the actor named when the audit log gave one, so the owner can accept or revert it. An unattributed attribute gets the default response. Nothing here applies or merges anything, and nothing changes state.
+
+## Pull request and release events
 
 ### Description check
 
@@ -152,6 +152,16 @@ Each tip is its own pull request.
 <Shot step="responses" view="fmt" alt="The style: tofu fmt commit on a pull request's branch in Forgejo, realigning the locals in app/locals.tf" optional />
 
 Release notes cover the commits that touched a module between its last two tags. Breaking changes are listed first.
+
+### Version bump
+
+Conventional commits decide a module's bump, and a `version` file in the module overrides it. `version-bump: suggest` adds one case: when none of the commits since the module's last release carries a conventional type, the typed-decision service reads the commit messages and a summary of the module's diff, and picks major, minor or patch. This needs [`decide`](/terragucci/reference/config/) in `terragucci.yml`. A project with only conventional commits never calls the service.
+
+A module is released from its git tags (`<module>/v1.2.0`). A project that publishes to a registry alone has none, and gives `--since <ref>` instead: changes are counted from that ref, and the module's `version` file at the ref is the last release (0.0.0 when there was none). A module that has tags uses them.
+
+With `respond.version-bump: suggest` the pipeline gets a `version-bump` job. It runs `terragucci respond version-bump --mode apply` from the default branch once every apply wave has finished, with the full history and the tags, and receives the secret named by `decide.token_env` on GitHub and Forgejo. It needs permission to push a branch and open a pull request, and a response that fails never fails the job.
+
+The suggestion goes into a release pull request that writes the module's `version` file. The pull request body shows the bump with the probability the service gave it. Merging it confirms the version, and the next `tf-publish` run publishes it. Nothing publishes before that. When the probability is below the threshold, or the service is off or unreachable, the pull request proposes a patch and says why. The last release is read from the module's git tags.
 
 ## Where it runs
 
