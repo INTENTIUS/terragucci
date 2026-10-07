@@ -33,7 +33,9 @@ found Terragrunt (root.hcl): 15 units in 2 waves from terragrunt find, terragrun
 calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
 ```
 
-The dev units are the canary wave. On the main branch the pipeline applies them with one `terragrunt run --all`, then the other ten with a second one. Terragrunt orders the units inside each run, so a platform always applies before the services that read it.
+The dev units are the canary wave. On the main branch the pipeline has one apply job per wave: `apply-wave-1` for the five dev units and `apply-wave-2` for the other ten. Each job plans its units with one `terragrunt run --all` and saves the plans. Once the gate lets it, a second `run --all` applies the saved plans. The gate is the one plain roots have. With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the two gates.
+
+A platform always applies before the services that read it. When a platform's plan changes its outputs, its services sit out the first pass. They plan again once the platform has applied.
 
 ## The check stage
 
@@ -55,13 +57,13 @@ The plan covers the 12 service units and none of the platforms. Each unit in the
 
 ## A new unit and its upstream, in one change
 
-The `new-service` scenario adds two units to dev: `ledger`, which makes a bucket, and `billing`, which registers itself in that bucket through a `dependency` block. Ledger has never applied, so it has no outputs. Planned now, billing would plan on its `mock_outputs`, and an approval would cover a placeholder.
+The `new-service` scenario adds two units to dev: `ledger`, which makes a bucket, and `billing`, which registers itself in that bucket through a `dependency` block. Ledger has never applied, so it has no outputs. If billing planned now, it would plan on its `mock_outputs`. An approval would then cover a made-up value.
 
 ```bash
 just example-terragrunt change new-service
 ```
 
-The plan job plans ledger. Billing is listed under the units planned later, with the read that held it back: its `ledger` dependency has no outputs yet. Merged, the apply job runs ledger before billing in the same `run --all`, so billing's state holds the real bucket.
+The plan job plans ledger. Billing is listed under the units planned later, with the read that held it back: its `ledger` dependency has no outputs yet. Merged, wave 1 applies ledger first. Billing plans in a second pass, once ledger has outputs, so its state holds the real bucket.
 
 Billing's dependency block has no allow-list, so its mocks could also stand in for `apply`. The report's tips name it as `TF041`, and `live/prod/email` in the example carries the same tip on purpose.
 

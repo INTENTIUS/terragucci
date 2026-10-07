@@ -114,6 +114,6 @@ In a Terragrunt repo the same three jobs run Terragrunt:
 |---|---|
 | check | `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs`, then the policy tests when `policy` is set |
 | plan | `terragucci stage tf-plan`, one `terragrunt run --all` per wave |
-| apply | one `terragrunt run --all` per wave, filtered to exactly that wave's units |
+| apply | `terragucci stage tf-apply --terragrunt`, one job per wave: the wave's units planned with one `terragrunt run --all`, each plan saved, the gate decided on their set digest, and the saved plans applied with a second `run --all` over exactly those units |
 
 The jobs run Terragrunt without prompts, with `binary` as the tool it calls and its provider cache on. Sources and providers are kept in `.terragrunt-cache/` at the repo root and cached between runs. GitLab-managed state limits concurrent inits, so a repo using it runs 3 units at once. Other backends run 16.
