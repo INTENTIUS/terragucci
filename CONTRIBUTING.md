@@ -108,7 +108,7 @@ The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/rend
 
 `docs-site/` is Astro and Starlight, published at intentius.io/terragucci. `just site` builds it the way the pages workflow does. Its prose is scored with the [sentences](https://www.npmjs.com/package/sentences) linter by `just lint-docs`.
 
-The site is for people using terragucci. It describes the finished product, links no issue tracker, and leaves what is built today to the Status page.
+The site is for people using terragucci. It describes what works today and is true as written, links no issue tracker, and never says a feature is being built or planned.
 
 ## The example, the checks and the tutorial
 
