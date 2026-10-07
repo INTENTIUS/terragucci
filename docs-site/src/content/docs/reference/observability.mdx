@@ -65,6 +65,10 @@ The binary's exporter goes to a loopback receiver that forwards batches to your 
 
 ### What the report lists
 
+:::tip[Provider calls and summed timings come from choudoufu]
+With `binary: choudoufu` the report names each slow provider call and its resource. On a huge estate it sums timings once a walk passes its span budget, so the report stays readable.
+:::
+
 Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where the run spent its time, endpoint or not:
 
 - the slowest roots, with each root's wall time, its plan's and, in a wave, its apply's;

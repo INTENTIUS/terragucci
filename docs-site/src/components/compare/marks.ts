@@ -81,7 +81,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	telemetry: {
 		mark: 'good',
-		text: 'One trace per stage run and the pipeline\'s metrics over OTLP to your collector, with Grafana dashboards; with choudoufu, each wave\'s state lock waits and their attempts',
+		text: 'One trace per stage run and the pipeline\'s metrics over OTLP to your collector, with Grafana dashboards; with choudoufu, the slow provider calls per resource, summed timings that keep reports readable on large estates, and each wave\'s state lock waits and their attempts',
 		page: 'reference/observability/',
 	},
 	modules: {

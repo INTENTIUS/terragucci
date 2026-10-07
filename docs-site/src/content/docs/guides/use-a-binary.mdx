@@ -20,7 +20,7 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 |---|---|---|---|---|
 | State | your backend | your backend | each unit's backend | no state file: a tag on each resource |
 | What `tf-check` runs | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) |
-| What the report times | nothing (no traces) | each resource | each unit, from Terragrunt's run report | each resource; [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend |
+| What the report times | nothing (no traces) | each resource | each unit, from Terragrunt's run report | each resource; [slow provider calls](/terragucci/reference/observability/#what-the-report-lists), [summed timings](/terragucci/reference/observability/#what-the-report-lists) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend |
 | CI image | `terragucci-terraform`, Terraform 1.14.0 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 | `terragucci-choudoufu`, choudoufu 0.22.0 |
 | Version pin | `version`, or an exact `required_version` | `version`, or an exact `required_version` | `terragrunt.version`, or an exact `terragrunt_version_constraint` | `version` only |
 
@@ -64,13 +64,15 @@ A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. U
 binary: choudoufu
 ```
 
-[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Three things come with it:
+[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Five things come with it:
 
 | You get | Where you see it |
 |---|---|
 | A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
 | No state file to host or lose: the apply writes a tag on each resource and the next plan reads it back | your cloud's own tags |
 | How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
+| Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
+| Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
 
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
