@@ -26,7 +26,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	override: {
 		mark: 'bad',
-		text: 'A denial has no override; the code or the policy changes in a reviewed pull request',
+		text: 'No bypass, by design: a denial changes only through a reviewed pull request to the code or the policy',
 		page: 'reference/policy/',
 	},
 	'apply-when': {
@@ -50,8 +50,8 @@ export const terragucci: Record<RowId, OwnCell> = {
 		page: 'concepts/waves-and-approvals/',
 	},
 	locks: {
-		mark: 'warn',
-		text: 'A pull request applied before merge locks its roots until it merges or closes; /terragucci unlock releases them; one push applies at a time. Plain roots on GitHub and Forgejo only',
+		mark: 'good',
+		text: 'A project applies one push at a time; a pull request applied before merge holds its roots until it merges or closes, and /terragucci unlock releases them (plain roots, GitHub and Forgejo)',
 		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {
