@@ -26,7 +26,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { CONFIG_NAMES, loadConfig, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings } from "../config";
+import { CONFIG_NAMES, loadConfig, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
 import { redactPlan } from "./redact";
 import { REDACTED, type ReportPolicy, type ReportRootPolicy } from "./schema";
 
@@ -549,8 +549,8 @@ export interface TrustedOptions {
 type BaseConfig =
   /** The base has no config file (or no ref by that name, `missing`): nothing was in force there that terragucci can read. */
   | { kind: "none"; missing?: string }
-  /** The config at the base, read: its `policy:` key, if any. */
-  | { kind: "read"; policy?: PolicySettings }
+  /** The config at the base, read: its `policy:` key, if any, and the whole config. */
+  | { kind: "read"; policy?: PolicySettings; config: TerragucciConfig }
   /** The config is there and cannot be read. `mentions` is whether its text names `policy` at all. */
   | { kind: "error"; error: string; mentions: boolean };
 
@@ -590,12 +590,27 @@ async function readBaseConfig(repo: string, base: string, options: TrustedOption
       writeFileSync(file, shown.stdout);
     }
     const config = await loadConfig(file);
-    return { kind: "read", policy: (options.project ? resolveProject(config, options.project) : resolveRepo(config)).policy };
+    return { kind: "read", policy: (options.project ? resolveProject(config, options.project) : resolveRepo(config)).policy, config };
   } catch (e) {
     return { kind: "error", error: `could not read the config at ${base}: ${(e as Error).message}`, mentions: /\bpolicy\b/.test(text) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * The whole config at `base`, read the way the policy key is: a `.ts` config
+ * folded from the base's own files, never run. A base with no config file
+ * gives the empty config, since nothing was set there. A base ref the
+ * checkout does not have, or a config there that cannot be read, gives the
+ * reason instead. `tf-apply` reads a pull request's settings from here when
+ * it applies the pull request before it merges.
+ */
+export async function configAtBase(repo: string, base: string, options: TrustedOptions = {}): Promise<{ config: TerragucciConfig } | { error: string }> {
+  const read = await readBaseConfig(repo, base, options);
+  if (read.kind === "error") return { error: read.error };
+  if (read.kind === "none") return read.missing ? { error: read.missing } : { config: {} };
+  return { config: read.config };
 }
 
 /** Which `policy:` key governs a run, and the trust options that read it again for the check. */
