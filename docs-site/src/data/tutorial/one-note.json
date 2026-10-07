@@ -4,7 +4,7 @@
   "commands": [
     {
       "cmd": "just example change module-bump",
-      "output": "[example] pushed change/module-bump at 2867fee1\n[example] run 6 for 2867fee1 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/6/jobs/1/attempt/1)\n[example] run 7 for 2867fee1 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/7/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/3 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/6/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/7/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/module-bump at a62fc09e\n[example] run 6 for a62fc09e (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/6/jobs/1/attempt/1)\n[example] run 7 for a62fc09e (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/7/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/3 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/6/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/7/jobs/0/attempt/1 (success)",
       "exit": 0
     }
   ],

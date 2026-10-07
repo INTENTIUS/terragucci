@@ -4,7 +4,7 @@
   "commands": [
     {
       "cmd": "just example change unformatted",
-      "output": "[example] pushed change/unformatted at a0bfab63\n[example] run 4 for a0bfab63 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1)\n[example] run 5 for a0bfab63 (push): failure (http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1 (failure)",
+      "output": "[example] pushed change/unformatted at 922f904c\n[example] run 4 for 922f904c (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1)\n[example] run 5 for 922f904c (push): failure (http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1 (failure)",
       "exit": 0
     },
     {
