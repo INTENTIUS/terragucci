@@ -27,17 +27,17 @@ The first line names the binary and why:
 found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
 ```
 
-The binary comes from `.opentofu-version` or `.terraform-version`, then from `.tofu` files, then from what is on your path. If it is the one you want, stop here.
+It comes from `.opentofu-version` or `.terraform-version`, then `.tofu` files, then your path. If it is the one you want, stop here.
 
 ### 2. Name the binary
 
-Set `binary` in `terragucci.yml`:
+Set `binary` in `terragucci.yml`.
 
 ```yaml
 binary: tofu
 ```
 
-The values are `terraform`, `tofu` and `choudoufu`. `npx terragucci init --binary tofu` sets it for you and writes the file when there is none. Pin the version with `version`, or with a `.opentofu-version` or `.terraform-version` file.
+The values are `terraform`, `tofu` and `choudoufu`; `npx terragucci init --binary tofu` writes the file for you. Pin the version with `version` or a `.opentofu-version` or `.terraform-version` file.
 
 ### 3. Write the pipeline again
 
@@ -51,7 +51,7 @@ updated .github/workflows/terragucci.yml
 using terragucci.yml
 ```
 
-Every job now runs in the CI image for that binary, pinned by digest. Commit the file and your next pull request runs on it.
+Every job now runs in that binary's CI image, pinned by digest. Commit the file.
 
 ## What each binary changes
 
@@ -64,11 +64,11 @@ Every job now runs in the CI image for that binary, pinned by digest. Commit the
 
 ## choudoufu
 
-[choudoufu](https://github.com/INTENTIUS/choudoufu) is a fork of OpenTofu. It keeps no state file. Each resource it manages carries tags that name its owner, and a plan reads the live resources by those tags.
+[choudoufu](https://github.com/INTENTIUS/choudoufu) is a fork of OpenTofu that keeps no state file. A plan reads live resources by their owner tags.
 
-Its jobs run in the `terragucci-choudoufu` CI image, which carries a choudoufu release (0.22.0) and the terragucci engine. To run another release, set `version` to it, and each job installs that release from choudoufu's GitHub releases, checked against their SHA256SUMS. A root's `required_version` names the OpenTofu language version choudoufu is forked from, so terragucci does not read it as a choudoufu release.
+Its jobs run in the `terragucci-choudoufu` image, which carries choudoufu 0.22.0. Set `version` to run another release; each job installs it from choudoufu's GitHub releases, checked against SHA256SUMS. terragucci does not read a root's `required_version` as a choudoufu release.
 
-You need none of this to use terragucci with Terraform or OpenTofu. With the binary set to `choudoufu`, `tf-check` runs `choudoufu live-check` on each root after `validate`. The check reads the root against choudoufu's rules with no cloud calls, and a refusal fails the job. Its diagnostics go to the job log and the check report.
+With `choudoufu`, `tf-check` runs `choudoufu live-check` on each root after `validate`, against choudoufu's rules with no cloud calls. A refusal fails the job and its diagnostics go to the log and check report.
 
 ## Next
 

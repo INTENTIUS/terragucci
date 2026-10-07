@@ -6,12 +6,12 @@ claims: [boot, check, affected]
 
 ## What you end up with
 
-`.forgejo/workflows/terragucci.yml` in your repo, a plan note and the `terragucci/plan` status on every pull request, and an apply job on the default branch.
+`.forgejo/workflows/terragucci.yml`, a plan note and the `terragucci/plan` status on every pull request, and an apply job on the default branch.
 
 ## Before you start
 
 - A Forgejo repo with Terraform, OpenTofu or Terragrunt roots, with Actions enabled.
-- A runner that carries the label `docker`. The generated jobs ask for it and run in terragucci's CI image.
+- A runner with the label `docker`, which the generated jobs ask for.
 - Node.js 22 or later on the machine you run `init` from.
 
 ## Steps
@@ -30,17 +30,15 @@ wrote chant.workspace.json
 no terragucci.yml needed (defaults fit)
 ```
 
-[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists the approval gate of each wave. Commit it with the pipeline.
-
-terragucci recognises codeberg.org and hostnames that start with `forgejo.` or `gitea.`. For any other host, pass `--forge forgejo` once. It writes `terragucci.yml` with the forge recorded, and `url` there names the host when it is on another scheme or port.
+Commit [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) too. For hosts other than codeberg.org, `forgejo.*` and `gitea.*`, pass `--forge forgejo` once; `url` in `terragucci.yml` names a host on another scheme or port.
 
 ### 2. Check the concurrency group
 
-Forgejo cancels the earlier runs of a branch when a push arrives, even one that is applying, unless the workflow names a group. The generated workflow names one that does not cancel, so a second push waits for the first apply. [The generated pipeline](/terragucci/reference/pipeline/#one-apply-at-a-time) explains the lock behind it.
+The generated workflow names a group that does not cancel, so a second push waits for the first apply instead of cancelling it ([details](/terragucci/reference/pipeline/#one-apply-at-a-time)).
 
 ### 3. Give the jobs cloud access
 
-The plan job runs `plan` and needs to read your state and providers. Forgejo 15 and Forgejo Runner 12.5 serve identity tokens to jobs. On those versions or later, set `oidc` in `terragucci.yml` and run `init` again. The plan and apply jobs then set `enable-openid-connect: true` and exchange Forgejo's identity token for roles.
+On Forgejo 15 with Forgejo Runner 12.5 or later, set `oidc` in `terragucci.yml` and run `init` again; the jobs set `enable-openid-connect: true` and exchange the identity token for roles.
 
 ```yaml
 oidc:
@@ -48,7 +46,7 @@ oidc:
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
 ```
 
-The token's issuer is your Forgejo URL followed by `/api/actions`, and the role's trust policy must accept it and your repo. An older Forgejo or runner serves no token. There, leave `oidc` unset and give the runner static credentials instead. [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) has the details.
+The issuer is your Forgejo URL plus `/api/actions`; the role's trust policy must accept it and your repo. Older versions serve no token: leave `oidc` unset and give the runner static credentials ([details](/terragucci/reference/environment/#cloud-roles-over-oidc)).
 
 ### 4. Commit and open a pull request
 
@@ -59,7 +57,7 @@ git commit -m "Add terragucci"
 git push -u origin add-terragucci
 ```
 
-Change a line in one root and open a pull request. The check job runs, then the plan job posts its note. The report is the run's `terragucci-report` artifact, and the note links to the run.
+Change a line in one root and open a pull request. The plan note links to the run, whose `terragucci-report` artifact is the report.
 
 ### 5. Require the status
 
@@ -67,7 +65,7 @@ In the repo's branch protection, require the `terragucci/plan` status context.
 
 ### 6. Make approval possible
 
-Approvals are sealed with a key. Until your key is in `.chant/allowed_signers` on the default branch and [chant](/terragucci/concepts/glossary/#chant) is installed, a waiting wave cannot be approved. The [getting-started page](/terragucci/getting-started/#before-your-first-approval) has both steps.
+A waiting wave cannot be approved until your key is in `.chant/allowed_signers` on the default branch and [chant](/terragucci/concepts/glossary/#chant) is installed ([both steps](/terragucci/getting-started/#before-your-first-approval)).
 
 ## Next
 
