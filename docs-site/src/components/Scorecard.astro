@@ -1,7 +1,7 @@
 ---
 // The comparison grid: products as columns, properties as rows in three
 // bands, a mark per cell. Each row opens to what every product does, and
-// every competitor's line carries a numbered note that links the page of
+// every competitor's line carries numbered notes that link the pages of
 // its own docs the mark was read from. The data is in ./compare/.
 import { bands, products, rows } from './compare/grid';
 import { terragucci } from './compare/marks';
@@ -24,10 +24,11 @@ const notes: { title: string; url: string; product: string }[] = [];
 const noteOf = new Map<string, number>();
 for (const row of rows) {
 	for (const p of products) {
-		const { source } = row.cells[p.id];
-		if (!noteOf.has(source.url)) {
-			notes.push({ ...source, product: p.name });
-			noteOf.set(source.url, notes.length);
+		for (const source of row.cells[p.id].sources) {
+			if (!noteOf.has(source.url)) {
+				notes.push({ ...source, product: p.name });
+				noteOf.set(source.url, notes.length);
+			}
 		}
 	}
 }
@@ -85,11 +86,11 @@ const columns = products.length + 1;
 								</p>
 								{products.map((p) => {
 									const c = row.cells[p.id];
-									const n = noteOf.get(c.source.url);
+									const ns = c.sources.map((s) => noteOf.get(s.url));
 									return (
 										<p>
 											<b>{p.name}</b>
-											<span><span class={`sc-dot ${c.mark}`} aria-hidden="true">{glyph[c.mark]}</span> {c.text}.<sup><a href={`#note-${n}`} aria-label={`Note ${n}`}>{n}</a></sup></span>
+											<span><span class={`sc-dot ${c.mark}`} aria-hidden="true">{glyph[c.mark]}</span> {c.text}.<sup>{ns.map((n, i) => <Fragment>{i > 0 && ','}<a href={`#note-${n}`} aria-label={`Note ${n}`}>{n}</a></Fragment>)}</sup></span>
 										</p>
 									);
 								})}
