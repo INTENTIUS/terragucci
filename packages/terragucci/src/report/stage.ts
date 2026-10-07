@@ -15,7 +15,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
-import { defaultTerragruntExec, planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { parseTerragruntReport } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
@@ -43,6 +43,7 @@ import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
 import { bucketReportUrl, uploadReport, writeReportDir, type Uploaded } from "./store";
 import { isArtifactPage, type NoteOptions } from "./views";
+import { binaryEnv, terragruntExec } from "../binary-env";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
@@ -250,7 +251,7 @@ export function preventDestroyIn(rootDir: string): Set<string> {
  * that was read and found empty.
  */
 export function stateIsEmpty(binary: string, dir: string, env: NodeJS.ProcessEnv): boolean | undefined {
-  const opts = { encoding: "utf-8" as const, maxBuffer: 512 * 1024 * 1024, env };
+  const opts = { encoding: "utf-8" as const, maxBuffer: 512 * 1024 * 1024, env: binaryEnv(env) };
   const init = spawnSync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], opts);
   if (init.status !== 0) return undefined;
   const pull = spawnSync(binary, [`-chdir=${dir}`, "state", "pull"], opts);
@@ -275,9 +276,10 @@ export interface Spawned {
   error?: Error;
 }
 
+/** Run the binary with the job's environment less its forge tokens (binaryEnv). */
 export function spawnAsync(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<Spawned> {
   return new Promise((done) => {
-    const child = spawn(file, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { env: binaryEnv(env), stdio: ["ignore", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let error: Error | undefined;
@@ -582,7 +584,7 @@ function unitSpansExec(
   const wrapper = join(dir, basename(binary) || "tofu");
   writeFileSync(wrapper, unitWrapper(binary, [plans, real], vars));
   chmodSync(wrapper, 0o755);
-  const run = inner ?? defaultTerragruntExec;
+  const run = inner ?? terragruntExec;
   return (file, args, opts) => run(file, args, { ...opts, env: { ...opts.env, TG_TF_PATH: wrapper } });
 }
 
@@ -591,7 +593,7 @@ function unitSpansExec(
  * command (`lockTimeoutArgs`), unless the job's `TF_CLI_ARGS` names one, so a
  * unit's plan waits for a lock an apply holds instead of failing at once.
  */
-function lockTimeoutExec(inner: TerragruntExec = defaultTerragruntExec, env: NodeJS.ProcessEnv): TerragruntExec {
+function lockTimeoutExec(inner: TerragruntExec = terragruntExec, env: NodeJS.ProcessEnv): TerragruntExec {
   return (file, args, opts) => {
     const at = args.indexOf("--");
     if (at < 0 || args[at + 1] !== "plan") return inner(file, args, opts);
@@ -604,7 +606,7 @@ function lockTimeoutExec(inner: TerragruntExec = defaultTerragruntExec, env: Nod
  * wave's `run --all` plans what the real world changed and not what the code
  * would change. Terragrunt's other calls (render, output) pass through.
  */
-function refreshOnlyExec(inner: TerragruntExec = defaultTerragruntExec): TerragruntExec {
+function refreshOnlyExec(inner: TerragruntExec = terragruntExec): TerragruntExec {
   return (file, args, opts) => {
     const at = args.indexOf("--");
     if (at < 0 || args[at + 1] !== "plan") return inner(file, args, opts);

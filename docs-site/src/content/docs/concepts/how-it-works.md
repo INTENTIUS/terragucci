@@ -21,7 +21,7 @@ A pull request starts two jobs. `tf-check` formats and validates every root; it 
 
 By default nothing applies before the merge. The merge to the default branch starts `tf-apply`, with the apply identity. A project applies one push at a time, so two merges never interleave. Under the default `apply.when: merge`, any push to the default branch runs the `apply-wave` jobs, not only the merge of a pull request. A wave whose plans destroy or replace nothing applies without an approval under the default `on-destroy` gate; only a wave that destroys or replaces waits.
 
-With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), the order turns around. On GitHub and Forgejo a person with write access comments `/terragucci apply` on the open pull request; on GitLab they start its `apply-mr` job. `tf-apply` then runs from the head in the same waves and under the same gate. The job first refuses a head that has no approval or is behind the default branch, and a root that another open change has locked. The merge comes after the last wave, and the push that follows plans every root and applies nothing.
+With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), the order turns around on GitHub and Forgejo. A person with write access comments `/terragucci apply` on the open pull request, and `tf-apply` then runs from the head in the same waves and under the same gate. The job first refuses a head that has no approval or is behind the default branch, and a root that another open change has locked. The merge comes after the last wave, and the push that follows plans every root and applies nothing.
 
 ### 4. The waves
 

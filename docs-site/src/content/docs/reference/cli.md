@@ -15,7 +15,7 @@ description: Every terragucci command, its flags and its exit codes.
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, and pushes an agent's change; the generated pipeline runs it |
-| `comment-apply` | reads a `/terragucci apply [wave-<n>]` or `/terragucci unlock` comment, or decides a GitLab merge request's manual apply; the generated pipeline runs it |
+| `comment-apply` | reads a `/terragucci apply [wave-<n>]` or `/terragucci unlock` comment; the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
@@ -138,21 +138,21 @@ The `agent-push` job runs `--agent push`. This mode applies the patch in `--chan
 ## comment-apply
 
 ```text
-terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab]
-    [--when merge|pull-request] [--unlock]
+terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
+    [--when merge|pull-request]
 ```
 
 Reads a `/terragucci apply [wave-<n>]` comment from the event file, checks the commenter's permission as `comment` does, and writes a decision to `--out`. The decision names the pull request, its merge commit and the last wave, or why nothing applies; refusals get a reply. The generated `apply-comment` job runs it before any credential, and on Forgejo again once it holds the apply lock. See [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request).
 
-With `--when pull-request` (written when `apply.when` is `pull-request`), an open pull request applies from its head once the checks in [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) pass, and the command takes its root locks; the decision then names the head. `/terragucci unlock` releases the pull request's locks. With `--forge gitlab` it decides the merge request pipeline's manual `apply-mr` job from the job's variables instead of a comment, and with `--unlock` the `unlock-mr` job.
+With `--when pull-request` (written when `apply.when` is `pull-request`), an open pull request applies from its head once the checks in [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) pass, and the command takes its root locks; the decision then names the head. `/terragucci unlock` releases the pull request's locks.
 
 ## pr-merge
 
 ```text
-terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
+terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]
 ```
 
-Merges the pull request while its head is still `--sha`, then releases its root locks. The generated job runs it after the last wave of a pull request applied before merge, with `apply.merge: auto`. It merges with the token in `TG_MERGE_TOKEN` when the job has one (the secret `apply.merge_token_env` names), and with `TG_TOKEN` otherwise. It exits 1 when the forge refuses the merge, and the job replies that the pull request was applied and not merged, with the forge's reason.
+Merges the pull request while its head is still `--sha`, then releases its root locks. The generated `pr-merge` job runs it after the last wave of a pull request applied before merge, with `apply.merge: auto`. The sha comes from the job that applied, which ran the pull request's code, so before the merge it checks with `TG_TOKEN` that the pull request is open, its head is `--sha` and a reviewer other than its author approved that head. It merges with the token in `TG_MERGE_TOKEN` when the job has one (the secret `apply.merge_token_env` names), and with `TG_TOKEN` otherwise. It exits 1 when it does not merge, and the job replies that the pull request was applied and not merged, with the reason.
 
 ## config check
 

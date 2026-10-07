@@ -11,6 +11,7 @@ import { emitYAML } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import {
   ConfigError,
+  NO_GITLAB_PR_APPLY,
   findConfig,
   loadConfig,
   resolveRepo,
@@ -169,6 +170,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (!forgeChoice) {
     throw new ConfigError("cannot tell which forge this repo is on; pass --forge github, gitlab or forgejo");
   }
+
+  if (forgeChoice.value === "gitlab" && settings.apply?.when === "pull-request") throw new ConfigError(`apply.when: ${NO_GITLAB_PR_APPLY}`);
 
   let ref: ImageRef;
   let tgInput: PipelineInput["terragrunt"];
