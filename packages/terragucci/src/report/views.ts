@@ -143,7 +143,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     blocks.push({ group: false, units: 0, text: t + "\n" });
   }
   if (report.deferred?.length) {
-    let t = `**Planned after what they wait for applies (${report.deferred.length}):**\n\n`;
+    let t = `**Planned once what they wait for applies (${report.deferred.length}):**\n\n`;
     for (const d of report.deferred) t += `- ${code(d.unit)} after ${d.after.map(code).join(", ")}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;
     blocks.push({ group: false, units: 0, text: t + "\n" });
   }

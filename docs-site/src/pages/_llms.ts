@@ -4,7 +4,7 @@ import { getCollection } from 'astro:content';
 
 const SITE = 'https://intentius.io/terragucci';
 
-// Sidebar order, with the agent page first and status last.
+// Sidebar order, with the agent page first.
 const ORDER = [
 	'getting-started/agents',
 	'index',
@@ -22,10 +22,7 @@ const ORDER = [
 	'guides/govern-many-repos',
 	'guides/use-a-binary',
 	'guides/use-terragrunt',
-	'guides/move-apply-to-fountain',
-	'guides/agent-explain-a-plan',
 	'guides/agent-refused-wave',
-	'guides/agent-drift-fixes',
 	'reference/config',
 	'reference/cli',
 	'reference/stages',
@@ -37,7 +34,6 @@ const ORDER = [
 	'concepts/waves-and-approvals',
 	'concepts/why-plans-are-grouped',
 	'concepts/approvals-as-records',
-	'status',
 ];
 
 export async function pages() {
@@ -62,6 +58,6 @@ export const PREAMBLE = `# terragucci
 
 > The whole Terraform lifecycle, handled: grouped plans on every pull request, applies in gated waves, drift reports, module publishing and rollouts, for Terraform, OpenTofu and Terragrunt on GitHub, GitLab or Forgejo.
 
-The docs describe the finished product in the present tense. The status page (${SITE}/status/) is the only record of what is built today. Before you run a command or promise a feature to a user, check it there, and say plainly when something is not built yet.
+Every page is true as written: a command or key on this site works as the page says. A key that \`terragucci config check\` refuses is not part of terragucci. The validation page (${SITE}/reference/validation/) lists the checks every generated pipeline passes.
 
 Agents adopting terragucci in a repository: start with ${SITE}/getting-started/agents/.`;

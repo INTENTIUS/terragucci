@@ -72,7 +72,7 @@ const USAGE = `usage:
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
   terragucci comment --agent push --change <dir> [--policy-dir <dir>]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
-  terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|question|version-bump|description [--mode dry-run|apply] [flags]
+  terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
 
@@ -109,7 +109,7 @@ function str(flags: Record<string, string | true>, k: string): string | undefine
   return v;
 }
 
-/** The validation stack's profiles a config needs: floci, one per forge it names, and fountain if a project runs there. */
+/** The validation stack's profiles a config needs: floci and one per forge it names. */
 export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
   const out = new Set<string>(["aws"]);
   const projects = config.projects
@@ -118,7 +118,6 @@ export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
   for (const { host, s } of projects) {
     const forge = s.forge ?? (host ? forgeFromHost(host) : repo ? detectForge(repo)?.value : undefined);
     if (forge) out.add(forge);
-    if (s.runtime === "fountain") out.add("fountain");
   }
   return [...out];
 }
@@ -241,7 +240,7 @@ export async function main(argv: string[]): Promise<number> {
         const s = (k: string) => str(flags, k);
         const log = s("log");
         const result = await respond(event, cwd, {
-          ...Object.fromEntries(["config", "project", "out", "report", "approved", "current", "root", "binary", "branch", "module", "version", "question", "title", "description", "since", "attributions"].map((k) => [k, s(k)])),
+          ...Object.fromEntries(["config", "project", "out", "report", "approved", "current", "root", "binary", "branch", "module", "version", "title", "description", "since", "attributions"].map((k) => [k, s(k)])),
           mode: (s("mode") ?? "dry-run") as "dry-run",
           ...(s("wave") ? { wave: Number(s("wave")) } : {}),
           ...(log ? { log: readFileSync(log === "-" ? 0 : resolve(cwd, log), "utf-8") } : {}),
@@ -249,7 +248,7 @@ export async function main(argv: string[]): Promise<number> {
           imports: argv.flatMap((a, i) => (a === "--import" ? [argv[i + 1] ?? ""] : a.startsWith("--import=") ? [a.slice(9)] : [])).map(parseImport),
         });
         if (json) return emit(envelope("respond", 0, result));
-        console.log(result.text + (result.agent_input ? `\nagent input: ${relative(cwd, result.agent_input)}` : ""));
+        console.log(result.text);
         return 0;
       }
       case "comment": {

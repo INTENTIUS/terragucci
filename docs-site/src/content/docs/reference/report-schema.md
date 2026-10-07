@@ -29,7 +29,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
-| `deferred[]` | Terragrunt units planned after the units they wait for apply, and what each waits for |
+| `deferred[]` | Terragrunt units planned once the units they wait for apply, and what each waits for |
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
 | `intent` | the description check's decision: its status, whether it flagged the pull request, the decision in a sentence, the probability and threshold, the model, the digest of the state the service was asked about (`state_digest`) and the destroys and replacements the text leaves out (`unmentioned`); present only after `respond description` ran on the report |
