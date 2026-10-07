@@ -2,9 +2,16 @@
 title: Fix a refused wave
 description: A wave that applied nothing because a plan changed after its approval. Read the diff, then approve again or stop.
 claims: [refuse, respond-refused]
+prompt: |
+  Read https://intentius.io/terragucci/guides/fix-a-refused-wave/.
+  Fetch both reports, run `npx terragucci respond wave-refused ... --json`,
+  and tell me in five lines which roots moved and why. The decision is mine.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 import Captured from '../../../components/Captured.astro';
+import Shot from '../../../components/Shot.astro';
+import { Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
@@ -17,38 +24,45 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
 ## Steps
 
-### 1. Understand why it refused
+<Steps>
 
-An approval binds a wave's set digest, so any root's plan changing after it means the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value.
+1. Understand why it refused.
 
-In the example, approve the waiting wave, then merge the module bump. Its job stops and names the roots that moved:
+   An approval binds a wave's set digest, so any root's plan changing after it means the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value.
 
-<Captured step="wave-refused" cmd="just example merge" optional />
+   In the example, approve the waiting wave, then merge the module bump. Its job stops and names the roots that moved:
 
-### 2. Get the two reports
+   <Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, both digests and the roots whose plans moved" optional />
+   <Captured step="wave-refused" cmd="just example merge" optional />
 
-The approved report is on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) at `_gates/tf-apply/wave-<k>/<digest>.json` (`:` written as `_`). The refused job writes it to `terragucci-report/approved/report.json` and its own to `terragucci-report/current/report.json`. To fetch the approved one locally:
+2. Get the two reports.
 
-```bash
-git fetch origin chant/lifecycle
-mkdir -p approved
-git show origin/chant/lifecycle:_gates/tf-apply/wave-2/jcs1-sha256_<hex>.json > approved/report.json
-```
+   The approved report is on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) at `_gates/tf-apply/wave-<k>/<digest>.json` (`:` written as `_`). The refused job writes it to `terragucci-report/approved/report.json` and its own to `terragucci-report/current/report.json`. To fetch the approved one locally:
 
-The current report stays in the job's workspace, so the job's log is the easiest place to read step 3.
+   ```bash
+   git fetch origin chant/lifecycle
+   mkdir -p approved
+   git show origin/chant/lifecycle:_gates/tf-apply/wave-2/jcs1-sha256_<hex>.json > approved/report.json
+   ```
 
-### 3. Print the diff
+   The current report stays in the job's workspace, so the job's log is the easiest place to read step 3.
 
-```bash
-npx terragucci respond wave-refused --approved approved --current terragucci-report/current --wave 2
-```
+3. Print the diff.
 
-It lists each root whose plan digest moved, with what changed inside it. `--json` prints one envelope.
+   ```bash
+   npx terragucci respond wave-refused --approved approved --current terragucci-report/current --wave 2
+   ```
 
-### 4. Decide
+   It lists each root whose plan digest moved, with what changed inside it. `--json` prints one envelope.
 
-- To keep the new plan: `npx chant approve tf-apply wave-2 --plan <new digest> --sign` with the printed digest, then run the stage again ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)).
-- To drop it: revert the change on the default branch. The old approval does not come back, since the refused run recorded a newer pending fact, so the wave waits for a fresh `chant approve`.
+4. Decide.
+
+   | Choice | Command | Result |
+   |---|---|---|
+   | Keep the new plan | `npx chant approve tf-apply wave-2 --plan <new digest> --sign`, then run the stage again ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
+   | Drop it | Revert the change on the default branch. | The old approval does not come back: the refused run recorded a newer pending fact, so the wave waits for a fresh `chant approve`. |
+
+</Steps>
 
 An agent may [summarize the diff](/terragucci/guides/agent-refused-wave/), but it does not re-approve.
 

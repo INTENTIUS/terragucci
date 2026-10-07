@@ -2,7 +2,15 @@
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
 claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply]
+prompt: |
+  Read https://intentius.io/terragucci/guides/use-terragrunt/.
+  Run `npx terragucci init --dry-run --json`, list the units and waves it found,
+  add a `terragrunt:` block only where the page says one is needed, and open a
+  pull request.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
+
+import { Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
@@ -16,39 +24,39 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 
 ## Steps
 
-### 1. Run init
+<Steps>
 
-```bash
-npx terragucci init --dry-run
-```
+1. Run init.
 
-Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. Explicit stacks are not supported: `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
+   ```bash
+   npx terragucci init --dry-run
+   ```
 
-### 2. Name the tool Terragrunt calls
+   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. Explicit stacks are not supported: `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
 
-`binary` names the tool Terragrunt runs underneath:
+2. Name the tool Terragrunt calls. `binary` names the tool Terragrunt runs underneath:
 
-```yaml
-binary: tofu
-```
+   ```yaml
+   binary: tofu
+   ```
 
-### 3. Tune it, if you need to
+3. Tune it, if you need to. An optional `terragrunt:` block sets version, parallelism, roles by unit path, excluded units and how dependents are planned; see [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block).
 
-An optional `terragrunt:` block sets version, parallelism, roles by unit path, excluded units and how dependents are planned; see [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block).
+   ```yaml
+   terragrunt:
+     exclude: ["live/sandbox/**"]
+     dependents: follow
+   ```
 
-```yaml
-terragrunt:
-  exclude: ["live/sandbox/**"]
-  dependents: follow
-```
+4. Write the pipeline.
 
-### 4. Write the pipeline
+   ```bash
+   npx terragucci init
+   ```
 
-```bash
-npx terragucci init
-```
+   Commit the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) and open a pull request. Before the first wave waits, set up the signers file as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes.
 
-Commit the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) and open a pull request. Before the first wave waits, set up the signers file as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes.
+</Steps>
 
 ## What is different in a Terragrunt repo
 

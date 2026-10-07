@@ -1,0 +1,121 @@
+---
+title: Have an agent summarize a refused wave
+description: Give an agent the diff between an approved plan and the current one, and read a short summary of what moved.
+claims: []
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-refused-wave/.
+  Add the explain-refusal job for wave <k> to the apply workflow, using a token
+  that can only comment, and open a pull request. Give the job no other permission.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+One comment saying what changed between the approved plan and the plan that was refused. The agent never approves, applies or merges.
+
+## Before you start
+
+- [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/): you can already print the diff by hand.
+- An API key for the model. On GitHub and GitLab, a forge token that can comment but not push, approve or merge; on Forgejo the job needs no token.
+- The report of the approved run and the report of the refused run, as artifacts.
+
+## Steps
+
+<Steps>
+
+1. Produce the diff without a model. This needs no model and is the agent's input:
+
+   ```bash
+   npx terragucci respond wave-refused --approved approved --current terragucci-report/current --wave 2 --json
+   ```
+
+   The envelope holds each root whose plan digest moved, with what moved inside it.
+
+2. Add a job to the apply workflow. Run it when a wave's apply job fails on a refusal. Wave jobs are `apply-wave-<k>`; each keeps its reports, including `approved/report.json` and `current/report.json` when refused, in the artifact `terragucci-report-apply-wave-<k>`. The examples cover wave 2; change the number everywhere for another.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       ```yaml
+       explain-refusal:
+         needs: apply-wave-2
+         if: failure()
+         runs-on: ubuntu-latest
+         permissions:
+           contents: read
+           pull-requests: write
+           issues: write
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/download-artifact@v4
+             with: { name: terragucci-report-apply-wave-2, path: reports }
+           - run: >
+               npx -y @intentius/terragucci respond wave-refused
+               --approved reports/approved --current reports/current --wave 2
+               --json > refusal.json
+           - uses: anthropics/claude-code-action@v1
+             with:
+               anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+               github_token: ${{ secrets.AGENT_FORGE_TOKEN }}
+               prompt: |
+                 Read refusal.json. Summarize which roots changed since the approval and why
+                 the plan moved, in five lines or fewer. Do not run chant approve,
+                 terragucci or any apply command.
+       ```
+     </TabItem>
+     <TabItem label="GitLab">
+       Add a job after the wave's job; its artifact unpacks at `terragucci-report/`. Give it `ANTHROPIC_API_KEY` and `AGENT_FORGE_TOKEN` as masked variables, the token limited to merge-request notes.
+
+       ```yaml
+       explain-refusal:
+         stage: apply
+         needs: [apply-wave-2]
+         when: on_failure
+         script:
+           - >
+             npx -y @intentius/terragucci respond wave-refused
+             --approved terragucci-report/approved --current terragucci-report/current --wave 2
+             --json > refusal.json
+           - >
+             npx -y @anthropic-ai/claude-code -p
+             "Read refusal.json. Summarize which roots changed since the approval and why
+             the plan moved, in five lines or fewer, as one note on the merge request.
+             Do not run chant approve, terragucci or any apply command."
+       ```
+     </TabItem>
+     <TabItem label="Forgejo">
+       Forgejo's runner takes `actions/download-artifact@v3`, and `anthropics/claude-code-action` is a GitHub app, so run the CLI in the job and read the summary in its log. The key is a repository secret; the job needs no write token.
+
+       ```yaml
+       explain-refusal:
+         needs: apply-wave-2
+         if: failure()
+         runs-on: ubuntu-latest
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/download-artifact@v3
+             with: { name: terragucci-report-apply-wave-2, path: reports }
+           - run: >
+               npx -y @intentius/terragucci respond wave-refused
+               --approved reports/approved --current reports/current --wave 2
+               --json > refusal.json
+           - run: >
+               npx -y @anthropic-ai/claude-code -p
+               "Read refusal.json. Summarize which roots changed since the approval and why
+               the plan moved, in five lines or fewer. Do not run chant approve,
+               terragucci or any apply command."
+             env:
+               ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+       ```
+     </TabItem>
+   </Tabs>
+
+3. Read the summary, then decide. Choose between approving the new plan and reverting the change. The choice and the [`chant approve`](/terragucci/concepts/glossary/#chant) are yours.
+
+</Steps>
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
