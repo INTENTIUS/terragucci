@@ -50,7 +50,6 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import {
   applyTerragruntWave,
-  defaultTerragruntExec,
   planTerragruntWave,
   TerragruntMockRefusal,
   type TerragruntExec,
@@ -70,6 +69,7 @@ import { version as VERSION } from "../package.json";
 import { sealRefusal, sealRule } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits } from "./terragrunt";
+import { binaryEnv, terragruntExec } from "./binary-env";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -269,7 +269,7 @@ interface Run {
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<Run> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { env: binaryEnv(env), stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
@@ -332,7 +332,7 @@ async function planTimed(repo: string, binary: string, root: string, work: strin
   if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
   const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);
   if (plan.code !== 0) return { ...base, error: `plan failed\n${plan.out}` };
-  const show = spawnSync(binary, [`-chdir=${dir}`, "show", "-json", planFile], { encoding: "utf-8", env, maxBuffer: 512 * 1024 * 1024 });
+  const show = spawnSync(binary, [`-chdir=${dir}`, "show", "-json", planFile], { encoding: "utf-8", env: binaryEnv(env), maxBuffer: 512 * 1024 * 1024 });
   let json: unknown;
   try {
     json = JSON.parse(show.stdout);
@@ -798,7 +798,7 @@ async function runTerragruntWave(
   const { roots, label, settings, configPath, work } = ctx;
   const env = options.env ?? process.env;
   const terragrunt = options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-  const exec = unitLockTimeoutExec(options.terragruntExec ?? defaultTerragruntExec, env);
+  const exec = unitLockTimeoutExec(options.terragruntExec ?? terragruntExec, env);
   const run = { dir: repo, binary, terragrunt, exec };
   w.started = new Date().toISOString();
   w.roots = roots;

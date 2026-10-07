@@ -101,6 +101,7 @@ describe("validation", () => {
     [{ apply: { when: "pull-request", lock: true } }, /config\.apply\.lock is not a setting/],
     [{ apply: { when: "pull-request", merge: "auto", merge_token_env: "merge-token" } }, /config\.apply\.merge_token_env must name the secret holding the token the merge is made with/],
     [{ apply: { when: "pull-request", merge_token_env: "MERGE_TOKEN" } }, /config\.apply\.merge_token_env is set, and only apply\.merge: auto merges/],
+    [{ forge: "gitlab", apply: { when: "pull-request" } }, /config\.apply\.when: pull-request is not supported on GitLab/],
   ])("%j is refused", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(message);
   });

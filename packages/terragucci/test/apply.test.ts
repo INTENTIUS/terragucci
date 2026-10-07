@@ -127,6 +127,28 @@ describe("a wave behind its gate", () => {
     expect(await applyWave(work, { ...opts, now: T(1), policy: { exec: allow } })).toBe(3);
   });
 
+  it("runs the binary with no forge token in its environment, by name or by value, in plan, show and apply", async () => {
+    const { work, bin } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const seen = join(work, "..", "env.log");
+    // The fake binary records its environment on every call, then does what FAKE does.
+    writeFileSync(bin, FAKE.replace("#!/usr/bin/env bash\n", `#!/usr/bin/env bash\nenv >> ${JSON.stringify(seen)}\n`));
+    const tokens = { TG_TOKEN: "job-token-1234", TG_MERGE_TOKEN: "merge-token-5678", GITHUB_TOKEN: "gh-1", GITLAB_TOKEN: "job-token-1234", CI_JOB_TOKEN: "ci-1", FORGEJO_TOKEN: "fj-1", MY_BOT_TOKEN: "merge-token-5678" };
+    for (const [k, v] of Object.entries(tokens)) vi.stubEnv(k, v);
+    vi.stubEnv("TF_HTTP_PASSWORD", "job-token-1234");
+    try {
+      expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: { ...process.env }, now: T(1) })).toBe(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const env = readFileSync(seen, "utf-8");
+    expect(env).toContain("TF_PLUGIN_CACHE_DIR=");
+    for (const k of Object.keys(tokens)) expect(env, k).not.toMatch(new RegExp(`^${k}=`, "m"));
+    for (const v of ["job-token-1234", "merge-token-5678", "gh-1", "ci-1", "fj-1"]) expect(env.split("\n").filter((l) => l.includes(v) && !l.startsWith("TF_HTTP_PASSWORD="))).toEqual([]);
+    // A TF_ variable is given to the binary on purpose, so it stays.
+    expect(env).toMatch(/^TF_HTTP_PASSWORD=job-token-1234$/m);
+  });
+
   it("records one pending fact with each root's digest, applies nothing, and records no second fact on a re-run", async () => {
     const { work, origin, bin, log } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});

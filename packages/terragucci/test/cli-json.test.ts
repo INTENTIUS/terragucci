@@ -98,6 +98,16 @@ describe("--json", () => {
     expect(JSON.parse(out).results.problems).toHaveLength(3);
   });
 
+  it("config check refuses apply before merge on GitLab, named in the config or detected from the repo", async () => {
+    for (const files of [{ "terragucci.yml": "forge: gitlab\napply:\n  when: pull-request\n" }, { "terragucci.yml": "apply:\n  when: pull-request\n", ".gitlab-ci.yml": "# x\n" }] as Record<string, string>[]) {
+      const { code, out } = await run(write(repo(), files), "config", "check", "--json");
+      expect(code).toBe(2);
+      expect(JSON.parse(out).results.problems.join("\n")).toMatch(/apply\.when: pull-request is not supported on GitLab/);
+    }
+    const { code } = await run(write(repo(), { "terragucci.yml": "apply:\n  when: pull-request\n", ".forgejo/workflows/x.yml": "# x\n" }), "config", "check", "--json");
+    expect(code).toBe(0);
+  });
+
   it("config check without --json prints text", async () => {
     const dir = write(repo(), { "terragucci.yml": "binary: tofu\n" });
     const { code, out } = await run(dir, "config", "check");
