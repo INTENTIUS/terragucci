@@ -964,7 +964,7 @@ claim_traces() {
 claim_metrics() {
   # One plan run. Prometheus, scraping the collector, must hold the run's
   # metrics with the report's root count and change totals. The metrics carry
-  # no commit (reference/observability.md), so the run is its own project and
+  # no commit (reference/observability.mdx), so the run is its own project and
   # its series are found by the project label.
   log() { echo "[smoke metrics] $*" >&2; }
   # shellcheck source=lib.sh
