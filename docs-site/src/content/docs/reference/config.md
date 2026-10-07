@@ -77,7 +77,7 @@ projects:
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
-| `agent` | none | `via` (`forge`), `token_env` and an optional read-only `role`: the agent integration. `comment` turns on the `/terragucci agent` pull request comment; see [The agent comment](#the-agent-comment) |
+| `agent` | none | `via` (`forge`) and `token_env`: the agent integration. `comment` turns on the `/terragucci agent` pull request comment; see [The agent comment](#the-agent-comment) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or a map of `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait` and `schedule`: `init` and `reconcile` write the dashboards and alert rules next to the pipeline; see [Dashboards and alerts](/terragucci/reference/observability/#dashboards-and-alerts) |
@@ -153,7 +153,7 @@ agent:
 | `max_turns` | 30 | the turn limit, passed to the command as `TG_AGENT_MAX_TURNS` |
 | `timeout` | 30 | minutes before the agent's job is stopped |
 
-The agent's jobs get no cloud credentials, whatever `oidc` and `agent.role` say. GitLab has no agent comment, and `init` refuses `agent.comment` for a GitLab repo. [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) describes the jobs.
+The agent's jobs get no cloud credentials, whatever `oidc` says. GitLab has no agent comment, and `init` refuses `agent.comment` for a GitLab repo. [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) describes the jobs.
 
 ## The decide block
 

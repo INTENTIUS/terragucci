@@ -51,19 +51,16 @@ describe("respond: the config", () => {
 
   it("checks the integration itself", () => {
     expect(problems({ agent: { token_env: "" , runs: "x" } })).toEqual([
-      "config.agent.runs is not a setting (settings: via, token_env, role, comment)",
+      "config.agent.runs is not a setting (settings: via, token_env, comment)",
       "config.agent.via is missing; use forge",
       "config.agent.token_env must name the variable holding the agent's forge token",
     ]);
   });
 
-  it("never lets the agent hold the apply role", () => {
-    expect(
-      problems({
-        oidc: { plan_role: "arn:aws:iam::1:role/plan", apply_role: "arn:aws:iam::1:role/apply" },
-        agent: { via: "forge", token_env: "AGENT_TOKEN", role: "arn:aws:iam::1:role/apply" },
-      }),
-    ).toEqual(["config.agent.role is the apply role; an agent gets read-only credentials at most, so name the plan role or a read-only role of its own"]);
+  it("has no role setting, since the agent job holds no cloud role", () => {
+    expect(problems({ agent: { via: "forge", token_env: "AGENT_TOKEN", role: "arn:aws:iam::1:role/plan" } })).toEqual([
+      "config.agent.role is not a setting (settings: via, token_env, comment)",
+    ]);
   });
 
   it("in a control repo, an agent response in a project is refused by the project's name", () => {
