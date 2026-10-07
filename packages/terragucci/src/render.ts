@@ -122,6 +122,13 @@ export interface RenderedPipeline {
 
 export class RenderError extends Error {}
 
+/**
+ * The remote a GitLab job pushes with: the server's own protocol, host and port.
+ * CI_SERVER_FQDN carries the port when it is not the scheme's default (GitLab 16.10
+ * and later), where CI_SERVER_HOST never does, so a GitLab on http or another port works.
+ */
+const gitlabPushRemote = 'git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"';
+
 /** Whether the pipeline calls `terragucci respond` for an event: its setting is not off. */
 const responds = (r: PipelineInput["respond"], event: RespondEvent): boolean => responseTo({ respond: r }, event) !== "off";
 
@@ -133,7 +140,7 @@ const responds = (r: PipelineInput["respond"], event: RespondEvent): boolean => 
 function respondSetup(forge: ForgeName, tokenEnv?: string): string[] {
   return [
     `export ${tokenEnv ?? DEFAULT_TOKEN_ENV[forge]}="$TG_TOKEN"`,
-    ...(forge === "gitlab" ? ['git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"'] : []),
+    ...(forge === "gitlab" ? [gitlabPushRemote] : []),
   ];
 }
 
@@ -544,7 +551,7 @@ export function applyScript(
     ...(forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
     // A waiting wave records what it planned on the chant/lifecycle branch, so the job's checkout must be able to push.
-    ...(forge === "gitlab" && gate !== "never" ? ['git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"'] : []),
+    ...(forge === "gitlab" && gate !== "never" ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(triage ? ['log="$(mktemp)"'] : []),
     `TG_OUTCOME="$outcome" terragucci stage tf-apply ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
@@ -910,7 +917,7 @@ export function publishScript(forge: ForgeName): string {
     "set -eu",
     ...(forge === "gitlab"
       ? [
-          'git remote set-url origin "https://oauth2:${TG_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"',
+          gitlabPushRemote,
           'git fetch --quiet --tags origin',
         ]
       : []),

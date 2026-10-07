@@ -7,7 +7,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, mergeScript, movedRoots, planScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, mergeScript, movedRoots, planScript, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -45,6 +45,15 @@ describe("the check job", () => {
     expect(doc.check.variables.GIT_DEPTH).toBeUndefined();
     const withPolicy = body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content);
     expect(withPolicy.check.variables.GIT_DEPTH).toBe("0");
+  });
+
+  it("gitlab: every push remote uses the server's own protocol and port", () => {
+    const remote = 'git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"';
+    expect(publishScript("gitlab")).toContain(remote);
+    expect(applyScript("tofu", layers, "gitlab")).toContain(remote);
+    const all = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content;
+    expect(all).not.toContain("CI_SERVER_HOST");
+    expect(all).not.toContain("https://oauth2");
   });
 
   it("a choudoufu pipeline passes its binary, which check-root uses to run live-check", () => {
