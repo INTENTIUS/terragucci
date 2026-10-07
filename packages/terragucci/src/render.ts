@@ -17,8 +17,9 @@
  *        approval applies nothing. A root that reads another's state applies
  *        after it. One apply per project at a time; posts one
  *        terragucci/apply status and marks plan notes the push made stale.
- *        A Terragrunt repo's waves are the same jobs over its units, each
- *        behind the same gate.
+ *        A Terragrunt repo's waves are the same jobs over its units' dependency
+ *        layers, each behind the same gate; the last job also runs any layer
+ *        the repo grew after init wrote the pipeline.
  * apply-comment  `/terragucci apply [wave-<n>]` on a merged pull request
  *        (GitHub and Forgejo, plain roots and Terragrunt units): the same
  *        stage at its merge commit, under the same lock, approving nothing.
@@ -514,7 +515,9 @@ export interface ApplyWaveInput {
  * made. The first wave marks stale plan notes and posts the pending status;
  * the last posts the one success. A wave that waits for an approval, or whose
  * plans changed after one, says so in the status and fails the job, so the
- * waves after it do not start.
+ * waves after it do not start. In a Terragrunt repo the stage cuts the waves
+ * from `terragrunt find` when it runs, and the last job passes `--rest`: it
+ * also runs every wave the repo has past the ones init gave a job.
  */
 export function applyScript(
   binary: Binary,
@@ -539,7 +542,10 @@ export function applyScript(
     "--binary", binary,
     "--gate", gate,
     ...(tg ? ["--terragrunt"] : []),
+    ...(tg && last ? ["--rest"] : []),
   ];
+  // With --rest the wave that stopped may be a later one: its outcome line names it.
+  const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
   return [
     READS_EXIT,
     forgeApi(forge),
@@ -561,12 +567,12 @@ export function applyScript(
     // GitLab reuses a running status and refuses to move it to pending or running again (400), and a status left running keeps the pipeline running, so a waiting wave fails it there; a retry posts a new one.
     `  3) tg status terragucci/apply ${forge === "gitlab" ? "failure" : "pending"} "$(cat "$outcome")"; exit 3 ;;`,
     // A wave waiting at a gate (3) is not a failure. A refused wave (4) and a failed apply are, and each gets its response before the job fails.
-    `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${input.wave} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}exit 4 ;;`,
+    `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${waveNow} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}exit 4 ;;`,
     `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}exit 1 ;;`,
     "esac",
     ...(last
       ? tg
-        ? [`tg status terragucci/apply success "${total} units in ${count} wave${count === 1 ? "" : "s"} applied"`, 'echo "all units applied"']
+        ? ['tg status terragucci/apply success "every wave of units applied"', 'echo "all units applied"']
         : [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
       : [`echo "wave ${input.wave} of ${count} applied"`]),
   ].join("\n");
@@ -598,6 +604,8 @@ export interface CommentApplyInput {
  * `$last`, as a re-run does: a wave already applied plans no change, a gated
  * wave counts only the sealed approval of the plans it makes now, and the
  * first wave that does not apply stops the run, with a reply that says why.
+ * In a Terragrunt repo a comment that asks for every wave runs the last one
+ * with `--rest`, so the waves past the pipeline's jobs apply too.
  */
 function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, base: string, again = COMMENT_AGAIN): string[] {
   const triage = responds(input.respond, "apply-failed");
@@ -610,10 +618,15 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
     'done_waves=""',
     'for wave in $(seq 1 "$last"); do',
     '  : >"$outcome"',
-    `  TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
+    ...(input.terragrunt ? ['  rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi'] : []),
+    `  TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${input.terragrunt ? " $rest" : ""}${triage ? ' 2>&1 | tee "$log"' : ""}`,
     triage ? "  rc=${PIPESTATUS[0]}" : "  rc=$?",
+    // With --rest the wave that stopped may be a later one: its outcome line names it.
+    ...(input.terragrunt ? [`  [ -s "$outcome" ] && wave="$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"`] : []),
     '  case "$rc" in',
-    '    0) done_waves="${done_waves:+$done_waves, }$wave" ;;',
+    input.terragrunt
+      ? '    0) done_waves="${done_waves:+$done_waves, }$wave${rest:+ and every wave after it}" ;;'
+      : '    0) done_waves="${done_waves:+$done_waves, }$wave" ;;',
     "    3)",
     '      tg status terragucci/apply pending "$(cat "$outcome")"',
     `      digest="$(sed -n 's/.*--plan \\([^ ]*\\).*/\\1/p' "$outcome")"`,
@@ -752,7 +765,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     ...waveLoop(binary, layers, input, prMode ? "$tf_base" : ""),
     `if [ "$last" = ${count} ]; then`,
     input.terragrunt
-      ? `  tg status terragucci/apply success "${total} units in ${count} wave${count === 1 ? "" : "s"} applied"`
+      ? '  tg status terragucci/apply success "every wave of units applied"'
       : `  tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
     "else",
     `  tg status terragucci/apply pending "wave $last of ${count} applied"`,
@@ -1047,7 +1060,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots);
-  // A wave per job, each behind its gate. A Terragrunt repo's layers are its waves of units, canary first.
+  // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
+  // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destroy";
   const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};

@@ -6,7 +6,7 @@
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
- *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt] [--base <ref>]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
  *   terragucci check-root <dir> [--binary <b>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu <version>   (Linux builds, for a CI job)
@@ -60,7 +60,7 @@ const USAGE = `usage:
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
-  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt] [--base <ref>]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>]
@@ -98,7 +98,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -175,6 +175,7 @@ export async function main(argv: string[]): Promise<number> {
             ...(str(flags, "config") ? { config: str(flags, "config") } : {}),
             ...(str(flags, "parallelism") ? { parallelism: parallelismFlag(str(flags, "parallelism")!) } : {}),
             ...(flags.terragrunt === true ? { terragrunt: true } : {}),
+            ...(flags.rest === true ? { rest: true } : {}),
             ...(str(flags, "base") ? { base: str(flags, "base") } : {}),
           });
         }

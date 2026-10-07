@@ -5,8 +5,10 @@
  * A Terragrunt unit is a root. Units and their edges come from Terragrunt's
  * own discovery (`terragrunt find`, through chant's runner), so terragucci
  * never evaluates Terragrunt's HCL to learn the graph. When `terragrunt` is
- * not on the path, the units are the directories holding a `terragrunt.hcl`,
- * with no edges, and Terragrunt orders them itself inside each `run --all`.
+ * not on the path (`init` on a laptop), the units are the directories holding
+ * a `terragrunt.hcl`, with the edges their `dependency` and `dependencies`
+ * blocks name as plain strings. That cut only sizes the pipeline: the apply
+ * jobs run in the Terragrunt image and take the waves from `terragrunt find`.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -85,7 +87,58 @@ export interface DiscoverOptions {
   exec?: TerragruntExec;
 }
 
-/** The units by a file walk: every directory holding a `terragrunt.hcl`, less the excludes. No edges. */
+/** The body of each top-level `<keyword> ... {` block in HCL text, braces matched, strings and comments skipped. */
+function blocks(text: string, keyword: string): string[] {
+  const out: string[] = [];
+  const head = new RegExp(`^\\s*${keyword}\\b[^{\\n]*\\{`, "gm");
+  for (let m = head.exec(text); m; m = head.exec(text)) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const start = i;
+    for (let quoted = false; i < text.length && depth > 0; i++) {
+      const c = text[i];
+      if (quoted) {
+        if (c === "\\") i++;
+        else if (c === '"') quoted = false;
+      } else if (c === '"') quoted = true;
+      else if (c === "{") depth++;
+      else if (c === "}") depth--;
+    }
+    out.push(text.slice(start, i - 1));
+    head.lastIndex = i;
+  }
+  return out;
+}
+
+/**
+ * The paths a unit's `terragrunt.hcl` names in its `dependency` blocks'
+ * `config_path` and its `dependencies` block's `paths`, when each is a plain
+ * string. A path built with a function or an interpolation is not read: only
+ * Terragrunt can evaluate it.
+ */
+export function literalDependencies(text: string): string[] {
+  const clean = text.replace(/(^|[^:"$])(#|\/\/).*$/gm, "$1");
+  const plain = /^"([^"$]*)"$/;
+  const out: string[] = [];
+  for (const b of blocks(clean, "dependency")) {
+    const m = /^\s*config_path\s*=\s*("[^"\n]*")\s*$/m.exec(b);
+    const p = m && plain.exec(m[1]);
+    if (p) out.push(p[1]);
+  }
+  for (const b of blocks(clean, "dependencies")) {
+    const m = /\bpaths\s*=\s*\[([^\]]*)\]/.exec(b);
+    for (const item of m ? m[1].split(",").map((x) => x.trim()).filter(Boolean) : []) {
+      const p = plain.exec(item);
+      if (p) out.push(p[1]);
+    }
+  }
+  return out;
+}
+
+/**
+ * The units by a file walk: every directory holding a `terragrunt.hcl`, less
+ * the excludes, each with the units its plain-string dependency paths name.
+ */
 export function walkUnits(repo: string, exclude: readonly string[] = []): TerragruntUnit[] {
   const globs = [...TERRAGRUNT_DISCOVERY_EXCLUDES, ...exclude];
   const out: TerragruntUnit[] = [];
@@ -93,8 +146,18 @@ export function walkUnits(repo: string, exclude: readonly string[] = []): Terrag
     const rel = posix(relative(repo, dir));
     if (!rel || !names.includes("terragrunt.hcl")) return;
     if (globs.some((g) => matchesUnitGlob(rel, g))) return;
-    out.push({ path: rel, dependencies: [] });
+    let text = "";
+    try {
+      text = readFileSync(join(dir, "terragrunt.hcl"), "utf-8");
+    } catch {
+      /* unreadable: no edges */
+    }
+    const deps = literalDependencies(text).map((p) => posix(relative(repo, resolve(dir, p))));
+    out.push({ path: rel, dependencies: [...new Set(deps)].sort() });
   });
+  const paths = new Set(out.map((u) => u.path));
+  // An edge to a directory that is not a unit (excluded, or outside the repo) holds nothing back.
+  for (const u of out) u.dependencies = u.dependencies.filter((d) => paths.has(d));
   return out.sort((a, b) => (a.path < b.path ? -1 : 1));
 }
 
@@ -116,22 +179,44 @@ export async function discoverUnits(repo: string, options: DiscoverOptions = {})
   return {
     units: walkUnits(repo, options.exclude),
     source: "terragrunt.hcl files",
-    notes: [`units come from terragrunt.hcl files, with no edges: Terragrunt discovery did not run (${fallback.split("\n")[0]})`],
+    notes: [`units and their edges come from terragrunt.hcl files: Terragrunt discovery did not run (${fallback.split("\n")[0]}), so a dependency path built with a function is not followed; the apply jobs take the waves from terragrunt find`],
   };
 }
 
 /**
- * The waves a pipeline runs, one `terragrunt run --all` each: the canary
- * units first, then the rest. Terragrunt orders the units inside a run by
- * its graph. A canary that depends on a unit outside the canary wave is refused.
+ * The waves a Terragrunt repo applies in, one `terragrunt run --all` each:
+ * the dependency layers of the canary units, then the layers of the rest.
+ * No unit of a wave reads another unit of it, so every wave plans against
+ * what the waves before it applied. Each wave is sorted by path. A canary
+ * that depends on a unit outside the canaries is refused, and so is a cycle.
  */
 export function unitWaves(units: readonly TerragruntUnit[], canary: readonly string[] = []): string[][] {
-  terragruntWaves(units, { canary }); // throws on a canary that reads a later unit, or a cycle
-  const isCanary = (p: string): boolean => canary.some((g) => matchesUnitGlob(p, g));
-  // Sorted, so the pipeline is the same whether discovery ran or fell back to a file walk.
-  const first = units.filter((u) => isCanary(u.path)).map((u) => u.path).sort();
-  const rest = units.filter((u) => !isCanary(u.path)).map((u) => u.path).sort();
-  return [first, rest].filter((w) => w.length > 0);
+  return terragruntWaves(units, { canary }).filter((w) => w.length > 0);
+}
+
+/**
+ * The waves a pipeline lists, cut again by the edges `terragrunt find` gives
+ * now: each listed wave split into its own dependency layers, the listed
+ * order kept, so the canary waves stay first. A pipeline written with the
+ * edges (by init, from discovery or the files) comes back as it is. A unit
+ * that reads a unit of a later listed wave is refused: the list is stale, and
+ * init cuts it again. Units the pipeline does not list stay out.
+ */
+export function refineWaves(listed: readonly (readonly string[])[], units: readonly TerragruntUnit[]): string[][] {
+  const deps = new Map(units.map((u) => [u.path, u.dependencies]));
+  const waveOf = new Map<string, number>();
+  listed.forEach((w, i) => w.forEach((u) => waveOf.set(u, i)));
+  const out: string[][] = [];
+  listed.forEach((wave, i) => {
+    const members = new Set(wave);
+    for (const u of wave) {
+      const later = (deps.get(u) ?? []).filter((d) => (waveOf.get(d) ?? -1) > i);
+      if (later.length > 0) throw new ConfigError(`${u} reads ${later.join(", ")}, which the pipeline applies in a later wave; run terragucci init to cut the waves again`);
+    }
+    const sub = wave.map((path) => ({ path, dependencies: (deps.get(path) ?? []).filter((d) => members.has(d)) }));
+    out.push(...terragruntWaves(sub).filter((w) => w.length > 0));
+  });
+  return out;
 }
 
 export { stackOfUnit };

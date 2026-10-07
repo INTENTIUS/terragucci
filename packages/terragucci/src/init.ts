@@ -261,7 +261,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     notes.push(`drift is set: add a pipeline schedule with the cron ${settings.drift} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope so the drift issue can be kept`);
   }
   if (settings.waves?.canary?.length && terragrunt) {
-    notes.push("waves.canary is set; the canary units apply first, then the rest, each wave behind the gate");
+    notes.push("waves.canary is set; the canary units' layers apply first, then the layers of the rest, each wave behind its gate");
   }
 
   if (!options.dryRun) {
