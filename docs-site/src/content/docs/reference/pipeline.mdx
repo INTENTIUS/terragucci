@@ -25,7 +25,7 @@ Roots that apply together each get a provider cache directory of their own.
 
 Each stage posts one commit status for the whole run. `terragucci/plan` carries the counts of roots, groups and destroys. `terragucci/apply` appears on the default branch. Require either in branch protection.
 
-<Shot step="statuses" view="checks" alt="An open pull request in Forgejo: the reply refusing /terragucci apply because the pull request is not merged, and below it the commit statuses of its head, terragucci/plan among them" optional />
+<Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" optional />
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale. Pushing to the pull request plans it again.
 

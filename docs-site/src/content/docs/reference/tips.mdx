@@ -9,9 +9,9 @@ Tips are on by default. They appear in the [plan report](/terragucci/reference/r
 
 A tip is advice. It cannot fail a run or change a gate, and no plan digest or set digest covers it, so a run with tips and a run without them produce the same digests.
 
-<Shot step="tips" view="pull" alt="The plan note on a pull request that lets dev search's AWS provider float, with its line counting one tip on how the roots are set up" optional />
+<Shot step="tips" view="pull" alt="The plan note on a pull request that lets dev search's AWS provider float, with its line counting the tips on how the roots are set up" optional />
 
-<Shot step="tips" view="report" alt="The Tips section of the HTML report: terragucci-floating-range for envs/dev/search, linked to its rule's page" optional />
+<Shot step="tips" view="report" alt="The Tips section of the HTML report, from its heading through its last tip: terragucci-floating-range for envs/dev/search among them, each tip linked to its rule's page" optional />
 
 Each tip names its rule. Code tips come from chant's terraform lint and link to that rule's page, so `chant lint` and a report agree. They need the HCL parser (`npm i -D @cdktn/hcl2json`); without it the report leaves them out and says so in the job log.
 
