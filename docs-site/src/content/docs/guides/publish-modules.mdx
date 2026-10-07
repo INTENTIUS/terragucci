@@ -47,15 +47,7 @@ Every module that changed on the default branch released under a new number, eac
    npx terragucci publish --dry-run
    ```
 
-   It lists each changed module with its next version:
-
-   | Commit or file | Bump |
-   |---|---|
-   | `feat` | minor |
-   | `feat!:` or a `BREAKING CHANGE:` footer | major |
-   | anything else | patch |
-   | first release | `0.1.0` |
-   | a `version` file in the module directory | overrides the bump; change it after publishing to release the next content |
+   It lists each changed module with its next version, by the [version-bump rules](/terragucci/reference/stages/#version-bump-rules).
 
    For commits with no conventional type, see [`respond.version-bump`](/terragucci/reference/responses/#version-bump).
 
