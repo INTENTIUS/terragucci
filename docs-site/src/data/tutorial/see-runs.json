@@ -4,17 +4,17 @@
   "commands": [
     {
       "cmd": "just see-runs",
-      "output": "tf-plan: 15 roots planned, 3 groups (pull request 1)\ntf-drift: 15 roots drifted\ntf-apply wave 1: nothing to change, so nothing to approve\ntf-apply wave 2: waits for an approval\nGrafana shows the runs: forgejo:3000/terragucci-admin/example\n\nThe dashboards, in Grafana at http://localhost:3310 (folder terragucci):\n  http://localhost:3310/d/terragucci-pipeline-health\n  http://localhost:3310/d/terragucci-change-review\n  http://localhost:3310/d/terragucci-rollouts-waves\n  http://localhost:3310/d/terragucci-drift\n  http://localhost:3310/d/terragucci-estate\n  http://localhost:3310/d/terragucci-runs\n  http://localhost:3310/d/slo-terragucci-plan-time",
+      "output": "tf-plan: 15 roots planned, 3 groups (pull request 1)\ntf-drift: 1 roots drifted\ntf-apply wave 1: nothing to change, so nothing to approve\ntf-apply wave 2: waits for an approval\nGrafana shows the runs: forgejo:3000/terragucci-admin/example\n\nThe dashboards, in Grafana at http://localhost:3310 (folder terragucci):\n  http://localhost:3310/d/terragucci-pipeline-health\n  http://localhost:3310/d/terragucci-change-review\n  http://localhost:3310/d/terragucci-rollouts-waves\n  http://localhost:3310/d/terragucci-drift\n  http://localhost:3310/d/terragucci-estate\n  http://localhost:3310/d/terragucci-runs\n  http://localhost:3310/d/slo-terragucci-plan-time",
       "exit": 0
     }
   ],
   "shots": {
-    "pipeline-light": "dc53effbb2c0ddd4",
-    "pipeline-dark": "4eb5ba62189533ea",
+    "pipeline-light": "b75bb29873e9ccb5",
+    "pipeline-dark": "241166f3c829cdb7",
     "waves-light": "7251dcf873ed8bdd",
     "waves-dark": "fa3156e83a31af45",
-    "drift-light": "924e15499b93c7c3",
-    "drift-dark": "6cfaa4463232ffa1",
+    "drift-light": "1162169d3967cc23",
+    "drift-dark": "64d4ba88d24ca681",
     "runs-light": "a60ada90ebe874ed",
     "runs-dark": "712bce1a398f7cf0"
   }
