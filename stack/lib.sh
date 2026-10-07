@@ -58,6 +58,15 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     cd "$dir"
     [ -d .git ] || git init -q -b "$branch"
     git checkout -q -B "$branch"
+    # init pins terragucci's CI images by the digest of the published release.
+    # The stack tests the code as it is now, built by `just images` under the
+    # same tag, so the pushed pipeline names the image by its tag alone and the
+    # runner takes the local build. TG_KEEP_DIGESTS=1 pushes the pins as written.
+    if [ -z "${TG_KEEP_DIGESTS:-}" ]; then
+      for f in .forgejo/workflows/*.yml .github/workflows/*.yml .gitlab-ci.yml; do
+        if [ -f "$f" ]; then perl -pi -e 's#(ghcr\.io/intentius/terragucci-[a-z]+:[^@\s]+)\@sha256:[0-9a-f]{64}#$1#g' "$f"; fi
+      done
+    fi
     git add -A
     if [ -n "${TG_FIXED_DATE:-}" ]; then
       export GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" GIT_COMMITTER_DATE="2026-01-01T00:00:00Z"
