@@ -21,7 +21,7 @@ export const workflow = new Workflow({
 
 export const gitlab = new Job({
   "runs-on": "ubuntu-latest",
-  timeoutMinutes: 60,
+  timeoutMinutes: 90,
   steps: [
     Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,

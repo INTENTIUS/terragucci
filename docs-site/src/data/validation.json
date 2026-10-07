@@ -22,6 +22,34 @@
       "break": "caught"
     },
     {
+      "forge": "forgejo",
+      "claim": "tg-check",
+      "says": "the generated workflow for a Terragrunt repo fails an unformatted unit file and names it",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "forgejo",
+      "claim": "tg-apply",
+      "says": "the generated workflow for a Terragrunt repo applies both of its units on the default branch",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "forgejo",
+      "claim": "cdf-check",
+      "says": "the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "forgejo",
+      "claim": "cdf-apply",
+      "says": "the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker",
+      "verdict": "pending",
+      "break": null
+    },
+    {
       "forge": "github",
       "claim": "check",
       "says": "the generated workflow fails an unformatted root and names the file",
@@ -43,6 +71,34 @@
       "break": "caught"
     },
     {
+      "forge": "github",
+      "claim": "tg-check",
+      "says": "the generated workflow for a Terragrunt repo fails an unformatted unit file and names it",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "github",
+      "claim": "tg-apply",
+      "says": "the generated workflow for a Terragrunt repo applies both of its units on the default branch",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "github",
+      "claim": "cdf-check",
+      "says": "the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "github",
+      "claim": "cdf-apply",
+      "says": "the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker",
+      "verdict": "pending",
+      "break": null
+    },
+    {
       "forge": "gitlab",
       "claim": "check",
       "says": "the generated pipeline fails an unformatted root and names the file",
@@ -62,6 +118,34 @@
       "says": "a control repo opens one merge request per project that changes, and the merged pipeline applies both roots",
       "verdict": "pass",
       "break": "caught"
+    },
+    {
+      "forge": "gitlab",
+      "claim": "tg-check",
+      "says": "the generated pipeline for a Terragrunt repo fails an unformatted unit file and names it",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "gitlab",
+      "claim": "tg-apply",
+      "says": "the generated pipeline for a Terragrunt repo applies both of its units on the default branch",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "gitlab",
+      "claim": "cdf-check",
+      "says": "the generated pipeline for a choudoufu estate fails a resource that live-check refuses and names it",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "forge": "gitlab",
+      "claim": "cdf-apply",
+      "says": "the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker",
+      "verdict": "pending",
+      "break": null
     }
   ]
 }
