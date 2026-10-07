@@ -13,6 +13,6 @@ Every stage runs as a job on your forge's CI: GitHub Actions, GitLab CI or Forge
 
 ## Approvals outside CI
 
-Approvals live on the `chant/lifecycle` branch, so an approval recorded with `chant approve` on your laptop counts in the next CI run. Each stage converges on the declared state, so a run that stops partway is simply run again.
+Approvals live on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch, so an approval recorded with [`chant approve`](/terragucci/concepts/glossary/#chant) on your laptop counts in the next CI run. Each stage converges on the declared state, so a run that stops partway is simply run again.
 
 Each stage also runs from your shell as `terragucci stage <name>`, with your own credentials; [Stages](/terragucci/reference/stages/) lists them.

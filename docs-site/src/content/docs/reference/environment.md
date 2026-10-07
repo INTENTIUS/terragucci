@@ -9,7 +9,7 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 | Variable | Used by | Needs |
 |---|---|---|
-| the run's own token (`github.token` on GitHub and Forgejo) | the generated plan and apply jobs | comment on pull requests, write commit statuses; the apply job also writes the `chant/lifecycle` branch |
+| the run's own token (`github.token` on GitHub and Forgejo) | the generated plan and apply jobs | comment on pull requests, write commit statuses; the apply job also writes the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch |
 | `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | `reconcile`, `rollout` and `respond --mode apply`, by the project's forge | push branches and open pull requests in the projects they touch |
 | `TG_TOKEN` | the comment, status and respond steps of a generated job | the job sets it from the run's own token or `GITLAB_TOKEN`; set it yourself to run those commands outside a pipeline |

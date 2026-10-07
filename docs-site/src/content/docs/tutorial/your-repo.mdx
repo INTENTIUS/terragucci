@@ -2,7 +2,7 @@
 title: Clean up, then your own repo
 description: Remove the example, then set terragucci up on a repository of your own.
 sidebar:
-  order: 9
+  order: 10
 claims: [zero-config]
 ---
 
@@ -13,6 +13,8 @@ Booted with `just example up`. `just example reset` gets you back to that from a
 ```bash
 just example down
 ```
+
+That removes the whole local stack, the Terragrunt shop's repository included if you booted it.
 
 In your own repository, most of what you did here needs no config. `terragucci init` finds the roots, the binary and the forge itself. The pipeline it writes checks every root and posts one note for the plans a pull request reaches. Applies go out in gated waves. The example's `terragucci.yml` is four lines, and a file of your own can be as short or absent.
 

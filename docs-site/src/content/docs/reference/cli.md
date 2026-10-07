@@ -7,7 +7,7 @@ description: Every terragucci command, its flags and its exit codes.
 
 | Command | What it does |
 |---|---|
-| `init` | finds roots, binary and forge, and writes the pipeline and `chant.workspace.json` |
+| `init` | finds roots, binary and forge, and writes the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
@@ -19,7 +19,7 @@ description: Every terragucci command, its flags and its exit codes.
 | `config check` | validates the config file and lists every problem |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
-| `install` | fetches a release of OpenTofu, Terraform, Terragrunt or choudoufu, verified against its checksums |
+| `install` | fetches a release of OpenTofu, Terraform, Terragrunt or [choudoufu](/terragucci/concepts/glossary/#choudoufu), verified against its checksums |
 | `profiles` | prints the stack profiles a config needs, for the local validation stack |
 
 ## init
@@ -37,7 +37,7 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudou
 
 With no config file, a flag that detection would not reach on its own is written to a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key the file already sets wins over the flag, and a note in the output says the flag is ignored.
 
-`init` also writes `chant.workspace.json` and lists each apply wave's gate (`wave-1`, `wave-2` and so on) under `identity.gates`, so a wave counts only an approval sealed with `chant approve --sign`. When the file already exists, `init` adds the gates it lacks and leaves the rest as it is. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file the seals are checked against.
+`init` also writes `chant.workspace.json`, chant's file, which has nothing to do with Terraform or HCP Terraform workspaces. It lists each apply wave's gate (`wave-1`, `wave-2` and so on) under [`identity.gates`](/terragucci/concepts/glossary/#identitygates), so a wave counts only an approval sealed with [`chant approve --sign`](/terragucci/concepts/glossary/#chant). When the file already exists, `init` adds the gates it lacks and leaves the rest as it is. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file the seals are checked against.
 
 ## reconcile
 
@@ -45,7 +45,7 @@ With no config file, a flag that detection would not reach on its own is written
 terragucci reconcile [--config <file>] [--mode dry-run|apply] [--project <host/path>]
 ```
 
-`--config` defaults to the config file in the working directory. `--mode` defaults to `dry-run`. `--mode apply` opens a pull request in each project that changes. `--project` narrows the run to one project.
+`--config` defaults to the config file in the working directory. `--mode` defaults to `dry-run`. `--mode apply` opens a pull request in each project that changes. It never runs `terraform apply`; [the glossary](/terragucci/concepts/glossary/#words-that-mean-something-else-in-terraform) lists the words that mean something else here. `--project` narrows the run to one project.
 
 ## plan and stage
 
@@ -92,7 +92,7 @@ terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply
 terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
 ```
 
-`--mode` defaults to `dry-run`. See [Rolling out a module version](/terragucci/reference/stages/#rolling-out-a-module-version).
+`--mode` defaults to `dry-run`, and neither mode runs `terraform apply`. See [Rolling out a module version](/terragucci/reference/stages/#rolling-out-a-module-version).
 
 ## respond
 
@@ -102,7 +102,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 
 | Flag | Used by | Meaning |
 |---|---|---|
-| `--mode` | all | `dry-run` (the default) or `apply`, which opens the pull request or pushes the commit |
+| `--mode` | all | `dry-run` (the default) or `apply`, which opens the pull request or pushes the commit and never runs `terraform apply` |
 | `--report` | `plan`, `description` | the report directory |
 | `--approved`, `--current`, `--wave` | `wave-refused` | the approved report, the current report directory and the wave number |
 | `--log` | `apply-failed` | the apply log; `-` reads standard input |

@@ -56,7 +56,7 @@ projects:
 | Key | Default | Meaning |
 |---|---|---|
 | `roots` | detected | globs of root directories |
-| `binary` | detected: a version file, then `.tofu` files, then the path, then `tofu`; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu`, `choudoufu` or `cdktn` |
+| `binary` | detected: a version file, then `.tofu` files, then the path, then `tofu`; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu`, [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) or `cdktn` |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
@@ -160,7 +160,7 @@ An answer below its threshold, a service that does not answer, or an answer from
 
 ## Parameters
 
-There are none to pass. A generated pipeline knows its project and roots from the config, and reads the pull request and commit from the forge event. Approving a wave is `chant approve`, which writes a record to your repo's `chant/lifecycle` branch. A local run can narrow itself:
+There are none to pass. A generated pipeline knows its project and roots from the config, and reads the pull request and commit from the forge event. Approving a wave is [`chant approve`](/terragucci/concepts/glossary/#chant), which writes a record to your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A local run can narrow itself:
 
 ```bash
 terragucci plan --project github.com/acme/infra --root envs/dev/core

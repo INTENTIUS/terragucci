@@ -18,7 +18,7 @@ Forgejo, GitHub and the AWS emulator are checked on every pull request to terrag
 
 ## The claims
 
-Each claim runs once as it should, and once with the property it checks broken on purpose; the claim must then fail. `reconcile` runs `terragucci reconcile` from a control repo and follows the pull or merge request it opens through its check, its merge and the apply that follows. The `tg-` claims run the generated pipeline for a Terragrunt repo of two units, and the `cdf-` claims run it for a choudoufu estate, each in the CI image that pipeline pins: `cdf-check` fails a resource that `choudoufu live-check` refuses, and `cdf-apply` finds the estate marker on the bucket it created.
+Each claim runs once as it should, and once with the property it checks broken on purpose; the claim must then fail. `reconcile` runs `terragucci reconcile` from a control repo and follows the pull or merge request it opens through its check, its merge and the apply that follows. The `tg-` claims run the generated pipeline for a Terragrunt repo of two units, and the `cdf-` claims run it for a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in the CI image that pipeline pins: `cdf-check` fails a resource that `choudoufu live-check` refuses, and `cdf-apply` finds the estate marker on the bucket it created.
 
 <ValidationClaims />
 

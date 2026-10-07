@@ -82,7 +82,7 @@ Give the job `ANTHROPIC_API_KEY` and `AGENT_FORGE_TOKEN` as masked variables. Th
 
 ### 3. Read the summary, then decide
 
-The comment helps you choose between approving the new plan and reverting the change that moved it. The choice, and the `chant approve` that follows, are yours.
+The comment helps you choose between approving the new plan and reverting the change that moved it. The choice, and the [`chant approve`](/terragucci/concepts/glossary/#chant) that follows, are yours.
 
 ## Next
 
