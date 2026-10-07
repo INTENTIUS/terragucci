@@ -317,7 +317,8 @@ OUT
     fi
     api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$REPO/pulls/$pr/merge" \
       || fail "could not merge pull request $pr"
-    sha="$(api "$URL/api/v1/repos/$REPO/branches/main" | jq -r '.commit.id')"
+    # The branches API fills from a push queue and can lag the merge; git reads the ref itself.
+    sha="$(remote_head "$REPO" main)"
     log "merged change/$name into main"
     wait_run "$REPO" "$sha"
     printf '\n  Merged    pull request %s into main\n  Pipeline  %s (%s)\n' "$pr" "$RUN_URL" "$RUN_STATUS"
