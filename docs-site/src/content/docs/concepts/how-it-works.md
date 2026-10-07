@@ -19,7 +19,9 @@ Opening a pull request, or pushing to one, starts two jobs. `tf-check` formats a
 
 ### 3. The merge
 
-Nothing applies before the merge. The merge to the default branch starts `tf-apply`, with the apply identity. A project applies one push at a time, so two merges never interleave.
+By default nothing applies before the merge. The merge to the default branch starts `tf-apply`, with the apply identity. A project applies one push at a time, so two merges never interleave.
+
+With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), the order turns around. On GitHub and Forgejo a person with write access comments `/terragucci apply` on the open pull request; on GitLab they start its `apply-mr` job. `tf-apply` then runs from the head in the same waves and under the same gate. The job first refuses a head that has no approval or is behind the default branch, and a root that another open change has locked. The merge comes after the last wave, and the push that follows plans every root and applies nothing.
 
 ### 4. The waves
 
@@ -31,7 +33,7 @@ The `gate` setting decides which waves wait for a person: by default, a wave who
 
 ### 6. The apply
 
-Running the wave again applies it. Re-run its job or push to the default branch; on GitHub and Forgejo you can also comment `/terragucci apply` on the merged pull request. The wave plans again and goes out only if the set digest still matches the approval. When a plan changed, the wave refuses. A run starts where the last one stopped and never applies a root twice.
+Running the wave again applies it. Re-run its job or push to the default branch; on GitHub and Forgejo you can also comment `/terragucci apply` on the merged pull request, or on the open one with `apply.when: pull-request`. The wave plans again and goes out only if the set digest still matches the approval. When a plan changed, the wave refuses. A run starts where the last one stopped and never applies a root twice.
 
 ### 7. Drift
 
@@ -42,12 +44,12 @@ With `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only
 | Where | What |
 |---|---|
 | your machine | `npx terragucci init`, once and after a config change; `chant approve`, to approve a wave |
-| your forge's CI | every stage: check and plan on pull requests, apply on the default branch, drift on its schedule, and the comment jobs |
+| your forge's CI | every stage: check and plan on pull requests, apply on the default branch (or from the pull request with `apply.when: pull-request`), drift on its schedule, and the comment jobs |
 | your repository | the pipeline file, an optional `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), the signers file and the `chant/lifecycle` branch |
 | your cloud | your state, and the plan and apply identities the jobs assume over OIDC |
 | your bucket, if you set one | the reports, with an index across runs |
 
-The plan identity is read-only, because a pull request's code runs with it. Only jobs on the default branch get the apply identity.
+The plan identity is read-only, because a pull request's code runs with it. By default only jobs on the default branch get the apply identity. Applying before the merge hands it to code nobody has merged yet, and that trade is why it is opt-in.
 
 ## Where to go next
 

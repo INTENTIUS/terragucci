@@ -380,7 +380,7 @@ export interface ApplyWaveOptions {
   parallelism?: number;
   /** The config file; default: the one found from the repo. */
   config?: string;
-  /** The ref the policy is read from. Default: TG_BASE, then the checkout (main, when the job runs there). */
+  /** The ref the policy is read from (default: TG_BASE, then the checkout), and the gate rule and signers when set (default: the commit before the one applied). */
   base?: string;
   /** With `policy:` set: how the engine runs and is fetched. Default: the real thing. */
   policy?: PolicyOptions;
@@ -610,7 +610,8 @@ async function gateWave(
     const now = options.now ?? new Date().toISOString();
     const ledger = readLedger(repo);
     if (ctx.applied?.size) ledger.resolutions = ledger.resolutions.filter((r) => r.gate !== name || !r.planDigest || !ctx.applied!.has(r.planDigest));
-    const rule = sealRule(repo);
+    // A pull request applied before it merges names its base (apply.when: pull-request): the rule is the default branch's, never the pull request's own.
+    const rule = sealRule(repo, options.base);
     // Once identity.gates names any gate, every wave gate needs a seal: a wave added after init is never left open.
     if (rule.gates.size > 0) {
       if (!rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
