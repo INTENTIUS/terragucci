@@ -1,6 +1,10 @@
 ---
 title: Report JSON schema
 description: The fields of report.json, which every plan, apply and drift run writes beside its HTML report.
+prompt: |
+  Read https://intentius.io/terragucci/reference/report-schema/.
+  Write a jq script that reads terragucci-report/report.json and prints every destroy and replacement by address, with its root and the wave that applies it.
+  Read only. Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 `report.json` sits beside every `report.html`, which also carries it inline:

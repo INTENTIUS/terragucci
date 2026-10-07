@@ -1,6 +1,10 @@
 ---
 title: The CLI's JSON output
 description: The envelope that init, reconcile, plan, stage, rollout, respond and config check print with --json, and the exit codes behind it.
+prompt: |
+  Read https://intentius.io/terragucci/reference/cli-json/.
+  Write a script that runs `npx terragucci plan --json` and branches on the envelope's `exit` and `status` and on `results.roots`, printing each failed root's summary.
+  Read only. Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
 With `--json`, these commands print one JSON object on stdout and nothing else.
@@ -22,13 +26,11 @@ With `--json`, these commands print one JSON object on stdout and nothing else.
 | `schema` | The envelope version. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
 | `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond` or `config check`. |
 | `exit` | The process exit code. |
-| `status` | `ok` for 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
+| `status` | `ok` for exit 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
 | `results` | What the command found or did, as below. `null` when the command could not run. |
 | `error` | Present when `results` is `null`: why it could not run. |
 
-Exit codes are the same with or without `--json`; [the CLI page](/terragucci/reference/cli/#exit-codes) lists them.
-
-No envelope carries code 4: `stage tf-apply` refuses `--json`.
+Exit codes are the same with or without `--json`; [the CLI page](/terragucci/reference/cli/#exit-codes) lists them. No envelope carries code 4: `stage tf-apply` refuses `--json`.
 
 ## init
 
@@ -62,15 +64,29 @@ The exit code is 1 when any project failed.
 
 ## plan
 
-`results.roots` has one entry per root, in apply order: `root`, `ok`, and `summary`, which is the plan's `Plan:` or `No changes.` line, or the failure.
+`results.roots` has one entry per root, in apply order:
+
+| Field | Holds |
+|---|---|
+| `root` | the root's path |
+| `ok` | whether it planned |
+| `summary` | the plan's `Plan:` or `No changes.` line, or the failure |
 
 ## stage
 
-`results` holds `stage`, `change_set`, `files` and `uploaded` (null without `reports.bucket`). `tf-drift` adds `issue` with `action` (`opened`, `updated`, `closed`, `left-open` or `none`), `issue` and `error`. A root that refused to plan exits 1.
+| `results` field | Holds |
+|---|---|
+| `stage` | the stage that ran |
+| `change_set` | the set digest |
+| `files` | the report files |
+| `uploaded` | the bucket copy; `null` without `reports.bucket` |
+| `issue` | `tf-drift` only: `action` (`opened`, `updated`, `closed`, `left-open` or `none`), `issue` and `error` |
+
+A root that refused to plan exits 1.
 
 ## rollout
 
-`results` is the rollout as the run left it. `stage tf-apply` has no `--json` and exits 2 with it.
+`results` is the rollout as the run left it.
 
 | Field | Holds |
 |---|---|
@@ -87,10 +103,19 @@ A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`
 
 ## respond
 
-`results` holds `event`, `response`, `text`, and when set `skipped`, `data`, `proposals` and `agent_input`. Exit 0 when handled; 2, with `results` null, for an unknown event or missing flag.
+| `results` field | Holds |
+|---|---|
+| `event`, `response`, `text` | the event, the response it got and the text printed |
+| `skipped`, `data`, `proposals`, `agent_input` | set only when the response has them |
+
+Exit 0 when handled. An unknown event or a missing flag exits 2 with `results` null.
 
 ## config check
 
 `terragucci config check [--config <file>]` lists every problem; for `.ts` it also checks that folding and running agree.
 
-`results` holds `file`, `ok`, and `problems`, a list of strings. A config with problems exits 2.
+| `results` field | Holds |
+|---|---|
+| `file` | the config file read |
+| `ok` | whether it has no problems |
+| `problems` | a list of strings; a config with problems exits 2 |
