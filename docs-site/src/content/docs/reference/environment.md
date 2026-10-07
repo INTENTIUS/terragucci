@@ -9,15 +9,15 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 | Variable | Used by | Needs |
 |---|---|---|
-| the run's own token (`github.token` on GitHub and Forgejo) | the generated plan and apply jobs | comment on pull requests, write commit statuses; the apply job also writes the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch |
+| the run's own token (`github.token` on GitHub and Forgejo) | the generated plan and apply jobs | comments and statuses; apply also writes [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
 | `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | `reconcile`, `rollout` and `respond --mode apply`, by the project's forge | push branches and open pull requests in the projects they touch |
-| `TG_TOKEN` | the comment, status and respond steps of a generated job | the job sets it from the run's own token or `GITLAB_TOKEN`; set it yourself to run those commands outside a pipeline |
+| `TG_TOKEN` | the comment, status and respond steps | set by the job; set it yourself outside a pipeline |
 | `GITEA_TOKEN` | nothing | the agent's job clears it with the other runner tokens, so it never reaches the agent |
 
-`token_env` in the config names a different variable for a project. The token for `rollout`, `reconcile` and `respond` needs no merge or approval rights, and the commands never merge.
+`token_env` renames the variable. That token needs no merge rights; those commands never merge.
 
-No forge token reaches the binary. When a stage runs `tofu`, `terraform`, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Terragrunt, it leaves out `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and `ACTIONS_RUNTIME_TOKEN`, and any other variable that holds the value of `TG_TOKEN` or `TG_MERGE_TOKEN`, such as the variable `token_env` names. A variable whose name starts with `TF_` is passed as set. A provider that reads a forge token of its own, such as the GitLab provider's `GITLAB_TOKEN`, needs it under a `TF_VAR_` name and a variable in the root. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) says what this covers.
+The binary and Terragrunt never get `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, or any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN`. `TF_` variables pass as set, so a provider's token goes in a `TF_VAR_` variable. [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
 
 ## Reports
 
@@ -26,30 +26,30 @@ Set these on the plan job when `reports.bucket` is set.
 | Variable | Meaning |
 |---|---|
 | `AWS_WEB_IDENTITY_TOKEN_FILE` | the job's OIDC token, which a job with `oidc` writes; with `reports.role` the job assumes that role with it |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | credentials that can write to the bucket, used when `reports.role` is not set; the GitHub and Forgejo plan, re-plan and drift jobs set them from the repository secrets of the same name |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | bucket credentials without `reports.role`, from same-named secrets |
 | `AWS_SESSION_TOKEN` | for temporary credentials, when set; mapped from the secret of the same name like the two keys |
-| `AWS_ROLE_ARN` | with no `reports.role` and no keys, the role assumed with the token to write the bucket; a job with `oidc` sets it to its own role |
+| `AWS_ROLE_ARN` | the role assumed with no `reports.role` and no keys |
 | `AWS_ROLE_SESSION_NAME` | the session name of an assumed role; `terragucci-report` when not set |
 | `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL` | a store that is not AWS; `reports.endpoint` takes precedence |
 | `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL` | the STS that answers `AssumeRoleWithWebIdentity`; `https://sts.<region>.amazonaws.com` when neither is set |
-| `AWS_REGION`, `AWS_DEFAULT_REGION` | the bucket's region, which requests are signed for; `AWS_REGION` first, then `AWS_DEFAULT_REGION`, then `us-east-1`, so a bucket elsewhere needs one of them |
+| `AWS_REGION`, `AWS_DEFAULT_REGION` | the bucket's region, in that order; `us-east-1` by default |
 
 ## Secrets the config names
 
-These names come from your config, and each defaults as shown. The variable holds a secret in your forge's store, and the generated job that needs it maps it in.
+Each names a secret in your forge's store.
 
 | Config key | Default name | Holds |
 |---|---|---|
 | `agent.comment.key_secret` | `ANTHROPIC_API_KEY` | the model's API key, given to the agent's step alone |
 | `agent.token_env` | none, required | the token the agent's change is pushed with |
-| `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto` | the token `apply.merge: auto` merges with, of a user who may push to the default branch |
+| `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto` | a token that may push to the default branch |
 | `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
 | `telemetry.headers_secret` | none | the value of `OTEL_EXPORTER_OTLP_HEADERS` |
 | `token_env` | by forge, see above | the forge token |
 
 ## Module publishing
 
-The `publish` job is the only job given these. Set them as secrets on GitHub and Forgejo, and as protected, masked variables on GitLab.
+Only `publish` gets these: secrets, or protected masked variables on GitLab.
 
 | Variable | Meaning |
 |---|---|
@@ -61,7 +61,7 @@ Git tags are pushed to `origin` with the job's checkout, so they need no variabl
 
 ## Cloud roles over OIDC
 
-Set `oidc` in your config and jobs trade the forge's identity token for cloud roles, so CI holds no long-lived keys.
+With `oidc`, jobs trade the forge's token for cloud roles.
 
 ```yaml
 oidc:
@@ -73,38 +73,38 @@ oidc:
 | Key | Meaning |
 |---|---|
 | `plan_role` | the read-only role the plan job assumes |
-| `apply_role` | the write role, assumed only by the apply jobs: on the default branch, and with `apply.when: pull-request` the job that applies a pull request ([Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) has its trust) |
+| `apply_role` | the write role, for apply jobs only, including [apply before merge](/terragucci/reference/pipeline/#apply-before-merge) |
 | `audience` | the AWS token's audience; `sts.amazonaws.com` when omitted |
-| `gcp.workload_identity_provider` | the GCP workload identity pool provider's resource name, `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
+| `gcp.workload_identity_provider` | `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
 | `gcp.plan_service_account`, `gcp.apply_service_account` | the service accounts the plan and apply jobs impersonate |
-| `gcp.token_url` | the STS endpoint that exchanges the token; `https://sts.googleapis.com/v1/token` when omitted, or a regional endpoint |
-| `azure.audience` | the token's audience; `api://AzureADTokenExchange` when omitted, `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China |
+| `gcp.token_url` | the STS endpoint; `https://sts.googleapis.com/v1/token` when omitted |
+| `azure.audience` | `api://AzureADTokenExchange` when omitted; `...USGov` or `...China` for those clouds |
 | `azure.tenant_id`, `azure.subscription_id` | the Entra ID tenant and the subscription the jobs work in |
-| `azure.plan_client_id`, `azure.apply_client_id` | the client IDs of the app registrations or managed identities the plan and apply jobs sign in as |
+| `azure.plan_client_id`, `azure.apply_client_id` | the identities plan and apply sign in as |
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
-GitHub jobs get the token through `id-token: write`, and GitLab jobs through `id_tokens`. Forgejo jobs set `enable-openid-connect: true` and ask the runner's token endpoint; Forgejo serves it from version 15, with Forgejo Runner 12.5 or later. The job writes the token to the file `AWS_WEB_IDENTITY_TOKEN_FILE` names and sets `AWS_ROLE_ARN`, so the AWS SDKs in the binary and its providers pick the role up. Your role's trust policy must accept the forge's issuer and your repo. [Credentials](/terragucci/reference/pipeline/#credentials) has the variables GCP and Azure get, and their setup.
+Forgejo needs version 15 and Runner 12.5 or later. Your role's trust policy must accept the forge's issuer and your repo. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
 
 | Forge | Issuer | Subject |
 |---|---|---|
 | GitHub | `https://token.actions.githubusercontent.com` | `repo:<owner>/<repo>:ref:refs/heads/<branch>`, or `repo:<owner>/<repo>:pull_request` |
 | GitLab | your GitLab URL | `project_path:<group>/<project>:ref_type:branch:ref:<branch>` |
-| Forgejo | your Forgejo URL followed by `/api/actions` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<branch>`, or `repo:<owner>-<owner id>/<repo>-<repo id>:pull_request` |
+| Forgejo | your Forgejo URL followed by `/api/actions` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<branch>`, or `...:pull_request` |
 
-Forgejo 16 puts the owner's and the repo's numeric IDs in the subject, for example `repo:shop-12/infra-345:pull_request`. A repo that had Actions enabled before Forgejo 16 keeps `repo:<owner>/<repo>` until Actions is turned off and on again for it. The repo's settings page and `GET /api/v1/repos/<owner>/<repo>` show both IDs.
+A repo with Actions on before Forgejo 16 keeps `repo:<owner>/<repo>` until Actions is toggled. `GET /api/v1/repos/<owner>/<repo>` shows both IDs.
 
-A Forgejo older than 15, or a runner older than 12.5, serves no token: the token request fails and the job stops before it plans. Leave `oidc` unset on such a forge and give the runner static credentials as environment variables in its config.
+On an older Forgejo or runner, leave `oidc` unset and give the runner static credentials.
 
 In a Terragrunt repo, roles can follow unit paths. See [The generated pipeline](/terragucci/reference/pipeline/#terragrunt).
 
 ## Agent integrations
 
-`agent.token_env` names the variable that holds the agent's forge token. The token can comment and open pull requests. The agent's jobs hold no cloud role. See [Responses to pipeline events](/terragucci/reference/responses/#where-it-runs).
+`agent.token_env` holds the agent's forge token; the agent's jobs hold no cloud role. See [Responses](/terragucci/reference/responses/#where-it-runs).
 
 ## Traces and metrics
 
-terragucci reads the standard OpenTelemetry variables, and `TRACEPARENT` to join a trace its caller started. [Traces and metrics](/terragucci/reference/observability/#turning-it-on) says what each does.
+See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 
 | Variable | Meaning |
 |---|---|
@@ -123,40 +123,40 @@ terragucci reads the standard OpenTelemetry variables, and `TRACEPARENT` to join
 | Variable | Meaning |
 |---|---|
 | `TERRAGUCCI_TERRAGRUNT` | the `terragrunt` executable to run; `terragrunt` on the path by default |
-| `TOFU_INSTALL_DIR` | where `terragucci install` puts the binary; `$RUNNER_TEMP/terragucci-bin`, or the system temp directory's `terragucci-bin`, when unset |
-| `RUNNER_TEMP` | set by GitHub and Forgejo runners; the install directory's parent when `TOFU_INSTALL_DIR` is unset |
-| `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` | the binary reads them itself. A `-lock-timeout` in any of them replaces terragucci's default of `-lock-timeout=5m` on plan and apply |
+| `TOFU_INSTALL_DIR` | where `terragucci install` puts the binary; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
+| `RUNNER_TEMP` | set by GitHub and Forgejo runners |
+| `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
 | `TG_LOCK_STALE` | seconds after which a Forgejo apply takes over a lock whose holder stopped renewing; 7200 by default |
 | `TG_LOCK_POLL` | seconds between a waiting Forgejo apply's checks of the lock; 10 by default |
-| `TG_BASE` | the ref a pull request's policy is read from, such as `origin/main`; set it to read the policy from another ref when you run `check` or `stage tf-apply` by hand. Otherwise the pull request's target branch is used |
-| `TG_BRANCH` | the default branch's name; the generated jobs set it, and a push to any other branch reads its policy from `origin/<that branch>` |
-| `TG_PR`, `TG_SHA`, `TG_HEAD` | the pull request number, the commit, and the pull request's head branch; the generated jobs set them, and the same commands take them from your environment when you run them by hand |
-| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` | read by `chant approve` on the approver's machine, in that order, to name the approver when `--actor` is not given; a waiting wave's log says so. The name must be a principal in `.chant/allowed_signers` for the seal to count |
+| `TG_BASE` | the ref policy is read from, such as `origin/main`; the target branch by default |
+| `TG_BRANCH` | the default branch; other pushes read policy from `origin/<that branch>` |
+| `TG_PR`, `TG_SHA`, `TG_HEAD` | the pull request number, commit and head branch |
+| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` | the approver for `chant approve` without `--actor`; must be in `.chant/allowed_signers` |
 | `env:` in the config | variables every job gets; values only, never secrets |
 
 ## Variables the forge provides
 
-terragucci reads these from the job's environment to find the project, the run and the pull request. Every forge sets them in a job, and a local run needs none.
+A local run needs none of these.
 
 | Forge | Variables |
 |---|---|
-| GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo also sets `FORGEJO_ACTIONS` and `GITEA_ACTIONS`, which tell the two apart |
+| GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
 | GitLab | `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_STATUS`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
 ## Variables the generated jobs set
 
-The renderers write these into a job's steps. They are internal: nothing needs setting them by hand, and a value you set in `env:` for one of them is overwritten.
+Internal; a value set in `env:` is overwritten.
 
 | Variable | Set for |
 |---|---|
-| `TG_MERGE_TOKEN` | the `pr-merge` job alone sets it from the secret `apply.merge_token_env` names; `apply.merge: auto` merges with it on GitHub and Forgejo, and falls back to `TG_TOKEN` when it is empty. No job that runs a pull request's code has it |
+| `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; no job running pull request code has it |
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
-| `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME` | the forge helper and the steps that name a pull request, wave or root; `TG_OPEN` says the pull request is open and applies from its head; `TG_OUTCOME` is the file that carries a job's one-line status |
+| `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME` | steps naming a pull request, wave or root |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
-| `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES` | Terragrunt repos: how Terragrunt runs the binary, where it caches, and the roles it assumes per unit; `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` carries the web identity token, and terragucci never sets `TG_IAM_ASSUME_ROLE` |
-| `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc`: the token files and the identities the binary's providers read |
+| `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
+| `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc` |
 | `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent comment's job: the prompt file and the turn limit |
-| `TF_HTTP_ADDRESS`, `TF_PLUGIN_CACHE_DIR` | read from your own job environment: a GitLab-managed state address picks the lower default parallelism, and a shared plugin cache makes inits take turns |
+| `TF_HTTP_ADDRESS`, `TF_PLUGIN_CACHE_DIR` | read from your job: GitLab state lowers parallelism; a shared cache serializes inits |
 
 
