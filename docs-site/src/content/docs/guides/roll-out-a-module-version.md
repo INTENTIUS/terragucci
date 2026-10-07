@@ -6,15 +6,15 @@ claims: [rollout]
 
 ## What you end up with
 
-Every root that pins the module moved to the new version, a few roots at a time. Each wave is a small pull request that the usual stages plan and apply.
+Every root that pins the module moved to the new version through one pull request per wave.
 
 ## Before you start
 
-- Roots that pin the module exactly: an `oci://` tag or digest, a registry `version`, or a git tag. A range such as `~> 1.4` cannot be moved; [Stages](/terragucci/reference/stages/#rolling-out-a-module-version) lists the cases.
-- The new version published. [Publish your modules](/terragucci/guides/publish-modules/) covers it.
+- Roots that pin the module exactly by `oci://` tag or digest, registry `version` or git tag. A range cannot move ([Stages](/terragucci/reference/stages/#rolling-out-a-module-version) lists the cases).
+- The new version published ([Publish your modules](/terragucci/guides/publish-modules/)).
 - The HCL parser beside terragucci: `npm i -D @cdktn/hcl2json`.
-- A forge token in the variable `token_env` names, with permission to open pull requests. Only the apply run needs it.
-- Optional: `waves.canary` in `terragucci.yml`, so the first wave is the roots you trust to break first.
+- A forge token, in the variable `token_env` names, that can open pull requests (only the apply run needs it).
+- Optional: `waves.canary` in `terragucci.yml` for the first wave.
 
 ## Steps
 
@@ -24,13 +24,11 @@ Every root that pins the module moved to the new version, a few roots at a time.
 npx terragucci rollout modules/network
 ```
 
-Name the module by its path, or by its source without the pin. With no version, the rollout takes the newest one published: the highest `modules/network/vX.Y.Z` tag, or the highest tag in the module's OCI repository. A dry run lists the pull requests it would open and their files, and changes nothing.
-
-The old version is read from the pins. When they disagree, `--from` says which one moves.
+Name the module by path or by source without the pin; with no version, the newest published is used. The dry run changes nothing. When pins disagree, `--from` picks which moves.
 
 ### 2. Fix any pin it refuses
 
-The preview reports a pin it cannot move, with its reason and a tip:
+The preview reports each pin it cannot move and a tip:
 
 | The pin | Tip |
 |---|---|
@@ -47,21 +45,21 @@ Fix those in their own pull request and run the preview again.
 npx terragucci rollout modules/network 1.4.0 --mode apply
 ```
 
-Here `--mode apply` means writing to the forge. It runs no `terraform apply`; the roots apply after the merge, as any change does. The command pushes a branch and opens one pull request for the canary wave, or for the first wave dependency order gives. It changes only that wave's files, so the plan covers exactly what moved. A pin keeps its shape: a ref of `modules/network/v1.3.0` becomes `modules/network/v1.4.0`.
+`--mode apply` writes to the forge and runs no `terraform apply`; roots apply after the merge. It opens one pull request for the canary wave, or the first in dependency order. Only that wave's files change, and each pin keeps its shape.
 
 ### 4. Merge it and let it apply
 
-Review the pull request as any other. When it merges, the apply stage runs on the merge commit.
+Review and merge it; the apply stage runs on the merge commit.
 
 ### 5. Run the rollout again
 
-Each run takes at most one step and exits. Run it on a schedule or after each merge:
+Each run takes at most one step, so schedule it or run it after each merge:
 
 ```bash
 npx terragucci rollout modules/network 1.4.0 --mode apply
 ```
 
-The next wave opens only after the last wave's pull requests merged and their apply passed. The check that decides it is `apply/<path>` per directory when there is one. Otherwise the `terragucci/apply` status decides, which turns success once the last wave has applied. A pull request closed without merging stops the rollout, and so does a failed apply. The command never merges anything and never writes a default branch.
+The next wave opens after the last wave merged and applied (`apply/<path>` per directory, else `terragucci/apply`). A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
 
 | Exit code | Meaning |
 |---|---|
@@ -69,19 +67,19 @@ The next wave opens only after the last wave's pull requests merged and their ap
 | 3 | a pull request waits for a merge or an apply |
 | 1 | the rollout stopped |
 
-From a control repo, wave 1 holds the canaries of every project, and each project's later waves follow in config order, with one pull request per project per wave.
+From a control repo, wave 1 holds every project's canaries and later waves follow in config order. Each project gets its own pull request per wave.
 
 ## Provider upgrades
 
-The same flow moves a provider through the lock file:
+The same flow moves a provider in the lock file:
 
 ```bash
 npx terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
-It runs the binary to rewrite each lock file for that provider alone. An exact `version` constraint on the provider moves with it. The new lock file must hold the provider at the new version and every other provider where it was, or the wave stops.
+Each lock file is rewritten for that provider alone, and an exact `version` constraint moves too. The wave stops unless every other provider stays where it was.
 
 ## Next
 
-- [Tips](/terragucci/reference/tips/) names the setup that makes rollouts hard, such as a widely shared local module.
+- [Tips](/terragucci/reference/tips/) names setups that make rollouts hard.
 - [The JSON output of rollout](/terragucci/reference/cli-json/#rollout) lists each wave's state for scripts.

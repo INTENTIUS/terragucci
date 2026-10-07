@@ -13,8 +13,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 ## Before you start
 
 - An S3-compatible bucket. Google Cloud Storage and MinIO work too.
-- An identity the plan job can write to the bucket with: an AWS role it assumes with its OIDC token, or keys kept in your forge's secrets. Step 3 has both.
-- By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. This guide is for when that is too short.
+- An identity the plan job writes with: an AWS role (OIDC) or keys in your forge's secrets. Step 3 has both.
 
 ## Steps
 
@@ -32,14 +31,14 @@ reports:
 
 For a store that is not AWS, add `endpoint`. When it is absent, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
 
-The job signs its requests for the region in `AWS_REGION` or `AWS_DEFAULT_REGION`, and for `us-east-1` when neither is set. A bucket in another region refuses a request signed for the wrong one, so name its region in the config's `env`, which every job gets:
+Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`. For a bucket in another region, set it in the config's `env`:
 
 ```yaml
 env:
   AWS_REGION: eu-west-2
 ```
 
-`url` is the address a browser reads the reports at, such as a static website. Set it once you serve them (step 5). The plan note then links the copy of `report.html` there instead of the CI run. Its links to a group or root land on that place in the report. On GitHub and Forgejo a run's artifacts are a download, so this is how the note's links open the report.
+`url` is where a browser reads the reports (step 5). The plan note links `report.html` there instead of the CI run, whose artifact on GitHub and Forgejo is a download.
 
 ### 2. Write the pipeline again
 
@@ -47,15 +46,15 @@ env:
 npx terragucci init
 ```
 
-The plan job now passes the bucket to `terragucci stage tf-plan`. Commit the result.
+Commit the result.
 
 ### 3. Give the job an identity that writes only reports
 
-The plan job runs the pull request's code. A root or a module in the pull request can read the job's environment and its token file. Whatever the job's credentials can do, a pull request can do too. So write reports with an identity of their own. Allow it `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::acme-terragucci/reports/*` and nothing more. The worst a pull request can then do with it is write under the reports prefix. Your plan role keeps the read-only access it needs to plan.
+The plan job runs the pull request's code, which can read its credentials. Write reports with an identity allowed only `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::acme-terragucci/reports/*`.
 
-With `oidc` set, `reports.role` is that identity. The job assumes it through STS `AssumeRoleWithWebIdentity` with the OIDC token it already has. Give the role the trust policy your plan role has. `config check` refuses a `reports.role` that is the plan or apply role.
+With `oidc` set, `reports.role` is that identity, assumed through STS `AssumeRoleWithWebIdentity` with a trust policy like your plan role's. `config check` refuses a `reports.role` that is the plan or apply role.
 
-Without `oidc`, make an IAM user (or the store's equivalent) with the same narrow policy. Pass its keys as `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN` for temporary ones. Create them as repository secrets on GitHub or Forgejo, or as CI/CD variables on GitLab, under those names. With `reports.bucket` set and no `reports.role`, `terragucci init` writes the plan, re-plan and drift jobs with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` set from the secret of the same name, and empty when it does not exist. The apply and check jobs do not carry them. GitLab jobs read the project's variables as they are, so the pipeline needs no lines for them; a protected variable reaches only jobs on protected branches, so leave it unprotected for merge request pipelines. OpenTofu sees these keys as well, so on a job that plans with them they are the plan's identity too.
+Without `oidc`, give an IAM user the same policy and store its keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` if temporary) as secrets, or unprotected CI/CD variables on GitLab. `init` passes them to the plan, re-plan and drift jobs only. OpenTofu sees them too, so in those jobs they are also the plan's identity.
 
 The job uses the first of these that is set:
 
@@ -63,9 +62,9 @@ The job uses the first of these that is set:
 2. `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
 3. `AWS_ROLE_ARN`, which a job with `oidc` sets to its own role; that role then needs write access to the reports
 
-A role is assumed with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`. STS is called in the job's region, or at `AWS_ENDPOINT_URL_STS` or `AWS_ENDPOINT_URL` when set. When STS refuses the role, the job fails with STS's error code and message.
+A role is assumed with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`; `AWS_ENDPOINT_URL_STS` or `AWS_ENDPOINT_URL` sets the STS address. When STS refuses it, the job fails with STS's error.
 
-Even narrowed to the prefix, the identity lets a pull request's plan write any object under it. That includes another run's report and the index. Read a report there as what the run that wrote it showed. The apply job's CI artifact is the record of what was applied.
+Even so, a pull request's plan can overwrite any object under the prefix, other reports and the index among them. The apply job's CI artifact is the record of what was applied.
 
 ### 4. Open a pull request
 
@@ -77,24 +76,24 @@ copied to the bucket under reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6
 served at https://reports.acme.example/reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
 ```
 
-Reports land under one path per run, the plans beside them. The path holds the commit's full SHA. Links inside a report are relative, so they work in the bucket as they do in the CI artifact:
+Each run gets one path holding the commit's full SHA. Links inside a report are relative:
 
 ```text
 reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
 reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-apply-wave-2/report.json
 ```
 
-The commit is the one the job ran on: `GITHUB_SHA` on GitHub and Forgejo, `CI_COMMIT_SHA` on GitLab. For a pull request on GitHub, `GITHUB_SHA` is the merge commit GitHub makes to test the pull request against its base, so the report is filed under that commit and not under the head of the branch. The report and its index row link the pull request, which leads to the head. On GitLab a merge request pipeline runs on the head of the source branch, or on the merged result when merged results pipelines are on.
+The commit is `GITHUB_SHA` on GitHub and Forgejo and `CI_COMMIT_SHA` on GitLab. On a GitHub pull request that is the merge commit.
 
 ### 5. Serve the index
 
-Every upload adds the run's row to `index.json` twice and writes `index.html` from it. One pair sits at the project's path and covers that project. The other sits at the top of the prefix and covers every project. Each run gets a row with its counts and destroys, linked to its report. The row also links the commit and the job, and the pull request when there is one.
+Every upload adds the run's row to two `index.json` files and writes `index.html` from each: one at the project's path, one at the top of the prefix for every project.
 
-Runs that finish at the same moment do not lose each other's rows. Each run writes `index.json` only if it still has the ETag the run read (`If-Match`, or `If-None-Match: *` for a new index). If another run wrote it in between, the store refuses the write. The run then reads the index again and adds its row, up to 8 times. A store that sends no ETag gets a plain write, and the last run to write wins. A store that answers the condition with `501 Not Implemented` is written without it.
+Index writes are conditional on the ETag read (`If-Match`, or `If-None-Match: *`) and retried up to 8 times. A store with no ETag gets a plain write, last run wins; on `501 Not Implemented` the condition is dropped.
 
-Serving it as a static site publishes every report in it. A plan shows resource addresses and every attribute value that is not marked sensitive, and the index lists every run. Put the site behind your identity provider (CloudFront with signed cookies or an authenticating proxy in front of a private bucket, Cloudflare Access in front of R2, or IAP in front of a Cloud Storage bucket), and never make the bucket public. `url` is then the address of that front door.
+A served bucket publishes every plan, including each attribute value not marked sensitive. Put it behind your identity provider (CloudFront signed cookies, Cloudflare Access, IAP) and never make it public. `url` is that front door.
 
-A run that sent a trace also gets `traces/<trace id>.html` under the prefix, which forwards to its report. With `dashboards: true`, the Runs dashboard links each trace there. The Estate dashboard links the index.
+A run that sent a trace also gets `traces/<trace id>.html` under the prefix, forwarding to its report. With `dashboards: true`, the Runs dashboard links it.
 
 <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
 

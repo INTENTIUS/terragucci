@@ -6,14 +6,14 @@ claims: [drift]
 
 ## What you end up with
 
-A scheduled `tf-drift` run that plans every root against what exists, and one issue that reports the drift, grouped like a pull-request plan.
+A scheduled `tf-drift` run that plans every root and one issue reporting the drift, grouped like a pull-request plan.
 
 ## Before you start
 
 - A repo with the pipeline from [Get your first plan note](/terragucci/getting-started/).
-- A plan role that can read your cloud. Drift plans run with the same read-only role as pull requests.
-- Terraform or OpenTofu roots, or Terragrunt units. In a Terragrunt repo the drift job refresh-plans every unit through Terragrunt, and the issue names units where it would name roots.
-- A time that suits you. The schedule is a cron expression in UTC.
+- A plan role that can read your cloud; drift plans use the same read-only role as pull requests.
+- Terraform or OpenTofu roots, or Terragrunt units (the issue then names units).
+- A cron expression in UTC.
 
 ## Steps
 
@@ -45,23 +45,19 @@ A bad value is listed as a problem, and the command exits 2.
 npx terragucci init
 ```
 
-The pipeline gets a `drift` job that runs on the schedule. On GitHub and Forgejo the generated workflow carries the cron and a `workflow_dispatch` trigger, so you can also start a check by hand. On GitLab, set the same cron under CI/CD, Schedules, because GitLab keeps schedules outside the pipeline file. Because drift writes issues, `GITLAB_TOKEN`, or the variable `token_env` names, needs the `api` scope. Commit and merge.
+This adds a `drift` job with the cron and a `workflow_dispatch` trigger. On GitLab, set the same cron under CI/CD, Schedules. `GITLAB_TOKEN` (or the `token_env` variable) needs the `api` scope. Commit and merge.
 
 ### 4. Wait for the first run, or start one
 
-The job runs `terragucci stage tf-drift`, which plans each root with `-refresh-only`. That plan compares state with the real objects and ignores the code. A change merged but not yet applied is therefore not drift. An object changed or deleted outside Terraform is.
-
-The report groups roots whose drift is the same and lists a deleted object by name with its root. The job keeps the report as an artifact, as the plan job does.
+`terragucci stage tf-drift` plans each root with `-refresh-only`, comparing state with real objects. Only an object changed or deleted outside Terraform counts as drift, and a merged but unapplied change does not.
 
 ### 5. Read the issue
 
-Each project has at most one open issue, titled `terragucci: drift found`. It opens when drift is found and updates in place on the next run. When every root is clean it closes, with a comment that names the commit. If a root could not be planned, the issue stays as it is, since that root is unknown.
-
-The job never applies. A root that cannot be refreshed fails the job, and drift alone does not.
+Each project has at most one open issue, `terragucci: drift found`, updated on each run. It closes when every root is clean, and stays as it is if a root could not be planned. The job never applies. A root that cannot be refreshed fails it; drift alone does not.
 
 ### 6. Correct the drift
 
-You can apply the code as it is, which puts the object back. Or you can accept the live value, which terragucci proposes as a pull request. Where the changed attribute is a literal in the root, the pull request writes the live value there. Merging it accepts the change made outside Terraform, so read it first. [Responses to pipeline events](/terragucci/reference/responses/#drift) lists what is only reported, such as values set from a variable or inside a module.
+Apply the code to put the object back, or read and merge the pull request that writes the live value into a literal attribute. [Responses](/terragucci/reference/responses/#drift) lists what is only reported.
 
 ## Next
 
