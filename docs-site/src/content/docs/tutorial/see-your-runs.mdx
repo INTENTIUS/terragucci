@@ -13,7 +13,7 @@ import Shot from '../../../components/Shot.astro';
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-Every stage can send a trace and its metrics to an OpenTelemetry collector. With `dashboards: true` in `terragucci.yml`, `init` also writes the Grafana dashboards and alert rules that read them, into the repo next to the pipeline. The stack's observability profile runs Grafana with those dashboards loaded. This page sends three runs of the example to it:
+Every stage can send traces and metrics to an OpenTelemetry collector. `dashboards: true` makes `init` write the Grafana dashboards and alert rules too. This page sends three runs of the example to Grafana:
 
 ```bash
 just see-runs
@@ -21,37 +21,37 @@ just see-runs
 
 <Captured step="see-runs" />
 
-It starts the profile, then runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set, as a pipeline job would have it. The first plans the module-bump change for pull request 1. The second is a drift run, after deleting staging orders' jobs queue from [floci](/terragucci/concepts/glossary/#floci) the way the [Drift](/terragucci/tutorial/drift/) page does (`just example reset` puts it back). The third runs the apply's waves in order with the gate set to `always`, as the pipeline would.
+It runs three stages on a copy of the example with `OTEL_EXPORTER_OTLP_ENDPOINT` set: a plan of the module-bump change, a drift run after deleting staging orders' jobs queue from [floci](/terragucci/concepts/glossary/#floci) as on the [Drift](/terragucci/tutorial/drift/) page, and the apply's waves with the gate set to `always`.
 
-Wave 1 holds only the dev platform, which the bump leaves alone, so it has nothing to approve and passes. Wave 2 plans the dev services and waits for an approval. The approval ledger goes to a scratch repo, so the example on Forgejo stays as it was. The command returns once Grafana shows the runs.
+Wave 1 has nothing to change and passes. Wave 2 waits for an approval. The ledger goes to a scratch repo, so the Forgejo example stays as it was.
 
-Open Grafana at [localhost:3310](http://localhost:3310) and look in the `terragucci` folder for the dashboards. They open on the last seven days, Pipeline health on the last 24 hours, where a graph's points are a quarter of an hour apart. The pictures below show the last hour instead, so that runs made a minute ago are on the graphs.
+Open Grafana at [localhost:3310](http://localhost:3310) and look in the `terragucci` folder. The pictures below show the last hour.
 
 ## Pipeline health
 
 <Shot step="see-runs" view="pipeline" alt="The Pipeline health dashboard: runs per hour, errors and duration for the tf-plan, tf-drift and tf-apply stages of the example" />
 
-Each stage run is one span. The collector counts the spans by stage and by how each run ended, so the plan and the drift run show as successes and the waves as `nothing` and `waiting`, neither of them an error. Each point of a graph counts the runs in the hour before it, so a run shows up within a minute and stays on the graph for an hour.
+Each stage run is one span, counted by stage and outcome. The plan and drift run are successes, and the waves are `nothing` and `waiting`, not errors.
 
 ## Rollouts and waves
 
 <Shot step="see-runs" view="waves" alt="The Rollouts and waves dashboard, with wave 2 of the example waiting for its approval" />
 
-Wave 2 waits for an approval of its digest, and the table counts how long it has waited. No wave was refused or failed, so both lines of that graph stay at 0. Approve it with the command the run printed and run the wave again, and it leaves the table. A wave that waits longer than `wave_wait` (four hours by default) fires `TerragucciWaveWaiting`.
+No wave was refused or failed. A wave waiting longer than `wave_wait` (four hours by default) fires `TerragucciWaveWaiting`.
 
 ## Drift
 
 <Shot step="see-runs" view="drift" alt="The Drift dashboard: the example's drifted roots, and how long its drift has stood" />
 
-The drift run finds the deleted queue in staging orders. floci keeps no tags, so after a fresh boot it also finds the tags of every root drifted, as the Drift page explains. The age counts from the drift issue's opening; with no issue to read, as here, from the run. Once that age passes `drift_age` (a day), `TerragucciDriftOld` fires.
+The drift run finds the deleted queue in staging orders, and floci's missing tags on every root. Once the drift's age passes `drift_age` (a day), `TerragucciDriftOld` fires.
 
 ## Runs
 
 <Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
 
-The slowest roots and resources come from the same timings as the plan report. The table at the bottom lists each run's trace, and opening one shows OpenTofu's own spans inside each root.
+The table at the bottom lists each run's trace; opening one shows OpenTofu's spans inside each root.
 
-Change review, Estate and the three SLO dashboards fill from the same runs. [Traces and metrics](/terragucci/reference/observability/#dashboards-and-alerts) lists every dashboard, the alert rules and the collector settings they need.
+[Traces and metrics](/terragucci/reference/observability/#dashboards-and-alerts) lists every dashboard, the alert rules and the collector settings.
 
 ## In your own repo
 
@@ -63,4 +63,4 @@ env:
   OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-collector.example.com:4318
 ```
 
-`init` writes the dashboards under `observability/terragucci/`, with the files Grafana and Prometheus load them from. Point both at that directory, and give your collector the `spanmetrics` connector from the reference page.
+`init` writes the dashboards under `observability/terragucci/`. Point Grafana and Prometheus at that directory, and give your collector the `spanmetrics` connector.
