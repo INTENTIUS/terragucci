@@ -2789,6 +2789,8 @@ claim_foreign_checkout() {
   # BREAK: GIT_CONFIG_NOSYSTEM=1, so git skips the image's config, refuses the
   # checkout, and every root plans.
   log() { echo "[smoke foreign-checkout] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
   local work r got want rc=0
   local -a REPORT_EXTRA=()
   want="envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/platform,envs/dev/search"
