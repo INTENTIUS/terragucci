@@ -272,7 +272,7 @@ fetch() { # url
 # The newest run on a branch's head commit, as the runs API gives it.
 run_on() { # branch
   local sha
-  sha="$(api "$URL/api/v1/repos/$REPO/branches/${1//\//%2F}" | jq -r '.commit.id')"
+  sha="$(remote_head "$REPO" "$1")"
   api "$URL/api/v1/repos/$REPO/actions/runs?head_sha=$sha" | jq -c '.workflow_runs[0] // empty'
 }
 
@@ -490,20 +490,23 @@ step_report() {
 # afterwards: the queue comes back and the drift job's pull request closes.
 step_drift() {
   run_cmd drift "just example change drift" "$HERE/example.sh" change drift
-  local sha before deadline n status url
-  sha="$(api "$URL/api/v1/repos/$REPO/branches/main" | jq -r '.commit.id')"
-  dispatched() { api "$URL/api/v1/repos/$REPO/actions/runs?head_sha=$sha" | jq -c '[.workflow_runs[] | select(.event == "workflow_dispatch")]'; }
-  before="$(dispatched | jq length)"
-  if api -o /dev/null -H 'content-type: application/json' -X POST -d '{"ref":"main"}' \
-      "$URL/api/v1/repos/$REPO/actions/workflows/terragucci.yml/dispatches"; then
+  local before deadline run status url
+  # Forgejo lists runs newest id first. The run is found by its id, never by
+  # a head sha (the branches API can lag a push, so a sha read from it may
+  # not match the commit the run is created on) and never by a count.
+  dispatched() { api "$URL/api/v1/repos/$REPO/actions/runs?event=workflow_dispatch&limit=50" | jq -c '.workflow_runs // []'; }
+  before="$(dispatched | jq '[.[].id] | max // 0')"
+  if run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' \
+      "$URL/api/v1/repos/$REPO/actions/workflows/terragucci.yml/dispatches")"; then
+    # The dispatch answers with the run it created; a Forgejo that answers
+    # nothing leaves the first dispatch run newer than $before.
+    run="$(jq -r '.id // empty' <<<"$run" 2>/dev/null || true)"
     deadline=$(( $(date +%s) + ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} ))
     status=""
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      n="$(dispatched | jq length)"
-      if [ "$n" -gt "$before" ]; then
-        status="$(dispatched | jq -r '.[0].status')"
-        case "$status" in success|failure|cancelled|skipped) break ;; esac
-      fi
+      status="$(dispatched | jq -r --argjson b "$before" --arg r "${run:-0}" \
+        '[.[] | select(if $r != "0" then .id == ($r | tonumber) else .id > $b end)] | (.[0].status // "")')"
+      case "$status" in success|failure|cancelled|skipped) break ;; esac
       sleep 5
     done
     log "drift: the dispatched run ended '${status:-unknown}'"
