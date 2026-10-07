@@ -13,7 +13,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 ## Before you start
 
 - A wave that ran: after a merge reached the default branch, or, with [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), after `/terragucci apply` on the open pull request (on GitLab, its `apply-mr` job).
-- `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits, and the apply runs unattended. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
+- `gate` set to `on-destroy` (the default) or `always`. A wave that destroys or replaces nothing needs no approval under `on-destroy`, and applies at once on any push to the default branch when `apply.when` is `merge`. With `never`, no wave waits, and the apply runs unattended. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
 - [chant](/terragucci/concepts/glossary/#chant) installed where you approve: `npm i -D @intentius/chant`.
 - Write access to the repo. What you record is a commit on its `chant/lifecycle` branch, which `chant approve` pushes from your machine with your own git credentials. [Who can push to `chant/lifecycle`](#who-can-push-to-chantlifecycle) covers how to protect that branch.
 - An ssh key of yours listed in `.chant/allowed_signers` on the default branch. [Set up the signers file](#set-up-the-signers-file) once per repo.
@@ -70,6 +70,10 @@ Either way the comment approves nothing. A wave with no sealed approval of the p
 Under `merge`, the apply role meets only merged code. Under `pull-request` it runs code nobody has merged yet, so the job also wants the forge's review. Your signature over the digests is the approval in both. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
 
 The report now shows each cleared wave as approved and links it to its record.
+
+## Roots on HCP Terraform
+
+This gate belongs to terragucci. It reads neither HCP Terraform's run approvals nor its workspace locks. terragucci expects local execution, with the workspace set to local so that HCP Terraform keeps the state and your jobs make the plans and applies behind this gate. A workspace left on remote execution runs on HCP Terraform's workers, where HCP's approvals and locks apply beside terragucci's.
 
 ## Set up the signers file
 

@@ -23,18 +23,18 @@ The agent never approves, applies or merges. Approving again stays with a person
 The refused-wave response needs no model, and it is the input to the agent:
 
 ```bash
-npx terragucci respond wave-refused --approved approved/report.json --current terragucci-report --wave 2 --json
+npx terragucci respond wave-refused --approved approved --current terragucci-report/current --wave 2 --json
 ```
 
 The envelope holds each root whose plan digest moved, with the changes and attributes that moved inside it.
 
 ### 2. Add a job to the apply workflow
 
-Run it when the apply job fails on a refusal. This is the GitHub version.
+Run it when a wave's apply job fails on a refusal. Waves are jobs named `apply-wave-1`, `apply-wave-2` and so on, and each job keeps its reports in an artifact named `terragucci-report-apply-wave-<k>`. The refused job writes `approved/report.json` and `current/report.json` into that artifact. This GitHub version covers wave 2. For another wave, change the number everywhere it appears.
 
 ```yaml
 explain-refusal:
-  needs: apply
+  needs: apply-wave-2
   if: failure()
   runs-on: ubuntu-latest
   permissions:
@@ -44,10 +44,10 @@ explain-refusal:
   steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
-      with: { pattern: terragucci-report*, path: reports }
+      with: { name: terragucci-report-apply-wave-2, path: reports }
     - run: >
         npx -y @intentius/terragucci respond wave-refused
-        --approved reports/approved/report.json --current reports/current --wave 2
+        --approved reports/approved --current reports/current --wave 2
         --json > refusal.json
     - uses: anthropics/claude-code-action@v1
       with:
@@ -59,17 +59,17 @@ explain-refusal:
           terragucci or any apply command.
 ```
 
-The paths depend on how your pipeline stores the approved report. Adjust them to match. On GitLab, add a job after the apply job that runs the same command and then starts the agent:
+Naming the artifact puts its files straight into `reports/`, where a `pattern:` would give each artifact a directory of its own. On GitLab, add a job after the wave's job that runs the same command and then starts the agent. The wave job's artifact unpacks at `terragucci-report/`:
 
 ```yaml
 explain-refusal:
   stage: apply
-  needs: [apply]
+  needs: [apply-wave-2]
   when: on_failure
   script:
     - >
       npx -y @intentius/terragucci respond wave-refused
-      --approved reports/approved/report.json --current reports/current --wave 2
+      --approved terragucci-report/approved --current terragucci-report/current --wave 2
       --json > refusal.json
     - >
       npx -y @anthropic-ai/claude-code -p

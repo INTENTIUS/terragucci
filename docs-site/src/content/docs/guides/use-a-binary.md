@@ -1,5 +1,5 @@
 ---
-title: Use OpenTofu, choudoufu or CDK Terrain
+title: Use OpenTofu or choudoufu
 description: Pick the binary your roots run with, and see what changes with each.
 claims: []
 ---
@@ -37,7 +37,7 @@ Set `binary` in `terragucci.yml`:
 binary: tofu
 ```
 
-The values are `terraform`, `tofu`, `choudoufu` and `cdktn`. `npx terragucci init --binary tofu` sets it for you and writes the file when there is none. Pin the version with `version`, or with a `.opentofu-version` or `.terraform-version` file.
+The values are `terraform`, `tofu` and `choudoufu`. `npx terragucci init --binary tofu` sets it for you and writes the file when there is none. Pin the version with `version`, or with a `.opentofu-version` or `.terraform-version` file.
 
 ### 3. Write the pipeline again
 
@@ -59,8 +59,7 @@ Every job now runs in the CI image for that binary, pinned by digest. Commit the
 |---|---|---|
 | `terraform` | `tf-check`, `tf-plan`, `tf-apply`, `tf-drift` | your backend |
 | `tofu` | the same four | your backend |
-| `cdktn` | the same four | your backend |
-| `choudoufu` | the same four, plus the three below | tags on each resource |
+| `choudoufu` | the same four, with choudoufu's live check in `tf-check` | tags on each resource |
 | Terragrunt, calling `tofu` or `terraform` | the same four, on Terragrunt units | each unit's backend; see [Use Terragrunt](/terragucci/guides/use-terragrunt/) |
 
 ## choudoufu
@@ -69,13 +68,7 @@ Every job now runs in the CI image for that binary, pinned by digest. Commit the
 
 Its jobs run in the `terragucci-choudoufu` CI image, which carries a choudoufu release (0.22.0) and the terragucci engine. To run another release, set `version` to it, and each job installs that release from choudoufu's GitHub releases, checked against their SHA256SUMS. A root's `required_version` names the OpenTofu language version choudoufu is forked from, so terragucci does not read it as a choudoufu release.
 
-You need none of this to use terragucci with Terraform or OpenTofu. The choudoufu stages are separate workflows that appear only when the binary is `choudoufu`.
-
-| choudoufu stage | What it does |
-|---|---|
-| `choudoufu-live-check` | checks the root against choudoufu's rules, with no cloud calls; `tf-check` runs it after `validate` and fails on a refusal |
-| `choudoufu-discover` | lists live resources nobody owns yet, on a schedule |
-| `choudoufu-adopt` | claims discovered resources by writing their owner tags, after an approval |
+You need none of this to use terragucci with Terraform or OpenTofu. With the binary set to `choudoufu`, `tf-check` runs `choudoufu live-check` on each root after `validate`. The check reads the root against choudoufu's rules with no cloud calls, and a refusal fails the job. Its diagnostics go to the job log and the check report.
 
 ## Next
 

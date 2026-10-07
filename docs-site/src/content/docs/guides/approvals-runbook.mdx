@@ -8,7 +8,7 @@ claims: [waves, sealed, refuse]
 
 The commands an approver and an on-call engineer use, in one place. Each section stands alone. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) walks through a first sign-off with screenshots, and [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/) explains why one is a commit.
 
-Everything lives in one file, `_gates/tf-apply.jsonl` on the `chant/lifecycle` branch. A line with `"kind":"pending"` is a wave asking to be approved, and a line without it is an approval. The commands below read or append to that file.
+The ledger is one file, `_gates/tf-apply.jsonl` on the `chant/lifecycle` branch. A line with `"kind":"pending"` is a wave asking to be approved, and a line without it is an approval. The commands below read or append to that file. The report of the plans each waiting wave asked about sits beside it, at `_gates/tf-apply/wave-<k>/<digest>.json`.
 
 ## Set up signers
 

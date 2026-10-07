@@ -32,7 +32,7 @@ When a wave waits for an approval, it keeps the report of the plans it asks you 
 ```bash
 git fetch origin chant/lifecycle
 mkdir -p approved
-git show origin/chant/lifecycle:_gates/tf-apply/wave-2/sha256_<hex>.json > approved/report.json
+git show origin/chant/lifecycle:_gates/tf-apply/wave-2/jcs1-sha256_<hex>.json > approved/report.json
 ```
 
 The current report stays in the refused job's workspace, so step 3 is easiest to read in the job's log. The log also names every root whose plan moved.
