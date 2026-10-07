@@ -8,6 +8,7 @@ const SITE = 'https://intentius.io/terragucci';
 const ORDER = [
 	'getting-started/agents',
 	'index',
+	'concepts/how-it-works',
 	'getting-started',
 	'tutorial',
 	'guides/add-to-github',
@@ -34,6 +35,7 @@ const ORDER = [
 	'concepts/waves-and-approvals',
 	'concepts/why-plans-are-grouped',
 	'concepts/approvals-as-records',
+	'concepts/glossary',
 ];
 
 export async function pages() {

@@ -39,7 +39,7 @@ terragucci tf-plan          project, commit, binary, change set, totals
       tofu show
 ```
 
-Every run of the binary is a span, and the binary gets that span as `TRACEPARENT`. OpenTofu and choudoufu read it, so their own spans land inside the trace. Terraform ignores it and starts a trace of its own. Its spans carry the resource attributes `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`, so a query on them finds the span that ran it.
+Every run of the binary is a span, and the binary gets that span as `TRACEPARENT`. OpenTofu and [choudoufu](/terragucci/concepts/glossary/#choudoufu) read it, so their own spans land inside the trace. Terraform ignores it and starts a trace of its own. Its spans carry the resource attributes `terragucci.trace_id`, `terragucci.span_id` and `terragucci.root`, so a query on them finds the span that ran it.
 
 <Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
 

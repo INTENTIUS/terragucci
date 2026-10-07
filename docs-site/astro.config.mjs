@@ -47,7 +47,7 @@ export default defineConfig({
 			title: 'terragucci',
 			expressiveCode: { plugins: [newlinesBetweenLines] },
 			customCss: ['./src/styles/terragucci.css'],
-			description: 'A lifecycle kit for Terraform, OpenTofu and Terragrunt: plan, approve, apply and watch for drift, on your forge\'s CI.',
+			description: 'CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],
@@ -57,7 +57,13 @@ export default defineConfig({
 			// The sections follow what the reader is doing. The validation page is the
 			// one people link to, so it has a fixed place.
 			sidebar: [
-				{ label: 'Getting started', items: [{ label: 'Get your first plan note', slug: 'getting-started' }] },
+				{
+					label: 'Getting started',
+					items: [
+						{ label: 'How terragucci works', slug: 'concepts/how-it-works' },
+						{ label: 'Get your first plan note', slug: 'getting-started' },
+					],
+				},
 				{
 					label: 'Tutorial',
 					items: [{ autogenerate: { directory: 'tutorial' } }],
@@ -133,6 +139,7 @@ export default defineConfig({
 						{ label: 'How waves and approvals work', slug: 'concepts/waves-and-approvals' },
 						{ label: 'Why plans are grouped', slug: 'concepts/why-plans-are-grouped' },
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
+						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},
 				{ label: 'How terragucci compares', slug: 'compare' },

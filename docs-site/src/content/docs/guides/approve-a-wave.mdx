@@ -14,7 +14,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 - A merge that reached the default branch, so `tf-apply` has started.
 - `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits, and the apply runs unattended. [Gate policy](/terragucci/reference/stages/#gate-policy) lists the three.
-- chant installed where you approve: `npm i -D @intentius/chant`.
+- [chant](/terragucci/concepts/glossary/#chant) installed where you approve: `npm i -D @intentius/chant`.
 - Write access to the repo. What you record is a commit on its `chant/lifecycle` branch, which `chant approve` pushes from your machine with your own git credentials. [Who can push to `chant/lifecycle`](#who-can-push-to-chantlifecycle) covers how to protect that branch.
 - An ssh key of yours listed in `.chant/allowed_signers` on the default branch. [Set up the signers file](#set-up-the-signers-file) once per repo.
 - You are a person. A gate exists so that someone reads the plans; anything that signs off for you defeats it.
@@ -55,7 +55,7 @@ When you leave out `--actor`, chant records `$GITHUB_ACTOR`, then `$GITLAB_USER_
 
 The command writes a record that names the wave's set digest, a hash over the plan digest of every root in it. Your sign-off covers those plans and no others, and the seal covers the record, so an edited record no longer verifies.
 
-`terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`. Once that list names any gate, the job accepts a record for any wave only when its seal verifies against the signers file at base, so a wave added after `init` needs a sealed approval too, and the job prints that its gate is not listed. Without such a seal the wave stays put, and the job prints why.
+`terragucci init` lists every wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson). Once that list names any gate, the job accepts a record for any wave only when its seal verifies against the signers file at base, so a wave added after `init` needs a sealed approval too, and the job prints that its gate is not listed. Without such a seal the wave stays put, and the job prints why.
 
 ### 4. Run the stage again
 

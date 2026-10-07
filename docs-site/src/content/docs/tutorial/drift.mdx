@@ -17,7 +17,7 @@ Someone deletes a queue in the console. This scenario does the same through the 
 
 <Captured step="drift" optional />
 
-The example's `terragucci.yml` schedules drift for six every morning. The pipeline's `drift` job runs then, and you can start it by hand from the Actions tab. It plans every root with `-refresh-only`: each root's state is compared with what exists in floci, and the code is ignored. The report lists the deleted queue under deletes, in root `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
+The example's `terragucci.yml` schedules drift for six every morning. The pipeline's `drift` job runs then, and you can start it by hand from the Actions tab. It plans every root with `-refresh-only`: each root's state is compared with what exists in [floci](/terragucci/concepts/glossary/#floci), and the code is ignored. The report lists the deleted queue under deletes, in root `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
 
 :::note
 floci, the local AWS stand-in, does not keep tags. On it, tags show as drifted on every root, and the report lists them beside the queue. On AWS they would not. Look for the entry marked deleted outside Terraform.

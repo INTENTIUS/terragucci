@@ -3,7 +3,7 @@ title: Approvals as records in your repo
 description: Why an approval is a commit on a branch of your own repo, and what that gives you over a button in a CI tool.
 ---
 
-An approval in terragucci is a record on the `chant/lifecycle` branch of your repository. `chant approve` writes it, and the record names the plan it approves.
+An approval in terragucci is a record on the `chant/lifecycle` branch of your repository. [`chant approve`](/terragucci/concepts/glossary/#chant) writes it, and the record names the plan it approves.
 
 ## What a record holds
 
@@ -15,7 +15,7 @@ Each approval is a commit, and `git log` shows who made it and when. It lives wi
 
 ## Why it is sealed
 
-Anything that can push to `chant/lifecycle` can write a line that names a person, and that includes every person with write access and, on GitHub, every workflow job with `contents: write`. So an approval is sealed: `chant approve --sign` signs the whole record with the approver's ssh key. `terragucci init` lists every wave's gate under `identity.gates` in `chant.workspace.json`. Once that list names any gate, the apply job counts an approval of any wave only when its seal verifies against `.chant/allowed_signers` (or the file `.chant/trust.json` names). A line without a valid seal from a listed key counts for nothing, and so does a line edited after it was sealed.
+Anything that can push to `chant/lifecycle` can write a line that names a person, and that includes every person with write access and, on GitHub, every workflow job with `contents: write`. So an approval is sealed: `chant approve --sign` signs the whole record with the approver's ssh key. `terragucci init` lists every wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson). Once that list names any gate, the apply job counts an approval of any wave only when its seal verifies against `.chant/allowed_signers` (or the file `.chant/trust.json` names). A line without a valid seal from a listed key counts for nothing, and so does a line edited after it was sealed.
 
 The seal is the guard, so the rules that keep it sound are about the files it is checked against. The job reads them from the commit before the one it applies, so a merge that adds a signer does not judge its own apply. Agent keys never go in the signers file, and the agent comment refuses a change to it or to `chant.workspace.json`. Protecting `chant/lifecycle` against force pushes and deletion keeps the record of who approved what; [Approve a waiting wave](/terragucci/guides/approve-a-wave/#who-can-push-to-chantlifecycle) shows how on each forge.
 

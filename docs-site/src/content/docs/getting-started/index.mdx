@@ -10,7 +10,7 @@ import PlanNote from '../../../components/PlanNote.astro';
 
 A pipeline file committed to your repo, and a pull request that carries one plan note from terragucci. The note groups the roots a change reaches and names every destroy.
 
-To see it work before touching your own repo, [the tutorial](/terragucci/tutorial/) runs a 15-root example on your laptop. A coding agent can also do these steps for you: [hand it this prompt](/terragucci/getting-started/agents/).
+[How terragucci works](/terragucci/concepts/how-it-works/) follows one change from pull request to drift and says what runs where. To see it work before touching your own repo, [the tutorial](/terragucci/tutorial/) runs a 15-root example on your laptop. A coding agent can also do these steps for you: [hand it this prompt](/terragucci/getting-started/agents/).
 
 ## Before you start
 
@@ -47,7 +47,7 @@ no terragucci.yml needed (defaults fit)
 dry run: nothing was written
 ```
 
-The roots are every directory that declares a backend or configures a provider. The layers are the apply order, read from `terraform_remote_state`. If the binary or the forge is wrong, pass `--binary` or `--forge`. `npx terragucci init --dry-run --json` lists the reason for every root.
+The roots are every directory that declares a backend or a `cloud` block, or configures a provider. A root on HCP Terraform with remote execution runs its plans on HCP Terraform's workers; [root](/terragucci/concepts/glossary/#root) says what that means for the jobs. The layers are the dependency order, read from `terraform_remote_state`. They are not the waves: `tf-apply` builds its [waves](/terragucci/concepts/glossary/#wave) from the layers, with any canary roots first. If the binary or the forge is wrong, pass `--binary` or `--forge`. `npx terragucci init --dry-run --json` lists the reason for every root.
 
 ### 3. Write the pipeline
 
@@ -64,7 +64,7 @@ no terragucci.yml needed (defaults fit)
 
 The file differs by forge. On GitLab it is `.gitlab-ci.yml`, and on Forgejo it is `.forgejo/workflows/terragucci.yml`. Open the file and read it once. Every job runs in terragucci's CI image for your binary. A job downloads a tool only if you pin a version the image lacks, which makes it run `terragucci install` first, or if you set a policy, which fetches conftest on first use.
 
-`chant.workspace.json` declares the approval gate of each wave. Commit it with the pipeline: the apply job reads it from the default branch. A Terragrunt repo gets no such file.
+[`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) declares the approval gate of each wave. Commit it with the pipeline: the apply job reads it from the default branch. A Terragrunt repo gets no such file.
 
 Most repos need no `terragucci.yml`. When you do want one, [Your config file](/terragucci/reference/config/) lists every key.
 
@@ -98,7 +98,7 @@ The note links to the full report, and every root in it links to its plan. [The 
 
 The plan note works without this. Approving a wave needs it, and a change that destroys something leaves a wave waiting. Approvals are sealed with an ssh key, so before the first one:
 
-1. Install chant where you approve: `npm i -D @intentius/chant`.
+1. Install [chant](/terragucci/concepts/glossary/#chant) where you approve: `npm i -D @intentius/chant`.
 2. Add your public key to `.chant/allowed_signers` through a reviewed pull request to the default branch, one line per person who approves. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) gives the format and the branch protection to set.
 
 Without a listed key, a waiting wave has nobody who can approve it.

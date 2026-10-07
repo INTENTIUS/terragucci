@@ -27,7 +27,7 @@ In the example, approve the waiting wave, then merge the module bump. That wave 
 
 ### 2. Get the two reports
 
-When a wave waits for an approval, it keeps the report of the plans it asks you to approve on the `chant/lifecycle` branch, at `_gates/tf-apply/wave-<k>/<digest>.json` with the `:` in the digest written as `_`. The refused job writes that report to `terragucci-report/approved/report.json` and the report of the plans it made to `terragucci-report/current/report.json`. To print the diff on your own machine, take the approved report from the branch:
+When a wave waits for an approval, it keeps the report of the plans it asks you to approve on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch, at `_gates/tf-apply/wave-<k>/<digest>.json` with the `:` in the digest written as `_`. The refused job writes that report to `terragucci-report/approved/report.json` and the report of the plans it made to `terragucci-report/current/report.json`. To print the diff on your own machine, take the approved report from the branch:
 
 ```bash
 git fetch origin chant/lifecycle
@@ -47,7 +47,7 @@ The response lists each root whose plan digest moved, with the changes and attri
 
 ### 4. Decide
 
-- The moved plan is the one you want: record a new approval with `npx chant approve tf-apply wave-2 --plan <new digest> --sign`, with the digest the refusal printed, then run the stage again. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) has the steps.
+- The moved plan is the one you want: record a new approval with [chant](/terragucci/concepts/glossary/#chant): `npx chant approve tf-apply wave-2 --plan <new digest> --sign`, with the digest the refusal printed, then run the stage again. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) has the steps.
 - The moved plan is not what you meant to apply: find the change that moved it, revert it on the default branch, and let the pipeline plan the wave again. The earlier approval does not come back when the revert restores the old digest. The refused run recorded a new pending fact, and an approval counts only when it is newer than the wave's latest pending fact, so the reverted wave waits again and needs a fresh `chant approve`.
 
 An agent may summarize the diff for you, but it does not re-approve. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) sets that up.

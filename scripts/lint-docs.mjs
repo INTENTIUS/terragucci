@@ -4,6 +4,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { lintDocument } from "sentences/lint/run";
+import { termProblems } from "./lint-terms.mjs";
 
 const strictness = Number(process.argv[2] ?? 2);
 const limit = Number(process.argv[3] ?? 8);
@@ -105,5 +106,10 @@ for (const file of files) {
       console.log(`       L${line} [${f.ruleId}/${f.severity}] ${f.message}`);
     }
   }
+}
+// A chant or fountain word on a page that neither defines nor links it.
+for (const problem of termProblems(files)) {
+  failed = true;
+  console.log(`FAIL term  ${problem}`);
 }
 process.exit(failed ? 1 : 0);

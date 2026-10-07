@@ -9,9 +9,9 @@ Every stage takes the root directories and the binary.
 
 | Stage | What it does | Forge permissions | Outputs |
 |---|---|---|---|
-| `tf-check` | format, `validate`, and for a `choudoufu` repo `live-check`; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the diagnostics in the log, and the check report |
+| `tf-check` | format, `validate`, and for a [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) repo `live-check`; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the diagnostics in the log, and the check report |
 | `tf-plan` | plans only the roots a change affects, in one run, and posts the grouped summary on the pull request; with [`policy`](/terragucci/reference/policy/) set, fails a root the policy denies | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
-| `tf-apply` | applies wave by wave, one job per wave, each wave behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a wave whose plans the policy denies | read the repository, write the `chant/lifecycle` branch | per wave, whether it waited and the command that approves it |
+| `tf-apply` | applies wave by wave, one job per wave, each wave behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a wave whose plans the policy denies | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch | per wave, whether it waited and the command that approves it |
 | `tf-drift` | plans every root on a schedule with `-refresh-only` and reports what changed outside Terraform, grouped | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
@@ -108,7 +108,7 @@ terragucci rollout modules/network 1.4.0 --mode apply
 terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
-With no version, the rollout takes the newest one published: the highest `modules/network/vX.Y.Z` tag, or the highest tag in the module's OCI repository. The old version is read from the pins, and `--from` says which one moves when they disagree. Each run takes at most one step and exits; the default is a dry run, and `--mode apply` pushes the branches and opens the pull requests with the token from `token_env`. It never merges anything or writes a default branch.
+With no version, the rollout takes the newest one published: the highest `modules/network/vX.Y.Z` tag, or the highest tag in the module's OCI repository. The old version is read from the pins, and `--from` says which one moves when they disagree. Each run takes at most one step and exits; the default is a dry run, and `--mode apply` pushes the branches and opens the pull requests with the token from `token_env`, and runs no `terraform apply`. It never merges anything or writes a default branch.
 
 | Exit code | Meaning |
 |---|---|

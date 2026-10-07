@@ -20,7 +20,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `run.commit_url`, `run.pull_request`, `run.pull_request_url` | the commit's page, and the pull or merge request the run planned with its page |
 | `run.report_url` | where this `report.html` is served from the bucket, when `reports.url` is set |
 | `run.trace_id`, `run.trace_url` | the run's trace, when the stage sent one, and its link when `telemetry.trace_url` is set |
-| `change_set` | the set digest over every root's plan digest, the same digest `chant` gives the change set |
+| `change_set` | the set digest over every root's plan digest, the same digest [`chant`](/terragucci/concepts/glossary/#chant) gives the change set |
 | `unit`, `units` | what the groups count: `member` or `instance`, and how many |
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts are read from it |
@@ -56,4 +56,4 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | what the policy denied or warned about in a root | `roots[].policy` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
-Approvals stay on your repo's `chant/lifecycle` branch. The report names each record's branch and path and never copies it, so the branch is the one record of who approved what.
+Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it, so the branch is the one record of who approved what.

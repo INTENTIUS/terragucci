@@ -20,7 +20,7 @@ Once per repo, in a reviewed pull request to the default branch.
    github:alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
    ```
 
-2. Run `terragucci init` if you have not. It lists each wave's gate under `identity.gates` in `chant.workspace.json`. Once that list names any gate, the apply job counts an approval of any wave only when its seal verifies against the signers file at base, the commit before the one it applies. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from) explains why.
+2. Run `terragucci init` if you have not. It lists each wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson). Once that list names any gate, the apply job counts an approval of any wave only when its seal verifies against the signers file at base, the commit before the one it applies. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from) explains why.
 3. Put people in the file and nobody else. A key that a CI job or an agent holds never goes in it.
 4. Add a person by pull request. Remove one the same way. The rule is read from the commit before the one being applied, so the change first governs the apply of the next merge.
 
@@ -69,7 +69,7 @@ The wave waits again, and the next run prints the approval command. The old line
 
 When a wave's plans changed after it was approved, the job exits with code 4 and applies nothing. It names the roots that moved, and `terragucci respond wave-refused` prints what changed inside them. You can approve the new digest or revert the change that moved the plan.
 
-A revert does not bring the old approval back. The refused run recorded a pending fact for the new digest, and an approval counts only when it is newer than the newest pending fact for its gate. The reverted wave waits again and needs a fresh `chant approve`. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) has the steps.
+A revert does not bring the old approval back. The refused run recorded a pending fact for the new digest, and an approval counts only when it is newer than the newest pending fact for its gate. The reverted wave waits again and needs a fresh [`chant approve`](/terragucci/concepts/glossary/#chant). [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) has the steps.
 
 ## What expires
 

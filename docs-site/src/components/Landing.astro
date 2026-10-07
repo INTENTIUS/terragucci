@@ -1,8 +1,19 @@
 ---
-// The top of the home page: the wordmark, the prompt to hand a coding agent,
-// and the one-line description. The prompt is the same one the agents page
-// and the README carry.
+// The home page's two ends. `part="top"` (the default) is the wordmark, the
+// tagline, what terragucci is and the three ways in. `part="agent"` is the
+// prompt to hand a coding agent, further down the page. The prompt is the same
+// one the agents page and the README carry. The tagline is the one the README
+// and the site description use.
+interface Props {
+	part?: 'top' | 'agent';
+}
+const { part = 'top' } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const paths = [
+	{ href: `${base}/tutorial/`, label: 'Try it on your laptop', detail: 'A 15-root example with a local forge and an AWS stand-in, booted with one command.' },
+	{ href: `${base}/getting-started/`, label: 'Set it up in your repo', detail: 'npm i -D @intentius/terragucci, npx terragucci init, and a plan note on your next pull request.' },
+	{ href: `${base}/getting-started/agents/`, label: 'Let your agent do it', detail: 'A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies or approves.' },
+];
 const prompt = [
 	'Set up terragucci in this repository.',
 	'Read https://intentius.io/terragucci/llms.txt first, then',
@@ -10,25 +21,39 @@ const prompt = [
 	'Do not apply anything. Open a pull request with the result.',
 ].join('\n');
 ---
-<section class="tg-landing not-content">
-	<p class="wordmark">TERRAGUCCI</p>
+{part === 'top' ? (
+	<section class="tg-landing not-content">
+		<p class="wordmark">TERRAGUCCI</p>
 
-	<figure class="agent">
-		<figcaption>
-			<span>Paste into your coding agent</span>
-			<button type="button" class="copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
-		</figcaption>
-		<pre><code>{prompt}</code></pre>
-	</figure>
+		<h1 class="claim">CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check</h1>
 
-	<h1 class="claim">CI and observability for Terraform, Terragrunt, and OpenTofu</h1>
+		<p class="lede">
+			terragucci writes the pipeline your forge runs. Every pull request gets one grouped plan note. Every merge
+			applies in waves, and a wave that destroys something waits for a signed approval. A scheduled job reports drift. It runs on your own GitHub,
+			GitLab or Forgejo runners with your cloud roles. There is no server to run and no service to pay for.
+			<a href={`${base}/concepts/how-it-works/`}>How it works</a>
+		</p>
 
-	<p class="paths">
-		<a href={`${base}/tutorial/`}>Try it on your laptop</a>
-		<a href={`${base}/getting-started/`}>Set it up in your repo</a>
-		<a href={`${base}/getting-started/agents/`}>Let your agent do it</a>
-	</p>
-</section>
+		<ul class="paths">
+			{paths.map((p) => (
+				<li>
+					<a href={p.href}>{p.label}</a>
+					<p>{p.detail}</p>
+				</li>
+			))}
+		</ul>
+	</section>
+) : (
+	<section class="tg-landing tg-agent not-content">
+		<figure class="agent">
+			<figcaption>
+				<span>Paste into your coding agent</span>
+				<button type="button" class="copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
+			</figcaption>
+			<pre><code>{prompt}</code></pre>
+		</figure>
+	</section>
+)}
 
 <script>
 	for (const button of document.querySelectorAll<HTMLButtonElement>('.tg-landing .copy')) {
@@ -125,20 +150,56 @@ const prompt = [
 		color: var(--sl-color-gray-2);
 		text-wrap: balance;
 	}
-	.paths {
+	.tg-agent {
+		padding-block: 0;
+	}
+	.lede {
 		margin: 0;
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: center;
-		gap: 0.5rem 1.5rem;
-		font-size: 0.95rem;
+		max-width: 40rem;
+		color: var(--sl-color-gray-2);
+		line-height: 1.6;
+		text-wrap: pretty;
+	}
+	.lede a {
+		color: var(--sl-color-accent-high);
+		font-weight: 500;
+		white-space: nowrap;
+	}
+	.paths {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		width: min(100%, 52rem);
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+		gap: 1rem;
+		text-align: left;
+	}
+	.paths li {
+		margin: 0;
+		padding: 1rem 1.1rem;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.75rem;
+		background: var(--tg-panel);
+		display: grid;
+		gap: 0.4rem;
+		align-content: start;
+		min-width: 0;
 	}
 	.paths a {
+		font-family: var(--tg-display);
+		font-size: 1.1rem;
+		font-weight: 600;
 		color: var(--sl-color-accent-high);
 		text-decoration: none;
-		font-weight: 500;
 	}
 	.paths a:hover {
 		text-decoration: underline;
+	}
+	.paths p {
+		margin: 0;
+		font-size: 0.9rem;
+		color: var(--sl-color-gray-2);
+		overflow-wrap: anywhere;
 	}
 </style>

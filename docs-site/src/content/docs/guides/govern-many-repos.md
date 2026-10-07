@@ -59,7 +59,7 @@ The dry run is the default. For each project it says whether the pipeline would 
 npx terragucci reconcile --config terragucci.yml --mode apply
 ```
 
-terragucci writes to each project through a pull request, never straight to its main branch. A project whose pipeline is already current is left alone. The exit code is 1 when any project failed.
+terragucci writes to each project through a pull request, never straight to its main branch. Despite its name, `--mode apply` runs no `terraform apply`. A project whose pipeline is already current is left alone. The exit code is 1 when any project failed.
 
 ### 5. Merge in each project
 

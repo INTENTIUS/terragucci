@@ -47,7 +47,7 @@ A comment that asks for nothing ends the job with no error. If the job cannot te
 
 ## Apply a merged pull request
 
-`/terragucci apply` on a merged pull request re-runs `tf-apply` for waves you approved with `chant approve --sign`, as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes. The `apply-comment` job reads the comment with `terragucci comment-apply` before any credential is asked for. Its workflow comes from the default branch, and its checkout is the merge commit, never the head. The job holds the apply lock a push holds, and assumes `oidc.apply_role` once the checks pass. Waves run in order from wave 1: one already applied plans no change, and the first that does not apply ends the run. With `wave-<n>` the run stops after wave n.
+`/terragucci apply` on a merged pull request re-runs `tf-apply` for waves you approved with [`chant approve --sign`](/terragucci/concepts/glossary/#chant), as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes. The `apply-comment` job reads the comment with `terragucci comment-apply` before any credential is asked for. Its workflow comes from the default branch, and its checkout is the merge commit, never the head. The job holds the apply lock a push holds, and assumes `oidc.apply_role` once the checks pass. Waves run in order from wave 1: one already applied plans no change, and the first that does not apply ends the run. With `wave-<n>` the run stops after wave n.
 
 Nothing applies, and the reply says why, when:
 

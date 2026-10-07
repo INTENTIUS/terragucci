@@ -47,7 +47,7 @@ Fix those in their own pull request and run the preview again.
 npx terragucci rollout modules/network 1.4.0 --mode apply
 ```
 
-The command pushes a branch and opens one pull request for the canary wave, or for the first wave dependency order gives. It changes only that wave's files, so the plan covers exactly what moved. A pin keeps its shape: a ref of `modules/network/v1.3.0` becomes `modules/network/v1.4.0`.
+Here `--mode apply` means writing to the forge. It runs no `terraform apply`; the roots apply after the merge, as any change does. The command pushes a branch and opens one pull request for the canary wave, or for the first wave dependency order gives. It changes only that wave's files, so the plan covers exactly what moved. A pin keeps its shape: a ref of `modules/network/v1.3.0` becomes `modules/network/v1.4.0`.
 
 ### 4. Merge it and let it apply
 
