@@ -883,6 +883,11 @@ describe("the plugin cache", () => {
 
 interface Hit { method: string; url: string; body: any }
 
+/** A route's answer with a status code of its own; any other value is sent with 200. */
+class Answer {
+  constructor(readonly status: number, readonly body: unknown) {}
+}
+
 /** A stand-in forge API: records requests, answers from `routes`. */
 async function stubApi(routes: (hit: Hit) => unknown): Promise<{ url: string; hits: Hit[]; close: () => void }> {
   const hits: Hit[] = [];
@@ -893,7 +898,9 @@ async function stubApi(routes: (hit: Hit) => unknown): Promise<{ url: string; hi
       const hit = { method: req.method!, url: req.url!, body: raw ? JSON.parse(raw) : undefined };
       hits.push(hit);
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify(routes(hit) ?? {}));
+      const answer = routes(hit);
+      if (answer instanceof Answer) res.statusCode = answer.status;
+      res.end(JSON.stringify((answer instanceof Answer ? answer.body : answer) ?? {}));
     });
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
@@ -1027,7 +1034,7 @@ describe("the plan stage", () => {
     expect(planScript("tofu", layers, "forgejo", OIDC, {}, true).split("\n")[0]).toBe(READS_EXIT);
     expect(planScript("tofu", layers, "github", undefined, { terragrunt: { prelude: "true" } }).split("\n")[0]).toBe(READS_EXIT);
     // GitLab runs the script in its own bash from a heredoc; the first line is the same there.
-    expect(body(render("gitlab")).plan.script.join("\n")).toContain(`bash <<'PLAN'\n${READS_EXIT}\n`);
+    expect(body(render("gitlab")).plan.script.join("\n")).toContain(`bash <<'PLAN' || exit $?\n${READS_EXIT}\n`);
   });
 
   it("names the stage's roots, binary and bucket, so it plans what the pipeline names", () => {
@@ -1145,6 +1152,130 @@ describe("stale plan notes", () => {
     }
   });
 });
+
+describe("a GitLab wave in the runner's own shell", () => {
+  const gitlabEnv = (api: string, bin: Record<string, string>): Record<string, string> => ({
+    ...bin, TG_TOKEN: "t", TG_SHA: "s", TG_BRANCH: "main", CI_API_V4_URL: api, CI_PROJECT_ID: "9", CI_PIPELINE_URL: "http://gitlab/p/1", CI_SERVER_HOST: "gitlab", CI_PROJECT_PATH: "acme/infra",
+  });
+  const waveJob = (wave: number, gate?: "always"): string[] => body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gate }).content)[`apply-wave-${wave}`].script;
+  const stage = (code: number, outcome: string): Record<string, string> => ({ terragucci: `#!/usr/bin/env bash\necho ${JSON.stringify(outcome)} > "$TG_OUTCOME"\nexit ${code}\n` });
+
+  it("the runner's eval turns a failed command's code into 1, and the heredoc's `exit` keeps it", async () => {
+    expect((await runJob(["bash <<'X'\nexit 3\nX"], {})).status).toBe(1);
+    expect((await runJob(["bash <<'X' || exit $?\nexit 3\nX"], {})).status).toBe(3);
+    expect((await runJob(["bash <<'X' || exit $?\nexit 0\nX", "echo after"], {})).out).toContain("after");
+  });
+
+  it.each([
+    [3, "failed", "wave 1 waits: chant approve tf-apply wave-1 --plan jcs1-sha256:abc123 --sign"],
+    [4, "failed", "wave 1 was refused: its plans changed since the approval"],
+    [1, "failed", "an apply failed"],
+  ] as const)("a wave that ends %i ends its job with that code, and its status call is not refused", async (code, state, outcome) => {
+    const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", stage(code, outcome));
+    git(dir, "init", "-q");
+    git(dir, "remote", "add", "origin", "http://gitlab/acme/infra.git");
+    const gl = gitlabStatuses();
+    const api = await stubApi(gl.route);
+    try {
+      const r = await runJob(waveJob(1), gitlabEnv(api.url, env), dir);
+      expect(r.status, r.out).toBe(code);
+      expect(r.out).not.toContain("answered 400");
+      expect(gl.posted).toEqual([["terragucci/apply", "running", "applying", 201], ["terragucci/apply", state, code === 1 ? "an apply failed" : outcome, 201]]);
+      // A running status keeps the pipeline running; this one ended.
+      expect(gl.current("terragucci/apply")).toBe(state);
+    } finally {
+      api.close();
+    }
+  });
+
+  it("a later wave that waits fails the running status, and the retry after the approval posts a new one", async () => {
+    const wait = "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:abc123 --sign";
+    const gl = gitlabStatuses();
+    const api = await stubApi(gl.route);
+    try {
+      for (const [wave, code] of [[1, 0], [2, 3], [2, 0]] as const) {
+        const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", stage(code, wait));
+        git(dir, "init", "-q");
+        git(dir, "remote", "add", "origin", "http://gitlab/acme/infra.git");
+        const r = await runJob(waveJob(wave, "always"), gitlabEnv(api.url, env), dir);
+        expect(r.status, r.out).toBe(code);
+        expect(r.out).not.toContain("answered 400");
+      }
+      expect(gl.posted).toEqual([
+        ["terragucci/apply", "running", "applying", 201],
+        ["terragucci/apply", "failed", wait, 201],
+        ["terragucci/apply", "success", "3 roots in 2 groups applied", 201],
+      ]);
+    } finally {
+      api.close();
+    }
+  });
+
+  it("the stub refuses what GitLab refuses: running again, or back to pending, from running", async () => {
+    const gl = gitlabStatuses();
+    const api = await stubApi(gl.route);
+    try {
+      const post = (state: string) => fetch(`${api.url}/projects/9/statuses/s`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x", state }) }).then((r) => r.status);
+      expect(await post("running")).toBe(201);
+      expect(await post("running")).toBe(400);
+      expect(await post("pending")).toBe(400);
+      expect(await post("failed")).toBe(201);
+      expect(await post("running")).toBe(201);
+    } finally {
+      api.close();
+    }
+  });
+});
+
+/**
+ * GitLab's commit statuses for one pipeline, as its API keeps them: a post
+ * reuses the status of that name while it is pending or running, else starts
+ * a new one, and answers 400 for a move its state machine has no event for
+ * (`running` is enqueue then run, `pending` is enqueue).
+ */
+function gitlabStatuses(): { route: (hit: Hit) => unknown; posted: [string, string, string, number][]; current: (name: string) => string | undefined } {
+  const jobs: { name: string; state: string }[] = [];
+  const posted: [string, string, string, number][] = [];
+  const route = (hit: Hit): unknown => {
+    if (!(hit.method === "POST" && hit.url.includes("/statuses/"))) return hit.method === "GET" ? [] : {};
+    const { name, state, description } = hit.body;
+    const open = jobs.find((j) => j.name === name && ["pending", "running"].includes(j.state));
+    const from = open?.state ?? "created";
+    const to = ({
+      pending: from === "created" ? "pending" : undefined,
+      running: ["created", "pending"].includes(from) ? "running" : undefined,
+      success: "success",
+      failed: "failed",
+    } as Record<string, string | undefined>)[state];
+    if (!to) {
+      posted.push([name, state, description, 400]);
+      return new Answer(400, { message: `400 Bad request - Cannot transition status via :${state === "running" ? "run" : "enqueue"} from :${from}` });
+    }
+    if (open) open.state = to;
+    else jobs.push({ name, state: to });
+    posted.push([name, state, description, 201]);
+    return new Answer(201, { name, status: to });
+  };
+  return { route, posted, current: (name) => jobs.filter((j) => j.name === name).at(-1)?.state };
+}
+
+/**
+ * Runs a job's `script:` lines the way gitlab-runner 17.11's bash shell does
+ * by default (shells/bash.go, Finish): the lines in one `eval`, behind a pipe,
+ * under errexit and pipefail, fed to bash on its stdin.
+ */
+function runJob(lines: string[], env: Record<string, string>, cwd?: string): Promise<{ status: number | null; out: string }> {
+  const quoted = `'${lines.join("\n").replaceAll("'", "'\\''")}'`;
+  const script = ["trap exit 1 TERM", "", "if set -o | grep pipefail > /dev/null; then set -o pipefail; fi; set -o errexit", "set +o noclobber", `: | eval ${quoted}`, "exit 0", ""].join("\n");
+  return new Promise((ok) => {
+    const p = spawn("bash", [], { cwd, env: { ...process.env, ...env } });
+    let out = "";
+    p.stdout.on("data", (c) => (out += c));
+    p.stderr.on("data", (c) => (out += c));
+    p.on("close", (status) => ok({ status, out }));
+    p.stdin.end(script);
+  });
+}
 
 describe("a Terragrunt wave in the step's own shell", () => {
   it("runs the stage with --terragrunt after the prelude, and a wave that fails posts the failure status and runs the apply-failed response before the job fails", async () => {

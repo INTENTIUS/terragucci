@@ -37,6 +37,18 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
    A waiting wave stops its job with exit code 3 and prints the command with the digest it planned. A comment-run apply puts it in its reply. The plan note lacks it: the digest is made after the note.
 
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       The job fails with exit code 3, and the commit's `terragucci/apply` status is pending, its description the approve command.
+     </TabItem>
+     <TabItem label="GitLab">
+       The job fails with exit code 3, and the commit's `terragucci/apply` status is failed, its description the approve command. GitLab cannot move a running status back to pending, and a running one would hold the pipeline open. The next status the retried waves post replaces it.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The job fails with exit code 3, and the commit's `terragucci/apply` status is pending, its description the approve command.
+     </TabItem>
+   </Tabs>
+
    ```text
    chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --sign
    ```
