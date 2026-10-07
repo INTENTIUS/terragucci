@@ -1,9 +1,27 @@
 ---
 title: Environment variables and credentials
 description: Every variable terragucci reads, which job gets it, and how cloud roles are assumed.
+prompt: |
+  Read https://intentius.io/terragucci/reference/environment/.
+  List every variable and secret this repo's pipeline needs and which job gets each. Print names only.
+  Do not write secret values anywhere. Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
 The config names variables and never holds a value. Put secrets in your forge's secret store and expose them to the job that needs them.
+
+<Tabs syncKey="forge">
+  <TabItem label="GitHub">
+    A repository secret under Settings, Secrets and variables, Actions. The jobs read it as `secrets.<NAME>`; the run's own token is `github.token`.
+  </TabItem>
+  <TabItem label="GitLab">
+    A masked CI/CD variable under Settings, CI/CD, Variables. The token is `GITLAB_TOKEN`, a project access token with the `api` scope.
+  </TabItem>
+  <TabItem label="Forgejo">
+    A repository secret under Settings, Actions, Secrets. The jobs read it as `secrets.<NAME>`; the run's own token is `github.token`.
+  </TabItem>
+</Tabs>
 
 ## Forge tokens
 
@@ -84,7 +102,7 @@ oidc:
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
-Forgejo needs version 15 and Runner 12.5 or later. Your role's trust policy must accept the forge's issuer and your repo. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
+Your role's trust policy must accept the forge's issuer and your repo. Forgejo needs version 15 and Runner 12.5 or later. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
 
 | Forge | Issuer | Subject |
 |---|---|---|
@@ -120,19 +138,19 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 
 ## Other variables you can set
 
-| Variable | Meaning |
-|---|---|
-| `TERRAGUCCI_TERRAGRUNT` | the `terragrunt` executable to run; `terragrunt` on the path by default |
-| `TOFU_INSTALL_DIR` | where `terragucci install` puts the binary; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
-| `RUNNER_TEMP` | set by GitHub and Forgejo runners |
-| `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
-| `TG_LOCK_STALE` | seconds after which a Forgejo apply takes over a lock whose holder stopped renewing; 7200 by default |
-| `TG_LOCK_POLL` | seconds between a waiting Forgejo apply's checks of the lock; 10 by default |
-| `TG_BASE` | the ref policy is read from, such as `origin/main`; the target branch by default |
-| `TG_BRANCH` | the default branch; other pushes read policy from `origin/<that branch>` |
-| `TG_PR`, `TG_SHA`, `TG_HEAD` | the pull request number, commit and head branch |
-| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` | the approver for `chant approve` without `--actor`; must be in `.chant/allowed_signers` |
-| `env:` in the config | variables every job gets; values only, never secrets |
+| Variable | Flag | Meaning |
+|---|---|---|
+| `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
+| `TOFU_INSTALL_DIR` |  | where `terragucci install` puts the binary; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
+| `RUNNER_TEMP` |  | set by GitHub and Forgejo runners |
+| `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` |  | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
+| `TG_LOCK_STALE` |  | seconds after which a Forgejo apply takes over a lock whose holder stopped renewing; 7200 by default |
+| `TG_LOCK_POLL` |  | seconds between a waiting Forgejo apply's checks of the lock; 10 by default |
+| `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
+| `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
+| `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
+| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `chant approve` without `--actor`; must be in `.chant/allowed_signers` |
+| `env:` in the config |  | variables every job gets; values only, never secrets |
 
 ## Variables the forge provides
 
