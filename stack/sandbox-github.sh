@@ -48,12 +48,12 @@ REPO="${TERRAGUCCI_SANDBOX_REPO:-INTENTIUS/terragucci-sandbox}"
 DIR="${TERRAGUCCI_SANDBOX_DIR:-${TMPDIR:-/tmp}/terragucci-sandbox}"
 DIR="${DIR%/}"
 # The published release whose `init` writes the pipeline, and so its images.
-RELEASE="${TERRAGUCCI_SANDBOX_RELEASE:-0.3.0}"
+RELEASE="${TERRAGUCCI_SANDBOX_RELEASE:-0.3.1}"
 # The container stack/shot.mjs runs in: Node 22 and Chromium.
 SHOT_IMAGE="${TERRAGUCCI_SHOT_IMAGE:-mcr.microsoft.com/playwright:v1.55.0-noble}"
 SIGNER="sandbox-signer"
 # 1: the sandbox's terragucci.yml marks the checkout safe for git (build_main).
-SAFE_DIRECTORY="${TERRAGUCCI_SANDBOX_SAFE_DIRECTORY:-1}"
+SAFE_DIRECTORY="${TERRAGUCCI_SANDBOX_SAFE_DIRECTORY:-0}"
 WEB="https://github.com/$REPO"
 
 log()  { echo "[sandbox] $*" >&2; }
