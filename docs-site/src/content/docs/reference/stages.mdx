@@ -9,20 +9,20 @@ Every stage takes the root directories and the binary.
 
 | Stage | What it does | Forge permissions | Outputs |
 |---|---|---|---|
-| `tf-check` | format, `validate`, and for a [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) repo `live-check`; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the diagnostics in the log, and the check report |
-| `tf-plan` | plans only the roots a change affects, in one run, and posts the grouped summary on the pull request; with [`policy`](/terragucci/reference/policy/) set, fails a root the policy denies | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
-| `tf-apply` | applies wave by wave, one job per wave, each wave behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a wave whose plans the policy denies | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch | per wave, whether it waited and the command that approves it |
-| `tf-drift` | plans every root on a schedule with `-refresh-only` and reports what changed outside Terraform, grouped | read the repository, write issues | the plan report, and one drift issue |
+| `tf-check` | format, `validate`, and for a [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) repo `live-check`; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the log, and the check report |
+| `tf-plan` | plans the affected roots in one run and posts the grouped summary; with [`policy`](/terragucci/reference/policy/) set, fails a denied root | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
+| `tf-apply` | applies one job per wave, each behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch | per wave, whether it waited and its approval command |
+| `tf-drift` | plans every root `-refresh-only` on a schedule and groups what changed outside Terraform | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
 
 ## Exit codes
 
-Stages exit with the codes on [the CLI page](/terragucci/reference/cli/#exit-codes). A stage exits 3 while a wave waits for an approval and 4 when a wave's plans changed after its approval, so it applied nothing.
+Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 while a wave waits for approval, 4 when its plans changed after approval and nothing applied.
 
 ## Check
 
-`tf-check` runs on every push, and on a fork's pull request. `fmt -check` runs first, and a formatting difference stops the job. Each root then gets `init -backend=false` and `validate -json`, and every diagnostic prints with its file and range:
+`tf-check` runs on every push and fork pull request: `fmt -check`, which stops the job on a difference, then `init -backend=false` and `validate -json` per root:
 
 ```text
 error: envs/dev/orders/main.tf:12:3-12:8: Unsupported argument
@@ -34,9 +34,9 @@ Warnings print and fail nothing. A failing root does not stop the next, so one r
 
 With `binary: choudoufu`, `choudoufu live-check -json` runs after `validate`. Each refusal prints with its rule, reason, resource types and sites, and a non-zero exit fails the check.
 
-With [`policy`](/terragucci/reference/policy/) set, the last step runs the policy's own tests: `conftest verify` for the `conftest` engine, `opa test` for `opa`. A failing test fails the check and its output is in the log. A policy directory with no `*_test.rego` file is skipped with a note. The tests, and the `policy` key that turns them on, come from the default branch, or from the pull request's target, so a change cannot edit its own tests away or skip them by deleting the key.
+With [`policy`](/terragucci/reference/policy/) set, the last step runs `conftest verify` or `opa test`, with the tests and key read from the default branch or the pull request's target.
 
-The log is also written to `terragucci-check/report.md`. The job keeps that file as an artifact, and GitHub and Forgejo show it in the run summary. A Terragrunt repo runs `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs` in place of the per-root steps.
+The log is kept as `terragucci-check/report.md`. Terragrunt repos run `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs` instead.
 
 <Shot step="check" view="log" alt="A failed check job in a Forgejo run. The format step is expanded and shows a diff of envs/dev/orders/locals.tf, where the alignment of the team line differs, followed by a runner exit code 3. The later jobs of the pipeline are skipped." />
 
@@ -48,9 +48,9 @@ Set `drift` in `terragucci.yml` to a cron schedule and the pipeline gets a `drif
 drift: "0 6 * * *"
 ```
 
-The job runs `terragucci stage tf-drift`, which plans each root with `-refresh-only`. That plan compares the state with the real objects and leaves the code out, so a change merged to the default branch but not yet applied is not drift. An object changed or deleted outside Terraform is.
+`terragucci stage tf-drift` plans each root with `-refresh-only`, so merged but unapplied code is not drift.
 
-The report is the one [the plan report](/terragucci/reference/report/) describes, with the stage set to `tf-drift`. It groups roots whose drift is the same, and a deleted object is listed by name with its root. The job keeps it as an artifact like the plan job does.
+Its [report](/terragucci/reference/report/) has the stage `tf-drift` and is kept as an artifact.
 
 Each project has at most one open drift issue, titled `terragucci: drift found`:
 
@@ -61,27 +61,32 @@ Each project has at most one open drift issue, titled `terragucci: drift found`:
 | no drift in any root | closes, with a comment naming the commit |
 | no drift, but a root could not be planned | stays as it is, since that root is unknown |
 
-`tf-drift` plans Terraform and OpenTofu roots. In a Terragrunt repo it runs one refresh-only `terragrunt run --all` per wave over every unit, and reports drift by unit. A root that cannot be refreshed fails the job. Drift alone does not. The job never applies; correct drift with a pull request, or by applying the code as it is.
+Terragrunt repos run one refresh-only `terragrunt run --all` per wave. A root that cannot be refreshed fails the job; drift does not. The job never applies.
 
-The job needs a token that can write issues. On GitHub and Forgejo the job's own token does, with `issues: write` in the generated workflow. On GitLab, `token_env` names a variable holding a token with the `api` scope, and the schedule itself is set under CI/CD > Schedules with the cron from `terragucci.yml`, since GitLab keeps schedules outside the pipeline file. The job takes the plan job's read-only role when `oidc` is set. `workflow_dispatch` also runs it on GitHub and Forgejo, for a drift check on demand.
+| Forge | Issue token | Schedule |
+|---|---|---|
+| GitHub, Forgejo | the job's own, `issues: write` | the workflow, plus `workflow_dispatch` |
+| GitLab | `token_env`, `api` scope | CI/CD > Schedules, by hand |
+
+With `oidc`, the job takes the plan job's read-only role.
 
 ```bash
 npx terragucci stage tf-drift
 ```
 
-With no forge token in the environment, the stage still writes the report and `issue.md`, the issue as it would be filed, and leaves the forge alone. `--forge` names the forge when the environment alone cannot tell GitHub from Forgejo.
+With no forge token, it writes the report and `issue.md` only. `--forge` tells GitHub from Forgejo.
 
 <Shot step="drift" view="issue" alt="The open issue titled terragucci: drift found, filed by the Forgejo Actions bot. It says 1 of 15 roots has drifted and lists envs/staging/orders with one object, an SQS queue, that no longer exists." />
 
 ## Gated waves
 
-A change that touches many roots goes out in waves, each behind its own approval bound to the wave's set digest. A changed plan stops the wave. [How waves and approvals work](/terragucci/concepts/waves-and-approvals/) explains why, and [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows the steps.
+Each wave waits behind an approval bound to its set digest; a changed plan stops it. See [Approve a waiting wave](/terragucci/guides/approve-a-wave/).
 
-A wave that waits prints its set digest and the command that approves it, and the job exits with code 3:
+A waiting wave prints its set digest and approval command and exits 3:
 
 <Shot step="wave-waiting" view="log" alt="The log of the apply-wave-4 job. Eight roots are planned, one with 1 change and 1 destroy, and the log prints the wave's set digest and the approval command to run before running the job again. The job ends with exit code 3." />
 
-A wave whose plans changed after the approval applies nothing. The log names the approved and the new digest and the roots that planned differently, and the job exits with code 4:
+A wave whose plans changed since approval applies nothing and exits 4:
 
 <Shot step="wave-refused" view="log" alt="The log of the apply-wave-4 job after a refusal. It says the wave changed after it was approved, so nothing was applied, lists the approved and the new digest, and the changes per root. The job ends with exit code 4." />
 
@@ -102,7 +107,7 @@ terragucci rollout modules/network 1.4.0 --mode apply
 terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
-With no version, the rollout takes the newest one published: the highest `modules/network/vX.Y.Z` tag, or the highest tag in the module's OCI repository. The old version is read from the pins, and `--from` says which one moves when they disagree. Each run takes at most one step and exits; the default is a dry run, and `--mode apply` pushes the branches and opens the pull requests with the token from `token_env`, and runs no `terraform apply`. It never merges anything or writes a default branch.
+No version means the newest published tag; `--from` picks between disagreeing pins. Each run takes one step; `--mode apply` opens pull requests with `token_env` and never applies, merges or writes a default branch.
 
 | Exit code | Meaning |
 |---|---|
@@ -122,26 +127,26 @@ A pin the rollout cannot move is reported with its reason and a tip:
 | two versions of the module in one directory | `rollout-one-pin`: pin every call at one version |
 | a provider with no `.terraform.lock.hcl` | `rollout-lock-file`: commit the lock file |
 
-A provider rollout runs the binary to rewrite each lock file for that provider alone. An exact `version` constraint on the provider moves with it. The new lock file must hold the provider at the new version and every other provider where it was, or the wave stops.
+A provider rollout rewrites each lock file, and any exact `version` constraint, for that provider alone; any other change stops the wave.
 
-Reading module pins needs the HCL parser, which is installed beside terragucci rather than bundled: `npm i -D @cdktn/hcl2json`.
+Reading module pins needs `npm i -D @cdktn/hcl2json`.
 
 ## Publishing modules
 
-`modules.path` names the modules and `modules.publish` takes an `oci://` registry address, `git-tags`, or a list of both. OpenTofu roots pin the OCI artifact as an `oci://` source. Terraform has no OCI sources, so its roots pin a git tag per module, such as `modules/network/v1.4.0`.
+`modules.path` names the modules; `modules.publish` takes an `oci://` address, `git-tags`, or both. OpenTofu roots pin `oci://` sources, Terraform roots git tags such as `modules/network/v1.4.0`.
 
 ```bash
 terragucci publish --dry-run
 terragucci publish
 ```
 
-A module is published when its content differs from its last release. The next version follows the commits since that release that touched the module: `feat` is a minor bump, `fix` and any other type a patch, and a breaking marker (`feat!:` or a `BREAKING CHANGE:` footer) a major. A module with no release yet starts at `0.1.0`, and a `version` file in the module directory overrides the bump.
+A changed module is published: `feat` bumps minor, a breaking marker (`feat!:`, `BREAKING CHANGE:`) major, anything else patch. First releases are `0.1.0`; a `version` file overrides.
 
-A published version never changes. Each release records the commit it was cut from and a digest of the module's content, so a second run on the same commit publishes nothing, and so does a change that was reverted. With `modules.publish` set, the pipeline's `publish` job runs after `apply` on a push to the default branch and is the only job given the registry credentials listed in [Environment variables and credentials](/terragucci/reference/environment/). [Publish your modules](/terragucci/guides/publish-modules/) walks through it.
+The `publish` job runs after `apply` on the default branch and alone gets the [registry credentials](/terragucci/reference/environment/). See [Publish your modules](/terragucci/guides/publish-modules/).
 
 ## The grouped summary
 
-`tf-plan` and `tf-drift` group the roots whose changes are the same, and list every destroy, replacement and refusal by name. The summary comes as text, JSON, or markdown sized for a pull-request note. [Why plans are grouped](/terragucci/concepts/why-plans-are-grouped/) explains the idea, and [The plan report](/terragucci/reference/report/) covers the HTML and JSON forms and where they are kept.
+`tf-plan` and `tf-drift` group identical changes and name every destroy, replacement and refusal. See [the plan report](/terragucci/reference/report/).
 
 <Shot step="one-note" view="pull" alt="A pull request with one plan note from the bot. The note says 12 roots, 2 groups, 0 destroys or replacements, shows a table of two waves with their set digests, and lists a group of 11 roots with an identical change and an outlier group of 1 root." />
 
@@ -153,6 +158,6 @@ A published version never changes. Each release records the commit it was cut fr
 |---|---|
 | `always` | the wave has at least one change; a wave whose plans change nothing never waits |
 | `on-destroy` | the wave's plans destroy or replace something |
-| `never` | never; the wave applies as soon as its plans are made, so only the review of the pull request and the protection of the default branch stand in front of it |
+| `never` | never; only pull request review and default-branch protection stand before the apply |
 
 A waiting wave exits with code 3 and prints the approval command. Run it, then run the stage again.
