@@ -19,7 +19,7 @@ Works with:
 - Binaries: [Terraform, OpenTofu](https://intentius.io/terragucci/guides/use-a-binary/), [Terragrunt](https://intentius.io/terragucci/guides/use-terragrunt/) and [choudoufu](https://intentius.io/terragucci/guides/use-a-binary/#choudoufu)
 - Also: [drift checks](https://intentius.io/terragucci/guides/turn-on-drift-checks/), [module publishing](https://intentius.io/terragucci/guides/publish-modules/) and [pinned rollouts](https://intentius.io/terragucci/guides/roll-out-a-module-version/)
 
-[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the two opt-in agent features run a coding agent. Every pipeline feature on the site is proven by a recorded claim that fails when broken ([validation](https://intentius.io/terragucci/reference/validation/)).
+[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the two opt-in agent features run a coding agent. Every pipeline feature on the site is proven on a local Forgejo by a recorded claim that fails when broken, and the per-forge claims list what is also proven on GitHub and GitLab ([validation](https://intentius.io/terragucci/reference/validation/)).
 
 ```bash
 npm i -D @intentius/terragucci

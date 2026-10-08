@@ -71,7 +71,7 @@ A waiting wave exits with code 3; its command is in the job log, the `terragucci
   </TabItem>
 </Tabs>
 
-It runs `chant approve tf-apply wave-2 --plan <digest>` for the digest the wave planned; `--dry-run` prints that command instead. Then re-run the job, or comment `/terragucci apply` on the pull request (GitHub or Forgejo; merged, or open with `apply.when: pull-request`).
+It runs `chant approve tf-apply wave-2 --plan <digest>` for the digest the wave planned; `--dry-run` prints that command instead. Then re-run the job, or comment `/terragucci apply` on the pull request (merged, or open with `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
 
 ## Approve by review
 

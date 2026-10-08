@@ -2,8 +2,9 @@
 // The smoke claims, as last recorded by `just smoke-record`.
 import record from '../data/smoke.json';
 
-// `steward` checks the validation stack's own fountain profile and backs no
-// page, so it stays off the table.
+// `steward` checks the validation stack's own fountain profile, which no
+// setting reaches (config refuses runtime: fountain); it waits on #273 and
+// stays off the table.
 const STACK_ONLY = new Set(['steward']);
 
 const claims = (record.claims as Array<{

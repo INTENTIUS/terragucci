@@ -244,9 +244,9 @@
     {
       "claim": "steward",
       "says": "tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught"
+      "needs": "273",
+      "verdict": "pending",
+      "break": null
     },
     {
       "claim": "policy",

@@ -19,7 +19,7 @@ terragucci runs as jobs in your forge's CI and writes to your git and your bucke
 
 ## Comment commands
 
-Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note, so there [`comments:`](/terragucci/guides/re-plan-from-a-comment/) adds a scheduled job that answers `/terragucci plan` and `/terragucci apply` on its next run.
+Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note, so there [`comments:`](/terragucci/guides/re-plan-from-a-comment/) adds a scheduled job that answers `/terragucci plan` and `/terragucci apply` on its next run, and `/terragucci lock` and `/terragucci unlock` when `apply.when: pull-request` is set.
 
 | To do this | Atlantis | OpenTaco | terragucci |
 |---|---|---|---|
