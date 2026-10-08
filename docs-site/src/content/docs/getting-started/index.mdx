@@ -32,7 +32,7 @@ CI does this: everything runs as jobs in your CI and lands in your git and your 
 
 <CardGrid>
 <LinkCard title="Try it on an example first" description="A 15-root example on your laptop, with no cloud account." href="/terragucci/tutorial/" />
-<LinkCard title="Hand it to my agent" description="A prompt for Claude Code, Codex or Cursor that stops at a pull request." href="/terragucci/getting-started/agents/" />
+<LinkCard title="Hand it to my agent" description="Optional. A prompt for Claude Code, Codex or Cursor that stops at a pull request." href="/terragucci/getting-started/agents/" />
 <LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
 <LinkCard title="Switching from Atlantis or OpenTaco" description="Their commands and settings, and the terragucci equivalent of each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
 </CardGrid>
@@ -40,6 +40,28 @@ CI does this: everything runs as jobs in your CI and lands in your git and your 
 ## What you end up with
 
 A pull request with one plan note that groups the roots a change reaches and names every destroy.
+
+## What needs an agent
+
+No agent is needed to set up or run terragucci. Setup and every pull request feature are plain CI jobs; two opt-in features run a coding agent.
+
+| CI jobs, no agent | Page |
+|---|---|
+| Setup with `init` (an agent can run it for you) | [Set up with a coding agent](/terragucci/getting-started/agents/) |
+| The plan note and `terragucci/plan` status | [Get your first plan note](/terragucci/getting-started/) |
+| Tips and policy checks | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
+| A `/terragucci plan` re-plan; on GitLab through the `comments:` schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
+| `/terragucci lock` and `/terragucci unlock`, `locks: plan` (GitHub and Forgejo) | [Locks](/terragucci/guides/apply-before-merge/#locks) |
+| Apply before merge and `/terragucci apply` (GitHub and Forgejo) | [Apply before merge](/terragucci/guides/apply-before-merge/) |
+| Approvals in every mode, `terragucci approve` | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
+| A recorded policy override | [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) |
+| Drift checks | [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) |
+| Module publishing and rollouts | [Publish your modules](/terragucci/guides/publish-modules/), [roll out a version](/terragucci/guides/roll-out-a-module-version/) |
+
+| Opt-in: coding agent | Off until | Page |
+|---|---|---|
+| The `/terragucci agent <ask>` comment (GitHub and Forgejo) | `agent.comment` is set, with a model API key secret | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
+| A summary of a refused wave | you add its job by hand, with a model API key secret | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
 ## Before you start
 

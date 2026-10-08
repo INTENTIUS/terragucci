@@ -67,4 +67,4 @@ Every page is true as written: a command or key on this site works as the page s
 
 Agents adopting terragucci in a repository: start with ${SITE}/getting-started/agents/.
 
-A page with a prompt carries it under "Hand this to your agent", and llms.txt lists it under the page. Every prompt forbids apply, approve and merge; those stay with the person.`;
+A page with a prompt carries it under "Optional: hand this page to your coding agent", and llms.txt lists it under the page. Every prompt forbids apply, approve and merge; those stay with the person.`;

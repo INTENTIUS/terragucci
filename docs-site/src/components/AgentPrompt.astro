@@ -1,6 +1,8 @@
 ---
-// "Hand this to your agent": a prompt to paste into a coding agent, with a Copy
-// button. The text is the page's `prompt:` front matter, or `text` when given
+// "Optional: hand this page to your coding agent": a prompt to paste into a
+// coding agent, with a Copy button, and a line saying the page works by hand.
+// Only two features run an agent (the agent comment and the refused-wave job);
+// the box is a shortcut for the rest, never a requirement. The text is the page's `prompt:` front matter, or `text` when given
 // (the home page passes the setup prompt). The page header (PageTitle.astro)
 // renders it under the title of every page with a `prompt:`, so a page needs
 // no import for it; a page that places <AgentPrompt /> itself gets it there
@@ -9,9 +11,14 @@ import { promptText } from '../prompts';
 
 interface Props {
 	label?: string;
+	note?: string;
 	text?: string;
 }
-const { label = 'Hand this to your agent', text } = Astro.props;
+const {
+	label = 'Optional: hand this page to your coding agent',
+	note = 'The steps below work by hand, with no agent.',
+	text,
+} = Astro.props;
 const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt);
 ---
 {prompt && (
@@ -20,6 +27,7 @@ const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt
 			<span>{label}</span>
 			<button type="button" class="tg-prompt-copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
 		</figcaption>
+		<p class="tg-prompt-note">{note}</p>
 		<pre><code>{prompt}</code></pre>
 	</figure>
 )}
@@ -74,6 +82,12 @@ const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt
 	}
 	button:hover {
 		border-color: var(--tg-accent);
+	}
+	.tg-prompt-note {
+		margin: 0;
+		padding: 0.5rem 1.1rem 0;
+		font-size: 0.8rem;
+		color: var(--sl-color-gray-3);
 	}
 	pre {
 		margin: 0;

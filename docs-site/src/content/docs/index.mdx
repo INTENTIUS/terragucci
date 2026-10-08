@@ -11,6 +11,7 @@ import Waves from '../../components/Waves.astro';
 import Runtimes from '../../components/Runtimes.astro';
 import KeepYours from '../../components/KeepYours.astro';
 import Validated from '../../components/Validated.astro';
+import Shot from '../../components/Shot.astro';
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <Landing />
@@ -26,12 +27,49 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 <LinkCard title="Module publishing and pinned rollouts" description="Version modules on merge, then move each pin one wave of pull requests at a time." href="/terragucci/guides/publish-modules/" />
 </CardGrid>
 
+## See every run as a trace
+
+Every plan, apply and drift run sends one OpenTelemetry trace over OTLP to your collector, with the pipeline's metrics beside it.
+
+<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, wave 2, the root span for envs/dev/orders, the tofu init and plan spans under it, and OpenTofu's own spans inside them" />
+
+| The trace shows | Page |
+|---|---|
+| The stage, then a span per wave and per root, with digests, change counts and status | [Send traces and metrics](/terragucci/guides/send-traces-and-metrics/) |
+| The binary's own spans inside each root: OpenTofu's resources, and with choudoufu its provider calls and state lock waits | [Traces and metrics](/terragucci/reference/observability/#spans-from-the-binary) |
+| Metrics and the Grafana dashboards `init` writes with `dashboards: true` | [The metrics](/terragucci/reference/observability/#the-metrics) |
+
+## Pull request automation
+
+These are plain CI jobs in your pipeline. None of them runs a coding agent.
+
+| On a pull request | How you start it | Forges | Page |
+|---|---|---|---|
+| One grouped plan note and a `terragucci/plan` status | open or push to the pull request | all three | [Get your first plan note](/terragucci/getting-started/) |
+| Tips and policy results on the plan | on by default with the plan; `tips: false` turns tips off, `policy` adds checks | all three | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
+| A re-plan | comment `/terragucci plan [root]` | all three; GitLab through the comments schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
+| Root locks | comment `/terragucci lock` or `/terragucci unlock`; `locks: plan` locks from the first plan | GitHub and Forgejo | [Locks](/terragucci/guides/apply-before-merge/#locks) |
+| Apply before merge, then merge after the last wave | `apply.when: pull-request`, then comment `/terragucci apply [wave-<n>]` | GitHub and Forgejo | [Apply before merge](/terragucci/guides/apply-before-merge/) |
+| An approval for a waiting wave | `approval: ledger`, `pr-review` or `sealed`; run `terragucci approve` | all three | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
+| A recorded policy override | a listed person runs `terragucci override` | all three | [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) |
+| Comment commands on GitLab | `comments:` sets the schedule that answers merge request notes | GitLab | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
+
+### Opt-in: coding agent
+
+Two features run a coding agent. Both are off until you set them up, and both need a model API key in your forge's secrets. Nothing else in terragucci runs an agent.
+
+| Feature | Turn it on | Forges | Page |
+|---|---|---|---|
+| Comment `/terragucci agent <ask>` and an agent commits the change to the pull request | `agent.comment` in `terragucci.yml` | GitHub and Forgejo | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
+| A summary of what moved in a refused wave | add the explain-refusal job to the pipeline by hand | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
+
+
 ## Start from what you want
 
 <CardGrid>
 <LinkCard title="See a plan note in about 10 minutes" description="A 15-root example on your laptop, with a local forge and an AWS stand-in. No cloud account." href="/terragucci/tutorial/" />
 <LinkCard title="Add terragucci to my repo" description="One page for GitHub, GitLab and Forgejo: install, run init, and read the plan note on your next pull request." href="/terragucci/guides/add-to-a-repo/" />
-<LinkCard title="Hand it to my agent" description="A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies, approves or merges." href="/terragucci/getting-started/agents/" />
+<LinkCard title="Hand it to my agent" description="Optional. A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies, approves or merges." href="/terragucci/getting-started/agents/" />
 <LinkCard title="Switching from Atlantis or OpenTaco" description="The commands and settings you use now, and the terragucci key or command for each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
 <LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
 <LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
@@ -86,6 +124,8 @@ Set `binary: choudoufu` in `terragucci.yml` and the stages gain these. [The glos
 | Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
 
 ## Hand the setup to your agent
+
+You can skip this. [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) gives the same steps by hand, and only the [opt-in agent features](#opt-in-coding-agent) run an agent.
 
 Paste this into Claude Code, Codex or Cursor in your Terraform, OpenTofu or Terragrunt repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.
 

@@ -112,7 +112,7 @@ for (const problem of termProblems(files)) {
   failed = true;
   console.log(`FAIL term  ${problem}`);
 }
-// Each "Hand this to your agent" prompt names its page and forbids apply, approve and merge.
+// Each page prompt ("Optional: hand this page to your coding agent") names its page and forbids apply, approve and merge.
 for (const problem of promptProblems(files)) {
   failed = true;
   console.log(`FAIL prompt  ${problem}`);
