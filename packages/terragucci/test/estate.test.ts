@@ -147,6 +147,26 @@ describe("the estate page", () => {
     expect(html).not.toContain("report.html");
   });
 
+  it("counts the roots the newest apply waves applied under a policy override, and says nothing of overrides when there are none", () => {
+    const e = buildEstate([{ project: "a/b/c", reports: [row({ project: "a/b/c", stage: "tf-apply", wave: 1, finished: "2026-10-07T11:00:00.000Z", approval: "not-required", applied: "2026-10-07T11:00:00.000Z", overridden: 1 })] }], NOW);
+    expect(e.totals.overridden_roots).toBe(1);
+    expect(e.projects[0].overridden).toBe(1);
+    const html = renderEstateHtml(e);
+    expect(html).toContain("root applied by policy override");
+    expect(html).toContain("1 by policy override");
+    const none = buildEstate(threeProjects(), NOW);
+    expect(none.totals).not.toHaveProperty("overridden_roots");
+    expect(renderEstateHtml(none)).not.toContain("policy override");
+  });
+
+  it("the index row counts the roots an override let through", () => {
+    const p = plan([rc("aws_s3_bucket.logs", ["create"], null, { bucket: "logs" })]);
+    const override = { by: "alice", at: "2026-10-07T10:00:00.000Z", rules: ["main.deny"], reason: "why", plan_digest: "jcs1-sha256:aa", digest: "sha256:bb", sealed: false };
+    const report = buildReport({ run: { ...RUN, stage: "tf-apply", wave: 1 }, roots: [{ path: "a", plan: p, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] });
+    expect(indexEntry(report, "x").overridden).toBe(1);
+    expect(indexEntry(buildReport({ run: RUN, roots: [{ path: "a", plan: p }] }), "x")).not.toHaveProperty("overridden");
+  });
+
   it("escapes what the indexes hold, so a value never closes the inline JSON", () => {
     const html = renderEstateHtml(buildEstate([{ project: "a/b/<c>", reports: [row({ project: "a/b/<c>", stage: "tf-plan", finished: NOW.toISOString(), pull_request: "</script><script>alert(1)</script>" })] }], NOW));
     expect(html).not.toContain("</script><script>alert(1)");

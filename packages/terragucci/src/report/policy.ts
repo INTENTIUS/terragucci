@@ -75,6 +75,8 @@ export const defaultPolicyExec: PolicyExec = (file, args, cwd) =>
 /** The one root's verdict: what the policy denied, or why it could not run. */
 export interface PolicyVerdict {
   violations: string[];
+  /** The ids of the rules that denied, sorted, each once: what an override names (ruleId). */
+  rules?: string[];
   /** `warn` messages: shown in the note and the report, and never fail the root. */
   warnings?: string[];
   /** Set when the engine did not run or did not answer; the root fails all the same. */
@@ -143,7 +145,16 @@ export const WARN_RULE = /^warn(_[A-Za-z0-9]+)*$/;
 export interface PolicyFindings {
   violations: string[];
   warnings: string[];
+  /** The id of the rule behind each violation, in the same order. */
+  rules: string[];
 }
+
+/**
+ * A rule's id: its package and name, `main.deny_public_bucket`, from the query
+ * the engine ran (`data.main.deny_public_bucket`). An HCP policy set's rule is
+ * its policy's name.
+ */
+export const ruleId = (query: string): string => query.replace(/^data\./, "");
 
 /** A rule's message as conftest prints it: a string as it is, an object's `msg`, anything else as JSON. */
 function messageOf(v: unknown): string {
@@ -166,25 +177,32 @@ export function conftestFindings(stdout: string): PolicyFindings | undefined {
     return undefined;
   }
   if (!Array.isArray(results)) return undefined;
-  const out: PolicyFindings = { violations: [], warnings: [] };
-  for (const r of results as { failures?: { msg?: unknown }[]; warnings?: { msg?: unknown }[] }[]) {
-    for (const f of r.failures ?? []) out.violations.push(typeof f.msg === "string" ? f.msg : JSON.stringify(f.msg));
+  const out: PolicyFindings = { violations: [], warnings: [], rules: [] };
+  for (const r of results as { namespace?: string; failures?: { msg?: unknown; metadata?: { query?: unknown } }[]; warnings?: { msg?: unknown }[] }[]) {
+    for (const f of r.failures ?? []) {
+      out.violations.push(typeof f.msg === "string" ? f.msg : JSON.stringify(f.msg));
+      // conftest names the query that denied in the failure's metadata; an older one gives only the namespace.
+      out.rules.push(typeof f.metadata?.query === "string" ? ruleId(f.metadata.query) : `${r.namespace ?? "main"}.deny`);
+    }
     for (const w of r.warnings ?? []) out.warnings.push(typeof w.msg === "string" ? w.msg : JSON.stringify(w.msg));
   }
   return out;
 }
 
-/** The rules of one package's document: each deny-like and warn-like rule's messages. `nested` reads every child package too. */
-function packageFindings(doc: Record<string, unknown>, out: PolicyFindings, nested: boolean): void {
+/** The rules of one package's document: each deny-like and warn-like rule's messages. `nested` reads every child package too. `pkg` is the package's name, for the rule ids. */
+function packageFindings(doc: Record<string, unknown>, out: PolicyFindings, nested: boolean, pkg: string): void {
   for (const [name, value] of Object.entries(doc).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const into = DENY_RULE.test(name) ? out.violations : WARN_RULE.test(name) ? out.warnings : undefined;
+    const deny = DENY_RULE.test(name);
+    const into = deny ? out.violations : WARN_RULE.test(name) ? out.warnings : undefined;
     if (into) {
+      const before = into.length;
       if (Array.isArray(value)) into.push(...value.map(messageOf));
       else if (value === true) into.push(name);
       else if (typeof value === "string") into.push(value);
+      if (deny) for (let i = before; i < into.length; i++) out.rules.push(`${pkg}.${name}`);
       continue;
     }
-    if (nested && value !== null && typeof value === "object" && !Array.isArray(value)) packageFindings(value as Record<string, unknown>, out, false);
+    if (nested && value !== null && typeof value === "object" && !Array.isArray(value)) packageFindings(value as Record<string, unknown>, out, false, `${pkg}.${name}`);
   }
 }
 
@@ -196,10 +214,10 @@ function packageFindings(doc: Record<string, unknown>, out: PolicyFindings, nest
  * package has no rule that holds: no denial. `checkPlans` has already
  * failed the root when the namespace names no package at all.
  */
-export function opaFindings(stdout: string, nested = false): PolicyFindings | undefined {
+export function opaFindings(stdout: string, nested = false, namespace = "main"): PolicyFindings | undefined {
   const answer = opaAnswer(stdout);
   if (answer === undefined) return undefined;
-  return answer.value === undefined ? { violations: [], warnings: [] } : findingsOf(answer.value, nested);
+  return answer.value === undefined ? { violations: [], warnings: [], rules: [] } : findingsOf(answer.value, nested, namespace);
 }
 
 /** The value of an `opa eval` JSON result's query: `{}` when the query is undefined, `undefined` when the output is not a result. */
@@ -215,12 +233,12 @@ export function opaAnswer(stdout: string): { value?: unknown } | undefined {
   return value === undefined ? {} : { value };
 }
 
-/** The findings in a query's value: an array is a deny set, an object is a package's rules. */
-function findingsOf(value: unknown, nested: boolean): PolicyFindings | undefined {
-  if (Array.isArray(value)) return { violations: value.map(messageOf), warnings: [] };
+/** The findings in a query's value: an array is a deny set (its rule is `query`), an object is the rules of the package `query` names. */
+function findingsOf(value: unknown, nested: boolean, query: string): PolicyFindings | undefined {
+  if (Array.isArray(value)) return { violations: value.map(messageOf), warnings: [], rules: value.map(() => ruleId(query)) };
   if (value === null || typeof value !== "object") return undefined;
-  const out: PolicyFindings = { violations: [], warnings: [] };
-  packageFindings(value as Record<string, unknown>, out, nested);
+  const out: PolicyFindings = { violations: [], warnings: [], rules: [] };
+  packageFindings(value as Record<string, unknown>, out, nested, ruleId(query));
   return out;
 }
 
@@ -340,19 +358,20 @@ function hcpPoliciesToRun(set: HcpPolicy[], namespace: string | undefined): HcpP
 async function checkHcpSet(binary: string, set: HcpPolicy[], policy: PolicySettings, path: string, file: string, repo: string, exec: PolicyExec): Promise<PolicyVerdict> {
   const run = hcpPoliciesToRun(set, policy.namespace);
   if (run.length === 0) return { violations: [], error: `no policy in ${HCP_POLICY_FILE} has a query under data.${policy.namespace}` };
-  const out: PolicyFindings = { violations: [], warnings: [] };
+  const out: PolicyFindings = { violations: [], warnings: [], rules: [] };
   for (const p of run) {
     const r = await exec(binary, ["eval", "--format", "json", "--data", path, "--input", file, p.query], repo);
     const answer = opaAnswer(r.stdout);
     if (answer === undefined) return { violations: [], error: `opa gave no verdict for policy ${p.name} (exit ${r.status}): ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ")}` };
     if (answer.value === undefined) return { violations: [], error: `policy ${p.name}: its query ${p.query} matches no rule` };
-    const found = findingsOf(answer.value, true);
+    const found = findingsOf(answer.value, true, p.query);
     if (found === undefined) return { violations: [], error: `policy ${p.name}: its query ${p.query} gives ${JSON.stringify(answer.value)}, not a set of messages` };
     // HCP reads the query's messages as the policy's result, whatever the rule is named; the level decides what they do.
     const messages = [...found.violations, ...found.warnings].map((m) => `${p.name}: ${m}`);
     (p.level === "mandatory" ? out.violations : out.warnings).push(...messages);
+    if (p.level === "mandatory") out.rules.push(...messages.map(() => p.name));
   }
-  return { violations: out.violations, ...(out.warnings.length > 0 ? { warnings: out.warnings } : {}) };
+  return { violations: out.violations, ...ruleList(out.rules), ...(out.warnings.length > 0 ? { warnings: out.warnings } : {}) };
 }
 
 /** Check one plan. `planJson` is the unredacted `show -json` text; `context` fills `input.run` with `input: hcp`. */
@@ -373,15 +392,18 @@ export async function checkPlan(binary: string, policy: PolicySettings, repo: st
     }
     const r = await exec(binary, policyArgs(policy, path, file), repo);
     // With input: hcp and no namespace, every package under terraform.policies is one policy of the set.
-    const found = opa ? opaFindings(r.stdout, policy.input === "hcp" && policy.namespace === undefined) : conftestFindings(r.stdout);
+    const found = opa ? opaFindings(r.stdout, policy.input === "hcp" && policy.namespace === undefined, opaNamespace(policy)) : conftestFindings(r.stdout);
     if (found === undefined) return { violations: [], error: `${engine} gave no verdict (exit ${r.status}): ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ")}` };
     // conftest exits 1 on a denial and 2 or more when it could not run; opa exits 0 or 1 on a query it ran.
     if (found.violations.length === 0 && r.status !== 0) return { violations: [], error: `${engine} exited ${r.status}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}` };
-    return { violations: found.violations, ...(found.warnings.length > 0 ? { warnings: found.warnings } : {}) };
+    return { violations: found.violations, ...ruleList(found.rules), ...(found.warnings.length > 0 ? { warnings: found.warnings } : {}) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/** A verdict's `rules`: each id once, sorted; nothing when no rule denied. */
+const ruleList = (rules: string[]): { rules?: string[] } => (rules.length > 0 ? { rules: [...new Set(rules)].sort() } : {});
 
 /** The error a failed root carries, which the report and the note show as the reason. */
 export function describeVerdict(engine: string, v: PolicyVerdict): string {
@@ -392,7 +414,7 @@ export function describeVerdict(engine: string, v: PolicyVerdict): string {
 /** A verdict as the report keeps it under the root. */
 export function rootPolicy(v: PolicyVerdict): ReportRootPolicy {
   const result = v.error !== undefined ? "error" : v.violations.length > 0 ? "denied" : "passed";
-  return { result, denials: v.violations, warnings: v.warnings ?? [], ...(v.error !== undefined ? { error: v.error } : {}) };
+  return { result, denials: v.violations, ...(v.rules?.length ? { rules: v.rules } : {}), warnings: v.warnings ?? [], ...(v.error !== undefined ? { error: v.error } : {}) };
 }
 
 /** Every `.rego` file under `dir` that is not a test, with its text. */
@@ -477,6 +499,7 @@ export function redactVerdict(v: PolicyVerdict, plan: unknown): PolicyVerdict {
   const clean = (m: string) => redactText(m, secrets);
   return {
     violations: v.violations.map(clean),
+    ...(v.rules ? { rules: v.rules } : {}),
     ...(v.warnings ? { warnings: v.warnings.map(clean) } : {}),
     ...(v.error !== undefined ? { error: clean(v.error) } : {}),
   };
@@ -846,7 +869,7 @@ export async function checkPlans(
       }
       denied += verdict.violations.length;
       failed.set(item.path, describeVerdict(resolved.engine, verdict));
-      log(`${item.path}: ${verdict.error ? "policy could not be checked" : `policy denied ${verdict.violations.length}`}`);
+      log(`${item.path}: ${verdict.error ? "policy could not be checked" : `policy denied ${verdict.violations.length}${verdict.rules?.length ? ` (${verdict.rules.join(", ")})` : ""}`}`);
       for (const m of verdict.violations) log(`  ${m}`);
     }
     if (failed.size > 0) log(`policy: ${failed.size} root${failed.size === 1 ? "" : "s"} failed${denied ? `, ${denied} violation${denied === 1 ? "" : "s"}` : ""}`);

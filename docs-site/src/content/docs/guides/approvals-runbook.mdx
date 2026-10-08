@@ -1,11 +1,11 @@
 ---
 title: Approvals runbook
-description: "The day-to-day commands for approvals: choose a mode, set up signers, approve a wave, list what is waiting, revoke an approval, recover from a refusal, and what expires."
+description: "The day-to-day commands for approvals: choose a mode, set up signers, approve a wave, override a policy denial, list what is waiting, revoke an approval, recover from a refusal, and what expires."
 claims: [waves, sealed, refuse]
 prompt: |
   Read https://intentius.io/terragucci/guides/approvals-runbook/.
   Run the "List the waves waiting" command with a read-only clone and tell me
-  each wave, digest and expiry. Do not revoke an approval.
+  each wave, digest and expiry. Do not revoke an approval, and do not run `terragucci override`.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -91,6 +91,47 @@ Under `approval: pr-review`, approve the pull request on its head before it merg
 
 A wave whose plans moved after the review exits 4 with the `chant approve` command for the new digest. The ledger line it records for a review carries `"via": "pr-review"`, the pull request, its head and the reviewers.
 
+## Override a policy denial
+
+This needs [`policy.override`](/terragucci/reference/policy/#overriding-a-denial) at base.
+
+<Steps>
+
+1. The denied wave exits 1. Its log gives the `terragucci override` command for each root the policy denied.
+
+2. Read the root's plan and denial in the wave's report.
+
+3. As a person the key lists, run the command in a checkout:
+
+   <Tabs syncKey="approval">
+     <TabItem label="ledger (default) or pr-review">
+       ```bash
+       npx terragucci override envs/prod/app --rule main.deny_public_bucket \
+         --reason "the incident needs the bucket public until 18:00" --actor github:alice
+       ```
+     </TabItem>
+     <TabItem label="sealed">
+       ```bash
+       npx terragucci override envs/prod/app --rule main.deny_public_bucket \
+         --reason "the incident needs the bucket public until 18:00" --actor github:alice --sign ~/.ssh/id_ed25519
+       ```
+     </TabItem>
+   </Tabs>
+
+   `--dry-run` prints the `chant approve policy-override` command and runs nothing.
+
+4. Re-run the wave's job.
+
+</Steps>
+
+| The wave then | Because |
+|---|---|
+| applies the root, and its report names the override | the override names this plan and these rules, and its author is listed at base |
+| exits 1 again, naming why the override does not count | its author is not listed, it gives no reason, or under `sealed` its seal does not verify |
+| exits 4 and applies nothing | the plan or its rules changed since; the next run records the new denial to override |
+
+The ledger is `_gates/policy-override.jsonl`, one gate per root. Revoke an override as an approval: delete its line before the wave runs.
+
 ## List the waves waiting for an approval
 
 This prints each gate whose newest pending record has no approval of its digest after it:
@@ -145,6 +186,7 @@ A revert does not revive the old approval: the refused run recorded a newer pend
 |---|---|---|
 | Pending fact | 48 hours after the first run recorded it; the next run after that records a fresh one. | It is replaced by a newer pending fact for the gate. |
 | Approval | Never. | It is older than the gate's newest pending fact, or names a digest the wave no longer plans ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)); or, under `sealed`, its approver leaves `.chant/allowed_signers`, for merges made after that. |
+| Policy override | Never. | It is older than the root's newest recorded denial, or names another plan or other rules; or its author leaves `policy.override`, or under `sealed` the signers file, for merges made after that. |
 
 ## Next
 

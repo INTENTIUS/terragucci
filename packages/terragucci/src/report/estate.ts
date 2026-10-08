@@ -44,6 +44,8 @@ export interface EstateRun {
   approval?: IndexEntry["approval"];
   waiting_since?: string;
   applied?: string;
+  /** Roots a policy override let through. */
+  overridden?: number;
   /** The run's report.html, when the page can link it. */
   report?: string;
   pull_request?: string;
@@ -77,12 +79,15 @@ export interface EstateProject {
   drifted: number;
   /** Roots that failed in the latest plan, drift check and apply waves. */
   failed: number;
+  /** Roots the newest commit's apply waves applied under a policy override. Absent when none. */
+  overridden?: number;
 }
 
 export interface Estate {
   schema: typeof ESTATE_SCHEMA;
   generated: string;
-  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number };
+  /** `overridden_roots` only when a policy override let a root through. */
+  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overridden_roots?: number };
   projects: EstateProject[];
   /** The newest runs across every project, newest first. */
   recent: EstateRun[];
@@ -107,6 +112,7 @@ function run(e: IndexEntry, base: string | undefined): EstateRun {
     ...(e.approval ? { approval: e.approval } : {}),
     ...(e.waiting_since ? { waiting_since: e.waiting_since } : {}),
     ...(e.applied ? { applied: e.applied } : {}),
+    ...(e.overridden ? { overridden: e.overridden } : {}),
     ...(base !== undefined ? { report: `${base}${e.path}/report.html` } : {}),
     ...(e.pull_request ? { pull_request: e.pull_request } : {}),
     ...(e.pull_request_url ? { pull_request_url: e.pull_request_url } : {}),
@@ -156,6 +162,7 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     }
   }
   const failedIn = (r: IndexEntry | undefined): number => r?.failed ?? 0;
+  const overridden = apply ? apply.waves.reduce((n, w) => n + (w.overridden ?? 0), 0) : 0;
   return {
     project: p.project,
     status: "ok",
@@ -166,12 +173,14 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     waiting,
     drifted: drift?.changed ?? 0,
     failed: failedIn(plan) + failedIn(drift) + (apply ? apply.waves.reduce((n, w) => n + (w.failed ?? 0), 0) : 0),
+    ...(overridden > 0 ? { overridden } : {}),
   };
 }
 
 /** The estate from every project's index. Projects keep the order given. */
 export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Estate {
   const projects = indexes.map((p) => projectState(p, now));
+  const overridden = projects.reduce((n, p) => n + (p.overridden ?? 0), 0);
   const recent = indexes
     .flatMap((p) => (p.reports ?? []).filter((r) => r.project === p.project).map((r) => ({ r, base: dirOf(p.base) })))
     .sort((a, b) => at(b.r.finished) - at(a.r.finished) || (a.r.path < b.r.path ? -1 : 1))
@@ -187,6 +196,7 @@ export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Es
       drifted_roots: projects.reduce((n, p) => n + p.drifted, 0),
       failed_roots: projects.reduce((n, p) => n + p.failed, 0),
       unreadable: projects.filter((p) => p.status === "error").length,
+      ...(overridden > 0 ? { overridden_roots: overridden } : {}),
     },
     projects,
     recent,
@@ -236,7 +246,7 @@ function applyCell(p: EstateProject, now: Date): string {
         : w.applied
           ? "applied"
           : w.approval ?? "ran";
-    return `<li>${link(w.report, `wave ${w.wave ?? 0}`)}: ${state}</li>`;
+    return `<li>${link(w.report, `wave ${w.wave ?? 0}`)}: ${state}${w.overridden ? `, <span class="warn">${w.overridden} by policy override</span>` : ""}</li>`;
   });
   return `<td><ul>${waves.join("")}</ul><small>${short(p.apply.commit)}</small></td>`;
 }
@@ -254,6 +264,7 @@ export function renderEstateHtml(estate: Estate): string {
     [t.waiting, t.waiting === 1 ? "wave waiting" : "waves waiting"],
     [t.drifted_projects, t.drifted_projects === 1 ? "project drifted" : "projects drifted"],
     [t.failed_roots, t.failed_roots === 1 ? "root failed" : "roots failed"],
+    ...(t.overridden_roots ? [[t.overridden_roots, t.overridden_roots === 1 ? "root applied by policy override" : "roots applied by policy override"]] : []),
   ].map(([n, label]) => `<div class="tile${Number(n) > 0 && label !== "projects" ? " hot" : ""}"><b>${n}</b><span>${label}</span></div>`);
   const waiting = estate.projects.flatMap((p) => p.waiting).sort((a, b) => b.age_seconds - a.age_seconds);
   const waitingRows = waiting.map((w) => `<tr><td>${esc(w.project)}</td><td>${link(w.report, `wave ${w.wave}`)}</td><td>${short(w.commit)}</td><td>${lasting(w.since, now)}</td></tr>`);

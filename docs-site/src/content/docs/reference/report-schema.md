@@ -37,8 +37,9 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
 | `intent` | the description check's decision: status, whether it flagged the pull request, the decision, probability and threshold, model, `state_digest` and the destroys and replacements the text leaves out (`unmentioned`); present only after `respond description` ran on the report |
-| `policy` | the policy check, when `policy` is on: engine, input mode, namespace, whether the policy came from the checkout or the base branch, the roots it failed and the warning count |
-| `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the warnings and, for `error`, why it could not run; a denied root is `failed` and keeps its `changes` |
+| `policy` | the policy check, when `policy` is on: engine, input mode, namespace, whether the policy came from the checkout or the base branch, the roots it denied and the warning count; with `policy.override` at base, `overriders` and the denied roots an override stands for, `overridden` |
+| `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the ids of the rules that denied (`rules`), the warnings and, for `error`, why it could not run; a denied root is `failed` and keeps its `changes` |
+| `roots[].policy.override` | the [override](/terragucci/reference/policy/#overriding-a-denial) that stands for the root's plan and rules: `by`, `at`, `rules`, `reason`, `plan_digest`, the ledger line's `digest`, and `sealed`; on a `tf-apply` wave the root then applies and is `planned` |
 | `redaction` | the marker that replaced sensitive values, and how many it replaced |
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
@@ -59,6 +60,7 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | the slowest resources of a run | `timings.resources`, then `roots[].timings.resources` |
 | how long a root waited for its state lock | `roots[].timings.lock_waits`, with the attempts it took |
 | what the policy denied or warned about in a root | `roots[].policy` |
+| who overrode a denial, and why | `roots[].policy.override` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
 Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it.

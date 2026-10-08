@@ -145,6 +145,8 @@ function rootBlock(r: ReportRoot, wave: number | undefined): string {
   const why = r.why.map((w) => `<span class="why">${esc(w)}</span>`).join(" ");
   let body = `<div class="meta">${planLinks(r)} ${r.group ? `<a href="#${esc(groupAnchor(r.group))}">group ${esc(r.group)}</a>` : ""} ${r.plan_digest ? `<code class="digest">${esc(r.plan_digest)}</code>` : ""}</div>`;
   if (r.error) body += `<pre class="error">${esc(r.error)}</pre>`;
+  const o = r.policy?.override;
+  if (o) body += `<p class="notice">Policy override: ${o.rules.map((x) => `<code>${esc(x)}</code>`).join(", ")} overridden by ${esc(o.by)} at ${esc(o.at)}${o.sealed ? ", sealed" : ""}, for plan <code>${esc(o.plan_digest)}</code>: ${esc(o.reason)}</p>`;
   if (r.policy?.warnings.length) body += `<p class="notice">Policy warnings, which fail nothing:</p><ul>${r.policy.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`;
   if (shown.length) body += `<ul class="changes">${shown.map(changeRow).join("")}</ul>`;
   if (folded.length) {

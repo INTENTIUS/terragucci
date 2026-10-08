@@ -23,6 +23,7 @@ prompt: |
 | `comment-apply` | reads a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; the generated pipeline runs it |
 | `pr-lock` | takes or releases a pull request's plan locks under `locks: plan`; the generated pipeline runs it |
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
+| `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and runs `chant approve policy-override <root> --plan <digest> --note <reason>`; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
@@ -264,6 +265,27 @@ wave-2 waits for an approval of jcs1-sha256:2e7a63f3... (wave 2 of 2: app), sinc
 running: chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
 ```
 
+## override
+
+```bash
+terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--actor <name>] [--sign [<key>]] [--dry-run]
+```
+
+| Flag | Meaning |
+|---|---|
+| `<root>` | the root the policy denied |
+| `--rule` | a rule that denied it, such as `main.deny_public_bucket`; name every one, or give them comma-separated |
+| `--reason` | required: why this plan goes out, kept on the ledger and shown in the report |
+| `--actor` | the name the override records; it counts only when [`policy.override`](/terragucci/reference/policy/#overriding-a-denial) at base lists it |
+| `--sign` | as for `approve`; the default under `approval: sealed` |
+| `--dry-run` | print the `chant approve` command and run nothing |
+
+```text
+envs/prod/app: its plan jcs1-sha256:4c1e09d2... was denied by main.deny_public_bucket, since 2026-10-07T18:04:11.000Z
+  the override binds the root, that plan and those rules: sha256:9b0f2a71...
+running: chant approve policy-override envs/prod/app --plan sha256:9b0f2a71... --note 'the incident needs the bucket public until 18:00' --actor github:alice
+```
+
 ## check-root and check-policy
 
 ```bash
@@ -295,14 +317,14 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | 1 | one or more projects or roots failed |
 | 2 | a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
-| 4 | a wave's plans changed after its approval, so `stage tf-apply` applied nothing |
+| 4 | a wave's plans changed after its approval or its policy override, so `stage tf-apply` applied nothing |
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
 | `init` | done | | an existing config file needs a line added | | |
 | `reconcile` | done | a project failed | | | |
 | `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
-| `stage tf-apply` | wave applied | a root failed | `--json` | waits for an approval | plans changed after the approval |
+| `stage tf-apply` | wave applied | a root failed, or the policy denied one | `--json` | waits for an approval | plans changed after the approval, or after a policy override |
 | `publish` | done | | OCI tag exists already; git tag exists with different content | | |
 | `rollout` | complete | stopped | | waiting | |
 | `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |
