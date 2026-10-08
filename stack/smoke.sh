@@ -6184,10 +6184,10 @@ claim_approve_command() {
     [ "$waited" = "$noted" ] || { log "the merge's wave 1 asks for another digest than the note gave"; rc=1; }
   fi
   if [ $rc = 0 ]; then
-    git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver" || rc=1
-    git -C "$work/approver" config user.name smoke-approver
-    git -C "$work/approver" config user.email smoke-approver@terragucci.local
-    out="$(cd "$work/approver" && PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" approve --actor smoke-approver ${BREAK:+--dry-run} 2>&1)" || { log "terragucci approve failed: $out"; rc=1; }
+    git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver-clone" || rc=1
+    git -C "$work/approver-clone" config user.name smoke-approver
+    git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
+    out="$(cd "$work/approver-clone" && PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" approve --actor smoke-approver ${BREAK:+--dry-run} 2>&1)" || { log "terragucci approve failed: $out"; rc=1; }
     log "terragucci approve: $(tr '\n' ' ' <<<"$out")"
     grep -qF -- "${noted#chant }" <<<"$out" || { log "terragucci approve did not approve the digest the note gave"; rc=1; }
   fi
