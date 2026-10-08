@@ -122,12 +122,12 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    <Tabs syncKey="approval">
      <TabItem label="ledger (default) or pr-review">
        ```bash
-       npx terragucci approve --actor github:alice
+       npx terragucci approve wave-2 --plan jcs1-sha256:9f2c... --actor github:alice
        ```
      </TabItem>
      <TabItem label="sealed">
        ```bash
-       npx terragucci approve --actor github:alice --sign ~/.ssh/id_ed25519
+       npx terragucci approve wave-2 --plan jcs1-sha256:9f2c... --actor github:alice --sign ~/.ssh/id_ed25519
        ```
 
        `--actor` must be your principal in `.chant/allowed_signers`. Left out, `--sign` uses git's `user.signingkey` when `gpg.format` is `ssh`.
@@ -138,6 +138,7 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    |---|---|
    | with no flag | fetches `chant/lifecycle`, finds the waiting wave, prints its roots and destroys, and runs `chant approve tf-apply wave-<k> --plan <digest>` for the digest that wave planned |
    | `wave-<k>` | picks the wave when several wait |
+   | `--plan <digest>` | the digest you read: approves only a wave waiting for exactly it, and otherwise approves nothing and exits 1, naming the digest waiting. Use it whenever you read the plans somewhere other than this command's own output, such as a chat message or the plan note. |
    | `--actor` | the name the approval records; pass it on your own machine, where chant would otherwise record `$USER` |
    | `--sign` | seals the approval; the default under `approval: sealed` |
    | `--dry-run` | prints the command and runs nothing |

@@ -61,12 +61,12 @@ A waiting wave exits with code 3; its command is in the job log, the `terragucci
 <Tabs syncKey="approval">
   <TabItem label="ledger (default) or pr-review">
     ```bash
-    npx terragucci approve wave-2 --actor github:alice
+    npx terragucci approve wave-2 --plan <digest> --actor github:alice
     ```
   </TabItem>
   <TabItem label="sealed">
     ```bash
-    npx terragucci approve wave-2 --actor github:alice --sign ~/.ssh/id_ed25519
+    npx terragucci approve wave-2 --plan <digest> --actor github:alice --sign ~/.ssh/id_ed25519
     ```
   </TabItem>
 </Tabs>

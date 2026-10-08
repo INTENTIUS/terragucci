@@ -74,8 +74,30 @@ describe("terragucci approve", () => {
     await expect(approve(checkout(jsonl(pending("wave-1", "jcs1-sha256:aa", 1), resolution("wave-1", "jcs1-sha256:aa", 2))), { dryRun: true, log: () => {} })).rejects.toThrow(/no wave waits/);
     const two = checkout(jsonl(pending("wave-1", "jcs1-sha256:aa", 1), pending("wave-2", "jcs1-sha256:cc", 1)));
     await expect(approve(two, { dryRun: true, log: () => {} })).rejects.toThrow(/2 waves wait \(wave-1, wave-2\)/);
-    expect((await approve(two, { wave: "wave-2", dryRun: true, log: () => {} })).wave.digest).toBe("jcs1-sha256:cc");
+    expect((await approve(two, { wave: "wave-2", dryRun: true, log: () => {} })).wave!.digest).toBe("jcs1-sha256:cc");
     await expect(approve(two, { wave: "3", dryRun: true, log: () => {} })).rejects.toThrow(/wave-3 is not waiting/);
+  });
+
+  it("with --plan approves only a wave waiting for that digest, and otherwise exits 1 naming the digest waiting", async () => {
+    const two = checkout(jsonl(pending("wave-1", "jcs1-sha256:aa", 1), pending("wave-2", "jcs1-sha256:cc", 1)));
+    // The digest picks the wave among several, with no wave named.
+    expect(await approve(two, { plan: "jcs1-sha256:cc", dryRun: true, log: () => {} })).toMatchObject({ code: 0, command: "chant approve tf-apply wave-2 --plan jcs1-sha256:cc", wave: { wave: 2 } });
+    expect((await approve(two, { wave: "wave-1", plan: "jcs1-sha256:aa", dryRun: true, log: () => {} })).command).toBe("chant approve tf-apply wave-1 --plan jcs1-sha256:aa");
+    // A stale digest: the plans moved since it was read.
+    let lines: string[] = [];
+    let r = await approve(two, { wave: "wave-2", plan: "jcs1-sha256:old", log: (l) => void lines.push(l) });
+    expect(r).toEqual({ code: 1, command: "" });
+    expect(lines).toEqual(["not approved: wave-2 waits for jcs1-sha256:old; waiting: wave-2 for jcs1-sha256:cc. The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest"]);
+    lines = [];
+    r = await approve(two, { plan: "jcs1-sha256:old", log: (l) => void lines.push(l) });
+    expect(r.code).toBe(1);
+    expect(lines[0]).toContain("waiting: wave-1 for jcs1-sha256:aa, wave-2 for jcs1-sha256:cc");
+    // Nothing waits: the digest was approved already.
+    lines = [];
+    const none = checkout(jsonl(pending("wave-1", "jcs1-sha256:aa", 1), resolution("wave-1", "jcs1-sha256:aa", 2)));
+    expect((await approve(none, { plan: "jcs1-sha256:aa", log: (l) => void lines.push(l) })).code).toBe(1);
+    expect(lines[0]).toMatch(/^not approved: no wave waits for jcs1-sha256:aa: no wave waits for an approval/);
+    await expect(approve(two, { plan: "", dryRun: true, log: () => {} })).rejects.toThrow(/--plan takes the digest/);
   });
 });
 

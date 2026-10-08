@@ -289,12 +289,13 @@ approval: ledger (the default)
 ## approve
 
 ```bash
-terragucci approve [wave-<k>] [--actor <name>] [--sign [<key>]] [--dry-run]
+terragucci approve [wave-<k>] [--plan <digest>] [--actor <name>] [--sign [<key>]] [--dry-run]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `wave-<k>` | the wave to approve; needed only when several wait |
+| `wave-<k>` | the wave to approve; needed only when several wait and no `--plan` picks one |
+| `--plan` | the digest you read, from a chat message, a plan note or a report: approve only a wave waiting for exactly that digest. When none does, it approves nothing, prints the digest waiting and exits 1 |
 | `--actor` | the name the approval records; under `approval: sealed`, your principal in the signers file |
 | `--sign` | seal the approval with this key, or with git's `user.signingkey` when no key is given; the default under `approval: sealed` |
 | `--dry-run` | print the `chant approve` command and run nothing |
@@ -306,6 +307,12 @@ wave-2 waits for an approval of jcs1-sha256:2e7a63f3... (wave 2 of 2: app), sinc
   roots: app
   destroys app: aws_s3_bucket.logs
 running: chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
+```
+
+With a digest that no longer waits, because the plans moved after you read them:
+
+```text
+not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha256:2e7a63f3.... The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest
 ```
 
 ## override
