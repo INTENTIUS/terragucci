@@ -11,6 +11,7 @@ prompt: |
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
 
 ## What you end up with
 
@@ -74,11 +75,15 @@ An open change that applies from its head in the same waves and gates as a merge
    | `mergeable` | the forge says it does not merge: conflicts with the default branch, or on GitHub a branch protection rule blocks it | resolve the conflicts, or meet the rule |
    | `checks` | a status or check on the head failed or has not passed yet | fix and push, or wait for it |
 
+   <Shot step="pr-apply" view="stale" alt="terragucci's reply on a Forgejo pull request: pull request 1 is not up to date with main, since its head does not contain main's newest commit; merge main into it or rebase it, and comment again once its plan passes" />
+
    [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, `terragucci/plan` must pass on the head, the change must leave the pipeline file alone, and no other open pull request may hold a lock on a root it reaches.
 
 5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives the command that approves it; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again.
 
 6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
+
+   <Shot step="pr-apply" view="reply" alt="terragucci's reply on a Forgejo pull request under merge: auto: it applied waves 1 and 2 of pull request 1 at its head, merged the pull request at that head, released its locks on canary/one, and links the run" />
 
    After the merge, `confirm` plans every root, or every unit in a Terragrunt repo. Its `terragucci/apply` status passes when nothing plans a change.
 
@@ -123,6 +128,12 @@ An unreadable default-branch config fails the wave before anything applies.
 | Another change reaches a locked root | refused; the reply names the root and the holder, and with `locks: plan` its `terragucci/lock` fails |
 | The holder merges or closes | released |
 | `/terragucci unlock` on the holder, by anyone with write access | released; the reply names what it released |
+
+A second pull request that reaches a locked root is refused, and `/terragucci unlock` on the holder releases it:
+
+<Shot step="pr-apply" view="lock" alt="terragucci's reply on pull request 2: canary/one is locked by pull request 1, applied by terragucci-admin, so pull request 2 is not applied until that one merges or closes, or someone with write access comments /terragucci unlock on it" />
+
+<Shot step="pr-apply" view="unlock" alt="terragucci's reply to /terragucci unlock on pull request 1: it released the locks pull request 1 held on canary/one, for terragucci-admin" />
 
 A change refused by a plan lock is not queued. Comment `/terragucci plan` on it once the holder merges, closes or is unlocked.
 

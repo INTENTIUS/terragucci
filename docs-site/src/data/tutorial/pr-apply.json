@@ -1,0 +1,15 @@
+{
+  "step": "pr-apply",
+  "source_hash": "89523777c20d72d8",
+  "commands": [],
+  "shots": {
+    "reply-light": "f5da926fcc1482f0",
+    "reply-dark": "de2f0430c827cec9",
+    "lock-light": "a81dc907cb208af5",
+    "lock-dark": "8a9a03fbc8784a29",
+    "unlock-light": "427fb7ceb690d4d4",
+    "unlock-dark": "404ccdeb9f44d6e9",
+    "stale-light": "9be480e002a92d20",
+    "stale-dark": "07c724878fbf3ed5"
+  }
+}

@@ -128,6 +128,8 @@ With `respond.drift: attribute`, each drifted attribute goes through three steps
 
 Where the step cannot run, it says so and step 3 follows.
 
+<Shot step="drift-attribute" view="issue" alt="A drift issue in Forgejo whose Who changed it list puts the queue's tags and visibility_timeout_seconds down to a person: SetQueueAttributes by alice, from the audit log" />
+
 | Attributed to | In the drift pull request | Suggestion |
 |---|---|---|
 | a controller write | left out | add `lifecycle { ignore_changes = [...] }` to the resource |
@@ -179,6 +181,8 @@ The bump comes from the [version bump rules](/terragucci/reference/stages/#versi
 | a registry-only project | pass `--since <ref>`; the `version` file at that ref is the last release (0.0.0 if none) |
 | the `version-bump` job | runs `terragucci respond version-bump --mode apply` on the default branch after every apply wave, with full history; it needs permission to push a branch and open a pull request; a failed response never fails the job |
 | the release pull request | writes the `version` file with the bump and its probability; merging confirms it and the next `tf-publish` publishes it |
+
+<Shot step="publish" view="release" alt="The release pull request the version-bump job opened on Forgejo, Release modules/queue 0.1.1: it proposes a patch bump, says no commit since 0.1.0 carries a conventional type and the decision service did not answer, explains that merging writes the module's version file for the next tf-publish run, and lists the commit since the last release" />
 
 ## Where it runs
 

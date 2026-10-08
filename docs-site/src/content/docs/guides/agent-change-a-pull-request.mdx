@@ -10,6 +10,7 @@ prompt: |
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
 
 This is one of the two features that run a coding agent; the other is [summarizing a refused wave](/terragucci/guides/agent-refused-wave/). It is off unless `agent.comment` is set, and every other feature runs with no agent ([what needs an agent](/terragucci/getting-started/#what-needs-an-agent)).
 
@@ -87,6 +88,12 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 
 4. Ask. Write `/terragucci agent` and the ask on one line. The reply links the commit and names the files it changed.
 
+   <Shot step="agent" view="reply" alt="terragucci's reply on a Forgejo pull request: it pushed a commit to agent-change, changing app/rev.txt; the push plans the pull request again, and nothing was applied, approved or merged" />
+
+   The commit names who asked, on which pull request, and the ask:
+
+   <Shot step="agent" view="commit" alt="The agent's commit in Forgejo: Change asked for by terragucci-admin on the pull request, with the ask set app's rev to 3, authored by terragucci agent, changing app/rev.txt from 1 to 3" />
+
 </Steps>
 
 ## What the agent can and cannot do
@@ -137,6 +144,8 @@ agent:
 | the `key_secret` name | the model's key, under its own name |
 
 `agent-push` refuses a guarded path whichever agent wrote the patch.
+
+<Shot step="agent" view="refused" alt="terragucci's reply to an ask whose change touches .forgejo/workflows/terragucci.yml: an agent may not change CI, terragucci.yml, chant.workspace.json, the signers file, .chant/, the policy directory, code owners, agent instructions or git settings, so nothing was pushed" />
 
 ## Next
 

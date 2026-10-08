@@ -60,7 +60,13 @@ Supported, as on GitHub.
 
    <Shot step="github" view="reply" alt="The plan note on a GitHub pull request after /terragucci plan: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.terraform_data.jobs" />
 
-   A named root the change does not reach gets a "not affected" reply and nothing is updated.
+   On Forgejo, the same note on the example's pull request, updated in place, with the comment below it:
+
+   <Shot step="replan" view="note" alt="The plan note on the example's one-root pull request in Forgejo, planned again after the /terragucci plan comment below it: one instance in one group, wave 2 with its digest, and dev orders' queue keeping messages for seven days" />
+
+   A named root the change does not reach gets a "not affected" reply and nothing is updated. A name that is not a root is refused, with the roots listed:
+
+   <Shot step="replan" view="replies" alt="Two comments on the pull request and terragucci's replies: envs/prod/payments is not affected by this pull request, so nothing was planned; envs/nope is not a root of this repository, followed by the fifteen roots" />
 
 </Steps>
 

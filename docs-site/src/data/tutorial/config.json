@@ -1,0 +1,21 @@
+{
+  "step": "config",
+  "source_hash": "89523777c20d72d8",
+  "commands": [
+    {
+      "cmd": "npx terragucci config check",
+      "output": "terragucci.yml: ok\napproval: sealed (identity.gates in chant.workspace.json here, with no approval key)\nnote: set approval: sealed in terragucci.yml to keep sealed approvals, or approval: ledger and run terragucci init to drop the gates",
+      "exit": 0
+    },
+    {
+      "cmd": "npx terragucci init --dry-run",
+      "output": "found 15 roots in 2 layers, tofu 1.13.1 (terragucci.yml), forge forgejo (.forgejo/workflows)\nunchanged .forgejo/workflows/terragucci.yml\nunchanged chant.workspace.json\nusing terragucci.yml\nnote: approval: sealed counts only approvals sealed by a key .chant/allowed_signers lists, and there is none yet; terragucci init --signer <your principal> writes it from git config user.signingkey\ndry run: nothing was written",
+      "exit": 0
+    },
+    {
+      "cmd": "echo 'gates: always' >> terragucci.yml && npx terragucci config check",
+      "output": "terragucci.yml: 1 problem(s)\n  config.gates is not a setting (settings: roots, binary, version, forge, url, gate, approval, apply, locks, waves, drift, comments, gitlab, runtime, reports, token_env, env, telemetry, tips, modules, oidc, parallelism, terragrunt, policy, respond, agent, decide, audit_region, dashboards)",
+      "exit": 2
+    }
+  ]
+}

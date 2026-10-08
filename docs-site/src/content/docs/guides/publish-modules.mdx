@@ -11,6 +11,7 @@ prompt: |
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
 
 ## What you end up with
 
@@ -82,6 +83,10 @@ Every module that changed on the default branch released under a new number, eac
 5. Merge a change to a module.
 
    The next push to the default branch publishes. The OCI manifest digest prints with each version, and a root can pin it: `oci://registry.example.com/acme/modules/network@sha256:...`.
+
+   With `git-tags`, each version is a tag on the repo, `<module>/v<version>`. Here `modules/service` changed after its first release and moved to 0.2.0; `modules/queue` did not:
+
+   <Shot step="publish" view="tags" alt="The tags page of a Forgejo repo after three merges: modules/service/v0.2.0, modules/service/v0.1.0 and modules/queue/v0.1.0, each pushed by the pipeline's publish job" />
 
    A published version never changes, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first. Unchanged content publishes nothing; different content under an existing tag stops the run and names the tag.
 

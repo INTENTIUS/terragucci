@@ -11,6 +11,7 @@ prompt: |
 ---
 
 import { Steps } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
 
 ## What you end up with
 
@@ -75,6 +76,10 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 | `/terragucci apply` | on a merged pull request (GitHub, Forgejo) reruns its waves from the merge commit behind the same gate, with [these refusals](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request); it approves nothing |
 | When a change applies | after it merges, by default. With `apply.when: pull-request` (GitHub, Forgejo), `/terragucci apply` on the approved open pull request applies its waves of units from the head: [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) |
 | Locks before merge | on units: a changed unit and the units whose `dependency` blocks name it; a change outside every unit's directory locks every unit ([Locks](/terragucci/guides/apply-before-merge/#locks)) |
+
+A wave of units the gate holds waits as a wave of roots does, naming its units, its set digest and the approve command:
+
+<Shot step="tg" view="waiting" alt="A Terragrunt repo's apply-wave-2 job in Forgejo, after wave 1 was approved: it plans live/fleet/three and live/fleet/two, one change each, waits for an approval of the set digest over the two units under approval: ledger, prints the chant approve tf-apply wave-2 command, and exits with code 3" />
 
 ## Next
 

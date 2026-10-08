@@ -29,6 +29,8 @@
 #            numbers are those of a full capture
 #   booted   it needs the example as committed: run alone, it resets a running
 #            example, or boots one
+#   alone    it needs nothing of the example: it runs the CLI on a copy of
+#            example/, or brings up what it needs itself
 # --reuse skips all of that and runs the step on the example as it stands.
 set -euo pipefail
 
@@ -49,15 +51,24 @@ check|chain|check|pull log|just example change unformatted and just example logs
 one-note|chain|affected grouped highlight|pull|just example change module-bump; the plan note for 12 roots, 11 in one group and prod payments apart (the pull request is closed afterwards)
 wave-waiting|chain|waves sealed|pull log|just example change destroy and merge destroy; the destroy pull request'"'"'s note, and wave 4'"'"'s job log with exit 3 and the approve command
 wave-refused|chain|waves sealed refuse|log|just example approve, change module-bump, merge module-bump; wave 4'"'"'s job log with both digests and the roots that moved
+approved|chain|sealed comment-apply wave-report|record reply log|just example approve of the plans wave 4 refused, then /terragucci apply on the merged module bump; the approval'"'"'s commit on chant/lifecycle, the reply linking the run, and wave 4'"'"'s job log applying
 pin|chain|publish rollout|pull files|just example change pin; the rollout'"'"'s wave 1 pull request and its ref bumps
 report|booted|report highlight|top root plan index|three tf-plan runs of the example with reports.bucket on floci; the module bump'"'"'s report.html, one root'"'"'s row, that root'"'"'s plan.txt, and the project'"'"'s report index
 drift|booted|drift|issue|just example change drift, then the drift job dispatched; the drift issue (the example is reset afterwards)
-see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves drift runs|just see-runs; four of the dashboards
+see-runs|booted|dash-pipeline dash-changes dash-waves dash-drift dash-estate dash-runs dash-slos|pipeline waves drift runs changes estate slos|just see-runs; seven of the dashboards
 trace|booted|traces|trace|a tf-plan of the one-root change with telemetry on, sent to the observability profile; that run'"'"'s trace in Grafana'"'"'s Explore, found by the trace id in its report
 responses|booted|respond-drift respond-fmt|drift drift-files fmt|the respond-drift and respond-fmt claims; the drift pull request with the live value and an import, its files, and the fmt commit on a pull request'"'"'s branch
 tips|booted|tips respond-tips|pull report fix|just example change float, a tf-plan of it with reports.bucket on floci, and the respond-tips claim; the plan note'"'"'s tip line, the report'"'"'s Tips section, and the files of the pull request one tip opens (the pull request is closed afterwards)
 policy|booted|policy check-diagnostics|pull log|a pull request on the example that adds a policy denying dev orders'"'"' change, and the check-diagnostics claim; the plan note naming the denial, and the check job'"'"'s log naming the failing policy test (the pull request is closed afterwards)
-statuses|booted|grouped comment-apply|checks reply|just example change one-root and the comment-apply claim; the pull request'"'"'s commit statuses, terragucci/plan among them (the pull request is closed afterwards), and the replies to /terragucci apply on a merged pull request'
+statuses|booted|grouped comment-apply|checks reply|just example change one-root and the comment-apply claim; the pull request'"'"'s commit statuses, terragucci/plan among them (the pull request is closed afterwards), and the replies to /terragucci apply on a merged pull request
+replan|booted|comment-plan comment-not-affected|note replies|just example change one-root, then /terragucci plan, one root it does not reach and one that is not a root as comments; the re-planned note, and the replies (the pull request is closed afterwards)
+pr-apply|booted|pr-apply pr-apply-lock pr-apply-stale|reply lock unlock stale|the pr-apply, pr-apply-lock and pr-apply-stale claims; the reply that applied an open pull request and merged it, the refusal naming the lock and its holder, the reply to /terragucci unlock, and the refusal of a head behind main
+agent|booted|comment-agent|reply commit refused|the comment-agent claim; the reply linking the agent'"'"'s commit, that commit, and the refusal of an ask that touches the pipeline file
+drift-attribute|booted|drift-attribute|issue|the drift-attribute claim; the drift issue naming who changed the attribute, from the audit log
+config|alone|zero-config sealed-migrate||terragucci config check and init --dry-run on the example, then config check with a key that is not a setting
+publish|booted|publish version-bump-job|tags release|the publish and version-bump-job claims; the module tags the publish job pushed, and the release pull request the version-bump job opened
+reconcile|booted|reconcile|pull files|the reconcile claim; the pipeline pull request reconcile opened in the project with no pipeline, and its files
+tg|alone|tg-check tg-gate-wait|check waiting|the Terragrunt example with its unformatted scenario pushed to a branch, and the tg-gate-wait claim; the check job'"'"'s hcl fmt failure, and wave 2 waiting for its own approval (the example is reset afterwards)'
 
 field() { # step, field number -> that field of the step's row
   awk -F'|' -v s="$1" -v n="$2" '$1 == s { print $n }' <<<"$STEPS"
@@ -314,6 +325,34 @@ note_page() { # pull request number
 
 pr_in_output() { grep -o 'pulls/[0-9]*' "$STAGE/last.out" | tail -1 | cut -d/ -f2 || true; }
 
+# A comment on a pull request, as the repo's admin, as a reader writes one.
+# Prints the run it started (the first issue_comment run newer than the
+# comment) once that run has finished, so its replies are posted.
+say() { # repo, pull request number, text
+  local repo="$1" last run="" deadline
+  # Forgejo's runs API filters by push and pull_request events, not by
+  # issue_comment, so the comment's runs are picked out here.
+  last="$(api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq '[.workflow_runs[]? | select(.event == "issue_comment") | .id] | max // 0')"
+  api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$3" '{body: $b}')" \
+    "$URL/api/v1/repos/$repo/issues/$2/comments" || return 0
+  deadline=$(( $(date +%s) + ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    run="$(api "$URL/api/v1/repos/$repo/actions/runs?limit=50" \
+      | jq -c --argjson l "$last" '[.workflow_runs[]? | select(.event == "issue_comment" and .id > $l)] | min_by(.id) // empty')"
+    case "$(jq -r '.status // empty' <<<"${run:-null}")" in
+      success|failure|cancelled|skipped) break ;;
+    esac
+    sleep 3
+  done
+  log "${STEP:-capture}: '$3' on $repo#$2: its run ended '$(jq -r '.status // "unknown"' <<<"${run:-null}")'"
+  echo "$run"
+}
+
+# One reply of terragucci's on a pull request, the first whose text matches.
+reply_shot() { # step, view, pull request page, regex
+  shot "$1" "$2" "$3" fit '.timeline-item.comment' "$4"
+}
+
 # ── the steps ──────────────────────────────────────────────────────────────
 
 step_boot() {
@@ -390,6 +429,22 @@ step_wave_refused() {
   local page
   page="$(job_page "$(run_on main)" '.status == "failure"')"
   if [ -n "$page" ]; then shot wave-refused log "$page" 1600 "Apply wave" "changed after it was approved|planned differently since"; else log "wave-refused: no refused job on main's head"; fi
+}
+
+# A reader who read the moved plans approves them, and asks for the apply
+# again on the merged pull request. The approval is a commit on
+# chant/lifecycle; the comment's apply-comment job resumes at wave 4.
+step_approved() {
+  run_cmd approved "just example approve" "$HERE/example.sh" approve
+  local sha pr run page
+  sha="$(remote_head "$REPO" chant/lifecycle)"
+  if [ -n "$sha" ]; then shot approved record "$FORGEJO/commit/$sha" 1000; else log "approved: no chant/lifecycle branch"; fi
+  pr="$(api "$URL/api/v1/repos/$REPO/pulls?state=closed&limit=50" | jq -r '[.[] | select(.head.ref == "change/module-bump" and .merged)] | max_by(.number) | .number // empty')"
+  [ -n "$pr" ] || { log "approved: no merged module-bump pull request"; return 0; }
+  run="$(say "$REPO" "$pr" "/terragucci apply")"
+  reply_shot approved reply "$FORGEJO/pulls/$pr" 'terragucci: .*wave 4'
+  page="$(job_page "$run" '.name == "apply-comment"')"
+  if [ -n "$page" ]; then shot approved log "$page" 1600 "Apply a merged pull request" "wave 4"; else log "approved: the comment's run has no apply-comment job"; fi
 }
 
 # Publish modules/service and open the first rollout wave. The scenario pins
@@ -533,8 +588,9 @@ step_see_runs() {
   local grafana="http://localhost:${TERRAGUCCI_GRAFANA_PORT:-3310}" d
   # The example only: the stack's Prometheus also holds the smoke claims' projects.
   forge
-  for d in pipeline-health:pipeline rollouts-waves:waves drift:drift runs:runs; do
-    shot see-runs "${d#*:}" "$grafana/d/terragucci-${d%%:*}?orgId=1&kiosk&from=now-1h&to=now&var-project=forgejo:3000/$REPO"
+  for d in terragucci-pipeline-health:pipeline terragucci-rollouts-waves:waves terragucci-drift:drift terragucci-runs:runs \
+    terragucci-change-review:changes terragucci-estate:estate slo-terragucci-plan-time:slos; do
+    shot see-runs "${d#*:}" "$grafana/d/${d%%:*}?orgId=1&kiosk&from=now-1h&to=now&var-project=forgejo:3000/$REPO"
   done
 }
 
@@ -721,6 +777,143 @@ step_statuses() {
     shot statuses reply "$URL/$repo/pulls/$merged" 1800 '.timeline-item.comment' 'wave 1 waits'
   else
     log "statuses: no merged pull request on $repo"
+  fi
+}
+
+# Re-plan from a comment (re-plan-from-a-comment), on the example's one-root
+# change: /terragucci plan re-plans it and updates the note; a root the
+# change does not reach is answered "not affected"; a path that is not a
+# root is refused.
+step_replan() {
+  forge
+  run_cmd replan "just example change one-root" "$HERE/example.sh" change one-root
+  local pr; pr="$(pr_in_output)"
+  [ -n "$pr" ] || { log "replan: the output named no pull request"; return 0; }
+  say "$REPO" "$pr" "/terragucci plan" >/dev/null
+  note_shot replan note "$pr" 900
+  say "$REPO" "$pr" "/terragucci plan envs/prod/payments" >/dev/null
+  say "$REPO" "$pr" "/terragucci plan envs/nope" >/dev/null
+  shot replan replies "$FORGEJO/pulls/$pr" 520 '.timeline-item.comment' 'terragucci plan envs/prod/payments'
+  close_change "$pr" change/one-root
+}
+
+# Apply before merge (apply-before-merge): what the three claims leave on
+# their scratch repos, each with apply.when: pull-request.
+step_pr_apply() {
+  forge
+  local repo pr
+  if claim_run pr-apply pr-apply; then
+    repo="$USER/pr-apply"
+    pr="$(api "$URL/api/v1/repos/$repo/pulls?state=closed&limit=50" | jq -r '[.[] | select(.head.ref == "change")][0].number // empty')"
+    if [ -n "$pr" ]; then reply_shot pr-apply reply "$URL/$repo/pulls/$pr" 'terragucci: applied wave'; else log "pr-apply: no pull request on $repo"; fi
+  fi
+  if claim_run pr-apply pr-apply-lock; then
+    repo="$USER/pr-apply-lock"
+    pr="$(open_pull "$repo" change-b)"
+    if [ -n "$pr" ]; then reply_shot pr-apply lock "$URL/$repo/pulls/$pr" 'is locked by pull request'; else log "pr-apply: no change-b pull request on $repo"; fi
+    pr="$(open_pull "$repo" change-a)"
+    if [ -n "$pr" ]; then reply_shot pr-apply unlock "$URL/$repo/pulls/$pr" 'released the locks'; else log "pr-apply: no change-a pull request on $repo"; fi
+  fi
+  if claim_run pr-apply pr-apply-stale; then
+    repo="$USER/pr-apply-stale"
+    pr="$(open_pull "$repo" change)"
+    if [ -n "$pr" ]; then reply_shot pr-apply stale "$URL/$repo/pulls/$pr" 'is not up to date with main'; else log "pr-apply: no pull request on $repo"; fi
+  fi
+}
+
+# The agent comment (agent-change-a-pull-request): the comment-agent claim's
+# pull request, where a stand-in agent answered two asks.
+step_agent() {
+  forge
+  claim_run agent comment-agent || return 0
+  local repo="$USER/comment-agent" pr sha
+  pr="$(open_pull "$repo" agent-change)"
+  [ -n "$pr" ] || { log "agent: no agent-change pull request on $repo"; return 0; }
+  reply_shot agent reply "$URL/$repo/pulls/$pr" 'terragucci: pushed'
+  sha="$(remote_head "$repo" agent-change)"
+  if [ -n "$sha" ]; then shot agent commit "$URL/$repo/commit/$sha" 540; else log "agent: no agent-change branch on $repo"; fi
+  reply_shot agent refused "$URL/$repo/pulls/$pr" 'terragucci: .*touches'
+}
+
+# Drift with attribution (turn-on-drift-checks): the drift-attribute claim's
+# issue, with who changed the attribute from the audit log.
+step_drift_attribute() {
+  forge
+  claim_run drift-attribute drift-attribute || return 0
+  local repo="$USER/drift-attribute" url
+  url="$(api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" \
+    | jq -r '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))][0].html_url // empty')"
+  if [ -n "$url" ]; then shot drift-attribute issue "$(browser_url <<<"$url")" 680; else log "drift-attribute: no drift issue on $repo"; fi
+}
+
+# The config check (reference/config): terragucci config check and init
+# --dry-run on a copy of the example, as a reader runs them before init, and
+# config check again with a key that is not a setting.
+step_config() {
+  local work="$STAGE/config" cli="$ROOT/packages/terragucci/dist/terragucci.mjs"
+  (cd "$ROOT" && node scripts/build-cli.mjs >/dev/null)
+  mkdir -p "$work"
+  cp -R "$EXAMPLE/." "$work/"
+  run_cmd config "npx terragucci config check" sh -c 'cd "$1" && node "$2" config check' sh "$work" "$cli"
+  run_cmd config "npx terragucci init --dry-run" sh -c 'cd "$1" && node "$2" init --dry-run' sh "$work" "$cli"
+  printf 'gates: always\n' >> "$work/terragucci.yml"
+  run_cmd config "echo 'gates: always' >> terragucci.yml && npx terragucci config check" sh -c 'cd "$1" && node "$2" config check' sh "$work" "$cli"
+}
+
+# Module publishing (publish-modules, roll-out-a-module-version): the tags
+# the publish claim's pipeline pushed, and the release pull request the
+# version-bump job opened.
+step_publish() {
+  forge
+  local repo pr
+  if claim_run publish publish; then
+    repo="$(api "$URL/api/v1/repos/search?q=publish-&limit=50" | jq -r '[.data[] | select(.name | test("^publish-[0-9]+$"))] | max_by(.id) | .full_name // empty')"
+    if [ -n "$repo" ]; then shot publish tags "$URL/$repo/tags" 480; else log "publish: no publish repo"; fi
+  fi
+  if claim_run publish version-bump-job; then
+    repo="$USER/version-bump"
+    pr="$(open_pull "$repo" terragucci/release/modules-queue)"
+    if [ -n "$pr" ]; then shot publish release "$URL/$repo/pulls/$pr" 880; else log "publish: no release pull request on $repo"; fi
+  fi
+}
+
+# Many repos (govern-many-repos): the pull request reconcile opened on the
+# project with no pipeline, merged by the claim once its check passed.
+step_reconcile() {
+  forge
+  claim_run reconcile reconcile || return 0
+  local repo="$USER/two-roots" pr
+  pr="$(api "$URL/api/v1/repos/$repo/pulls?state=all&limit=50" | jq -r '[.[] | select(.head.ref == "terragucci/pipeline")][0].number // empty')"
+  [ -n "$pr" ] || { log "reconcile: no pipeline pull request on $repo"; return 0; }
+  shot reconcile pull "$URL/$repo/pulls/$pr" 1040
+  shot reconcile files "$URL/$repo/pulls/$pr/files" 760
+}
+
+# Terragrunt (tutorial/terragrunt, use-terragrunt): the Terragrunt example
+# beside the plain one, booted when it is not running and reset when it is.
+# The unformatted scenario pushed to a branch, and its push run's check job
+# failing on terragrunt hcl fmt; then the tg-gate-wait claim's run, where
+# wave 2 waits for its own approval. No pull request is opened: Forgejo 16
+# inserts no pull_request run for the example's pipeline (its five waves'
+# skipped jobs pass checkJobsOfRun's recursion limit), so no note would come.
+step_tg() {
+  forge
+  local repo="$USER/example-terragrunt" work="$STAGE/tg" sha page run
+  if "$HERE/example-terragrunt.sh" verify >/dev/null 2>&1; then
+    "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
+  else
+    "$HERE/example-terragrunt.sh" up >/dev/null 2>&1 || fail "tg: 'just example-terragrunt up' failed"
+  fi
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work" 2>/dev/null || fail "tg: cannot clone $repo"
+  git -C "$work" apply "$ROOT/example-terragrunt/changes/unformatted.patch" || fail "tg: changes/unformatted.patch does not apply to main"
+  sha="$(TG_FIXED_DATE=1 push_tree "$work" "$repo" change/unformatted "Name dev orders' owner, without running terragrunt hcl fmt")"
+  page="$(REPO="$repo"; FORGEJO="$URL/$repo"; job_page "$(REPO="$repo"; push_run "$sha")" '.status == "failure"')"
+  if [ -n "$page" ]; then shot tg check "$page" 900 "Format check" "needs formatting"; else log "tg: no failed job in the push run on ${sha:-the pushed commit}"; fi
+  "$HERE/example-terragrunt.sh" reset >/dev/null 2>&1 || log "tg: reset failed"
+  if claim_run tg tg-gate-wait; then
+    run="$(api "$URL/api/v1/repos/$USER/tg-gate-wait/actions/runs?event=push&limit=50" | jq -c '.workflow_runs[0] // empty')"
+    page="$(REPO="$USER/tg-gate-wait"; FORGEJO="$URL/$USER/tg-gate-wait"; job_page "$run" '.status == "failure"')"
+    if [ -n "$page" ]; then shot tg waiting "$page" 900 "Apply wave" "waits for an approval of digest"; else log "tg: no stopped job on tg-gate-wait"; fi
   fi
 }
 
