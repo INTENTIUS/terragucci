@@ -21,6 +21,7 @@ const ORDER = [
 	'guides/publish-modules',
 	'guides/turn-on-drift-checks',
 	'guides/keep-reports-in-s3',
+	'guides/send-traces-and-metrics',
 	'guides/govern-many-repos',
 	'guides/use-a-binary',
 	'guides/use-terragrunt',

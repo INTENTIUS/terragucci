@@ -11,7 +11,7 @@ prompt: |
 
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
-import { Steps } from '@astrojs/starlight/components';
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## What you end up with
 
@@ -19,8 +19,11 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
 ## Before you start
 
-- A wave that stopped with a refusal: the job says the set digest no longer matches its approval, and nothing in the wave applied.
-- The apply job's log. Unless `respond.wave-refused` is `off`, it prints the diff from step 3.
+| You need | Why |
+|---|---|
+| A wave that stopped with a refusal | the job says the set digest no longer matches its approval, and nothing in the wave applied |
+| The apply job's log | unless `respond.wave-refused` is `off`, it prints the diff from step 3 |
+| The job's artifact, `terragucci-report-apply-wave-<k>` | it holds both reports the diff compares |
 
 ## Steps
 
@@ -37,20 +40,33 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
 2. Get the two reports.
 
-   The approved report is on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) at `_gates/tf-apply/wave-<k>/<digest>.json` (`:` written as `_`). The refused job writes it to `terragucci-report/approved/report.json` and its own to `terragucci-report/current/report.json`. To fetch the approved one locally:
+   The refused job keeps `terragucci-report/` as the artifact `terragucci-report-apply-wave-<k>`: the approved report in `approved/report.json` and its own in `current/report.json`. Download it into `terragucci-report/`:
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       ```bash
+       gh run download <run-id> -n terragucci-report-apply-wave-2 -D terragucci-report
+       ```
+     </TabItem>
+     <TabItem label="GitLab">
+       The `apply-wave-2` job's page > Job artifacts > Download, then unzip it in the checkout; the archive holds `terragucci-report/`.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The run's page > Artifacts > `terragucci-report-apply-wave-2`, then unzip it into `terragucci-report/`.
+     </TabItem>
+   </Tabs>
+
+   The approved report also stays on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) at `_gates/tf-apply/wave-<k>/<digest>.json` (`:` written as `_`):
 
    ```bash
    git fetch origin chant/lifecycle
-   mkdir -p approved
-   git show origin/chant/lifecycle:_gates/tf-apply/wave-2/jcs1-sha256_<hex>.json > approved/report.json
+   git show origin/chant/lifecycle:_gates/tf-apply/wave-2/jcs1-sha256_<hex>.json
    ```
-
-   The current report stays in the job's workspace, so the job's log is the easiest place to read step 3.
 
 3. Print the diff.
 
    ```bash
-   npx terragucci respond wave-refused --approved approved --current terragucci-report/current --wave 2
+   npx terragucci respond wave-refused --approved terragucci-report/approved --current terragucci-report/current --wave 2
    ```
 
    It lists each root whose plan digest moved, with what changed inside it. `--json` prints one envelope.
@@ -59,8 +75,8 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
    | Choice | Command | Result |
    |---|---|---|
-   | Keep the new plan | `npx chant approve tf-apply wave-2 --plan <new digest>` (add `--sign` under `approval: sealed`), then run the stage again ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
-   | Drop it | Revert the change on the default branch. | The old approval does not come back: the refused run recorded a newer pending fact, so the wave waits for a fresh `chant approve`. |
+   | Keep the new plan | `npx terragucci approve wave-2` from a checkout, which approves the new digest (add `--sign` under `approval: sealed`), then run the stage again ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
+   | Drop it | Revert the change on the default branch. | The old approval does not come back: the refused run recorded a newer pending fact, so the wave waits for a fresh approval. |
 
 </Steps>
 

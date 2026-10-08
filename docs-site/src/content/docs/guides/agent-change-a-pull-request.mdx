@@ -95,27 +95,25 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 | `agent-push` | applies the patch to the same head in a fresh container; refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), with a reply naming the paths; pushes any other as one commit without force | the agent's token |
 | the plan job | plans the pushed change with its read-only role | the plan role |
 
-The ask never reaches a shell.
-
-Before the agent runs, its step clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables. Neither agent job has a cloud role, whatever `oidc` says.
-
-The guarded paths include CI files, `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/`, the signers file, the policy directory, `CODEOWNERS` and agent instruction files.
-
-A branch that moved keeps what it has. The branch stays as it was when the agent fails or hits its turn limit, or when the pull request moves.
+| Guard | What it stops |
+|---|---|
+| the ask reaches the agent as a prompt file (`TG_AGENT_PROMPT`), never on a command line | the ask running in a shell |
+| the agent's step clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables; neither agent job has a cloud role, whatever `oidc` says | the agent pushing, commenting or calling the cloud itself |
+| `agent-push` refuses a patch that touches a guarded path: CI files, `terragucci.yml`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/`, the signers file, the policy directory, `CODEOWNERS` and agent instruction files | the agent changing the pipeline, the gate, the signers or the policy |
+| `agent-push` pushes to the same head, without force | a lost commit: when the agent fails, hits its turn limit, or the pull request moves, the branch stays as it was |
+| the command below lets the agent edit files and run `terragucci config check` and `terragucci init --dry-run`, and loads no MCP server and none of the repository's Claude Code settings | any other command, web fetches and MCP tools |
 
 The default command is Claude Code in print mode, pinned to one release:
 
 ```text
-npx -y @anthropic-ai/claude-code@<version> -p --max-turns "$TG_AGENT_MAX_TURNS"
+npx -y @anthropic-ai/claude-code@2.1.290 -p --max-turns "$TG_AGENT_MAX_TURNS"
   --permission-prompts none --setting-sources user --strict-mcp-config --no-session-persistence
   --tools "Read,Edit,Write,Glob,Grep,Bash"
   --allowedTools "Read" "Edit" "Write" "Glob" "Grep" "Bash(terragucci config check)" "Bash(terragucci init --dry-run)"
   --disallowedTools "WebFetch" "WebSearch" "mcp__*" "Edit(.git/**)"
 ```
 
-The agent edits files and may run two read-only terragucci commands; any other command is denied.
-
-No MCP server and none of the repository's own Claude Code settings load. The flags are in the [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
+The flags are in the [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 ## Use another agent
 
@@ -136,7 +134,7 @@ agent:
 | `TG_AGENT_MAX_TURNS` | the turn limit |
 | the `key_secret` name | the model's key, under its own name |
 
-The `agent-push` guard holds for any agent.
+`agent-push` refuses a guarded path whichever agent wrote the patch.
 
 ## Next
 

@@ -58,6 +58,8 @@ Supported, as on GitHub.
 
 2. Read the note. The `replan` job plans the head with the read-only role and updates the same note and status.
 
+   <Shot step="github" view="reply" alt="The plan note on a GitHub pull request after /terragucci plan: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.terraform_data.jobs" />
+
    A named root the change does not reach gets a "not affected" reply and nothing is updated.
 
 </Steps>
@@ -82,9 +84,9 @@ A comment that asks for nothing ends the job cleanly. A forge 403 or failure, or
 
 ## Apply a merged pull request
 
-`/terragucci apply` on a merged pull request re-runs `tf-apply` for waves approved with [`chant approve`](/terragucci/concepts/glossary/#chant), as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
+`/terragucci apply` on a merged pull request re-runs `tf-apply` for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
 
-<Shot step="statuses" view="reply" alt="A merged pull request's conversation in Forgejo: the reply that wave 1 waits for an approval of its set digest with the chant approve --sign command, the refusal of a commenter with no write access, and, once the wave is sealed, the reply linking the run that applied it" optional />
+<Shot step="statuses" view="reply" alt="A merged pull request's conversation in Forgejo: the reply that wave 1 waits for an approval of its set digest with the chant approve --sign command (this repo runs approval: sealed), the refusal of a commenter with no write access, and, once the wave is sealed, the reply linking the run that applied it" optional />
 
 | Part | What happens |
 |---|---|
@@ -103,11 +105,13 @@ On GitLab, `/terragucci apply` retries the waiting wave's job in the merge commi
 
 With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies its head before merge. [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) has the steps.
 
-`/terragucci lock` locks the roots the pull request reaches without applying anything, so no other pull request applies them first. It needs no approval or checks, and is refused naming the holder when another open pull request holds one of those roots.
+Anyone with write access can lock or unlock, and the reply names what was locked or released. [Locks](/terragucci/guides/apply-before-merge/#locks) lists everything that takes and releases one.
 
-`/terragucci unlock` releases the pull request's locks so another one can apply those roots. Anyone with write access can use either, and the reply names what was locked or released.
-
-With [`locks: plan`](/terragucci/reference/config/#plan-locks), a pull request locks its roots from its first plan, and `/terragucci plan` takes them again after a holder is gone. A writer's `/terragucci unlock` releases them; the pull request locks again on its next push or `/terragucci plan`.
+| Comment | Does | Refused when |
+|---|---|---|
+| `/terragucci lock` | locks the roots the pull request reaches, applying nothing, so no other pull request applies them first; needs no approval or checks | another open pull request holds one of those roots; the reply names it |
+| `/terragucci unlock` | releases the pull request's locks so another can apply those roots; under [`locks: plan`](/terragucci/reference/config/#plan-locks) it locks again on its next push or `/terragucci plan` | |
+| `/terragucci plan`, under `locks: plan` | takes the locks again once a holder is gone | |
 
 ## Next
 

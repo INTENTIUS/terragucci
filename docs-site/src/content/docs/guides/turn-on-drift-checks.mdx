@@ -19,10 +19,12 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 ## Before you start
 
-- A repo with the pipeline from [Get your first plan note](/terragucci/getting-started/).
-- A plan role that can read your cloud; drift plans use the same read-only role as pull requests.
-- Terraform or OpenTofu roots, or Terragrunt units (the issue then names units).
-- A cron expression in UTC.
+| You need | Why |
+|---|---|
+| The pipeline from [Get your first plan note](/terragucci/getting-started/) | `init` adds the drift job to it |
+| A plan role that can read your cloud | drift plans use the same read-only role as pull requests |
+| Terraform or OpenTofu roots, or Terragrunt units | the issue names roots, or units in a Terragrunt repo |
+| A cron expression in UTC | forge schedulers read cron in UTC |
 
 ## Steps
 
@@ -42,6 +44,7 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
    ```text
    terragucci.yml: ok
+   approval: ledger (the default)
    ```
 
    A bad value is listed as a problem, and the command exits 2.
