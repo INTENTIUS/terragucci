@@ -31,7 +31,7 @@ COPY --chmod=0755 images/decide/server.py /opt/decide/server.py
 EXPOSE 8790
 LABEL org.opencontainers.image.title="terragucci-decide"
 LABEL org.opencontainers.image.description="Laya 0.3.28 (convaiinnovations/laya@55cf4c4ebb4e) on CPU behind the Jev /v1/systemone shape"
-LABEL org.opencontainers.image.version="0.3.1"
+LABEL org.opencontainers.image.version="0.4.0"
 LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 CMD ["python", "/opt/decide/server.py"]
