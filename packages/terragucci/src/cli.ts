@@ -20,6 +20,7 @@
  *   terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a waiting wave's digest with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
+ *   terragucci comment --forge gitlab --poll --layers <a,b;c>   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
  *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo]   (read a `/terragucci agent <ask>` comment)
  *   terragucci comment --agent push --change <dir> [--policy-dir <dir>]   (push the agent's change to the pull request's head branch)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]   (locks: plan: lock the roots a pull request's head reaches, or release them; run by the generated pipeline)
@@ -41,6 +42,7 @@ import { fileURLToPath } from "node:url";
 import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, NO_GITLAB_PR_APPLY, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
+import { pollGitLabComments } from "./comment-gitlab";
 import { approvalStatus } from "./review";
 import { approve } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
@@ -81,6 +83,7 @@ const USAGE = `usage:
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
+  terragucci comment --forge gitlab --poll --layers <a,b;c>
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
   terragucci comment --agent push --change <dir> [--policy-dir <dir>]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
@@ -116,7 +119,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -298,6 +301,16 @@ export async function main(argv: string[]): Promise<number> {
         const agent = str(flags, "agent") ?? "off";
         const policyDir = str(flags, "policy-dir") ?? "policy";
         if (!["off", "on", "run", "push"].includes(agent)) throw new ConfigError("comment's --agent is off, on, run or push");
+        if (flags.poll === true || forge === "gitlab") {
+          // GitLab: no event file, so the comments schedule's job polls the merge requests' notes.
+          if (forge !== "gitlab" || flags.poll !== true) throw new ConfigError("comment --poll is GitLab's: run it as comment --forge gitlab --poll --layers <a,b;c>");
+          if (!layers) throw new ConfigError("comment --forge gitlab --poll needs --layers <a,b;c>");
+          const poll = await pollGitLabComments({ layers: parseLayers(layers) });
+          for (const n of poll.outcomes) console.log(`terragucci comment: !${n.mr} note ${n.note}: ${n.ran ? "" : "nothing run: "}${n.reason}`);
+          if (poll.outcomes.length === 0 && !poll.fail) console.log("terragucci comment: no new /terragucci notes");
+          if (poll.fail) console.error(`terragucci comment: failed: ${poll.fail}`);
+          return poll.fail || poll.outcomes.some((n) => n.fail) ? 1 : 0;
+        }
         if (agent === "push") {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("comment --agent push needs --change <dir>");

@@ -261,6 +261,12 @@ export interface ProjectSettings {
   waves?: { canary?: string[] };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
+  /**
+   * GitLab only: the cron of the comments schedule, or false. The pipeline
+   * gets a `comments` job that reads new merge request notes on that
+   * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
+   */
+  comments?: string | false;
   runtime?: Runtime;
   /**
    * A bucket for plan reports. `url` is the address that serves the bucket's
@@ -365,7 +371,7 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "runtime",
+  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
 ]);
 
@@ -415,6 +421,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
     problems.push(`${where}.drift must be a cron schedule or false`);
   }
+  if (s.comments !== undefined && s.comments !== false && typeof s.comments !== "string") {
+    problems.push(`${where}.comments must be a cron schedule or false`);
+  }
+  if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${GITLAB_ONLY_COMMENTS}`);
   if (s.tips !== undefined && typeof s.tips !== "boolean") problems.push(`${where}.tips must be true or false`);
   if (s.waves !== undefined) {
     if (!isObject(s.waves)) problems.push(`${where}.waves must be a map`);
@@ -504,6 +514,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
  * pipeline file) inside a pipeline the merge request controls, and the apply
  * role would have to trust every branch of the project.
  */
+/** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
+export const GITLAB_ONLY_COMMENTS = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
+
 export const NO_GITLAB_PR_APPLY = "pull-request is not supported on GitLab, where a merge request's pipeline is defined by the merge request itself, so nothing it runs can be trusted with the apply role; leave apply.when unset, and the change applies after it merges";
 
 /** Why GitLab has no plan-time locks: its applies run after merge, one at a time, and no merge request event runs a pipeline from the default branch. */

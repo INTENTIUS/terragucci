@@ -28,7 +28,12 @@
  *        every root with -refresh-only, keeps the same report, and opens,
  *        updates or closes the project's one drift issue. It never applies.
  *        Read-only role. On GitLab the schedule itself is set in the
- *        project's CI/CD schedules; the job runs for scheduled pipelines.
+ *        project's CI/CD schedules; the job runs for scheduled pipelines
+ *        other than the comments schedule's.
+ * comments  GitLab only, when `comments:` is set: the comments schedule's
+ *        pipelines (TERRAGUCCI_SCHEDULE=comments) poll merge request notes
+ *        and start a merge request pipeline for `/terragucci plan`, or retry
+ *        the merge commit's apply jobs for `/terragucci apply`.
  *
  * Each stage is one job here; the file holds all of them.
  */
@@ -48,7 +53,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, NO_GITLAB_PLAN_LOCKS, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, GITLAB_ONLY_COMMENTS, NO_GITLAB_PLAN_LOCKS, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -109,6 +114,8 @@ export interface PipelineInput {
   publish?: boolean;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
+  /** GitLab only: the comments schedule's cron. The pipeline gets a `comments` job for the pipelines that schedule starts. */
+  comments?: string;
   /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
   canary?: string[];
   /** When a wave waits for an approval. Default on-destroy. */
@@ -970,6 +977,19 @@ function replanPrelude(layers: string[][], forge: ForgeName, agentComment?: bool
   ].join("\n");
 }
 
+/** The pipeline variable that tells the comments schedule's pipelines from drift's on GitLab. */
+export const SCHEDULE_VAR = "TERRAGUCCI_SCHEDULE";
+
+/**
+ * The comments job's script (GitLab). `terragucci comment --poll` reads the
+ * merge request notes since the last polls, answers each `/terragucci` note
+ * once, and starts or retries pipelines through the API. It runs nothing
+ * itself: no plan, no apply and no cloud credentials.
+ */
+export function commentsScript(layers: string[][]): string {
+  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}`;
+}
+
 /**
  * The publish job's script. It needs the whole history and the module tags
  * (publish reads the last release from them), and on GitLab a remote that can
@@ -1151,6 +1171,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Attribution reads CloudTrail through the aws CLI, which the images do not carry.
   const awsStep = !tg && responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
+  if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${GITLAB_ONLY_COMMENTS}`);
   if (forge === "gitlab") {
     if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
     const jobImage = new Image({ name: image });
@@ -1175,7 +1196,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
           },
         }
       : {};
-    const notScheduled = drift ? { rules: [new Rule({ if: '$CI_PIPELINE_SOURCE != "schedule"' })] } : {};
+    // A scheduled pipeline is drift's or the comments poll's; the push and merge request jobs sit it out.
+    const scheduled = Boolean(drift || input.comments);
+    const notScheduled = scheduled ? { rules: [new Rule({ if: '$CI_PIPELINE_SOURCE != "schedule"' })] } : {};
+    const onDefault = scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH";
     const check = new GitLabJob({
       stage: "check",
       image: jobImage,
@@ -1210,7 +1234,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         ...(i > 0 ? { needs: [applyJobs[i - 1].name] } : {}),
         variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA" },
-        rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-apply",
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
@@ -1226,7 +1250,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         needs: [lastApply],
         variables: { ...gitlabEnv, GIT_DEPTH: "0" },
-        rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-tips",
         script: script(bash("TIPS", tipsScript(binary, forge, tokenEnv))),
       } as never) as never);
@@ -1238,7 +1262,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         needs: [lastApply],
         variables: { ...gitlabEnv, GIT_DEPTH: "0" },
-        rules: [new Rule({ if: drift ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-version-bump",
         script: [bash("BUMP", versionBumpScript(forge, tokenEnv))],
       } as never) as never);
@@ -1251,7 +1275,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         needs: [lastApply],
         variables: { ...jobEnv, TG_TOKEN: gitlabEnv.TG_TOKEN, TG_SHA: gitlabEnv.TG_SHA, TG_BRANCH: gitlabEnv.TG_BRANCH, GIT_DEPTH: "0" },
-        rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+        // A scheduled pipeline has no apply job for its needs to name.
+        rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-publish",
         script: script(bash("PUBLISH", publishScript(forge))),
       } as never) as never);
@@ -1261,11 +1286,25 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         stage: "drift",
         image: jobImage,
         variables: gitlabEnv,
-        rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "schedule"' })],
+        // The comments schedule's pipelines carry TERRAGUCCI_SCHEDULE=comments; any other schedule, with or without a variable, is drift's.
+        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"` })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))],
         artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] },
+      } as never) as never);
+    }
+    if (input.comments) {
+      // GitLab starts no pipeline for a merge request note, so a schedule polls for them. The job runs from the
+      // default branch, reads notes and calls the API with the project's token; it takes no cloud credentials,
+      // and one poll at a time answers a note.
+      jobs.set("comments", new GitLabJob({
+        stage: "comments",
+        image: jobImage,
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, GIT_STRATEGY: "none" },
+        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
+        resource_group: "terragucci-comments",
+        script: [bash("COMMENTS", commentsScript(layers))],
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {

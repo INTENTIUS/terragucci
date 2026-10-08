@@ -226,6 +226,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.modules?.publish ? { publish: true } : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
+    ...(settings.comments ? { comments: settings.comments } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     gate: settings.gate,
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
@@ -308,6 +309,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
 
   if (settings.drift && forgeChoice.value === "gitlab") {
     notes.push(`drift is set: add a pipeline schedule with the cron ${settings.drift} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope so the drift issue can be kept`);
+  }
+  if (settings.comments && forgeChoice.value === "gitlab") {
+    notes.push(`comments is set: add a pipeline schedule with the cron ${settings.comments} and the variable TERRAGUCCI_SCHEDULE set to comments under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope and the Developer role so the comments job can answer notes and start pipelines`);
   }
   if (settings.waves?.canary?.length && terragrunt) {
     notes.push("waves.canary is set; the canary units' layers apply first, then the layers of the rest, each wave behind its gate");

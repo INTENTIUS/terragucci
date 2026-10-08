@@ -1651,12 +1651,54 @@ describe("the drift stage", () => {
     });
   });
 
-  it("gitlab: drift runs for scheduled pipelines only, and check and apply skip them", () => {
+  it("gitlab: drift runs for scheduled pipelines other than the comments schedule's, and check and apply skip them", () => {
     const doc = body(withDrift("gitlab"));
-    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule"' }]);
+    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
     expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
     expect(doc["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
     expect(doc.drift.script.join("\n")).toContain("terragucci stage tf-drift");
+  });
+});
+
+describe("the comments job (GitLab)", () => {
+  const withComments = (extra: Partial<Parameters<typeof renderPipeline>[0]> = {}): Record<string, any> =>
+    body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, comments: "*/5 * * * *", ...extra }).content);
+
+  it("is there only when comments is set", () => {
+    expect(body(render("gitlab")).comments).toBeUndefined();
+    expect(render("gitlab")).not.toContain("TERRAGUCCI_SCHEDULE");
+  });
+
+  it("runs for the comments schedule alone, one poll at a time, with no checkout and no cloud credentials", () => {
+    const doc = withComments({ oidc: OIDC });
+    expect(doc.comments.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "comments"' }]);
+    expect(doc.comments.resource_group).toBe("terragucci-comments");
+    expect(doc.comments.variables).toEqual({ TG_TOKEN: "$GITLAB_TOKEN", GIT_STRATEGY: "none" });
+    expect(doc.comments.id_tokens).toBeUndefined();
+    const run = doc.comments.script.join("\n");
+    expect(run).toContain("terragucci comment --forge gitlab --poll --layers 'network;app,cache'");
+    expect(run).not.toContain(OIDC.apply_role);
+    expect(run).not.toContain(OIDC.plan_role);
+    expect(doc.stages).toContain("comments");
+  });
+
+  it("names the token comments reads from token_env", () => {
+    expect(withComments({ tokenEnv: "TG_GITLAB" }).comments.variables.TG_TOKEN).toBe("$TG_GITLAB");
+  });
+
+  it("keeps check, apply and publish out of every scheduled pipeline, with or without drift", () => {
+    const doc = withComments({ publish: true });
+    expect(doc.drift).toBeUndefined();
+    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
+    for (const job of ["apply-wave-1", "apply-wave-2", "tips", "publish"]) expect(doc[job].rules[0].if, job).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"');
+    expect(doc.plan.rules[0].if).toContain("merge_request_event");
+    const both = withComments({ drift: "0 6 * * *" });
+    expect(both.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
+    expect(both.comments.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE == "comments"');
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: refused, since a comment starts the comment jobs there", (forge) => {
+    expect(() => renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, comments: "*/5 * * * *" })).toThrow(/comments is for GitLab/);
   });
 });
 
