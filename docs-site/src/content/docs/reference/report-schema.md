@@ -46,7 +46,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
-The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`.
+The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
 
 ## Reading it
 
@@ -68,7 +68,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 ## The index and the estate page
 
-Each `index.json` in the bucket is `terragucci.report-index/v1`: one row per run, newest first.
+Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON Schema in the package as `dist/report-index.schema.json`: one row per run, newest first.
 
 | Row field | What it holds |
 |---|---|
@@ -78,14 +78,16 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`: one row per run
 | `changed` | roots with a change; on a `tf-drift` row, the roots that drifted |
 | `approval`, `waiting_since` | a `tf-apply` wave's gate, and when a waiting wave began waiting |
 | `applied` | when a `tf-apply` wave finished applying |
+| `overridden` | roots the policy denied that a recorded override let through; absent when none |
 | `destroys`, `destroys_total` | up to 50 destroys and replacements, and how many there are when the row lists fewer |
 | `commit_url`, `pull_request`, `pull_request_url`, `job_url`, `trace_url` | links |
 
-`estate.json` is `terragucci.estate/v1`, which [`terragucci estate`](/terragucci/reference/cli/#estate) builds from those rows alone:
+`estate.json` is `terragucci.estate/v1`, which [`terragucci estate`](/terragucci/reference/cli/#estate) builds from those rows alone, with its JSON Schema in the package as `dist/estate.schema.json`:
 
 | Field | What it holds |
 |---|---|
-| `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes |
+| `generated` | when the page was built; every `age_seconds` is as of then |
+| `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes, and `overridden_roots` when an override let a root through |
 | `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, and `status` (`ok`, `no-index` or `error`) |
 | `recent[]` | the 20 newest runs across every project |
 | `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |

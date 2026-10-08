@@ -31,6 +31,7 @@ const ORDER = [
 	'reference/cli',
 	'reference/stages',
 	'reference/report-schema',
+	'reference/reports-bucket',
 	'reference/environment',
 	'reference/report',
 	'reference/runtimes',
