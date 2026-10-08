@@ -325,8 +325,10 @@ run_scale() { # scale
   load_env
   local build_image=""
   if [ "${TGSCALE_BUILD:-}" = tree ]; then
+    # The build is named for the newest commit of the package, which must hold all of it.
+    git -C "$ROOT" diff --quiet HEAD -- packages/terragucci || die "packages/terragucci has uncommitted changes; commit them, since the build is named for its commit"
     (cd "$ROOT" && node scripts/build-cli.mjs >/dev/null)
-    release="$(jq -r .version "$ROOT/packages/terragucci/package.json")+$(git -C "$ROOT" rev-parse --short=7 HEAD)"
+    release="$(jq -r .version "$ROOT/packages/terragucci/package.json")+$(git -C "$ROOT" log -1 --format=%h --abbrev=7 -- packages/terragucci)"
     tg=(node "$ROOT/packages/terragucci/dist/terragucci.mjs")
     build_image="tgscale-tofu:${release#*+}"
   else
