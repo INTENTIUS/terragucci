@@ -1,0 +1,33 @@
+---
+// terragucci's logo, the pixel-art taco with a diamond. `scale` shows the
+// 51x31 art (an SVG with a square per art pixel) at a whole multiple, so
+// every art pixel stays square and sharp; `small` is the 26x16 mark for inline
+// use, a PNG at twice that size resampled once from the sharp art.
+// Decorative by default (alt=""), since a word beside it names terragucci.
+interface Props {
+	scale?: number | 'small';
+	alt?: string;
+	class?: string;
+}
+const { scale = 1, alt = '', class: className } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const small = scale === 'small';
+const n = small ? 1 : scale;
+---
+<img
+	class:list={['tg-taco', className]}
+	src={small ? `${base}/brand/taco-small.png` : `${base}/brand/taco.svg`}
+	width={small ? 26 : 51 * n}
+	height={small ? 16 : 31 * n}
+	alt={alt}
+	decoding="async"
+/>
+
+<style>
+	.tg-taco {
+		display: inline-block;
+		max-width: none;
+		height: auto;
+		vertical-align: middle;
+	}
+</style>

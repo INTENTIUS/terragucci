@@ -1,9 +1,10 @@
 ---
 // The band that says every generated pipeline has run before you get it.
+import Taco from './Taco.astro';
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 ---
 <aside class="tg-validated not-content">
-	<p class="claim">Every pipeline terragucci generates has already run.</p>
+	<p class="claim"><Taco scale={2} />Every pipeline terragucci generates has already run.</p>
 	<p>
 		Against an AWS emulator, on each forge, with every property checked holding and broken.
 	</p>
@@ -20,6 +21,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 	}
 	.claim {
 		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 1.25rem;
 		font-family: var(--tg-display);
 		font-size: clamp(1.5rem, 3vw, 2rem);
 		font-weight: 600;

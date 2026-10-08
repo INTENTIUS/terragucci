@@ -79,6 +79,11 @@ h1#_top {
 	color: var(--sl-color-white);
 }
 
+/* The taco beside it, at the art's own size: a sharp square per art pixel. */
+.site-title img {
+	height: 31px;
+}
+
 /* Tables: hairlines, no zebra. */
 .sl-markdown-content table {
 	border-collapse: collapse;
@@ -175,6 +180,13 @@ code, pre, kbd, samp {
 .starlight-aside--danger .starlight-aside__icon {
 	color: var(--tg-warn);
 }
+/* A tip carries the taco in place of its icon. */
+.starlight-aside--tip .starlight-aside__icon {
+	width: 26px;
+	height: 16px;
+	color: transparent;
+	background: url('/brand/taco-small.png') center / contain no-repeat;
+}
 .starlight-aside a {
 	color: var(--sl-color-accent-high);
 }
@@ -183,4 +195,29 @@ code, pre, kbd, samp {
    in the landing block, so Starlight's title panel is hidden there. */
 :root:not([data-has-sidebar]) main > .content-panel:first-child:has(h1#_top) {
 	display: none;
+}
+
+/* The 404 page: the taco, the news, and the way back. */
+.tg-404 {
+	display: grid;
+	justify-items: center;
+	gap: 1rem;
+	padding-block: clamp(3rem, 10vw, 6rem) 2rem;
+	text-align: center;
+}
+.tg-404 p {
+	margin: 0;
+	max-width: 36rem;
+	color: var(--sl-color-gray-2);
+}
+.tg-404 .tg-404-title {
+	font-family: var(--tg-display);
+	font-size: clamp(2rem, 5vw, 3rem);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	color: var(--sl-color-white);
+}
+.tg-404 a {
+	color: var(--sl-color-accent-high);
+	font-weight: 500;
 }

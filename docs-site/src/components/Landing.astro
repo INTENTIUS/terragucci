@@ -1,11 +1,12 @@
 ---
-// The home page's two ends. `part="top"` (the default) is the wordmark, the
+// The home page's two ends. `part="top"` (the default) is the taco, the wordmark, the
 // tagline, the one-sentence position, the proof line and the three pillars;
 // index.mdx follows it with the plan note. `part="agent"` is the prompt to hand
 // a coding agent, last on the page: the setup prompt from src/prompts.ts, which
 // the agents page and the README carry too. The tagline is the one the README
 // and the site description use.
 import AgentPrompt from './AgentPrompt.astro';
+import Taco from './Taco.astro';
 import { setupPrompt } from '../prompts';
 
 interface Props {
@@ -42,6 +43,7 @@ const pillars = [
 ---
 {part === 'top' ? (
 	<section class="tg-landing not-content">
+		<Taco scale={4} class="hero-taco" />
 		<p class="wordmark">TERRAGUCCI</p>
 
 		<h1 class="claim">Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.</h1>
@@ -59,6 +61,7 @@ const pillars = [
 	<ul class="tg-pillars not-content">
 		{pillars.map((p) => (
 			<li>
+				<Taco />
 				<h2>{p.title}</h2>
 				<p>{p.text}</p>
 				<span class="links">
@@ -80,6 +83,14 @@ const pillars = [
 		gap: 2rem;
 		padding-block: clamp(3rem, 10vw, 6rem) clamp(1rem, 3vw, 2rem);
 		text-align: center;
+	}
+	.tg-landing :global(.hero-taco) {
+		margin-bottom: -1rem;
+	}
+	@media (min-width: 50rem) {
+		.tg-landing :global(.hero-taco) {
+			width: 306px;
+		}
 	}
 	.wordmark {
 		margin: 0;

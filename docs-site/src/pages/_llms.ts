@@ -47,7 +47,9 @@ export async function pages() {
 		const i = ORDER.indexOf(id);
 		return i === -1 ? ORDER.length : i;
 	};
+	// The 404 page is no page to read.
 	return docs
+		.filter((d) => d.id !== '404')
 		.sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id))
 		.map((d) => ({
 			id: d.id,
