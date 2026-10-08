@@ -120,11 +120,12 @@ When the default branch changes a root that a pull request's plan note covers, t
 
 Set `oidc` and jobs trade the forge's identity token for cloud credentials, so CI holds no long-lived keys. Each cloud takes one identity for plan and one for apply; one identity for both is rejected.
 
-| Job | Identity |
-|---|---|
-| plan, re-plan and drift | the read-only plan identity |
-| jobs running the default branch's pipeline, `apply-comment` included | the apply identity |
-| a fork's pull request | none: it gets no plan job |
+| Job | Identity | Subject the job carries |
+|---|---|---|
+| plan | the read-only plan identity | the pull request's on GitHub and Forgejo, the source branch's on GitLab |
+| re-plan, drift, `confirm` | the read-only plan identity | the default branch's |
+| apply, `apply-comment` | the apply identity | the default branch's |
+| a fork's pull request | none: it gets no plan job | |
 
 <Tabs syncKey="cloud">
 <TabItem label="AWS">
@@ -139,7 +140,7 @@ oidc:
 |---|---|
 | Token audience | `sts.amazonaws.com`, or `oidc.audience` |
 | The job sets | `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` |
-| Trust | an IAM OIDC provider for the issuer; each role allows `sts:AssumeRoleWithWebIdentity` on `aud` and `sub`: the pull-request subject for plan, the default branch's for apply |
+| Trust | an IAM OIDC provider for the issuer; each role allows `sts:AssumeRoleWithWebIdentity` on `aud` and `sub`: the pull-request and default branch subjects for plan, the default branch's alone for apply |
 
 </TabItem>
 <TabItem label="GCP">
@@ -157,7 +158,7 @@ oidc:
 |---|---|
 | Token audience | `https://iam.googleapis.com/` followed by `workload_identity_provider` |
 | The job sets | `GOOGLE_APPLICATION_CREDENTIALS`, an `external_account` file that reads the token from `credential_source.file` and exchanges it at `gcp.token_url` (default `https://sts.googleapis.com/v1/token`) for the stage's service account |
-| Trust | a pool and OIDC provider mapping `google.subject=assertion.sub`, admitting only your repo; grant `roles/iam.workloadIdentityUser` on each service account to `principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/subject/<subject>`: pull-request for plan, default branch for apply |
+| Trust | a pool and OIDC provider mapping `google.subject=assertion.sub`, admitting only your repo; grant `roles/iam.workloadIdentityUser` on each service account to `principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/subject/<subject>`: pull-request and default branch for plan, default branch alone for apply |
 
 </TabItem>
 <TabItem label="Azure">
@@ -176,7 +177,7 @@ oidc:
 |---|---|
 | Token audience | `api://AzureADTokenExchange`, or `azure.audience`: `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China |
 | The job sets | `ARM_USE_OIDC=true` with `ARM_CLIENT_ID`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID` and `ARM_OIDC_TOKEN_FILE_PATH` |
-| Trust | a federated credential on each app registration or user-assigned managed identity for the issuer, the audience and the exact subject: pull-request for plan, default branch for apply |
+| Trust | a federated credential on each app registration or user-assigned managed identity for the issuer, the audience and the exact subject: one for the pull request and one for the default branch on plan, the default branch alone on apply |
 
 </TabItem>
 </Tabs>
@@ -189,7 +190,7 @@ The job asks the forge for one token per cloud. The state backend of each cloud 
 | GitLab | one `id_tokens` entry per cloud |
 | Forgejo | `enable-openid-connect: true`, which needs Forgejo 15 and Forgejo Runner 12.5 or later; on an older Forgejo, leave `oidc` unset and give the runner static credentials |
 
-Each identity trusts the forge's issuer and checks the token's `sub` claim; [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) lists the issuer and subjects of each forge.
+Each identity trusts the forge's issuer and checks the token's `sub` claim; [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) lists the issuer and the exact subjects each role trusts on each forge.
 
 Keep the apply role's trust to the default branch's subject. On GitLab a trust on `ref:*` lets any branch assume it. `apply-comment` runs the default branch's workflow and carries its subject, so apply before merge needs no trust change.
 

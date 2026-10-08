@@ -35,7 +35,7 @@ The gate is `on-destroy`, the default. A wave waits only when its plans destroy 
 
 That pull request drops the records table of staging email. Its note names the destroy at the top:
 
-<Shot step="wave-waiting" view="pull" alt="The destroy pull request's plan note, with the records table of staging email named as a destroy above everything else" optional />
+<Shot step="wave-waiting" view="pull" alt="The destroy pull request in Forgejo. The plan note lists the records table of staging email under destroys and replacements, shows wave 4 with one root and approval not requested. Below it the apply-wave jobs show as skipped on the pull request" optional />
 
 Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key and commits it to `.chant/allowed_signers` on main, the file that says who may approve. Wave 4 plans the destroy and stops: its job exits with code 3 and prints the approve command:
 

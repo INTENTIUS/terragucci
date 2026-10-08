@@ -35,7 +35,9 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 `token_env` renames the variable. That token needs no merge rights; those commands never merge.
 
-The binary and Terragrunt never get `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, or any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN`. `TF_` variables pass as set, so a provider's token goes in a `TF_VAR_` variable. [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
+In the plan, apply, drift and respond stages, the binary and Terragrunt never get `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, or any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN`. `TF_` variables pass as set, so a provider's token goes in a `TF_VAR_` variable. [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
+
+The check job is the exception. It runs `fmt`, `init -backend=false`, `validate` and [choudoufu](/terragucci/concepts/glossary/#choudoufu)'s `live-check` with the job's whole environment. Outside a Terragrunt repo that holds `TG_TOKEN` when `respond.fmt` is `commit` (the default), so the job can push the formatting, and on GitLab also `CI_JOB_TOKEN` and the project's variables, `GITLAB_TOKEN` among them. The check job holds no cloud role.
 
 ## Reports
 
@@ -104,11 +106,21 @@ Plan runs the pull request's code, so it gets the read-only role. The config rej
 
 Your role's trust policy must accept the forge's issuer and your repo. Forgejo needs version 15 and Runner 12.5 or later. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
 
-| Forge | Issuer | Subject |
+| Forge | Issuer |
+|---|---|
+| GitHub | `https://token.actions.githubusercontent.com` |
+| GitLab | your GitLab URL |
+| Forgejo | your Forgejo URL followed by `/api/actions` |
+
+The plan role is used on the pull request and on the default branch: re-plan, drift and `confirm` run the default branch's workflow. Trust both subjects for plan, and only the default branch's for apply.
+
+| Forge | Plan role trusts | Apply role trusts |
 |---|---|---|
-| GitHub | `https://token.actions.githubusercontent.com` | `repo:<owner>/<repo>:ref:refs/heads/<branch>`, or `repo:<owner>/<repo>:pull_request` |
-| GitLab | your GitLab URL | `project_path:<group>/<project>:ref_type:branch:ref:<branch>` |
-| Forgejo | your Forgejo URL followed by `/api/actions` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<branch>`, or `...:pull_request` |
+| GitHub | `repo:<owner>/<repo>:pull_request` and `repo:<owner>/<repo>:ref:refs/heads/<default branch>` | `repo:<owner>/<repo>:ref:refs/heads/<default branch>` |
+| GitLab | `project_path:<group>/<project>:ref_type:branch:ref:*` | `project_path:<group>/<project>:ref_type:branch:ref:<default branch>` |
+| Forgejo | `repo:<owner>-<owner id>/<repo>-<repo id>:pull_request` and `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` |
+
+On GitLab a merge request's plan job carries its source branch in the subject, so the plan role trusts every branch of the project. Anyone who can push a branch can assume it; keep it read-only. Azure matches a federated credential's subject exactly, so on GitLab the plan identity needs a credential that matches on a claims expression instead.
 
 A repo with Actions on before Forgejo 16 keeps `repo:<owner>/<repo>` until Actions is toggled. `GET /api/v1/repos/<owner>/<repo>` shows both IDs.
 

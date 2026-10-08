@@ -116,7 +116,7 @@ The mode is read at base, like the signers file ([Which commit the rule is read 
    | `apply.when: merge`, GitLab | Retry the job. |
    | `apply.when: pull-request` | Comment `/terragucci apply` on the open pull request again. The mode and the signers come from the default branch, so the pull request cannot relax them or add its own approver. The forge's review is also required. |
 
-   The comment approves nothing. A wave without an approval that counts in its mode waits, with the command in the reply; one whose plans changed is refused; otherwise it applies, resuming where it stopped. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
+   The comment approves nothing. A wave without an approval that counts in its mode waits, with the command in the reply; one whose plans changed is refused; otherwise it applies, resuming where it stopped. A comment that fails a check runs nothing, and the reply names the check ([the checks](/terragucci/reference/pipeline/#when-a-comment-runs-nothing)). [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
 
    The report then shows the wave as approved, linked to its record.
 
