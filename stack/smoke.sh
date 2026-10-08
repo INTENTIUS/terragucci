@@ -237,7 +237,14 @@ policy-hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and i
 policy-hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
 tg-policy|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
 tg-credentials|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
-tg-dependents|terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out|'
+tg-dependents|terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out|
+tf-terraform|with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform|
+tg-terraform|in a Terragrunt repo with binary: terraform the pipeline installs Terraform and Terragrunt applies every unit with it|
+tfquery-import|with binary: terraform a root with a .tfquery.hcl gets the drift pull request with the config terraform query generated for what it lists|
+alerts-fire|with short thresholds every alert init writes fires on its signal, and the apply-success and drift-corrected SLOs record|
+blob-gcs-key|with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key|
+blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
+index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -8333,6 +8340,496 @@ claim_tg_dependents() {
   return $rc
 }
 
+# ── binary: terraform ─────────────────────────────────────────────────────
+
+claim_tf_terraform() {
+  # The gated fixture with binary: terraform, so init writes the pipeline in
+  # the terragucci-terraform image. A pull request that changes fleet/two
+  # gets a passing terragucci/plan; the push to main passes check and waits
+  # at wave 1; approved, the next push applies canary/one with Terraform,
+  # whose state says terraform_version 1.14.0.
+  # BREAK: the pushed pipeline runs in the tofu image, which has no
+  # terraform, so nothing plans or applies.
+  log() { echo "[smoke tf-terraform] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tf-terraform" wf sha head pr jobs version rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo tf-terraform || { drop_work "$work"; return 1; }
+  sed -i.bak 's/^binary: tofu$/binary: terraform/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q 'ghcr.io/intentius/terragucci-terraform:' "$wf" || { log "the pipeline does not run in the terraform image"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak "s#ghcr.io/intentius/terragucci-terraform:[^ \"']*#$(image_tag tofu)#g" "$wf" && rm -f "$wf.bak"
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "tf-terraform: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs")"
+  log "the first push ran: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
+  [ "$(jq -r '.[] | select(.name == "check") | .status' <<<"$jobs")" = success ] || { log "check did not pass with terraform"; rc=1; }
+  [ -z "$(gated_applied tf-terraform)" ] || { log "a root applied before wave 1 was approved"; rc=1; }
+  print_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for its approval"; rc=1; }
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/fleet/two/rev.txt"
+    head="$(push_tree "$work/tree" "$repo" change "tf-terraform: change fleet/two")" || rc=1
+    git -C "$work/tree" checkout -q main
+    echo 1 > "$work/tree/fleet/two/rev.txt"
+  fi
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "tf-terraform: change fleet/two")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+    [ $rc = 0 ] && { [ "$(context_state "$repo" "$head" terragucci/plan)" = success ] || { log "terragucci/plan did not pass on pull request $pr"; rc=1; }; }
+  fi
+  [ $rc = 0 ] && { gated_approve tf-terraform 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "tf-terraform: after wave 1 was approved")"
+    wait_run "$repo" "$sha" || rc=1
+    [ "$(gated_applied tf-terraform)" = "canary/one " ] || { log "canary/one did not apply alone: $(gated_applied tf-terraform)"; rc=1; }
+    version="$(curl -fsS "$FLOCI/shop-terraform-state/tf-terraform/canary/one.tfstate" 2>/dev/null | jq -r '.terraform_version // empty')"
+    log "canary/one state written by version ${version:-none}"
+    [ "$version" = 1.14.0 ] || { log "Terraform 1.14.0 did not write the state of canary/one"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "with binary: terraform, check and the plan passed, wave 1 waited, and its approval applied canary/one with Terraform 1.14.0"
+  return $rc
+}
+
+# The state of the latest status of a context on a commit, or none.
+context_state() { # repo, sha, context
+  api "$URL/api/v1/repos/$1/commits/$2/statuses?limit=50" 2>/dev/null \
+    | jq -r --arg c "$3" '[.[] | select(.context == $c)] | sort_by(.id) | last | if . == null then "none" else (.status // .state) end' 2>/dev/null || echo none
+}
+
+claim_tg_terraform() {
+  # The Terragrunt gated fixture with binary: terraform and gate: never. The
+  # pipeline installs Terraform beside Terragrunt and the push to main
+  # applies every unit; each unit's state says terraform_version 1.14.0.
+  # BREAK: binary stays tofu, so OpenTofu writes the state.
+  log() { echo "[smoke tg-terraform] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-terraform" wf sha unit version rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo tg-terraform tg-gated-waves || { drop_work "$work"; return 1; }
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  [ -n "${BREAK:-}" ] || { sed -i.bak 's/^binary: tofu$/binary: terraform/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"; }
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -z "${BREAK:-}" ]; then
+    # shellcheck disable=SC2016 # the step's own text
+    grep -qF 'dir="$(terragucci install terraform 1.14.0)"' "$wf" || { log "the pipeline does not install Terraform"; rc=1; }
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "tg-terraform: first")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  log "the push ended $RUN_STATUS; units with state: $(tg_gated_applied tg-terraform)"
+  [ "$(tg_gated_applied tg-terraform)" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "not every unit applied"; rc=1; }
+  for unit in live/canary/one live/fleet/two live/fleet/three; do
+    version="$(curl -fsS "$FLOCI/shop-terraform-state/tg-terraform/$unit/terraform.tfstate" 2>/dev/null | jq -r '.terraform_version // empty')"
+    [ "$version" = 1.14.0 ] || { log "$unit state was written by ${version:-nothing}, not Terraform 1.14.0"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "Terragrunt ran Terraform 1.14.0, installed in the job, and applied every unit"
+  return $rc
+}
+
+claim_tfquery_import() {
+  # A root with binary: terraform and a roles.tfquery.hcl listing IAM roles,
+  # and a role made in floci by hand that the state does not hold. respond
+  # drift --mode apply, in the terraform image, runs terraform query and
+  # opens the drift pull request with generated config that names the role.
+  # BREAK: the root has no .tfquery.hcl, so nothing is imported and no pull
+  # request opens.
+  log() { echo "[smoke tfquery-import] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tfquery-import" role="tg-query-$STAMP" out pr sha rc=0
+  local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" image
+  image="$(image_tag terraform)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo tfquery-import || return 1
+  respond_tree "$work" "$repo" "$(respond_root "respond/tfquery-$STAMP.tfstate" "")"
+  rm -f "$work/tree/app/.terraform.lock.hcl"
+  sed -i.bak 's/^binary: tofu$/binary: terraform/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  [ -n "${BREAK:-}" ] || printf 'list "aws_iam_role" "all" {\n  provider = aws\n}\n' > "$work/tree/app/roles.tfquery.hcl"
+  push_tree "$work/tree" "$repo" main "a root that lists IAM roles" >/dev/null || return 1
+  curl -fsS -o /dev/null -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' \
+    --data-urlencode Action=CreateRole --data-urlencode Version=2010-05-08 --data-urlencode "RoleName=$role" \
+    --data-urlencode 'AssumeRolePolicyDocument={"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+    || { log "floci did not make IAM role $role"; return 1; }
+  out="$(run_copied --rm --network terragucci -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e "TERRAGUCCI_FORGEJO_TOKEN=$TOKEN" -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci respond drift --root app --mode apply 2>&1)" || true
+  echo "$out" >&2
+  clean_mounted "$work/tree"
+  pr="$(open_pr "$repo" terragucci/drift)"
+  if [ -z "$pr" ]; then
+    log "no drift pull request"; rc=1
+  else
+    sha="$(remote_head "$repo" terragucci/drift)"
+    file_at "$repo" terragucci/drift "$sha" app/terragucci_generated.tf | grep -q "$role" || { log "the generated config does not name $role"; rc=1; }
+  fi
+  curl -s -o /dev/null -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' --data-urlencode Action=DeleteRole --data-urlencode Version=2010-05-08 --data-urlencode "RoleName=$role" || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "terraform query listed $role, and pull request $pr imports it with generated config"
+  return $rc
+}
+
+# ── alerts and SLOs ───────────────────────────────────────────────────────
+
+claim_alerts_fire() {
+  # init with dashboards drift_age, wave_wait and schedule at 10s writes the
+  # alert rules; a Prometheus of the claim loads them and scrapes the stack's
+  # collector. Runs of one project each: a wave that waits, a drift run that
+  # finds a changed queue and opens its drift issue on a scratch repo, an
+  # apply that fails twice, and a wave refused after its approval. TerragucciWaveWaiting, TerragucciDriftOld,
+  # TerragucciDriftStopped, TerragucciApplyFailed, TerragucciWaveRefused and
+  # ErrorBudgetBurn for apply success fire, and the apply-success and
+  # drift-corrected SLOs record.
+  # BREAK: init keeps the default thresholds (1d, 4h and 2d), so the three
+  # alerts on age never fire.
+  log() { echo "[smoke alerts-fire] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  dash_up || { log "the observability profile did not start"; return 1; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" prom name="tgs-prom-$STAMP" hostport promurl i q got rc=0 code
+  local queue="tg-alerts-$STAMP" url digest clone dash='dashboards:\n  dir: obs\n  drift_age: 10s\n  wave_wait: 10s\n  schedule: 10s\n'
+  [ -n "${BREAK:-}" ] && dash='dashboards:\n  dir: obs\n'
+  image="$(image_tag tofu)"
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  # The rules init writes, in a Prometheus of their own.
+  mkdir -p "$work/rules-repo/app"
+  printf 'terraform {\n  backend "local" {}\n}\n' > "$work/rules-repo/app/main.tf"
+  # shellcheck disable=SC2059 # the format holds the dashboards block
+  printf "forge: forgejo\nbinary: tofu\n$dash" > "$work/rules-repo/terragucci.yml"
+  (cd "$work/rules-repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  mkdir -p "$work/prom/rules"
+  cp "$work/rules-repo/obs/prometheus/terragucci.rules.yml" "$work/prom/rules/" || { log "init wrote no rules file"; drop_work "$work"; return 1; }
+  printf 'global:\n  scrape_interval: 5s\n  evaluation_interval: 5s\nrule_files:\n  - /prom/rules/*.yml\nscrape_configs:\n  - job_name: otel-collector\n    static_configs:\n      - targets: [otel-collector:8889]\n' > "$work/prom/prometheus.yml"
+  prom="$(grep -o 'prom/prometheus:[^ ]*' "$HERE/docker-compose.yml" | head -1)"
+  STANDIN="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::9090 -v "$work/prom:/prom:ro" "$prom" \
+    --config.file=/prom/prometheus.yml)" || { log "the Prometheus of the claim did not start"; drop_work "$work"; return 1; }
+  hostport="$(docker port "$STANDIN" 9090/tcp | head -1 | sed 's/.*://')"
+  promurl="http://127.0.0.1:$hostport"
+  for i in $(seq 1 30); do curl -fsS -o /dev/null "$promurl/-/ready" 2>/dev/null && break; sleep 1; done
+  # One project per signal, each its own repo and ledger.
+  signal() { # name, main.tf body -> $work/<name> committed, with /origin.git
+    mkdir -p "$work/$1/app"
+    printf '%s\n' "$2" > "$work/$1/app/main.tf"
+    cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$work/$1/app/"
+    printf 'binary: tofu\n' > "$work/$1/terragucci.yml"
+    git init -q --bare "$work/$1.git"
+    git -C "$work/$1" init -q -b main
+    git -C "$work/$1" add -A && git -C "$work/$1" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke alerts $1"
+    git -C "$work/$1" remote add origin /origin.git
+  }
+  stage() { # name, stage args...
+    local n="$1"
+    shift
+    run_copied --rm --network terragucci -v "$work/$n:/repo" -v "$work/$n.git:/origin.git" -w /repo \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      -e "OTEL_EXPORTER_OTLP_ENDPOINT=$OTLP_ENDPOINT" -e GITHUB_SERVER_URL=http://smoke.local -e "GITHUB_REPOSITORY=alerts/$n-$STAMP" \
+      ${ALERT_ENV[@]+"${ALERT_ENV[@]}"} "$image" terragucci stage "$@" >&2
+    local c=$?
+    clean_mounted "$work/$n"
+    return $c
+  }
+  local tf='terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+  }
+  backend "local" {}
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+'
+  signal wait "$tf"'resource "terraform_data" "w" {
+  input = "waits"
+}'
+  signal fail "$tf"'resource "terraform_data" "f" {
+  input = "fails"
+
+  provisioner "local-exec" {
+    command = "exit 1"
+  }
+}'
+  signal refused "$tf"'resource "terraform_data" "r" {
+  input = "first"
+}'
+  signal drift "$tf""resource \"aws_sqs_queue\" \"q\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+}"
+  code=0; stage wait tf-apply --wave 1 --layers app --binary tofu --gate always || code=$?
+  [ "$code" = 3 ] || { log "the wave of wait did not wait (exit $code)"; rc=1; }
+  for i in 1 2; do
+    code=0; stage fail tf-apply --wave 1 --layers app --binary tofu --gate never || code=$?
+    [ "$code" != 0 ] || { log "the apply of fail did not fail"; rc=1; }
+    sleep 6
+  done
+  # refused: wait, approve the digest on the ledger, change the plan, run again.
+  code=0; stage refused tf-apply --wave 1 --layers app --binary tofu --gate always || code=$?
+  [ "$code" = 3 ] || { log "the wave of refused did not wait (exit $code)"; rc=1; }
+  clone="$work/refused-ledger"
+  if git clone -q -b chant/lifecycle "$work/refused.git" "$clone" 2>/dev/null; then
+    digest="$(jq -rs '[.[] | select(.kind == "pending" and .gate == "wave-1")] | last | .planDigest' "$clone/_gates/tf-apply.jsonl")"
+    sleep 1
+    printf '%s\n' "$(jq -cn --arg d "$digest" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "smoke-approver", timestamp: $t, planDigest: $d}')" >> "$clone/_gates/tf-apply.jsonl"
+    { git -C "$clone" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "approve wave-1" && git -C "$clone" push -q origin chant/lifecycle; } || { log "could not approve wave-1 of refused"; rc=1; }
+  else
+    log "refused recorded no ledger"; rc=1
+  fi
+  sed -i.bak 's/input = "first"/input = "moved"/' "$work/refused/app/main.tf" && rm -f "$work/refused/app/main.tf.bak"
+  git -C "$work/refused" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "the plan moves after its approval"
+  code=0; stage refused tf-apply --wave 1 --layers app --binary tofu --gate always || code=$?
+  [ "$code" = 4 ] || { log "the wave of refused was not refused (exit $code)"; rc=1; }
+  # drift: apply the queue, change its timeout in floci, run tf-drift.
+  run_copied --rm --network terragucci -v "$work/drift:/repo" -w /repo/app -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 \
+    || { log "the queue of drift did not apply"; rc=1; }
+  clean_mounted "$work/drift"
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+  [ -n "$url" ] && sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null
+  # The drift issue is what gives drift its age, so this run keeps one on a repo of its own.
+  if fresh_repo alerts-drift; then
+    local -a ALERT_ENV=(-e GITHUB_SERVER_URL=http://forgejo:3000 -e GITHUB_API_URL=http://forgejo:3000/api/v1 -e "GITHUB_REPOSITORY=$USER/alerts-drift" -e "TG_TOKEN=$TOKEN")
+    stage drift tf-drift --forge forgejo --layers app || true
+    ALERT_ENV=()
+  else
+    rc=1
+  fi
+  # Prometheus evaluates every 5s; the age alerts need 10s past their stamps.
+  alert() { # alertname, label, value -> 0 once firing
+    curl -fsS -G "$promurl/api/v1/query" --data-urlencode "query=ALERTS{alertname=\"$1\",alertstate=\"firing\",$2=\"$3\"}" | jq -e '.data.result | length > 0' >/dev/null 2>&1
+  }
+  local -a want=("TerragucciWaveWaiting|project|smoke.local/alerts/wait-$STAMP" "TerragucciDriftOld|project|forgejo:3000/$USER/alerts-drift"
+    "TerragucciDriftStopped|project|forgejo:3000/$USER/alerts-drift" "TerragucciApplyFailed|terragucci_project|smoke.local/alerts/fail-$STAMP"
+    "TerragucciWaveRefused|terragucci_project|smoke.local/alerts/refused-$STAMP" "ErrorBudgetBurn|slo|terragucci-apply-success")
+  local w left
+  for i in $(seq 1 36); do
+    left=""
+    for w in "${want[@]}"; do
+      IFS='|' read -r q got hostport <<<"$w"
+      alert "$q" "$got" "$hostport" || left="$left $q"
+    done
+    [ -z "$left" ] && break
+    sleep 5
+  done
+  [ -z "$left" ] || { log "not firing after 3 minutes:$left"; rc=1; }
+  for q in terragucci-apply-success terragucci-drift-corrected; do
+    curl -fsS -G "$promurl/api/v1/query" --data-urlencode "query=slo:sli_error:ratio_rate5m{slo=\"$q\"}" | jq -e '.data.result | length > 0' >/dev/null 2>&1 \
+      || { log "the $q SLO records nothing"; rc=1; }
+  done
+  [ -n "$url" ] && sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "every alert init writes fired on its signal with short thresholds, and the apply-success and drift-corrected SLOs record"
+  return $rc
+}
+
+# ── report stores: key credentials and index writes ──────────────────────
+
+claim_blob_gcs_key() {
+  # reports.bucket is gs://<bucket> on fake-gcs-server, and the job has a
+  # service_account key file in GOOGLE_APPLICATION_CREDENTIALS and nothing
+  # else. tf-plan writes the report and both indexes; terragucci estate
+  # writes the page and prints a V4 signed URL that verifies with the public
+  # half of the key, and the emulator serves it.
+  # BREAK: one character of the signature changes, so it does not verify.
+  log() { echo "[smoke blob-gcs-key] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image port="${TERRAGUCCI_GCS_PORT:-4453}" name=blob-gcs-key bucket sa=terragucci-plan@smoke-project.iam.gserviceaccount.com
+  local out link served path rc=0 i sig flip
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/stub"
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile blob up -d gcs >&2 || { drop_work "$work"; return 1; }
+  gcs() { curl -sS -H 'Host: gcs:4443' "$@"; }
+  for i in $(seq 1 30); do gcs -f -o /dev/null "http://localhost:$port/_internal/healthcheck" 2>/dev/null && break; sleep 1; done
+  bucket="tg-key-$(date +%s)"
+  gcs -f -o /dev/null -X POST -H 'content-type: application/json' -d "{\"name\":\"$bucket\"}" "http://localhost:$port/storage/v1/b?project=smoke-project" \
+    || { log "fake-gcs-server did not make bucket $bucket"; drop_work "$work"; return 1; }
+  openssl genrsa -out "$work/sa.pem" 2048 >/dev/null 2>&1 || { log "openssl could not make a key"; drop_work "$work"; return 1; }
+  openssl rsa -in "$work/sa.pem" -pubout -out "$work/sa.pub" >/dev/null 2>&1
+  jq -n --arg k "$(cat "$work/sa.pem")" --arg e "$sa" '{type: "service_account", project_id: "smoke-project", private_key_id: "smoke", private_key: $k, client_email: $e, client_id: "1", token_uri: "https://oauth2.googleapis.com/token"}' > "$work/stub/key.json"
+  printf 'import { writeFileSync } from "node:fs";\nwriteFileSync("/stub/ready", "1");\n' > "$work/stub/none.mjs"
+  blob_project "$work" "$name" "$(printf 'reports:\n  bucket: gs://%s\n  endpoint: http://gcs:4443\n  prefix: reports' "$bucket")"
+  local -a BLOB_ENV=(-e GOOGLE_APPLICATION_CREDENTIALS=/stub/key.json)
+  blob_run "$work" "$name" "$image" none.mjs terragucci stage tf-plan --layers app >&2 || { log "the plan run failed"; rc=1; }
+  clean_mounted "$work/$name" "$image"
+  obj() { gcs "http://localhost:$port/storage/v1/b/$bucket/o/$(jq -rn --arg k "$1" '$k | @uri')?alt=media"; }
+  if [ $rc = 0 ]; then
+    path="$(obj "reports/$name/index.json" | jq -r '.reports[0].path // empty')"
+    [ -n "$path" ] || { log "no row in reports/$name/index.json"; rc=1; }
+    [ "$(obj reports/index.json | jq -r '[.reports[].project] | join(",")')" = "$name" ] || { log "the top index does not list $name"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    : >"$work/stub/ready"
+    out="$(blob_run "$work" "$name" "$image" none.mjs terragucci estate --bucket "gs://$bucket" --bucket-endpoint http://gcs:4443 --bucket-prefix reports --link-hours 1)" || { log "terragucci estate failed"; rc=1; }
+    printf '%s\n' "$out" >&2
+    link="$(grep -E "^http://gcs:4443/$bucket/reports/estate.html\\?X-Goog-Algorithm=GOOG4-RSA-SHA256&" <<<"$out" | head -1)"
+    [ -n "$link" ] || { log "the command printed no signed URL"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    sig="${link##*X-Goog-Signature=}"
+    flip=0; [ "${sig:0:1}" = 0 ] && flip=1
+    link="${link%X-Goog-Signature=*}X-Goog-Signature=$flip${sig:1}"
+  fi
+  if [ $rc = 0 ]; then
+    node -e '
+      const { createHash, createVerify, readFileSync } = { ...require("node:crypto"), ...require("node:fs") };
+      const u = new URL(process.argv[1]);
+      const query = u.search.slice(1).replace(/&X-Goog-Signature=.*$/, "");
+      const stamp = u.searchParams.get("X-Goog-Date");
+      const canonical = ["GET", u.pathname, query, "host:" + u.host, "", "host", "UNSIGNED-PAYLOAD"].join("\n");
+      const toSign = ["GOOG4-RSA-SHA256", stamp, stamp.slice(0, 8) + "/auto/storage/goog4_request", createHash("sha256").update(canonical).digest("hex")].join("\n");
+      process.exit(createVerify("RSA-SHA256").update(toSign).verify(readFileSync(process.argv[2], "utf-8"), Buffer.from(u.searchParams.get("X-Goog-Signature"), "hex")) ? 0 : 1);
+    ' "$link" "$work/sa.pub" || { log "the signature of the link does not verify with the public half of the key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    served="$(gcs -f "http://localhost:$port${link#http://gcs:4443}")" || { log "the emulator did not serve the link"; rc=1; }
+    [ $rc = 0 ] && { grep -q "$name" <<<"$served" || { log "the link does not serve the page with $name on it"; rc=1; }; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "with only a service account key file the job wrote the report, both indexes and the page to $bucket, and the link is signed with the key"
+  return $rc
+}
+
+claim_blob_azure_key() {
+  # reports.bucket is az://devstoreaccount1/<container> on Azurite, and the
+  # job has the account key in AZURE_STORAGE_KEY and no OIDC identity.
+  # tf-plan writes the report and both indexes with Shared Key; terragucci
+  # estate writes the page and prints a service SAS signed with the account
+  # key, which Azurite serves.
+  # BREAK: one character of the link signature changes, and Azurite refuses it.
+  log() { echo "[smoke blob-azure-key] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image port="${TERRAGUCCI_AZURITE_PORT:-10010}" certs="$HERE/.state/azurite-certs" name=blob-azure-key container
+  local key='Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==' tenant=7d2c0b4e-0000-4000-8000-00000000a2e1
+  local now jwt out link served path rc=0 i code
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$certs" "$work/newcerts" "$work/stub"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:azurite,IP:127.0.0.1" \
+    -keyout "$work/newcerts/azurite.key" -out "$work/newcerts/azurite.crt" >/dev/null 2>&1 \
+    || { log "openssl could not make a certificate"; drop_work "$work"; return 1; }
+  cat "$work/newcerts/azurite.key" >"$certs/azurite.key"
+  cat "$work/newcerts/azurite.crt" >"$certs/azurite.crt"
+  chmod 644 "$certs/azurite.key"
+  cp "$certs/azurite.crt" "$work/stub/ca.crt"
+  with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+    --profile blob up -d --force-recreate azurite >&2 || { drop_work "$work"; return 1; }
+  # The claim reads Azurite with a token Azurite takes, as blob-azure does; the job has only the key.
+  now="$(date +%s)"
+  jwt="$(blob_jwt "{\"aud\":\"https://storage.azure.com\",\"iss\":\"https://sts.windows.net/$tenant/\",\"iat\":$((now - 60)),\"nbf\":$((now - 60)),\"exp\":$((now + 3600)),\"oid\":\"smoke\",\"tid\":\"$tenant\"}")"
+  azr() { curl -sS --cacert "$certs/azurite.crt" -H "Authorization: Bearer $jwt" -H 'x-ms-version: 2021-08-06' "$@"; }
+  for i in $(seq 1 30); do
+    [ "$(azr -o /dev/null -w '%{http_code}' "https://localhost:$port/devstoreaccount1?comp=list" 2>/dev/null)" = 200 ] && break
+    sleep 1
+  done
+  container="tg-key-$(date +%s)"
+  code="$(azr -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Length: 0' "https://localhost:$port/devstoreaccount1/$container?restype=container" 2>/dev/null)" || true
+  [ "$code" = 201 ] || { log "Azurite did not make container $container ($code)"; drop_work "$work"; return 1; }
+  printf 'import { writeFileSync } from "node:fs";\nwriteFileSync("/stub/ready", "1");\n' > "$work/stub/none.mjs"
+  blob_project "$work" "$name" "$(printf 'reports:\n  bucket: az://devstoreaccount1/%s\n  endpoint: https://azurite:10000/devstoreaccount1\n  prefix: reports' "$container")"
+  local -a BLOB_ENV=(-e "AZURE_STORAGE_KEY=$key" -e NODE_EXTRA_CA_CERTS=/stub/ca.crt)
+  blob_run "$work" "$name" "$image" none.mjs terragucci stage tf-plan --layers app >&2 || { log "the plan run failed"; rc=1; }
+  clean_mounted "$work/$name" "$image"
+  if [ $rc = 0 ]; then
+    path="$(azr "https://localhost:$port/devstoreaccount1/$container/reports/$name/index.json" | jq -r '.reports[0].path // empty')"
+    [ -n "$path" ] || { log "no row in reports/$name/index.json"; rc=1; }
+    [ "$(azr "https://localhost:$port/devstoreaccount1/$container/reports/index.json" | jq -r '[.reports[].project] | join(",")')" = "$name" ] || { log "the top index does not list $name"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    : >"$work/stub/ready"
+    out="$(blob_run "$work" "$name" "$image" none.mjs terragucci estate --bucket "az://devstoreaccount1/$container" --bucket-endpoint https://azurite:10000/devstoreaccount1 --bucket-prefix reports --link-hours 1)" || { log "terragucci estate failed"; rc=1; }
+    printf '%s\n' "$out" >&2
+    link="$(grep -E '^https://azurite:10000/devstoreaccount1/' <<<"$out" | head -1)"
+    grep -q 'sig=' <<<"$link" || { log "the command printed no SAS link"; rc=1; }
+    grep -q 'skoid=' <<<"$link" && { log "the link is a user delegation SAS, not one signed with the account key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ -n "${BREAK:-}" ] && link="${link/sig=/sig=A}"
+    served="$(curl -sS --cacert "$certs/azurite.crt" -w '\n%{http_code}' "https://localhost:$port${link#https://azurite:10000}")" || true
+    [ "$(tail -1 <<<"$served")" = 200 ] || { log "Azurite refused the link ($(tail -1 <<<"$served"))"; rc=1; }
+    [ $rc = 0 ] && { grep -q "$name" <<<"$served" || { log "the link does not serve the page with $name on it"; rc=1; }; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "with only the account key the job wrote the report, both indexes and the page to $container, and the key-signed link served it"
+  return $rc
+}
+
+claim_index_writes() {
+  # Two projects plan at once through an S3 stand-in in front of floci that
+  # holds the first two PUTs of the top index.json and sends them together,
+  # so both writers read the same index: one conditional write lands, the
+  # other is refused and retried, and the top index lists both projects.
+  # Then a third project plans through a stand-in that answers 501 to a
+  # conditional index write: it drops the condition and its row lands.
+  # BREAK: the first stand-in drops If-Match and If-None-Match, as a store
+  # that ignores them would, so the second write overwrites the first.
+  log() { echo "[smoke index-writes] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work prefix="index-writes-$STAMP" name="tgs-s3-$STAMP" p rc=0 index pids=() strip=()
+  [ -n "${BREAK:-}" ] && strip=(STRIP=1)
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  index_plan() { # project dir, endpoint
+    run_copied --rm --network terragucci -v "$work/$1:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -e GITHUB_SERVER_URL=http://smoke.local -e "GITHUB_REPOSITORY=index/$1" \
+      "$(image_tag tofu)" terragucci stage tf-plan --layers app > "$work/$1.log" 2>&1
+  }
+  for p in race-a race-b fallback; do
+    estate_project "$work/$p" "$(printf '  bucket: s3://%s\n  endpoint: http://%s:4566\n  prefix: %s' "$REPORT_BUCKET" "$name" "$prefix")"
+  done
+  stand_in_up "$work" "$name" 4566 MODE=s3 UPSTREAM=floci:4566 "HOLD_PATH=/$REPORT_BUCKET/$prefix/index.json" ${strip[@]+"${strip[@]}"} || { stand_in_down; drop_work "$work"; return 1; }
+  index_plan race-a & pids+=($!)
+  index_plan race-b & pids+=($!)
+  for p in "${pids[@]}"; do wait "$p" || true; done
+  cat "$work/race-a.log" "$work/race-b.log" | grep -E 'index|copied' >&2 || true
+  curl -fsS "$STANDIN_CTL/_requests" | jq -r --arg p "/$REPORT_BUCKET/$prefix/index.json" '.[] | select(.method == "PUT" and .path == $p) | "[smoke index-writes]   PUT top index: \(.status) \(.cond)"' >&2 || true
+  index="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" 2>/dev/null || true)"
+  [ "$(jq -r '[.reports[].project] | unique | join(",")' <<<"$index" 2>/dev/null)" = "smoke.local/index/race-a,smoke.local/index/race-b" ] \
+    || { log "the top index lists $(jq -c '[.reports[].project]' <<<"$index" 2>/dev/null || echo nothing), not both projects"; rc=1; }
+  stand_in_down
+  if [ $rc = 0 ]; then
+    stand_in_up "$work" "$name-501" 4566 MODE=s3 UPSTREAM=floci:4566 ANSWER_501=1 || rc=1
+    if [ $rc = 0 ]; then
+      sed -i.bak "s#http://$name:4566#http://$name-501:4566#" "$work/fallback/terragucci.yml" && rm -f "$work/fallback/terragucci.yml.bak"
+      git -C "$work/fallback" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "the 501 stand-in"
+      index_plan fallback || true
+      curl -fsS "$STANDIN_CTL/_requests" | jq -e '[.[] | select(.status == 501)] | length > 0' >/dev/null || { log "the stand-in answered no conditional write with 501"; rc=1; }
+      index="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" 2>/dev/null || true)"
+      jq -e '[.reports[].project] | index("smoke.local/index/fallback")' <<<"$index" >/dev/null 2>&1 || { log "after a 501 the row of fallback did not land"; rc=1; }
+    fi
+    stand_in_down
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "two writers that read the same index both landed, and a store that answers 501 got the row without the condition"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -8518,6 +9015,13 @@ policy-hcl           weight=150
 tg-policy            weight=200
 tg-credentials       weight=200
 tg-dependents        weight=250
+tf-terraform         runner self! weight=300
+tg-terraform         runner self! weight=300
+tfquery-import       self! weight=120
+alerts-fire          otel self! weight=300
+blob-gcs-key         gcs! weight=120
+blob-azure-key       azurite! weight=120
+index-writes         self! weight=90
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
