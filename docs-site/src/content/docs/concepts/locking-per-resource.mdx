@@ -1,0 +1,86 @@
+---
+title: Locking per resource, with no state file
+description: Applies of one estate that touch different resources run at once, each resource carries its estate as a tag, and one bucket serves every estate.
+---
+
+## Locking per resource
+
+Two applies of one estate that change different resources run at the same time. Neither waits for an estate-wide lock.
+
+| Two applies of one estate | What happens |
+|---|---|
+| change different resources | both run at once and both apply, and the bucket holds no lock object |
+| change the same resource | the first write lands; the second fails with a record store write conflict that names the resource, and overwrites nothing; its next plan shows the value that landed |
+
+Each resource has its own record in the estate's record store bucket. Every record write is one conditional S3 `PutObject`, so the cloud's API settles two runs that reach one resource:
+
+| Record write | Condition | When another run got there first |
+|---|---|---|
+| create | `If-None-Match: *` | the write fails, because the record exists |
+| update | `If-Match: <the version it read>` | the write fails, because the version moved |
+
+<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci. <a href="/terragucci/guides/use-a-binary/#choudoufu">Set it up</a>.</small>
+
+## Live resource markers
+
+Each resource carries its identity on the resource itself, as tags written in its create call. A resource that exists has them.
+
+| Tag | Holds |
+|---|---|
+| `tofu-estate` | the estate that owns the resource |
+| `tofu-address` | the resource's address in the configuration |
+
+| What the tags give you | How |
+|---|---|
+| No state file to host or lose | the next plan reads the tags back from the cloud |
+| An estate any cloud tool can list | filter on the tag, for example `aws ec2 describe-instances --filters Name=tag:tofu-estate,Values=prod` |
+| A role scoped to one estate | an IAM condition on the tag: the role applies its own estate, and IAM refuses it a change to another estate's resources |
+
+The scoped role's write statement, for an estate called `prod`:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["ec2:CreateTags", "ec2:DeleteTags", "ec2:TerminateInstances"],
+  "Resource": "*",
+  "Condition": { "StringEquals": { "aws:ResourceTag/tofu-estate": "prod" } }
+}
+```
+
+The role also reads with `ec2:Describe*`. [choudoufu's marker spec](https://github.com/INTENTIUS/choudoufu/blob/main/live/MARKERS.md) publishes the whole grant, creates included.
+
+<small>Markers are written by choudoufu. <a href="/terragucci/guides/use-a-binary/#choudoufu">Choose your binary</a> turns it on with one line.</small>
+
+## One backend for all your estates
+
+Values the cloud has nowhere to keep go in a record store: an S3 bucket you own. One bucket serves every estate, and each root names its estate and the bucket:
+
+```hcl
+terraform {
+  live {
+    estate = "prod-eu"
+
+    record_store "s3" {
+      bucket = "acme-records"
+    }
+  }
+}
+```
+
+| In the shared bucket | What you get |
+|---|---|
+| `tofu-records/<estate>/` | each estate's records, one per resource, under a prefix of its own |
+| the `tofu-estate` tag on each object | every record carries its estate's tag |
+| estates whose names start alike, such as `prod` and `prod-eu` | no shared keys: each holds only its own records, and the next plan of both shows no change |
+
+The apply checks the bucket before it writes a record:
+
+| Bucket setting | Value |
+|---|---|
+| versioning | enabled |
+| lifecycle | a rule that expires noncurrent versions |
+| public access blocks | all four on |
+
+[choudoufu's bucket page](https://intentius.io/choudoufu/docs/use/bucket/) has the IAM policy for a role per estate.
+
+<small>Only choudoufu estates keep a record store; <a href="/terragucci/guides/use-a-binary/#choudoufu">switch the binary</a> to get one.</small>

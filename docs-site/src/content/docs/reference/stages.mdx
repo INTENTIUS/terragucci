@@ -52,8 +52,10 @@ Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 whi
   </TabItem>
   <TabItem label="choudoufu">
 
-:::tip[choudoufu's live check]
-[choudoufu](/terragucci/concepts/glossary/#choudoufu)'s live check runs here. Set `binary: choudoufu` and every pull request learns, before any plan and with no cloud credentials, whether choudoufu can track each resource without a state file.
+:::tip[A live check before any plan]
+Every pull request learns, before any plan and with no cloud credentials, whether each resource can be tracked without a state file.
+
+<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci. <a href="/terragucci/guides/use-a-binary/#choudoufu">Set it up</a>.</small>
 :::
 
 | Order | Command | A difference |

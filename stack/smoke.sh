@@ -273,7 +273,8 @@ tfquery-import|with binary: terraform a root with a .tfquery.hcl gets the drift 
 alerts-fire|with short thresholds every alert init writes fires on its signal, and the apply-success and drift-corrected SLOs record|
 blob-gcs-key|with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key|
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
-index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|'
+index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
+cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -8859,6 +8860,87 @@ claim_index_writes() {
   return $rc
 }
 
+claim_cdf_shared_bucket() {
+  # Two choudoufu estates in one record store bucket, applied by one tf-apply
+  # wave of one repo: root a is estate <name>, root b is estate <name>-eu, so
+  # one name starts the other, and each holds terraform_data.this (a from-a,
+  # b from-b), with the record_store pointing both at terragucci-smoke-records.
+  # Each estate must hold its own value under tofu-records/<estate>/, as one
+  # record tagged with its own estate, and a tf-plan of both roots right after
+  # must show no change: each read its own records back and no other.
+  # BREAK: root b names estate a, so the two roots share one estate and one
+  # prefix: the wave fails on the second create, or b's apply overwrites a's
+  # record, and estate a no longer holds from-a alone.
+  log() { echo "[smoke cdf-shared-bucket] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work ea eb eb_root side estate want values keys key tags rc=0 got
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  ea="smoke-shared-$(date +%s)-$$"
+  eb="$ea-eu"
+  eb_root="$eb"
+  [ -n "${BREAK:-}" ] && eb_root="$ea"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  for side in a b; do
+    estate="$ea"; [ "$side" = b ] && estate="$eb_root"
+    mkdir -p "$work/repo/$side"
+    cat >"$work/repo/$side/main.tf" <<HCL
+terraform {
+  live {
+    estate = "$estate"
+
+    record_store "s3" {
+      bucket = "$CDF_RECORDS"
+    }
+
+    retry {
+      max_attempts = 1
+    }
+  }
+}
+
+resource "terraform_data" "this" {
+  input = "from-$side"
+}
+HCL
+  done
+  printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$work/repo/.gitignore"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke cdf-shared-bucket $(date +%s%N)"
+  if ! cdf_run "$work/repo" "$work/apply.log" "$CDF_ALIAS-apply" choudoufu "" tf-apply --wave 1 --layers a,b --binary choudoufu --gate never; then
+    log "the wave did not apply both estates into $CDF_RECORDS"; tail -20 "$work/apply.log" >&2; cdf_down "$work"; return 1
+  fi
+  for side in a b; do
+    estate="$ea"; [ "$side" = b ] && estate="$eb"
+    want="from-$side"
+    values="$(cdf_values "$estate")"
+    [ "$values" = "$want" ] || { log "estate $estate holds '$values', not $want"; rc=1; continue; }
+    keys="$(cdf_keys "$estate" | grep '/terraform_data/' || true)"
+    [ "$(grep -c . <<<"$keys")" = 1 ] || { log "estate $estate has $(grep -c . <<<"$keys") terraform_data records, not one: $keys"; rc=1; continue; }
+    key="$(head -1 <<<"$keys")"
+    case "$key" in "tofu-records/$estate/"*) ;; *) log "the record of estate $estate is at $key, outside tofu-records/$estate/"; rc=1 ;; esac
+    tags="$(curl -fsS "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$key" '$k | split("/") | map(@uri) | join("/")')?tagging" | tr -d '\n\t ' || true)"
+    grep -qF "<Key>tofu-estate</Key><Value>$estate</Value>" <<<"$tags" || { log "the record of estate $estate is not tagged tofu-estate=$estate: $tags"; rc=1; }
+    [ $rc = 0 ] && log "estate $estate holds $want in one record at $key, tagged with its estate"
+  done
+  if [ $rc = 0 ]; then
+    if ! cdf_run "$work/repo" "$work/plan.log" "$CDF_ALIAS-plan" choudoufu "" tf-plan --layers a,b --binary choudoufu; then
+      log "tf-plan of both estates failed"; tail -20 "$work/plan.log" >&2; rc=1
+    else
+      got="$(jq -c '[.roots[].path] | sort' "$work/repo/terragucci-report/report.json" 2>/dev/null || echo none)"
+      [ "$got" = '["a","b"]' ] || { log "the plan reports roots $got, not a and b"; rc=1; }
+      got="$(jq '[.roots[].changes[]?] | length' "$work/repo/terragucci-report/report.json" 2>/dev/null || echo missing)"
+      [ "$got" = 0 ] || { log "the plan of both estates right after the apply shows $got change(s), not none"; rc=1; }
+    fi
+  fi
+  cdf_down "$work"
+  [ $rc = 0 ] && log "one wave applied estates $ea and $eb into $CDF_RECORDS, each under its own prefix and estate tag, and a plan of both read each one back with no change"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -9056,6 +9138,7 @@ alerts-fire          otel self! weight=300
 blob-gcs-key         gcs! weight=120
 blob-azure-key       azurite! weight=120
 index-writes         self! weight=90
+cdf-shared-bucket    weight=120
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
