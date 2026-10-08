@@ -8,6 +8,6 @@ const total = run ? Math.round((run.wall_seconds.create + run.wall_seconds.plan 
 ---
 {run && (
 	<p>
-		The largest run of the <a href="/terragucci/reference/scale/">scale bench</a> planned and applied {n(run.estate.resources)} resources in {n(run.estate.roots)} roots across {run.estate.repos} repos, governed by one control repo: every root created, then a change to all of them planned and applied, in {total} minutes on terragucci {run.release}.
+		The largest run of the <a href="/terragucci/reference/scale/">scale bench</a> planned and applied {n(run.estate.resources)} resources in {n(run.estate.roots)} roots across {run.estate.repos} repos, governed by one control repo: every root created, then a change to all of them planned and applied, in {total} minutes on terragucci {run.release.includes('+') ? `main at ${run.release.split('+')[1]}` : run.release}.
 	</p>
 )}

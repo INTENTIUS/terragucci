@@ -8,6 +8,8 @@ const runs = record.runs as Run[];
 const n = (v: number) => v.toLocaleString('en-US');
 const mins = (s: number) => (s < 90 ? `${s} s` : `${Math.round(s / 60)} min`);
 const kb = (b: number) => (b < 1_000_000 ? `${Math.round(b / 1000)} kB` : `${(b / 1_000_000).toFixed(1)} MB`);
+// A run of a commit on main records the release before it and the commit: 0.4.1+9cc0eca.
+const build = (release: string) => (release.includes('+') ? `main at ${release.split('+')[1]}` : release);
 const host = (r: Run) =>
 	`${r.host.os === 'darwin' ? 'macOS' : r.host.os === 'linux' ? 'Linux' : r.host.os} ${r.host.arch}, ${r.host.runner_capacity} jobs at once`;
 ---
@@ -32,7 +34,7 @@ const host = (r: Run) =>
 					<td>{n(Math.round(r.runner_minutes.total))}</td>
 					<td>{kb(r.note.bytes_max)}</td>
 					<td>{kb(r.reports.report_json_bytes_max)}</td>
-					<td>{r.release}, {r.finished_at.slice(0, 10)}, {host(r)}</td>
+					<td>{build(r.release)}, {r.finished_at.slice(0, 10)}, {host(r)}</td>
 				</tr>
 			))}
 		</tbody>
