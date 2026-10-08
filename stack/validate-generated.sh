@@ -66,6 +66,21 @@
 #   gl-comment-drift-schedule  gitlab: with drift and comments set, a
 #              schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone,
 #              and the comments schedule the comments job alone.
+#   pr-apply   gitlab: apply.when: pull-request with merge: auto. A merge
+#              request approved by a second member after its last push gets
+#              a Developer's /terragucci apply; the comments schedule's play
+#              starts a pipeline on main, whose mr-apply job applies the head
+#              (its bucket exists) and whose pr-merge job merges it.
+#   pr-apply-stale  gitlab: main moves after the merge request was cut; its
+#              /terragucci apply is refused as not up to date, no pipeline
+#              starts on main, and nothing applies.
+#   pr-apply-lock  gitlab: merge request A applies and stays open
+#              (merge: manual); merge request B, which reaches the same root,
+#              is refused by its mr-apply job naming the root and !A.
+#   pr-apply-trust  gitlab: a pipeline started on main with TERRAGUCCI_HEAD
+#              naming another commit than the merge request's head is refused
+#              by mr-apply, which reads the head from GitLab, and nothing
+#              applies.
 #
 # The images are the ones the generated pipeline pins by digest; the runner
 # (gitlab-runner, or act on the host) pulls each the first time.
@@ -83,6 +98,10 @@
 # gl-comment-apply pushes to main after the merge, so the merge commit is
 # superseded and no job at it is retried; gl-comment-drift-schedule drops the
 # variable check from the drift rule, so the comments schedule runs drift too.
+# pr-apply leaves the approval out, so the note is refused and nothing
+# applies; pr-apply-stale leaves main where it was, so the head is up to date
+# and applies; pr-apply-lock unlocks A before B asks, so B applies;
+# pr-apply-trust names the merge request's own head, so it applies.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -98,7 +117,8 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule|pr-apply|pr-apply-stale|pr-apply-lock|pr-apply-trust) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:pr-apply*) ;; *:pr-apply*) echo "$CLAIM is gitlab's here; the smoke claims of that name run it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:approve) ;; *:approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in forgejo:pr-review|gitlab:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
@@ -659,6 +679,154 @@ run_comment_drift_schedule() {
   log "the comments schedule ran the comments job alone"
 }
 
+# ── GitLab apply before merge: the comments job and the mr-apply pipeline ─────
+
+# The comments fixture with apply.when: pull-request, and the merge token as a
+# variable scoped to the terragucci-merge environment, which only the
+# comments and pr-merge jobs name. The stack leaves main unprotected, so the
+# variable is not protected either.
+prepare_pr_apply() { # repo merge
+  prepare_comments "$1" "forge: gitlab" "apply:" "  when: pull-request" "  merge: $2" "  merge_token_env: TERRAGUCCI_MERGE_TOKEN"
+  grep -q '^mr-apply:$' "$CDIR/$PIPELINE_FILE" || fail "the pipeline init wrote has no mr-apply job"
+  local p="$URL/api/v4/projects/$(pid "$1")"
+  curl -s -o /dev/null -H "PRIVATE-TOKEN: $TOKEN" -X DELETE "$p/variables/TERRAGUCCI_MERGE_TOKEN?filter%5Benvironment_scope%5D=terragucci-merge" || true
+  glapi -o /dev/null -X POST "$p/variables" --data-urlencode "key=TERRAGUCCI_MERGE_TOKEN" --data-urlencode "value=$TOKEN" \
+    --data-urlencode "environment_scope=terragucci-merge" --data-urlencode "protected=false" || fail "could not set TERRAGUCCI_MERGE_TOKEN"
+}
+
+# A merge request from BRANCH that renames the root's bucket to BUCKET, cut
+# from main as CDIR has it. Prints its iid once its pipeline ended.
+gl_bucket_mr() { # repo branch bucket
+  local f="$CDIR/infra/main.tf" head iid
+  git -C "$CDIR" checkout -q -f main
+  sed "s/default = \"terragucci-validate\"/default = \"$3\"/" "$f" > "$f.new" && mv "$f.new" "$f"
+  grep -q "\"$3\"" "$f" || fail "could not rename the bucket to $3"
+  head="$(forge_push "$CDIR" "$1" "$2" "$(msg)")"
+  iid="$(glapi -X POST "$URL/api/v4/projects/$(pid "$1")/merge_requests" --data-urlencode "source_branch=$2" --data-urlencode "target_branch=main" --data-urlencode "title=validate $2" | jq -r '.iid // empty')"
+  [ -n "$iid" ] || fail "no merge request from $2"
+  forge_run "$1" "$2" "$head" merge_request_event >&2
+  git -C "$CDIR" checkout -q -f main
+  echo "$iid"
+}
+
+# An approval of merge request IID by the member whose token is given, after its last push.
+gl_approve() { # repo iid token
+  sleep 2
+  curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $3" -X POST "$URL/api/v4/projects/$(pid "$1")/merge_requests/$2/approve" || fail "could not approve !$2"
+}
+
+# Every terragucci note on merge request IID, one per line.
+gl_said() { # repo iid
+  glapi "$URL/api/v4/projects/$(pid "$1")/merge_requests/$2/notes?per_page=100" | jq -r '.[] | select(.body | startswith("terragucci:")) | .body | gsub("\n"; " ")'
+}
+
+gl_api_pipelines() { glapi "$URL/api/v4/projects/$(pid "$1")/pipelines?source=api&per_page=100" | jq length; }
+
+run_pr_apply_gitlab() {
+  local repo=validate-pr-apply bucket=terragucci-validate-pr-apply main sid dev rtok iid n head
+  prepare_pr_apply "$repo" auto
+  curl -s -o /dev/null -X DELETE "$FLOCI/$bucket" || true
+  main="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$main"
+  sid="$(gl_schedule "$repo" "terragucci comments" comments)"
+  dev="$(gl_member "$repo" validate-dev 30)"; rtok="$(gl_member "$repo" validate-rev 30)"
+  [ -n "$dev" ] && [ -n "$rtok" ] || fail "no tokens for the developer and the reviewer"
+  iid="$(gl_bucket_mr "$repo" pr-apply "$bucket")"
+  head="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r .sha)"
+  [ -n "$BREAK" ] || gl_approve "$repo" "$iid" "$rtok"
+  n="$(gl_note "$repo" "$iid" "$dev" "/terragucci apply")"
+  gl_play "$repo" "$sid"
+  [ "$PLAY_STATUS" = success ] || fail "the comments pipeline ended '${PLAY_STATUS:-none}'"
+  gl_replies "$repo" "$iid" | grep -q "started pipeline .* on main to apply !$iid's head ${head:0:8} for validate-dev.*terragucci:note=$n -->" || { gl_said "$repo" "$iid"; fail "the note started no pipeline on main"; }
+  forge_run "$repo" main "$main" api
+  if [ "$RUN_STATUS" != success ]; then forge_logs; fail "the mr-apply pipeline ended '$RUN_STATUS'"; fi
+  grep -q "^----- job 'mr-apply' -----" "$RUN_LOG" && grep -q "^----- job 'pr-merge' -----" "$RUN_LOG" || { forge_logs; fail "the pipeline did not run mr-apply and pr-merge"; }
+  [ "$(bucket_code "$bucket")" = 200 ] || { forge_logs; fail "$bucket is not in floci after mr-apply"; }
+  [ "$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r .state)" = merged ] || { gl_said "$repo" "$iid"; fail "!$iid was not merged after its waves applied"; }
+  gl_said "$repo" "$iid" | grep -q "merged !$iid at ${head:0:8}" || { gl_said "$repo" "$iid"; fail "no reply said !$iid was merged"; }
+  log "!$iid applied its head ${head:0:8} from a pipeline on main ($bucket exists) and pr-merge merged it"
+}
+
+run_pr_apply_stale_gitlab() {
+  local repo=validate-pr-apply-stale bucket=terragucci-validate-pr-stale main sid dev rtok iid before
+  prepare_pr_apply "$repo" manual
+  curl -s -o /dev/null -X DELETE "$FLOCI/$bucket" || true
+  main="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$main"
+  sid="$(gl_schedule "$repo" "terragucci comments" comments)"
+  dev="$(gl_member "$repo" validate-dev 30)"; rtok="$(gl_member "$repo" validate-rev 30)"
+  [ -n "$dev" ] && [ -n "$rtok" ] || fail "no tokens for the developer and the reviewer"
+  iid="$(gl_bucket_mr "$repo" pr-stale "$bucket")"
+  if [ -z "$BREAK" ]; then
+    echo "# main moved after the merge request was cut" > "$CDIR/MOVED.md"
+    main="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+    forge_run "$repo" main "$main"
+    log "main moved to ${main:0:8} after !$iid was cut"
+  fi
+  # The approval comes after main moved, so only the head being behind holds the apply back.
+  gl_approve "$repo" "$iid" "$rtok"
+  before="$(gl_api_pipelines "$repo")"
+  gl_note "$repo" "$iid" "$dev" "/terragucci apply" >/dev/null
+  gl_play "$repo" "$sid"
+  gl_replies "$repo" "$iid" | grep -q "!$iid is not up to date with main" || { gl_said "$repo" "$iid"; fail "the apply of a merge request behind main was not refused as not up to date"; }
+  [ "$(gl_api_pipelines "$repo")" -eq "$before" ] || fail "a pipeline started on main for the stale merge request"
+  [ "$(bucket_code "$bucket")" = 404 ] || fail "$bucket exists: the stale merge request applied"
+  log "the apply of !$iid, behind main, was refused as not up to date, and nothing applied"
+}
+
+run_pr_apply_lock_gitlab() {
+  local repo=validate-pr-apply-lock main sid dev rtok a b
+  prepare_pr_apply "$repo" manual
+  for b in terragucci-validate-lock-a terragucci-validate-lock-b; do curl -s -o /dev/null -X DELETE "$FLOCI/$b" || true; done
+  main="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$main"
+  sid="$(gl_schedule "$repo" "terragucci comments" comments)"
+  dev="$(gl_member "$repo" validate-dev 30)"; rtok="$(gl_member "$repo" validate-rev 30)"
+  [ -n "$dev" ] && [ -n "$rtok" ] || fail "no tokens for the developer and the reviewer"
+  a="$(gl_bucket_mr "$repo" lock-a terragucci-validate-lock-a)"; gl_approve "$repo" "$a" "$rtok"
+  b="$(gl_bucket_mr "$repo" lock-b terragucci-validate-lock-b)"; gl_approve "$repo" "$b" "$rtok"
+  gl_note "$repo" "$a" "$dev" "/terragucci apply" >/dev/null
+  gl_play "$repo" "$sid"
+  forge_run "$repo" main "$main" api
+  [ "$(bucket_code terragucci-validate-lock-a)" = 200 ] || { forge_logs; fail "!$a did not apply"; }
+  log "!$a applied and stays open, holding infra"
+  if [ -n "$BREAK" ]; then
+    gl_note "$repo" "$a" "$dev" "/terragucci unlock" >/dev/null
+    sleep 61; gl_play "$repo" "$sid"
+    forge_run "$repo" main "$main" api
+  fi
+  gl_note "$repo" "$b" "$dev" "/terragucci apply" >/dev/null
+  sleep 61; gl_play "$repo" "$sid"
+  gl_replies "$repo" "$b" | grep -q "started pipeline .* on main to apply !$b" || { gl_said "$repo" "$b"; fail "the note on !$b started no pipeline"; }
+  forge_run "$repo" main "$main" api
+  gl_said "$repo" "$b" | grep -q '`infra` is locked by merge request !'"$a"' (applied by validate-dev), so !'"$b"' is not applied' || { gl_said "$repo" "$b"; fail "!$b was not refused naming the root and !$a"; }
+  [ "$(bucket_code terragucci-validate-lock-b)" = 404 ] || fail "!$b applied a root !$a holds"
+  log "!$b was refused: infra is locked by !$a, and nothing of !$b applied"
+}
+
+run_pr_apply_trust_gitlab() {
+  local repo=validate-pr-apply-trust bucket=terragucci-validate-pr-trust main dev rtok iid n head named
+  prepare_pr_apply "$repo" manual
+  curl -s -o /dev/null -X DELETE "$FLOCI/$bucket" || true
+  main="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$main"
+  dev="$(gl_member "$repo" validate-dev 30)"; rtok="$(gl_member "$repo" validate-rev 30)"
+  [ -n "$dev" ] && [ -n "$rtok" ] || fail "no tokens for the developer and the reviewer"
+  iid="$(gl_bucket_mr "$repo" pr-trust "$bucket")"
+  head="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r .sha)"
+  gl_approve "$repo" "$iid" "$rtok"
+  n="$(gl_note "$repo" "$iid" "$dev" "/terragucci apply")"
+  # Started by hand, as anyone who may run a pipeline on main can, naming main's commit as the head.
+  named="$main"; [ -n "$BREAK" ] && named="$head"
+  glapi -o /dev/null -H 'content-type: application/json' -X POST "$URL/api/v4/projects/$(pid "$repo")/pipeline" \
+    -d "$(jq -cn --arg mr "$iid" --arg n "$n" --arg h "$named" '{ref: "main", variables: [{key: "TERRAGUCCI_MR", value: $mr}, {key: "TERRAGUCCI_NOTE", value: $n}, {key: "TERRAGUCCI_HEAD", value: $h}]}')" \
+    || fail "could not start a pipeline on main"
+  forge_run "$repo" main "$main" api
+  gl_said "$repo" "$iid" | grep -q "this pipeline was started for the head ${named:0:8}, and !$iid's head is ${head:0:8}, so nothing is applied" || { forge_logs; gl_said "$repo" "$iid"; fail "mr-apply did not refuse a head the merge request does not have"; }
+  [ "$(bucket_code "$bucket")" = 404 ] || fail "$bucket exists: a pipeline naming another head applied"
+  log "mr-apply refused TERRAGUCCI_HEAD=${named:0:8}, which is not !$iid's head ${head:0:8}, and nothing applied"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -683,6 +851,10 @@ case "$CLAIM" in
   gl-comment-plan) run_comment_plan ;;
   gl-comment-apply) run_comment_apply ;;
   gl-comment-drift-schedule) run_comment_drift_schedule ;;
+  pr-apply) run_pr_apply_gitlab ;;
+  pr-apply-stale) run_pr_apply_stale_gitlab ;;
+  pr-apply-lock) run_pr_apply_lock_gitlab ;;
+  pr-apply-trust) run_pr_apply_trust_gitlab ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done
