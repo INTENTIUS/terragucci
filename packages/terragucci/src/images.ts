@@ -15,7 +15,7 @@ export const REGISTRY = "ghcr.io/intentius";
 /** The tool versions the images carry, and the defaults when a repo pins none. */
 export const TOOL_VERSIONS = {
   tofu: "1.13.1",
-  terraform: "1.14.0",
+  terraform: "1.14.9",
   terragrunt: "1.1.6",
   /** A choudoufu release (INTENTIUS/choudoufu), not the OpenTofu version it is forked from. */
   choudoufu: "0.23.0",
