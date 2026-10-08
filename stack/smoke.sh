@@ -196,7 +196,9 @@ cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that chan
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
 tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
-tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|'
+tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
+plan-lock|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
+plan-lock-release|with locks: plan the merge of a pull request releases the lock its first plan took|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -5050,6 +5052,134 @@ claim_tg_pr_apply_lock() {
   return $rc
 }
 
+# ── plan locks (locks: plan) ──
+# The plain gated-waves fixture with gate never and locks: plan, applying after
+# merge. The pr-lock job runs on pull_request_target from the default branch,
+# so its run is not on the head commit: the claims read terragucci/lock on the
+# head and the lock file on chant/lifecycle instead of waiting for a run.
+
+plan_lock_repo() { # name -> the repo in $work/tree, its pipeline written with locks: plan (left out under BREAK when $2 is break)
+  gated_repo "$1" || return 1
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  [ "${2:-}" = break ] || echo 'locks: plan' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+}
+
+lock_status() { # repo, sha -> "<state> <description>" of the latest terragucci/lock status on the commit, empty when it has none
+  api "$URL/api/v1/repos/$1/commits/$2/statuses?limit=50" 2>/dev/null \
+    | jq -r '[.[] | select(.context == "terragucci/lock")] | sort_by(.id) | last | if . == null then empty else "\(.status // .state) \(.description)" end' 2>/dev/null || true
+}
+
+wait_lock_status() { # repo, sha, state -> prints the status once its state is <state>, or the last one seen
+  local i got=""
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    got="$(lock_status "$1" "$2")"
+    [ "${got%% *}" = "$3" ] && break
+    sleep 3
+  done
+  echo "$got"
+}
+
+lock_file() { # repo -> _locks/tf-apply.json on chant/lifecycle, empty when there is none
+  api "$URL/api/v1/repos/$1/raw/_locks%2Ftf-apply.json?ref=chant%2Flifecycle" 2>/dev/null || true
+}
+
+last_reply() { # repo, number -> the last reply terragucci posted on it
+  api "$URL/api/v1/repos/$1/issues/$2/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | last | .body // empty'
+}
+
+claim_plan_lock() {
+  # A repo with locks: plan. Pull request A changes canary/one; the pr-lock job
+  # locks it on pull_request_target and posts terragucci/lock success on the
+  # head. Pull request B changes canary/one too: its terragucci/lock fails, and
+  # the reply names canary/one and A, planned by its author. /terragucci unlock
+  # on A releases it, and /terragucci plan on B then takes it.
+  # BREAK: locks: plan is left out of terragucci.yml, so there is no pr-lock
+  # job and B is never answered as locked.
+  log() { echo "[smoke plan-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/plan-lock" head_a head_b pr_a pr_b got reply rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  plan_lock_repo plan-lock ${BREAK:+break} || { drop_work "$work"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    grep -q '^  pr-lock:' "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no pr-lock job"; drop_work "$work"; return 1; }
+  fi
+  wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock: first")" || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" change-a "plan-lock: a")" || { drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q main
+  echo b > "$work/tree/canary/one/rev.txt"
+  head_b="$(push_tree "$work/tree" "$repo" change-b "plan-lock: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "plan-lock: a")" || { drop_work "$work"; return 1; }
+  # Under BREAK no job posts the status, so A is not waited for.
+  if [ -z "${BREAK:-}" ]; then
+    got="$(wait_lock_status "$repo" "$head_a" success)"
+    log "A ($pr_a): terragucci/lock ${got:-none}"
+    [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; rc=1; }
+  fi
+  pr_b="$(pr_open "$repo" change-b "plan-lock: b")" || { drop_work "$work"; return 1; }
+  got="$(wait_lock_status "$repo" "$head_b" failure)"
+  reply="$(last_reply "$repo" "$pr_b")"
+  log "B ($pr_b): terragucci/lock ${got:-none}; reply: ${reply:-none}"
+  [ "${got%% *}" = failure ] || { log "terragucci/lock on B did not fail"; rc=1; }
+  grep -q "\`canary/one\` is locked by pull request $pr_a (planned by $USER), so pull request $pr_b is not locked" <<<"$reply" || { log "B was not answered as locked, naming canary/one and A"; rc=1; }
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_a" "/terragucci unlock")"
+    log "unlock on A: ${reply:-no reply}"
+    grep -q "released the locks pull request $pr_a held on \`canary/one\`" <<<"$reply" || { log "the unlock did not release canary/one"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci plan"}' "$URL/api/v1/repos/$repo/issues/$pr_b/comments" || rc=1
+    got="$(wait_lock_status "$repo" "$head_b" success)"
+    log "B after the unlock and /terragucci plan: terragucci/lock ${got:-none}; locks: $(lock_file "$repo" | jq -c '.locks | map_values(.pr)' 2>/dev/null)"
+    [ "$got" = "success holds canary/one" ] || { log "B did not take canary/one after the unlock"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "A locked canary/one at its first plan, B was answered as locked by A, and took it once A was unlocked"
+  return $rc
+}
+
+claim_plan_lock_release() {
+  # A repo with locks: plan, applying after merge. Pull request A changes
+  # canary/one and locks it; then A merges, and the closed event releases its
+  # lock: canary/one is gone from _locks/tf-apply.json.
+  # BREAK: closed is cut from the pull_request_target types of the committed
+  # pipeline, so nothing releases the lock and A still holds canary/one.
+  log() { echo "[smoke plan-lock-release] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/plan-lock-release" wf head pr got i held rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  plan_lock_repo plan-lock-release || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak '/^  pull_request_target:/,/^[a-z]/{/^      - closed$/d;}' "$wf" && rm -f "$wf.bak"
+  fi
+  wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock-release: first")" || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" change "plan-lock-release: a")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" change "plan-lock-release: a")" || { drop_work "$work"; return 1; }
+  got="$(wait_lock_status "$repo" "$head" success)"
+  log "A ($pr): terragucci/lock ${got:-none}"
+  [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; rc=1; }
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "pull request $pr did not merge"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+      held="$(lock_file "$repo" | jq -r '.locks["canary/one"].pr // empty' 2>/dev/null)"
+      [ -z "$held" ] && break
+      sleep 3
+    done
+    log "after the merge: canary/one is held by ${held:-nobody}"
+    [ -z "$held" ] || { log "the merge of pull request $pr did not release canary/one"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "A held canary/one from its first plan, and its merge released it"
+  return $rc
+}
+
 claim_front_door() {
   # The reports front door template the site offers
   # (docs-site/public/reports-front-door.json) deploys through floci's
@@ -6209,6 +6339,8 @@ cdf-iam              self! weight=250
 approve-command      runner self! weight=250
 tg-pr-apply          runner self! weight=300
 tg-pr-apply-lock     runner self! weight=300
+plan-lock            runner self! weight=250
+plan-lock-release    runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

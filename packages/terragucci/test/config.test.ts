@@ -107,6 +107,8 @@ describe("validation", () => {
     [{ apply: { when: "pull-request", merge: "auto", merge_token_env: "merge-token" } }, /config\.apply\.merge_token_env must name the secret holding the token the merge is made with/],
     [{ apply: { when: "pull-request", merge_token_env: "MERGE_TOKEN" } }, /config\.apply\.merge_token_env is set, and only apply\.merge: auto merges/],
     [{ forge: "gitlab", apply: { when: "pull-request" } }, /config\.apply\.when: pull-request is not supported on GitLab/],
+    [{ locks: "always" }, /config\.locks is "always"; use one of apply, plan/],
+    [{ forge: "gitlab", locks: "plan" }, /config\.locks: plan is not supported on GitLab, where every apply runs after merge/],
   ])("%j is refused", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(message);
   });
@@ -120,6 +122,9 @@ describe("validation", () => {
     [{ apply: { when: "pull-request" } }],
     [{ apply: { when: "pull-request", merge: "auto" } }],
     [{ apply: { when: "pull-request", merge: "auto", merge_token_env: "MERGE_TOKEN" } }],
+    [{ locks: "plan" }],
+    [{ locks: "apply", forge: "gitlab" }],
+    [{ locks: "plan", apply: { when: "pull-request" }, forge: "forgejo" }],
     [{ binary: "tofu", terragrunt: { credentials: { "live/prod/**": { plan: "arn:aws:iam::111:role/plan", apply: "arn:aws:iam::111:role/apply" } } } }],
   ])("%j is accepted as written", (raw) => {
     expect(validateConfig(raw, "t")).toEqual(raw);

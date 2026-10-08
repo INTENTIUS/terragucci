@@ -51,7 +51,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	locks: {
 		mark: 'good',
-		text: 'A project applies one push at a time; a pull request applied before merge holds its roots, or its Terragrunt units, until it merges or closes, and /terragucci unlock releases them (GitHub and Forgejo)',
+		text: 'A project applies one push at a time; a pull request holds its roots, or its Terragrunt units, from its first plan with locks: plan or when it applies before merge, until it merges or closes, and /terragucci unlock releases them (GitHub and Forgejo)',
 		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {

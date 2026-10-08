@@ -85,9 +85,12 @@ An unreadable default-branch config fails the wave before anything applies.
 |---|---|
 | The change applies | each root it reaches is locked |
 | `/terragucci lock` on the change, by anyone with write access | each root it reaches is locked, and nothing applies; the reply names the roots |
-| Another change reaches a locked root | refused; the reply names the root and the holder |
+| With [`locks: plan`](/terragucci/reference/config/#plan-locks), the change is opened, pushed to or re-planned with `/terragucci plan` | each root its head reaches is locked; roots it no longer reaches are released; `terragucci/lock` passes, naming them |
+| Another change reaches a locked root | refused; the reply names the root and the holder, and with `locks: plan` its `terragucci/lock` fails |
 | The holder merges or closes | released |
 | `/terragucci unlock` on the holder, by anyone with write access | released; the reply names what it released |
+
+A change refused by a plan lock is not queued. Comment `/terragucci plan` on it once the holder merges, closes or is unlocked.
 
 In a Terragrunt repo the locks are on units, worked out from git without running Terragrunt:
 

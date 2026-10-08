@@ -452,6 +452,172 @@ async function decideLock(i: OpenInput): Promise<ApplyCommentDecision> {
   return { go: false, reason: text };
 }
 
+// ── locks: plan, the pr-lock job ─────────────────────────────────────────
+
+/** The status the pr-lock job posts on the head it locked, or could not lock. */
+export const LOCK_CONTEXT = "terragucci/lock";
+
+/**
+ * `terragucci pr-lock`, the decision of the `pr-lock` job under `locks:
+ * plan`. The job runs the default branch's workflow on `pull_request_target`
+ * and on comments, and checks out none of the pull request's code: it reads
+ * the change's diff, and its `terragrunt.hcl` files in a Terragrunt repo, as
+ * data from git (reachedRoots, reachedUnits).
+ *
+ * A pull request of this repository that is opened, reopened or pushed to,
+ * or that a writer comments `/terragucci plan` on, takes the locks of the
+ * roots its head reaches, as a plan lock, and drops its plan locks on roots
+ * the head no longer reaches. It posts `terragucci/lock` on the head:
+ * success naming what it holds, or failure, with a reply naming each root
+ * another open pull request holds and the hint to plan again once that one
+ * merges, closes or is unlocked. A closed pull request, merged or not,
+ * releases its locks. Under `apply.when: merge` the job also reads
+ * `/terragucci lock` (the same as a plan) and `/terragucci unlock`; under
+ * `pull-request` those are the apply-comment job's. A fork's pull request
+ * takes no lock.
+ */
+export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyCommentDecision> {
+  const env = o.env ?? process.env;
+  const doFetch: Fetch = o.fetch ?? fetch;
+  const git: Git = o.git ?? ((args) => spawnSync("git", args, { encoding: "utf-8" }) as ReturnType<Git>);
+  const repoDir = o.repo ?? process.cwd();
+  const stop = (reason: string): ApplyCommentDecision => ({ go: false, reason });
+  const broke = (reason: string): ApplyCommentDecision => ({ go: false, fail: true, reason });
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (!eventPath) return broke("pr-lock reads the event file; GITHUB_EVENT_PATH is not set");
+  let event: any;
+  try {
+    event = JSON.parse(readFileSync(eventPath, "utf-8"));
+  } catch (e) {
+    return broke(`could not read the event file ${eventPath} (${(e as Error).message})`);
+  }
+  if (event === null || typeof event !== "object") return broke(`the event file ${eventPath} is not a JSON object`);
+  const { api, repo, token } = apiOf(env);
+  const call = async (method: string, path: string, body?: unknown): Promise<any> => {
+    const r = await doFetch(`${api}/${path}`, {
+      method,
+      headers: { "content-type": "application/json", authorization: `token ${token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
+    return r.status === 204 ? null : r.json();
+  };
+  const replyOn = (number: number) => async (text: string): Promise<void> => {
+    try {
+      await call("POST", `repos/${repo}/issues/${number}/comments`, { body: `terragucci: ${text}` });
+    } catch (e) {
+      console.error(`terragucci: could not reply: ${(e as Error).message}`);
+    }
+  };
+  const runUrl = env.GITHUB_SERVER_URL && env.GITHUB_RUN_ID ? `${env.GITHUB_SERVER_URL}/${repo}/actions/runs/${env.GITHUB_RUN_ID}` : undefined;
+  const status = async (sha: string, state: "success" | "failure", description: string): Promise<void> => {
+    try {
+      await call("POST", `repos/${repo}/statuses/${sha}`, { state, context: LOCK_CONTEXT, description: description.length > 140 ? `${description.slice(0, 137)}...` : description, ...(runUrl ? { target_url: runUrl } : {}) });
+    } catch (e) {
+      console.error(`terragucci: could not post ${LOCK_CONTEXT}: ${(e as Error).message}`);
+    }
+  };
+  const base = event.repository?.default_branch;
+  const what = o.terragrunt ? "unit" : "root";
+
+  /** Lock what the head of an open pull request of this repository reaches, as a plan lock. */
+  const lockHead = async (pr: any, number: number, reply: (text: string) => Promise<void>): Promise<ApplyCommentDecision> => {
+    if (pr?.state !== "open" || pr?.merged === true) return stop(`pull request ${number} is not open, so it takes no lock`);
+    if (pr?.head?.repo?.full_name !== repo) return stop(`pull request ${number} comes from a fork, so it takes no lock`);
+    if (!validBranch(base)) return broke("the event names no default branch this command passes on");
+    if (pr?.base?.ref !== base) return stop(`pull request ${number} targets ${String(pr?.base?.ref)}, not ${base}, so it takes no lock`);
+    const sha = pr?.head?.sha;
+    const headRef = pr?.head?.ref;
+    if (typeof sha !== "string" || !SHA.test(sha)) return broke(`pull request ${number}'s head is not a commit`);
+    if (!validBranch(headRef)) return broke(`pull request ${number}'s head branch has a name this command does not pass on`);
+    const remote = `refs/remotes/origin/${base}`;
+    const headRemote = "refs/remotes/terragucci/pull-request-head";
+    const fetched = git(["fetch", "-q", "origin", `+refs/heads/${base}:${remote}`, `+refs/heads/${headRef}:${headRemote}`]);
+    if (fetched.status !== 0) return broke(`could not fetch ${base} and ${headRef} (${fetched.stderr.trim()})`);
+    // A head that moved since the event is the next event's to lock.
+    if (git(["rev-parse", headRemote]).stdout.trim() !== sha) return stop(`pull request ${number} moved since this event; its next run locks the new head`);
+    const reach = o.terragrunt ? reachedUnits(git, remote, sha, o.layers) : { units: reachedRoots(repoDir, git, remote, sha, o.layers) };
+    const author = typeof pr?.user?.login === "string" && LOGIN.test(pr.user.login) ? pr.user.login : "its author";
+    let locked;
+    try {
+      locked = await takeLocks(repoDir, reach.units, { pr: number, by: author, at: new Date().toISOString(), head: sha, stage: "plan" }, async (n) => (await call("GET", `repos/${repo}/pulls/${n}`))?.state === "open", { release: true });
+    } catch (e) {
+      return broke(`could not take the ${what} locks (${(e as Error).message})`);
+    }
+    if (!locked.ok) {
+      const text = `${describeHeld(locked.held)}, so pull request ${number} is not locked. Comment \`/terragucci plan\` on it once that pull request merges or closes, or someone with write access comments \`/terragucci unlock\` on it`;
+      await status(sha, "failure", `locked by pull request ${[...new Set(locked.held.map((h) => h.pr))].join(", ")}: ${locked.held.map((h) => h.root).join(", ")}`);
+      await reply(text);
+      return stop(text);
+    }
+    const holds = locked.taken.length ? `holds ${locked.taken.join(", ")}` : `reaches no ${what}`;
+    await status(sha, "success", reach.every ? `${holds}: every ${what}` : holds);
+    const freed = locked.released?.length ? `; released ${locked.released.join(", ")}, which its head no longer reaches` : "";
+    return stop(`pull request ${number} at ${short(sha)} ${holds}${freed}${reach.every ? ` (${everyUnit(number, reach.every)})` : ""}`);
+  };
+
+  if (event.pull_request && typeof event.pull_request === "object") {
+    const number = event.pull_request.number ?? event.number;
+    if (!Number.isInteger(number) || number < 1) return stop("the event has no pull request number");
+    if (event.action === "closed") {
+      let released: string[];
+      try {
+        released = releaseLocks(repoDir, number);
+      } catch (e) {
+        return broke(`could not release the locks of pull request ${number} (${(e as Error).message})`);
+      }
+      return stop(released.length ? `pull request ${number} closed, so its locks on ${released.join(", ")} are released` : `pull request ${number} closed and held no lock`);
+    }
+    if (!["opened", "reopened", "synchronize"].includes(event.action)) return stop(`a pull request ${String(event.action)} event takes no lock`);
+    return lockHead(event.pull_request, number, replyOn(number));
+  }
+
+  if (event.action !== "created") return stop("not a new comment");
+  const parsed = parseComment(event.comment?.body);
+  const prMode = o.when === "pull-request";
+  // Under apply.when: pull-request the apply-comment job holds /terragucci lock and unlock.
+  if (!parsed || !(parsed.kind === "plan" || (!prMode && (parsed.kind === "lock" || parsed.kind === "unlock")))) return stop("another job reads this comment");
+  const number = event.issue?.number;
+  if (!Number.isInteger(number) || number < 1) return stop("the comment has no issue number");
+  if (!event.issue?.pull_request && event.issue?.is_pull !== true) return stop("the comment is not on a pull request");
+  const user = event.comment?.user?.login;
+  if (typeof user !== "string" || !LOGIN.test(user)) return stop("the comment has no usable author");
+  const reply = replyOn(number);
+  // Only a writer moves a lock; a plan comment from anyone else is the replan job's to ignore.
+  if (o.forge === "forgejo") {
+    if (event.repository?.full_name !== repo) return stop("the event is not for this repository");
+    if (event.sender?.login !== user) return stop("the comment's author is not the event's sender");
+    const p = event.repository?.permissions;
+    if (p?.push !== true && p?.admin !== true) return stop(`${user} has no write access, so no lock moves`);
+  } else {
+    let permission: unknown;
+    try {
+      permission = (await call("GET", `repos/${repo}/collaborators/${encodeURIComponent(user)}/permission`))?.permission;
+    } catch (e) {
+      return broke(`could not read ${user}'s permission, so no lock moves (${(e as Error).message})`);
+    }
+    if (typeof permission !== "string" || !MAY_APPLY.has(permission)) return stop(`${user} has no write access, so no lock moves`);
+  }
+  if (parsed.kind === "unlock") {
+    let released: string[];
+    try {
+      released = releaseLocks(repoDir, number);
+    } catch (e) {
+      return broke(`could not release the locks of pull request ${number} (${(e as Error).message})`);
+    }
+    const text = released.length ? `released the locks pull request ${number} held on ${released.map((r) => `\`${r}\``).join(", ")}, for ${user}` : `pull request ${number} holds no lock`;
+    await reply(text);
+    return stop(text);
+  }
+  let pr: any;
+  try {
+    pr = await call("GET", `repos/${repo}/pulls/${number}`);
+  } catch (e) {
+    return broke(`could not read pull request ${number} (${(e as Error).message})`);
+  }
+  return lockHead(pr, number, reply);
+}
+
 /** How many times a pull request the forge has not finished checking is read again, and how long between reads. */
 const MERGEABLE_READS = 5;
 const MERGEABLE_WAIT_MS = 3000;
