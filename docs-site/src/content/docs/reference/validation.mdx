@@ -19,11 +19,14 @@ Every pipeline feature has a check that runs on a local Forgejo against an AWS e
 
 These are the features proven on each forge. Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
 
-The github.com claims run the newest published release against real GitHub: its pull request events, statuses, comments and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account. That has two limits:
+The github.com claims run the newest published release against real GitHub: its pull request events and statuses, comments and reviews, and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account. That has these limits:
 
 | Limit | What runs instead |
 |---|---|
 | no cloud role | `oidc` checks each job's token against GitHub's published keys, its repo, run, audience and role, and trades it with nothing; the trade with STS is proven on Forgejo |
+| no bucket | report upload credentials are proven on Forgejo, against the AWS emulator; the estate page's scheduled job does not run here |
+| one GitHub account | the refusals of a commenter with no write access and of a pull request from a fork are proven on Forgejo |
+| no model key | the agent comment and the refused-wave job run a stand-in agent that makes one edit or prints the summary input |
 | no broken run | these claims are not broken on purpose, so they read "passes" |
 
 <ValidationClaims />
