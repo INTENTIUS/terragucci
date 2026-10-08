@@ -56,3 +56,5 @@ The wave's plans now differ from the approved ones. It applies nothing and the j
 `npx terragucci respond wave-refused --approved <approved report> --current <current report> --wave 4` prints what changed; [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) describes the reports.
 
 If the new plan is what you meant, approve the new digest and run the job again. Otherwise revert the change.
+
+Had the job run between steps 2 and 3, wave 4 would have applied the destroy under your approval, and the module bump's wave 4 would wait for an approval of its own instead of refusing.

@@ -281,7 +281,8 @@ audit-override|the audit record keeps a policy refusal after its report is repla
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
 notify-chat|with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each|
-cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|'
+cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
+approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -9463,6 +9464,68 @@ JS
   return $rc
 }
 
+claim_approval_used() {
+  # Push the fixture; wave 1 waits. Approve it and push again: canary/one
+  # applies, and the wave records on chant/lifecycle that it used the
+  # approval. Then change canary/one and push: wave 1 plans another digest,
+  # and since the approval it has applied under is used, it waits with the
+  # approve command for the new digest instead of refusing.
+  # BREAK: the record of the apply is emptied on chant/lifecycle before the
+  # change, so the approval reads as one of plans that never applied: stale,
+  # and the moved wave is refused.
+  log() { echo "[smoke approval-used] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/approval-used" sha applied logs first second clone rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo approval-used || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "approval-used: first")"
+  wait_run "$repo" "$sha"
+  first="$(run_logs "$repo" "$RUN_ID" | grep -o 'chant approve tf-apply wave-1 --plan [^ ]*' | head -1 | sed 's/.* //' || true)"
+  [ -n "$first" ] || { log "wave 1 did not wait with its approve command"; rc=1; }
+  if [ $rc = 0 ]; then
+    gated_approve approval-used 1 || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "approval-used: after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied approval-used)"
+    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply on the approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    clone="$work/lifecycle"
+    git clone -q -b chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    jq -e --arg d "$first" 'select(.gate == "wave-1" and .planDigest == $d)' "$clone/_gates/tf-apply/applied.jsonl" >/dev/null 2>&1 \
+      || { log "chant/lifecycle holds no record that wave 1 applied under the approval of $first"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    : > "$clone/_gates/tf-apply/applied.jsonl"
+    git -C "$clone" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -q -am "forget the apply" || rc=1
+    git -C "$clone" push -q origin chant/lifecycle || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/canary/one/rev.txt"
+    sha="$(push_tree "$work/tree" "$repo" main "approval-used: change canary/one after its approved wave applied")"
+    wait_run "$repo" "$sha"
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    second="$(grep -o 'chant approve tf-apply wave-1 --plan [^ ]*' <<<"$logs" | head -1 | sed 's/.* //' || true)"
+    log "after the change: run $RUN_STATUS, approve command for ${second:-nothing}"
+    grep -qE 'changed after it was approved|planned differently since' <<<"$logs" && { log "wave 1 was refused on the approval it already applied under"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -qE "wave 1 of [0-9]+ waits for an approval of digest $second" <<<"$logs" || { log "wave 1 did not wait for an approval of its new digest"; rc=1; }
+    [ -n "$second" ] && [ "$second" != "$first" ] || { log "the approve command names ${second:-no digest}, not a new one"; rc=1; }
+    grep -qE "the approval of [^ ]+ by smoke-approver was used by the apply of those plans" <<<"$logs" || { log "the run did not say the earlier approval was used"; rc=1; }
+    [ "$(gated_applied approval-used)" = "canary/one " ] || { log "a root applied with nothing approved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the approval wave 1 applied under refused nothing; the moved wave waits for an approval of $second"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -9668,6 +9731,7 @@ audit-refused        weight=150
 audit-control        weight=150
 notify-chat          runner self! weight=150
 cost-estimate        runner self! weight=150
+approval-used        runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
