@@ -204,7 +204,7 @@ Only `approval: sealed` reads it. With that key in `terragucci.yml`, `terragucci
    | `cert-authority` | ignored |
    | a pattern principal (`*`, `?`, `!`) | ignored |
 
-   To move the file, set its path in `.chant/trust.json`, e.g. `{"signers": "security/allowed_signers"}`. The agent comment refuses changes to it.
+   To move the file, set its path in `.chant/trust.json`, e.g. `{"schema": 1, "signers": "security/allowed_signers"}`. The agent comment refuses changes to it.
 
 2. List people only. An agent's or CI job's key does not belong here.
 

@@ -3592,9 +3592,12 @@ claim_drift_attribute() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   tree="$work/tree"
   fresh_repo drift-attribute || return 1
+  # The queue carries a tag: floci reads an untagged queue's tags as {} where
+  # the state holds null, a tags drift that no run clears.
   respond_tree "$work" "$repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
   name                       = \"$queue\"
   visibility_timeout_seconds = 30
+  tags                       = { owner = \"smoke\" }
 }")"
   [ -n "${BREAK:-}" ] || printf 'respond:\n  drift: attribute\n' >> "$tree/terragucci.yml"
   push_tree "$tree" "$repo" main "a queue with a literal timeout" >/dev/null || return 1
@@ -5928,11 +5931,6 @@ claim_cdf_concurrency() {
   # through in turn. Both waves must apply, the records hold left-1 and
   # right-2, both writes carry If-Match, neither report lists a lock wait, and
   # nothing lock-shaped is in the bucket.
-  # Pending on #418: choudoufu 0.22.0 (and its main at fc94cceeee) rewrites
-  # the record of every instance of the estate on apply, those its plan left
-  # alone included, each under If-Match. So the wave that writes the other
-  # wave's unchanged resource second fails with a record store write
-  # conflict: nothing is overwritten, but both do not apply.
   # BREAK: the same two waves in stock OpenTofu, with the estate in one state
   # file under use_lockfile. The first wave holds the estate lock while its
   # state write is held, so the second waits for the lock and never reaches
@@ -7043,8 +7041,8 @@ claim_otlp_headers() {
   note_repo "$work/repo" "$(printf 'forge: forgejo\nbinary: tofu\nenv:\n  OTEL_EXPORTER_OTLP_ENDPOINT: http://%s:4318\ntelemetry:\n  headers_secret: OTLP_HEADERS' "$name")"
   (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; rc=1; }
   if [ $rc = 0 ]; then
-    # shellcheck disable=SC2016 # the expression the forge expands
-    grep -qF 'OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTLP_HEADERS }}' "$work/repo/.forgejo/workflows/terragucci.yml" \
+    # The YAML writer quotes the forge expression; quoted or not it is the same value.
+    grep -qE "OTEL_EXPORTER_OTLP_HEADERS: '?\\\$\\{\\{ secrets\\.OTLP_HEADERS \\}\\}'?\$" "$work/repo/.forgejo/workflows/terragucci.yml" \
       || { log "the pipeline does not map OTLP_HEADERS into OTEL_EXPORTER_OTLP_HEADERS"; rc=1; }
     git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke otlp: pipeline"
   fi
@@ -7142,9 +7140,12 @@ claim_drift_close() {
   [ -n "${BREAK:-}" ] && back=45
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo drift-close || return 1
+  # The queue carries a tag: floci reads an untagged queue's tags as {} where
+  # the state holds null, a tags drift that no run clears.
   respond_tree "$work" "$repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
   name                       = \"$queue\"
   visibility_timeout_seconds = 30
+  tags                       = { owner = \"smoke\" }
 }")"
   push_tree "$work/tree" "$repo" main "a queue with a timeout of 30" >/dev/null || return 1
   curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
@@ -7941,7 +7942,7 @@ claim_signer_trust() {
     || { log "init --signer did not write the approver key"; rc=1; }
   mkdir -p "$work/tree/security"
   mv "$work/tree/.chant/allowed_signers" "$work/tree/security/allowed_signers"
-  printf '{"signers": "%s"}\n' "$path" > "$work/tree/.chant/trust.json"
+  printf '{"schema": 1, "signers": "%s"}\n' "$path" > "$work/tree/.chant/trust.json"
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "signer-trust: first")"
     wait_run "$repo" "$sha" || rc=1
@@ -8662,9 +8663,15 @@ provider "aws" {
     sleep 5
   done
   [ -z "$left" ] || { log "not firing after 3 minutes:$left"; rc=1; }
-  for q in terragucci-apply-success terragucci-drift-corrected; do
-    curl -fsS -G "$promurl/api/v1/query" --data-urlencode "query=slo:sli_error:ratio_rate5m{slo=\"$q\"}" | jq -e '.data.result | length > 0' >/dev/null 2>&1 \
-      || { log "the $q SLO records nothing"; rc=1; }
+  # Each SLO records from its shortest window: 5m for apply success, 2h for
+  # drift corrected. The 2h window samples every 5m on the clock, so it
+  # records at the first 5-minute mark after the drift run, within 5 minutes.
+  for q in terragucci-apply-success:5m terragucci-drift-corrected:2h; do
+    for i in $(seq 1 72); do
+      curl -fsS -G "$promurl/api/v1/query" --data-urlencode "query=slo:sli_error:ratio_rate${q#*:}{slo=\"${q%:*}\"}" | jq -e '.data.result | length > 0' >/dev/null 2>&1 && break
+      [ "$i" = 72 ] && { log "the ${q%:*} SLO records nothing in its ${q#*:} window"; rc=1; }
+      sleep 5
+    done
   done
   [ -n "$url" ] && sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
   stand_in_down

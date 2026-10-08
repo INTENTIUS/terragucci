@@ -715,12 +715,28 @@
       "commit": "6a8d796"
     },
     {
+      "claim": "otlp-headers",
+      "says": "telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f9098c3"
+    },
+    {
       "claim": "pinned-install",
       "says": "a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "commit": "6a8d796"
+    },
+    {
+      "claim": "drift-close",
+      "says": "a drift run that finds no drift closes the drift issue an earlier run opened",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f9098c3"
     },
     {
       "claim": "estate-control",
@@ -795,12 +811,28 @@
       "commit": "6a8d796"
     },
     {
+      "claim": "highlight-sensitive",
+      "says": "IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f9098c3"
+    },
+    {
       "claim": "pending-expiry",
       "says": "a pending fact past its 48 hours is recorded afresh by the next run of its wave",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "commit": "6a8d796"
+    },
+    {
+      "claim": "signer-trust",
+      "says": "init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f9098c3"
     },
     {
       "claim": "rollout-control",
@@ -875,6 +907,14 @@
       "commit": "6a8d796"
     },
     {
+      "claim": "alerts-fire",
+      "says": "with short thresholds every alert init writes fires on its signal, and the apply-success and drift-corrected SLOs record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f9098c3"
+    },
+    {
       "claim": "blob-gcs-key",
       "says": "with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key",
       "needs": null,
@@ -897,6 +937,46 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "6a8d796"
+    },
+    {
+      "claim": "cdf-shared-bucket",
+      "says": "with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f9098c3"
+    },
+    {
+      "claim": "audit",
+      "says": "terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time, the request, and the apply that names its approval; --check passes and the estate page links the audit page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4c27247"
+    },
+    {
+      "claim": "audit-override",
+      "says": "the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4c27247"
+    },
+    {
+      "claim": "audit-refused",
+      "says": "a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4c27247"
+    },
+    {
+      "claim": "audit-control",
+      "says": "terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4c27247"
     }
   ]
 }
