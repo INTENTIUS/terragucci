@@ -192,7 +192,7 @@ stack-for config:
     done
     case " $profiles " in *" forgejo "*|*" github "*|*" gitlab "*) ;; *) stack/bootstrap.sh aws ;; esac
 
-[doc("Remove every container, network and volume the validation stack started.")]
+[doc("Remove every container, network and volume the validation stack started, except the job cache (just job-cache-prune).")]
 stack-down:
     #!/usr/bin/env bash
     set -euo pipefail

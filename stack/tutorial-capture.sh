@@ -319,6 +319,8 @@ pr_in_output() { grep -o 'pulls/[0-9]*' "$STAGE/last.out" | tail -1 | cut -d/ -f
 step_boot() {
   # A reader's first boot starts from nothing, so the capture does too.
   "$HERE/down.sh" >/dev/null 2>&1 || true
+  # forge() exported the old stack's token and URLs; the new stack makes its own.
+  unset TERRAGUCCI_FORGEJO_URL TERRAGUCCI_FORGEJO_TOKEN TERRAGUCCI_FORGEJO_USER TERRAGUCCI_FORGEJO_REPO TERRAGUCCI_FLOCI_URL
   run_cmd boot "just example up" "$HERE/example.sh" up
   forge
   shot boot repo "$FORGEJO"
