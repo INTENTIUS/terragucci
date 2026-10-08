@@ -681,6 +681,222 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught"
+    },
+    {
+      "claim": "config-ts",
+      "says": "init writes the pipeline from a terragucci.ts folded as data, and config check refuses a terragucci.ts that reads process.env at its line",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "role-refused",
+      "says": "config check and init refuse an oidc block that names one role for plan and apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "description-check",
+      "says": "with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "decide-backends",
+      "says": "decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "pinned-install",
+      "says": "a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "estate-control",
+      "says": "terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "estate-override",
+      "says": "the estate page counts the roots applied under a policy override, in estate.json and estate.html",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "note-stale",
+      "says": "a push to the default branch that changes a root an open pull request planned marks its plan note stale",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "pr-confirm",
+      "says": "with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "pr-base-config",
+      "says": "with apply.when: pull-request a pull request that sets gate: never still waits at the gate of the default branch",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "pr-guard",
+      "says": "with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "pr-close-release",
+      "says": "with apply.when: pull-request closing a pull request releases the roots it locked",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "tg-lock-fanout",
+      "says": "in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "token-scrub",
+      "says": "the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "pending-expiry",
+      "says": "a pending fact past its 48 hours is recorded afresh by the next run of its wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "rollout-control",
+      "says": "from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "rollout-pins",
+      "says": "rollout moves an oci:// tag and a registry version pin, each in the shape it had",
+      "needs": null,
+      "verdict": "fail",
+      "break": "fail",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "policy-opa",
+      "says": "with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "policy-hcp",
+      "says": "with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "policy-hcl",
+      "says": "with a policies.hcl a mandatory policy denies the wave and an advisory one warns",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "tg-policy",
+      "says": "in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "tg-credentials",
+      "says": "in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "tg-dependents",
+      "says": "terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "tg-terraform",
+      "says": "in a Terragrunt repo with binary: terraform the pipeline installs Terraform and Terragrunt applies every unit with it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "blob-gcs-key",
+      "says": "with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "blob-azure-key",
+      "says": "with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
+    },
+    {
+      "claim": "index-writes",
+      "says": "two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6a8d796"
     }
   ]
 }
