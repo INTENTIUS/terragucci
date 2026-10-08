@@ -24,6 +24,7 @@ The ledger is `_gates/tf-apply.jsonl` on the [`chant/lifecycle`](/terragucci/con
 | `approval` | An approval counts when | Setup |
 |---|---|---|
 | `ledger` (default) | it names the wave's digest. Anyone who can push to `chant/lifecycle` can write one in anyone's name: it binds the plans, not the person. | none |
+| `pr-review` | the merged pull request's head was approved by a writer other than its author and the wave plans what the review saw, or, as under `ledger`, it names the digest | GitHub or Forgejo; optionally require `terragucci/approval` |
 | `sealed` | it names the digest and its seal verifies against the signers file at base | [Set up signers](#set-up-signers) |
 
 `terragucci config check` prints the mode in force and where it comes from. A wave reads it at base, so a change to it governs the merges after it.
@@ -59,7 +60,7 @@ Under `approval: sealed` only. Once per repo, in a reviewed pull request to the 
 A waiting wave exits with code 3 and prints the command. Read the plans in the report. Then run the command with your name, and your key under `sealed`.
 
 <Tabs syncKey="approval">
-  <TabItem label="ledger (default)">
+  <TabItem label="ledger (default) or pr-review">
     ```bash
     npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
     ```
@@ -72,6 +73,21 @@ A waiting wave exits with code 3 and prints the command. Read the plans in the r
 </Tabs>
 
 The sign-off covers the `--plan` set digest only. Then re-run the job, or comment `/terragucci apply` on the pull request (GitHub or Forgejo; merged, or open with `apply.when: pull-request`).
+
+## Approve by review
+
+Under `approval: pr-review`, approve the pull request on its head before it merges; each gated wave then applies when it plans what the review saw ([the steps](/terragucci/guides/approve-a-wave/#approve-by-review-approvalpr-review)).
+
+<Tabs syncKey="forge">
+  <TabItem label="GitHub">
+    Files changed > Review changes > Approve, with write access. `terragucci/approval` on the head turns success.
+  </TabItem>
+  <TabItem label="Forgejo">
+    Files changed > Review > Approve, as an official reviewer. `terragucci/approval` on the head turns success.
+  </TabItem>
+</Tabs>
+
+A wave whose plans moved after the review exits 4 with the `chant approve` command for the new digest. The ledger line it records for a review carries `"via": "pr-review"`, the pull request, its head and the reviewers.
 
 ## List the waves waiting for an approval
 

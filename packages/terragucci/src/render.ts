@@ -48,7 +48,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, NO_GITLAB_PR_REVIEW, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -115,6 +115,8 @@ export interface PipelineInput {
   gate?: Gate;
   /** A control repo's `approval:`, which the project's repo has no config to carry: the waves' `--approval`. */
   approval?: Approval;
+  /** `approval: pr-review`: the plan job and a review job post `terragucci/approval` on the pull request's head. GitHub and Forgejo. */
+  prReview?: boolean;
   /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
   respond?: Partial<Record<RespondEvent, string>>;
   /** `policy:` is set; the check job then runs the policy's tests, which read the policy from the default branch, so it clones with full history. */
@@ -818,6 +820,8 @@ export interface PlanReportInput {
   description?: boolean;
   /** The agent comment is on, so a re-plan leaves `/terragucci agent` comments to the agent job. */
   agentComment?: boolean;
+  /** `approval: pr-review`: after the note, post `terragucci/approval` on the head (review.ts). */
+  prReview?: boolean;
 }
 
 /**
@@ -911,6 +915,8 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     "  # The first line says which roots the note covers, so an apply can mark it stale.",
     `  { echo "<!-- terragucci:plan roots=$(node -e '${PLANNED_JS}' ${REPORT_DIR}/report.json) -->"; cat ${REPORT_DIR}/note.md; } >"$note"`,
     '  tg note "$note"',
+    // Under pr-review the head says whether a wave the gate will hold has an approving review of it, so branch protection can require one.
+    ...(report.prReview ? [`  terragucci approval-status --forge ${forge} --report ${REPORT_DIR} || echo "terragucci/approval was not posted"`] : []),
     "fi",
     'if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi',
     'tg status terragucci/plan success "$counts"',
@@ -1058,6 +1064,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
+  // approval: pr-review posts terragucci/approval from the plan job and a review job; GitLab has none.
+  if (input.prReview && forge === "gitlab") throw new RenderError(`approval: ${NO_GITLAB_PR_REVIEW}`);
+  const prReview = input.prReview === true;
   // A job asks the forge for an OIDC token when it assumes a role, by oidc or by unit path.
   const needsToken = Boolean(oidc || credentials);
   // The canary wave comes from the repo's terragucci.yml at plan time, so a repo
@@ -1066,6 +1075,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(input.reports ? { reports: input.reports } : {}),
     ...(responds(input.respond, "description") ? { description: true } : {}),
     ...(tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n") } } : {}),
+    ...(prReview ? { prReview: true } : {}),
   };
   const drift = input.drift;
   const roots = layers.flat().sort();
@@ -1253,6 +1263,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       pull_request: {},
       // `/terragucci plan [root]` in a pull request comment re-plans it (comment.ts); `/terragucci apply` on a merged one re-runs its apply (comment-apply.ts).
       issue_comment: { types: ["created"] },
+      // approval: pr-review: a review of the head re-posts terragucci/approval.
+      ...(prReview ? { pull_request_review: {} } : {}),
       ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
     },
     env: jobEnv,
@@ -1397,6 +1409,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         new Step({ uses: "actions/checkout@v4" }),
         new Step({ name: "Merge the pull request whose every wave applied", shell: "bash", run: mergeScript(forge) }),
       ],
+    } as never) as never);
+  }
+  if (prReview) {
+    // A review of the head says again whether the waves the gate will hold are approved.
+    entities.set("approval", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      if: `github.event_name == 'pull_request_review' && ${sameRepo}`,
+      permissions: { contents: "read", statuses: "write", "pull-requests": "read" },
+      env: { TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_PR: "${{ github.event.pull_request.number }}" },
+      steps: [new Step({ name: "Say on the head whether its waiting waves are approved", shell: "bash", run: `terragucci approval-status --forge ${forge}` })],
     } as never) as never);
   }
   if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);

@@ -40,6 +40,11 @@
 #              stage). init adds the include of .gitlab/terragucci.yml and
 #              keeps the job; a push to a branch goes green, the repo's job
 #              runs in the test stage, and terragucci's check runs beside it.
+#   pr-review  forgejo: the root with approval: pr-review and gate: always. A
+#              push to main waits at wave 1. A pull request that adds a
+#              resource to the root is approved on its head by a second user
+#              with write access and merged: the merge's wave 1 applies with no
+#              chant approve, and the bucket exists.
 #
 # The images are the ones the generated pipeline pins by digest; the runner
 # (gitlab-runner, or act on the host) pulls each the first time.
@@ -50,6 +55,7 @@
 # `|| exit $?` after each job's heredoc, so the waiting job ends with 1;
 # own-jobs writes terragucci's jobs over the repo's .gitlab-ci.yml, as init
 # did before it kept the file, so the repo's job is gone.
+# pr-review merges with no review, so wave 1 waits and nothing applies.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,7 +71,8 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review)" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in forgejo:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo here" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
@@ -265,6 +272,46 @@ YML
   log "the repo's own job ran in the test stage, and terragucci's check ran beside it"
 }
 
+# approval: pr-review on Forgejo: the review of a pull request's head applies
+# its gated wave once merged.
+run_pr_review() {
+  local repo=validate-review who="validate-reviewer" pass="validate-$RANDOM-$RANDOM-Aa1" rtoken sha head pr merge code
+  forge_reset_repo "$repo"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
+  prepare "$WORK/main"
+  printf 'approval: pr-review\ngate: always\n' > "$WORK/main/terragucci.yml"
+  (cd "$WORK/main" && "$TERRAGUCCI" init --forge "$FORGE" --binary tofu >/dev/null) || fail "init failed with approval: pr-review"
+  grep -q "pull_request_review" "$WORK/main/$PIPELINE_FILE" || fail "the pipeline has no pull_request_review trigger"
+  sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
+  log "pushed to $repo main at ${sha:0:8}; wave 1 waits"
+  forge_run "$repo" main "$sha"
+  [ "$(bucket_code "$BUCKET")" = 404 ] || fail "wave 1 applied with no approval"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$who?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg u "$who" --arg p "$pass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" || fail "could not make $who"
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"write"}' "$URL/api/v1/repos/$USER/$repo/collaborators/$who" || fail "could not give $who write access"
+  rtoken="$(curl -fsS -u "$who:$pass" -H 'content-type: application/json' -X POST -d '{"name":"validate","scopes":["write:repository","write:issue"]}' "$URL/api/v1/users/$who/tokens" | jq -r '.sha1 // empty')"
+  [ -n "$rtoken" ] || fail "no token for $who"
+  printf 'resource "terraform_data" "reviewed" {\n  input = "reviewed"\n}\n' > "$WORK/main/infra/reviewed.tf"
+  head="$(forge_push "$WORK/main" "$repo" change "$(msg)")"
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"change","base":"main","title":"validate pr-review"}' "$URL/api/v1/repos/$USER/$repo/pulls" | jq -r '.number // empty')"
+  [ -n "$pr" ] || fail "no pull request opened"
+  wait_run "$USER/$repo" "$head" pull_request || fail "the pull request was not planned"
+  if [ -z "$BREAK" ]; then
+    curl -fsS -o /dev/null -H "Authorization: token $rtoken" -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg c "$head" '{event: "APPROVED", body: "read the plans", commit_id: $c}')" "$URL/api/v1/repos/$USER/$repo/pulls/$pr/reviews" || fail "$who could not approve"
+    log "$who approved pull request $pr on ${head:0:8}"
+  fi
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$USER/$repo/pulls/$pr/merge" || fail "pull request $pr did not merge"
+  merge="$(api "$URL/api/v1/repos/$USER/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+  [ -n "$merge" ] || fail "pull request $pr has no merge commit"
+  forge_run "$repo" main "$merge"
+  code="$(bucket_code "$BUCKET")"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$who?purge=true" 2>/dev/null || true
+  if [ "$code" != 200 ]; then forge_logs; fail "the merge did not apply wave 1 on the review: $BUCKET answered $code"; fi
+  grep -q "was approved on its head ${head:0:8} by $who" "$RUN_LOG" || { forge_logs; fail "wave 1 did not say the review approved it"; }
+  log "the merge's wave 1 applied on $who's review of ${head:0:8}, and $BUCKET exists"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -284,6 +331,7 @@ case "$CLAIM" in
     ;;
   gate-wait) run_gate_wait ;;
   own-jobs) run_own_jobs ;;
+  pr-review) run_pr_review ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done

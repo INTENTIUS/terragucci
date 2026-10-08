@@ -1916,3 +1916,23 @@ describe("GCP and Azure credentials", () => {
     expect(() => validateConfig({ oidc: { plan_role: "r", gcp: GCP } }, "t")).toThrow(/apply_role must name a role/);
   });
 });
+
+describe("approval: pr-review", () => {
+  it.each(["github", "forgejo"] as const)("%s: the plan job posts terragucci/approval after the note, and a review of the head re-posts it", (forge) => {
+    const doc = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, prReview: true }).content);
+    expect(Object.keys(doc.on)).toContain("pull_request_review");
+    const plan = doc.jobs.plan.steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-plan")).run as string;
+    expect(plan.indexOf(`terragucci approval-status --forge ${forge} --report terragucci-report`)).toBeGreaterThan(plan.indexOf('tg note "$note"'));
+    expect(doc.jobs.approval.if).toContain("github.event_name == 'pull_request_review'");
+    expect(doc.jobs.approval.permissions).toEqual({ contents: "read", statuses: "write", "pull-requests": "read" });
+    expect(doc.jobs.approval.steps[0].run).toBe(`terragucci approval-status --forge ${forge}`);
+  });
+
+  it("is not in a pipeline without it, and GitLab refuses it", () => {
+    const doc = body(render("github"));
+    expect(Object.keys(doc.on)).not.toContain("pull_request_review");
+    expect(doc.jobs.approval).toBeUndefined();
+    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, prReview: true })).toThrow(/pr-review is not supported on GitLab/);
+    expect(() => validateConfig({ forge: "gitlab", approval: "pr-review" }, "t")).toThrow(/pr-review is not supported on GitLab/);
+  });
+});

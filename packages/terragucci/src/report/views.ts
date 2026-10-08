@@ -8,6 +8,7 @@ import {
   type PlanSummary, type PlanSummaryChange,
 } from "@intentius/chant/plan-summary";
 import { groupAnchor, rootAnchor } from "./build";
+import { noteMarker } from "./marker";
 import { actionWord, type Report, type ReportNamed } from "./schema";
 import { duration } from "./spans";
 
@@ -150,7 +151,13 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     for (const d of report.deferred) t += `- ${code(d.unit)} after ${d.after.map(code).join(", ")}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;
     blocks.push({ group: false, units: 0, text: t + "\n" });
   }
-  if (report.waves.length > 0) {
+  if (report.waves.some((w) => w.review_digest !== undefined)) {
+    // A plan's waves: the digest of what each changes, which approval: pr-review binds a review to, and whether the gate will hold it.
+    let t = "| Wave | Roots | Digest of its changes | When it applies |\n|---|---|---|---|\n";
+    for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : "no change"} | ${w.waits ? "waits for an approval" : "applies"} |\n`;
+    blocks.push({ group: false, units: 0, text: t + "\n" });
+    head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })) }), "");
+  } else if (report.waves.length > 0) {
     let t = "| Wave | Roots | Set digest | Approval |\n|---|---|---|---|\n";
     for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
     blocks.push({ group: false, units: 0, text: t + "\n" });

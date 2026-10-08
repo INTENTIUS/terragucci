@@ -36,11 +36,50 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 | Mode | Counts | Setup | What it proves |
 |---|---|---|---|
 | `ledger` (default) | any `chant approve` of the digest on `chant/lifecycle`, signed or not | none | someone with push access to `chant/lifecycle` approved these exact plans. Anyone who can push there can write an approval in anyone's name: it binds the plans, not the person. |
+| `pr-review` | the merged pull request's approval of its head, by a reviewer other than its author with write access, when the wave plans what the review saw; and any `chant approve` of the digest, as under `ledger` | GitHub or Forgejo; optionally require `terragucci/approval` in branch protection | a writer other than the author approved the head whose plans these are. A `chant approve` still binds the plans, not the person. |
 | `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
 
-The mode is read at base, like the signers file ([Which commit the rule is read from](#which-commit-the-rule-is-read-from)), and `terragucci config check` prints the mode in force and where it comes from. A repo whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` and whose config names no mode stays `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates.
+A wave reads the mode at base, like the signers file ([Which commit the rule is read from](#which-commit-the-rule-is-read-from)). `terragucci config check` prints the mode in force and its source. A repo whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` and whose config names no mode stays `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates.
 
-## Steps
+## Approve by review (`approval: pr-review`)
+
+GitHub and Forgejo. GitLab's merge request approvals name no commit, so `pr-review` is refused there.
+
+<Steps>
+
+1. Open the pull request's plan note. Its waves table has each wave's digest of its changes and whether the gate will hold it; the note keeps the digests for the apply to compare.
+
+2. Read the plans, then approve the pull request on its head.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       Files changed > Review changes > Approve, from an account with write access.
+     </TabItem>
+     <TabItem label="Forgejo">
+       Files changed > Review > Approve. Forgejo marks the review official when you have write access, and only an official one counts.
+     </TabItem>
+   </Tabs>
+
+   The author's own approval never counts. A push after your review needs a fresh one, since a review counts only on the commit it names, and a latest review that asks for changes holds every wave back.
+
+3. Check `terragucci/approval` on the head. It is pending while a wave the gate will hold has no approving review, and success once it has. Require it in branch protection to keep such a change from merging unreviewed.
+
+   | Forge | Require it under |
+   |---|---|
+   | GitHub | Settings > Branches (or Rules) > the default branch > Require status checks > `terragucci/approval` |
+   | Forgejo | Settings > Branches > the default branch's rule > Status check patterns > `terragucci/approval` |
+
+4. Merge. Each gated wave plans the merge commit and compares the digest of its changes with the one the note recorded for the reviewed head.
+
+   | Outcome | Wave |
+   |---|---|
+   | same digest | records the approval on `chant/lifecycle` (`via: pr-review`, the pull request, its head and the reviewers) and applies |
+   | another digest (the plans moved after the review) | applies nothing, exits 4 and prints the `chant approve` command for the new digest |
+   | no row for the wave in the note, no approving review, or a direct push | waits for a `chant approve`, as under `ledger` |
+
+</Steps>
+
+## Approve with chant
 
 <Steps>
 
@@ -72,7 +111,7 @@ The mode is read at base, like the signers file ([Which commit the rule is read 
 3. Approve it.
 
    <Tabs syncKey="approval">
-     <TabItem label="ledger (default)">
+     <TabItem label="ledger (default) or pr-review">
        ```bash
        npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
        ```
@@ -128,7 +167,7 @@ terragucci's gate reads neither HCP Terraform's run approvals nor its locks. Set
 
 ## Set up the signers file
 
-Only `approval: sealed` reads it. Set `approval: sealed` in `terragucci.yml` and run `terragucci init`, which lists each wave under `identity.gates` so `chant approve` asks for `--sign` too.
+Only `approval: sealed` reads it. With that key in `terragucci.yml`, `terragucci init` lists each wave under `identity.gates`, so `chant approve` asks for `--sign` too.
 
 <Steps>
 

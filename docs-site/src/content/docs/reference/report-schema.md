@@ -29,7 +29,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
-| `waves[]` | number, roots, set digest, approval state (`waiting`, `approved` or `not-required` on a `tf-apply` wave, `not-requested` on a plan) and, on a gated wave, the ledger's branch and path; on a waiting wave, `waiting_since`, when it began waiting for an approval of this digest |
+| `waves[]` | number, roots, set digest, approval state (`waiting`, `approved` or `not-required` on a `tf-apply` wave, `not-requested` on a plan) and, on a gated wave, the ledger's branch and path; on a waiting wave, `waiting_since`, when it began waiting for an approval of this digest; on a plan's wave, `review_digest`, the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to, and `waits`, whether the gate will hold it |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
@@ -53,6 +53,7 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | every destroy, replacement and refusal | `named[]`, filtered on `action` |
 | the roots a group folds | `groups[].units`, matched to `roots[].path` |
 | the digest an approval binds | `waves[].set_digest`, over each root's `roots[].plan_digest` |
+| the digest a pull request review binds | `waves[].review_digest` in the plan report, compared with the same digest the wave plans after the merge |
 | why a root is shown open | `roots[].why` |
 | the full plan of a root | `roots[].plan` |
 | the slowest resources of a run | `timings.resources`, then `roots[].timings.resources` |

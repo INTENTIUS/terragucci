@@ -168,6 +168,8 @@
           "roots": { "type": "array", "items": { "type": "string" } },
           "set_digest": { "type": ["string", "null"] },
           "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
+          "review_digest": { "type": ["string", "null"], "description": "A tf-plan wave's set digest over its roots whose plan changes something, which approval: pr-review binds a review to (minor 9)." },
+          "waits": { "type": "boolean", "description": "A tf-plan wave: whether the gate will hold it when it applies (minor 9)." },
           "gate": {
             "type": "object",
             "required": ["branch", "path"],

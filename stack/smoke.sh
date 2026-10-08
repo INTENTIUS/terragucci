@@ -187,7 +187,10 @@ ledger-default|with no approval key a wave counts an unsigned approval of its se
 approval-at-base|a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger|
 sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|
 estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|
-drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|'
+drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
+pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review|
+pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest|
+pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -5255,6 +5258,147 @@ HCL
   return $rc
 }
 
+# ── approval: pr-review ───────────────────────────────────────────────────
+# Each claim: the gated fixture with approval: pr-review on main (wave 1,
+# canary/one, waits: no pull request made that push), a reviewer with write
+# access (pr_reviewer), and a pull request that changes canary/one.
+
+review_pr() { # name, [reviewer permission] -> REVIEW_PR and REVIEW_HEAD, the pull request open from branch change and planned
+  gated_repo "$1" gated-waves pr-review || return 1
+  local sha
+  sha="$(push_tree "$work/tree" "$USER/$1" main "$1: first")"
+  wait_run "$USER/$1" "$sha" || return 1
+  pr_reviewer "$USER/$1" "reviewer-$1" || return 1
+  [ -z "${2:-}" ] || api -o /dev/null -H 'content-type: application/json' -X PUT -d "{\"permission\":\"$2\"}" "$URL/api/v1/repos/$USER/$1/collaborators/reviewer-$1" || return 1
+  echo 2 > "$work/tree/canary/one/rev.txt"
+  REVIEW_HEAD="$(push_tree "$work/tree" "$USER/$1" change "$1: change canary/one")" || return 1
+  REVIEW_PR="$(pr_open "$USER/$1" change "$1: change canary/one")" || return 1
+  wait_run "$USER/$1" "$REVIEW_HEAD" pull_request || return 1
+}
+
+review_approve() { # name, sha -> the reviewer approves the pull request on sha
+  curl -fsS -o /dev/null -H "Authorization: token $PR_REVIEWER_TOKEN" -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg c "$2" '{event: "APPROVED", body: "read the plans", commit_id: $c}')" "$URL/api/v1/repos/$USER/$1/pulls/$REVIEW_PR/reviews" || { log "the reviewer could not approve pull request $REVIEW_PR"; return 1; }
+}
+
+review_merge() { # name -> REVIEW_MERGE, the merge commit, once its run ended
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$USER/$1/pulls/$REVIEW_PR/merge" || { log "pull request $REVIEW_PR did not merge"; return 1; }
+  REVIEW_MERGE="$(api "$URL/api/v1/repos/$USER/$1/pulls/$REVIEW_PR" | jq -r '.merge_commit_sha // empty')"
+  [ -n "$REVIEW_MERGE" ] || { log "pull request $REVIEW_PR has no merge commit"; return 1; }
+  wait_run "$USER/$1" "$REVIEW_MERGE" push
+}
+
+approval_status() { # name, sha -> the state and description of terragucci/approval on sha
+  api "$URL/api/v1/repos/$USER/$1/commits/$2/statuses?limit=50" | jq -r '[.[] | select(.context == "terragucci/approval")] | sort_by(.id) | last | if . == null then "" else .status + ":" + .description end'
+}
+
+claim_pr_review() {
+  # The reviewer approves the pull request on its head and it merges. Wave 1
+  # plans the merge commit, finds the digest the plan note recorded for that
+  # head, records the approval on chant/lifecycle with via pr-review, and
+  # canary/one applies with no chant approve. Wave 2 (fleet/*), which the pull
+  # request did not reach, waits at its own gate.
+  # BREAK: a second push to the pull request lands after the review, so the
+  # review names an older head and counts for nothing.
+  log() { echo "[smoke pr-review] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-review" applied logs ledger rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  review_pr pr-review || { drop_work "$work"; return 1; }
+  review_approve pr-review "$REVIEW_HEAD" || rc=1
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    echo after > "$work/tree/fleet/two/rev.txt"
+    REVIEW_HEAD="$(push_tree "$work/tree" "$repo" change "pr-review: a push after the review")"
+    wait_run "$repo" "$REVIEW_HEAD" pull_request || rc=1
+  fi
+  [ $rc = 0 ] && { review_merge pr-review || rc=1; }
+  if [ $rc = 0 ]; then
+    applied="$(gated_applied pr-review)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after the merge: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply on the review"; rc=1; }
+    grep -q "pull request $REVIEW_PR was approved on its head ${REVIEW_HEAD:0:8} by reviewer-pr-review" <<<"$logs" || { log "wave 1 did not say the review approved it"; rc=1; }
+    grep -q "chant approve tf-apply wave-2 --plan" <<<"$logs" || { log "wave 2 did not wait at its own gate"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    ledger="$(git clone -q -b chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/ledger" && cat "$work/ledger/_gates/tf-apply.jsonl")"
+    jq -se --argjson pr "$REVIEW_PR" --arg h "$REVIEW_HEAD" 'map(select(.via == "pr-review" and .gate == "wave-1" and .pr == $pr and .head == $h and .reviewers == ["reviewer-pr-review"])) | length == 1' <<<"$ledger" >/dev/null \
+      || { log "the ledger has no via pr-review resolution for wave 1 naming the pull request, its head and the reviewer"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/reviewer-pr-review?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the review of the head applied wave 1, recorded as via pr-review, and wave 2 waited"
+  return $rc
+}
+
+claim_pr_review_moved() {
+  # The reviewer approves the head. Before the merge, a commit on main adds a
+  # resource to canary/one, so the merge commit plans a change the review
+  # never saw: wave 1 applies nothing, exits 4, says the plans changed since
+  # the review and prints the chant approve command for its new digest.
+  # BREAK: nothing lands on main in between, so the merge plans what the
+  # review saw and canary/one applies.
+  log() { echo "[smoke pr-review-moved] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-review-moved" applied logs sha extra rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  review_pr pr-review-moved || { drop_work "$work"; return 1; }
+  review_approve pr-review-moved "$REVIEW_HEAD" || rc=1
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    extra="$(printf 'resource "terraform_data" "extra" {\n  input = "after the review"\n}\n' | base64 | tr -d '\n')"
+    sha="$(api -H 'content-type: application/json' -X POST -d "$(jq -cn --arg c "$extra" '{content: $c, branch: "main", message: "pr-review-moved: a change on main after the review"}')" "$URL/api/v1/repos/$repo/contents/canary/one/extra.tf" | jq -r '.commit.sha // empty')"
+    [ -n "$sha" ] || { log "could not commit to main"; rc=1; }
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" push || rc=1; }
+  fi
+  [ $rc = 0 ] && { review_merge pr-review-moved || rc=1; }
+  if [ $rc = 0 ]; then
+    applied="$(gated_applied pr-review-moved)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after the merge: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a root applied on a review of other plans"; rc=1; }
+    grep -q "but the plans changed since that review, so nothing in it was applied" <<<"$logs" || { log "wave 1 did not say its plans changed since the review"; rc=1; }
+    grep -Eq "chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+" <<<"$logs" || { log "wave 1 printed no chant approve command for its new digest"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/reviewer-pr-review-moved?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "plans that moved after the review applied nothing, and the wave printed the command for its new digest"
+  return $rc
+}
+
+claim_pr_review_status() {
+  # Once the pull request is planned, terragucci/approval on its head is
+  # pending: wave 1 waits under gate always. The reviewer approves the head;
+  # the approval job, started by the review, turns it to success naming the
+  # reviewer.
+  # BREAK: the reviewer has read access only, so Forgejo does not count the
+  # review as official and the status stays pending.
+  log() { echo "[smoke pr-review-status] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work st i rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  review_pr pr-review-status "${BREAK:+read}" || { drop_work "$work"; return 1; }
+  st="$(approval_status pr-review-status "$REVIEW_HEAD")"
+  log "after the plan: terragucci/approval is ${st:-absent}"
+  case "$st" in pending:*"wave 1"*"waits"*) ;; *) log "expected terragucci/approval pending, naming wave 1"; rc=1 ;; esac
+  [ $rc = 0 ] && { review_approve pr-review-status "$REVIEW_HEAD" || rc=1; }
+  if [ $rc = 0 ]; then
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+      st="$(approval_status pr-review-status "$REVIEW_HEAD")"
+      case "$st" in success:*) break ;; esac
+      sleep 3
+    done
+    log "after the review: terragucci/approval is ${st:-absent}"
+    case "$st" in success:*"by reviewer-pr-review-status"*) ;; *) log "expected terragucci/approval success, naming the reviewer"; rc=1 ;; esac
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/reviewer-pr-review-status?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "terragucci/approval was pending while wave 1 waited, and success once the reviewer approved the head"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -5390,6 +5534,9 @@ approval-at-base     runner self! weight=250
 sealed-migrate       runner self! weight=250
 estate               weight=120
 drift-overdue        self! weight=60
+pr-review            runner self! weight=300
+pr-review-moved      runner self! weight=300
+pr-review-status     runner self! weight=250
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
