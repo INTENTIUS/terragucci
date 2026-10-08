@@ -38,7 +38,7 @@ The pipeline is made of [chant](/terragucci/concepts/glossary/#chant) stages. ch
 
    <Shot step="wave-waiting" view="log" alt="Wave 4's apply job stopped with exit code 3, printing the chant approve command with the wave's set digest" />
 
-6. Rerun the job, push, or comment `/terragucci apply`. The wave re-plans and refuses on a changed digest. It never applies a root twice.
+6. Rerun the job, push, or comment `/terragucci apply`. The wave re-plans and refuses on a changed digest. It never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) runs nothing.
 
 7. With `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only` under the plan identity and keeps one issue updated, closing it when drift is gone. It never applies.
 

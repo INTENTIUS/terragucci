@@ -151,7 +151,7 @@ Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and write
 | `run` | `agent` | decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`; a fork or default-branch pull request gets no agent |
 | `push` | `agent-push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them, and commits a passing patch to the pull request's head branch with the `TG_*` variables in [Environment variables](/terragucci/reference/environment/) |
 
-[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths.
+[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
 
 ## comment-apply
 
