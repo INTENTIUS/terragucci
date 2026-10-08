@@ -6,7 +6,7 @@ prompt: |
   For this repo's forge, compare the branch protection, the merge methods and the apply role's trust policy with the page's "Branch protection" tab, reading them through the forge's API or CLI.
   List each setting that differs and what it leaves open; do not change settings, tokens or trust policies yourself.
   Do not run `terragucci override`.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';

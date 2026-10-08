@@ -7,7 +7,7 @@ prompt: |
   Add the `reports:` block for bucket <bucket>, rerun `npx terragucci init`, write
   the IAM policy the page gives as a file for me to review, and open a pull request.
   Do not create the role, the bucket, any secret or the front door stack.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Shot from '../../../components/Shot.astro';

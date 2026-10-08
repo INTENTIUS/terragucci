@@ -4,7 +4,7 @@ description: Opt-in policy checks that run conftest or OPA over each plan and fa
 prompt: |
   Read https://intentius.io/terragucci/reference/policy/.
   Write a Rego policy under the policy directory that denies the rule I name, with tests, and open a pull request.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';

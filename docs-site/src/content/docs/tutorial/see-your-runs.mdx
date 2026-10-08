@@ -11,7 +11,7 @@ prompt: |
   Read https://intentius.io/terragucci/tutorial/see-your-runs/.
   In the terragucci clone with the example booted, run `just see-runs` and tell me what the Pipeline health, Rollouts and waves, Drift and Runs dashboards in Grafana at http://localhost:3310 show, and where they differ from the page.
   `just see-runs` runs the waves of a scratch copy of the example against floci only; that is the one exception to the line below.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Captured from '../../../components/Captured.astro';

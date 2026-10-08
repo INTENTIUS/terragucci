@@ -4,7 +4,7 @@ description: The envelope that init, reconcile, plan, stage, rollout, respond an
 prompt: |
   Read https://intentius.io/terragucci/reference/cli-json/.
   Write a script that runs `npx terragucci plan --json` and branches on the envelope's `exit` and `status` and on `results.roots`, printing each failed root's summary.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 With `--json`, these commands print one JSON object on stdout and nothing else.
