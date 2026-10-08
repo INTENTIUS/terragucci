@@ -30,7 +30,8 @@
 # stack/.state/smoke-logs/<time>); the SMOKE lines print as runs finish, and
 # the record lists claims in CLAIMS order whatever order they finished in.
 #
-# A run whose log has not grown for SMOKE_STALL_MIN minutes (default 10) is
+# A run whose log has not grown for SMOKE_STALL_MIN minutes (default: the
+# claim timeout plus two, 17 for the default 900 s timeout) is
 # stopped and fails as stalled, its last lines and the stack's job containers
 # printed, so nothing waits out a long timeout without anyone looking.
 #
@@ -10066,8 +10067,12 @@ finish_run() { # run
   smoke_line "$line"
 }
 
-SMOKE_STALL_MIN="${SMOKE_STALL_MIN:-10}"
-case "$SMOKE_STALL_MIN" in ''|*[!0-9]*|0) SMOKE_STALL_MIN=10 ;; esac
+# A claim can wait silently for up to its timeout (lib.sh's TIMEOUT) on
+# something its break keeps from happening, so the default allows that plus
+# two minutes: a claim silent past its own timeout is stuck.
+stall_default=$(( ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} / 60 + 2 ))
+SMOKE_STALL_MIN="${SMOKE_STALL_MIN:-$stall_default}"
+case "$SMOKE_STALL_MIN" in ''|*[!0-9]*|0) SMOKE_STALL_MIN=$stall_default ;; esac
 
 # A run whose log has not grown for SMOKE_STALL_MIN minutes: say what it was
 # doing and what the stack is running, stop it and its children, and leave a
