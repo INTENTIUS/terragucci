@@ -89,12 +89,13 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
    ```text
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
+   wrote .gitlab/terragucci.yml
    wrote .gitlab-ci.yml
    wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
-   It writes the whole file; merge your own jobs back in.
+   The jobs go in `.gitlab/terragucci.yml`. A `.gitlab-ci.yml` you already have keeps its jobs and gains an `include:` of that file; [add terragucci to a repo](/terragucci/guides/add-to-a-repo/) has the cases.
 
    </TabItem>
    <TabItem label="Forgejo">

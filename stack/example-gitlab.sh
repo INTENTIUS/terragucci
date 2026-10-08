@@ -117,13 +117,15 @@ ci_var() { # key value [masked]
 }
 
 # The example as a GitLab repo commits it: Forgejo's workflow out, forge:
-# gitlab in terragucci.yml, and the pipeline 'terragucci init' writes from it.
+# gitlab in terragucci.yml, and the pipeline 'terragucci init' writes from it:
+# the jobs in .gitlab/terragucci.yml and a .gitlab-ci.yml that includes them.
 gitlab_tree() { # dir (holding the example)
   rm -rf "$1/.forgejo"
   echo "forge: gitlab" >> "$1/terragucci.yml"
   (cd "$1" && { [ -d .git ] || git init -q -b main; } && "$TERRAGUCCI" init >/dev/null 2>&1) \
     || fail "terragucci init failed on the example with forge: gitlab"
-  [ -f "$1/.gitlab-ci.yml" ] || fail "terragucci init wrote no .gitlab-ci.yml"
+  [ -f "$1/.gitlab/terragucci.yml" ] || fail "terragucci init wrote no .gitlab/terragucci.yml"
+  grep -q 'local: .gitlab/terragucci.yml' "$1/.gitlab-ci.yml" 2>/dev/null || fail "terragucci init wrote no .gitlab-ci.yml that includes .gitlab/terragucci.yml"
 }
 
 clone_main() { # dir

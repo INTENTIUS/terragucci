@@ -29,6 +29,7 @@ import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
 import { agentCommentInput } from "./agent-comment";
+import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, type PipelineInput } from "./render";
 import { terragruntInstalls } from "./render-terragrunt";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
@@ -236,6 +237,11 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
+  // On GitLab the repo's own .gitlab-ci.yml includes the pipeline; its jobs stay.
+  if (forgeChoice.value === "gitlab") {
+    const root = join(repo, GL_ROOT_FILE);
+    files.push(plan(root, gitlabCi(existsSync(root) ? readFileSync(root, "utf-8") : undefined, pipeline.content)));
+  }
 
   // Dashboards and alert rules, next to the pipeline, when terragucci.yml asks for them.
   const dashboards = dashboardSettings(settings.dashboards);

@@ -186,7 +186,7 @@ What differs from the Forgejo example:
 
 | | Forgejo (`just example`) | GitLab (`just example-gitlab`) |
 |---|---|---|
-| Pipeline | `example/.forgejo/workflows/terragucci.yml`, committed | `.gitlab-ci.yml`, written at push time by `terragucci init` with `forge: gitlab` added to `terragucci.yml` |
+| Pipeline | `example/.forgejo/workflows/terragucci.yml`, committed | `.gitlab/terragucci.yml` and the `.gitlab-ci.yml` that includes it, written at push time by `terragucci init` with `forge: gitlab` added to `terragucci.yml` |
 | Image | pushed by tag, digest pins stripped (`push_tree`) | the same |
 | Approve | `chant approve` only; the reader re-runs the stage | `chant approve`, then the waiting `apply-wave-N` job is retried, as the docs tell a GitLab reader to |
 | Drift | `change drift` deletes the queue | deletes the queue, then runs the pipeline schedule `terragucci drift` (made on first use) |
