@@ -25,6 +25,11 @@
 #                                     the docs tell a GitLab reader to, and wait for
 #                                     the pipeline. With no argument, the wave the
 #                                     last pipeline on main printed an approval for.
+#   stack/example-gitlab.sh comments  make the comments schedule (TERRAGUCCI_SCHEDULE
+#                                     set to comments) if there is none, play it,
+#                                     and show what the comments job answered: write
+#                                     /terragucci plan or /terragucci apply on a merge
+#                                     request first, signed in as root
 #   stack/example-gitlab.sh logs      the last failed pipeline's failing lines
 #   stack/example-gitlab.sh reset     close every merge request, put main back to
 #                                     the example as committed, and apply it again
@@ -121,7 +126,8 @@ ci_var() { # key value [masked]
 # the jobs in .gitlab/terragucci.yml and a .gitlab-ci.yml that includes them.
 gitlab_tree() { # dir (holding the example)
   rm -rf "$1/.forgejo"
-  echo "forge: gitlab" >> "$1/terragucci.yml"
+  # The comments job answers /terragucci notes on the comments schedule.
+  printf 'forge: gitlab\ncomments: "*/5 * * * *"\n' >> "$1/terragucci.yml"
   (cd "$1" && { [ -d .git ] || git init -q -b main; } && "$TERRAGUCCI" init >/dev/null 2>&1) \
     || fail "terragucci init failed on the example with forge: gitlab"
   [ -f "$1/.gitlab/terragucci.yml" ] || fail "terragucci init wrote no .gitlab/terragucci.yml"
@@ -410,6 +416,36 @@ OUT
     printf '  Retried   %s/-/jobs/%s\n  Pipeline  %s (%s)\n' "$URL/$REPO" "$new" "$PIPE_URL" "$PIPE_STATUS"
     held_lines "$PIPE_ID" | sed 's/^/  /'
     if [ "$PIPE_STATUS" = success ]; then clone_main "$WORK/tree"; verify_tree "$WORK/tree"; fi
+    ;;
+
+  comments)
+    # Merge request notes start no pipeline on GitLab: the comments schedule's
+    # pipeline reads them. One with the example's cron is made once and runs
+    # every five minutes while the stack is up; this plays it now.
+    cron="$(cd "$WORK" && clone_main tree && sed -n 's/^comments: *"\(.*\)"/\1/p' tree/terragucci.yml)"
+    [ -n "$cron" ] || fail "main's terragucci.yml sets no comments schedule; run 'just example-gitlab reset' first"
+    sched="$(api "$P/pipeline_schedules" | jq -r '.[] | select(.description == "terragucci comments") | .id' | head -1)"
+    if [ -z "$sched" ]; then
+      sched="$(api -X POST "$P/pipeline_schedules" --data-urlencode "description=terragucci comments" \
+        --data-urlencode "ref=main" --data-urlencode "cron=$cron" --data-urlencode "active=true" | jq -r .id)"
+      api -o /dev/null -X POST "$P/pipeline_schedules/$sched/variables" --data-urlencode "key=TERRAGUCCI_SCHEDULE" --data-urlencode "value=comments"
+      log "made the comments schedule ($cron, TERRAGUCCI_SCHEDULE=comments)"
+    fi
+    before="$(api "$P/pipelines?source=schedule&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+    # GitLab plays a schedule once a minute at most.
+    for _ in $(seq 1 7); do api -o /dev/null -X POST "$P/pipeline_schedules/$sched/play" 2>/dev/null && break; sleep 10; done
+    id="$before"
+    for _ in $(seq 1 60); do
+      id="$(api "$P/pipelines?source=schedule&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+      [ "$id" -gt "$before" ] && break
+      sleep 2
+    done
+    [ "$id" -gt "$before" ] || fail "the comments schedule started no pipeline"
+    wait_pipeline "$(api "$P/pipelines/$id" | jq -r .sha)" schedule
+    job="$(api "$P/pipelines/$PIPE_ID/jobs" | jq -r '.[] | select(.name == "comments") | .id' | head -1)"
+    [ -n "$job" ] || fail "pipeline $PIPE_ID has no comments job"
+    printf '\n  Comments run  %s (%s)\n' "$PIPE_URL" "$PIPE_STATUS"
+    trace "$job" | grep '^terragucci comment:' | sed 's/^/  /' || true
     ;;
 
   logs)
