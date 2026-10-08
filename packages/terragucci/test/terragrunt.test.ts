@@ -318,8 +318,8 @@ describe("init in a Terragrunt repo", () => {
     expect(applyRun("apply-wave-4")).toContain(`terragucci stage tf-apply --wave 4 --layers ${layers} --binary tofu --gate on-destroy --terragrunt --rest`);
     expect(apply).not.toContain("-auto-approve");
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
-    // Each wave's gate is declared, so an approval of it counts only when sealed.
-    expect(JSON.parse(r.files.find((f) => f.path.endsWith("chant.workspace.json"))!.content).identity.gates).toEqual({ "wave-1": {}, "wave-2": {}, "wave-3": {}, "wave-4": {} });
+    // approval: ledger is the default, so no gate is declared for a seal.
+    expect(r.files.find((f) => f.path.endsWith("chant.workspace.json"))).toBeUndefined();
     for (const job of ["plan", "apply-wave-1", "apply-wave-4", "apply-comment"]) {
       expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === "actions/cache@v4")?.with.path).toBe(".terragrunt-cache");
     }

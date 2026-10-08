@@ -43,7 +43,7 @@ Merge it with `just example merge destroy`, or in Forgejo signed in with the acc
 
 <Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing chant approve tf-apply wave-4 with the plan's digest" optional />
 
-Read the wave's plans in the report first. The [`chant approve`](/terragucci/concepts/glossary/#chant) command carries the digest the wave planned, so the approval covers those plans and no others. In your own repo you run it with your own key, listed in `.chant/allowed_signers`; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets that up.
+Read the wave's plans in the report first. The [`chant approve`](/terragucci/concepts/glossary/#chant) command carries the digest the wave planned, so the approval covers those plans and no others. The example's [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists its wave gates, so it runs `approval: sealed` and the approval needs a key listed in `.chant/allowed_signers`. In your own repo the default is `approval: ledger`, which needs no key; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows both.
 
 In the example, use the generated key:
 

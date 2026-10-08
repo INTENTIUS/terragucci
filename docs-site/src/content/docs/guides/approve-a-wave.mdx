@@ -26,8 +26,19 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 | A gate | `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits ([Gate policy](/terragucci/reference/stages/#gate-policy)). |
 | [chant](/terragucci/concepts/glossary/#chant) | `npm i -D @intentius/chant`, where you approve. |
 | Write access | `chant approve` pushes a commit to `chant/lifecycle` with your own git credentials. |
-| Your key in the signers file | An ssh key of yours in `.chant/allowed_signers` on the default branch ([setup](#set-up-the-signers-file), once per repo). |
+| Under `approval: sealed` only | An ssh key of yours in `.chant/allowed_signers` on the default branch ([setup](#set-up-the-signers-file), once per repo). |
 | To be a person | Nothing signs off for you. |
+
+## Approval modes
+
+`approval` in `terragucci.yml` decides which approvals count. Every mode binds the wave's set digest: an approval of other plans is refused as changed.
+
+| Mode | Counts | Setup | What it proves |
+|---|---|---|---|
+| `ledger` (default) | any `chant approve` of the digest on `chant/lifecycle`, signed or not | none | someone with push access to `chant/lifecycle` approved these exact plans. Anyone who can push there can write an approval in anyone's name: it binds the plans, not the person. |
+| `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
+
+The mode is read at base, like the signers file ([Which commit the rule is read from](#which-commit-the-rule-is-read-from)), and `terragucci config check` prints the mode in force and where it comes from. A repo whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` and whose config names no mode stays `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates.
 
 ## Steps
 
@@ -43,8 +54,10 @@ One wave applied, with an approval recorded in your repo that names the exact pl
    | GitLab | failed, the command as its description; GitLab cannot move a running status back to pending, and a running one holds the pipeline open |
 
    ```text
-   chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --sign
+   chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3...
    ```
+
+   Under `approval: sealed` the command ends in `--sign`.
 
    In the example, `just example change destroy` opens a destroy and `just example merge destroy` merges it. The report has a Waves table with each wave's set digest and state.
 
@@ -58,15 +71,26 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
 3. Approve it.
 
-   ```bash
-   npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
-   ```
+   <Tabs syncKey="approval">
+     <TabItem label="ledger (default)">
+       ```bash
+       npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
+       ```
+
+       `--actor` is the name the record carries. Nothing checks it.
+     </TabItem>
+     <TabItem label="sealed">
+       ```bash
+       npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
+       ```
+
+       `--actor` is your principal in `.chant/allowed_signers`; a seal counts only for a listed principal. `--sign` seals with your key, or git's `user.signingkey` when `gpg.format` is `ssh`. The seal covers the record, so an edited record no longer verifies.
+     </TabItem>
+   </Tabs>
 
    The approval binds the `--plan` digest only; a wave that plans differently is refused as changed. Without `--plan`, chant binds whatever is pending, maybe plans you did not read, so always pass it.
 
-   `--actor` is your principal in `.chant/allowed_signers`; a seal counts only for a listed principal. `--sign` seals with your key, or git's `user.signingkey` when `gpg.format` is `ssh`.
-
-   Left out, `--actor` falls back by forge. On your own machine only `$USER` is set, so pass `--actor` with the principal you listed.
+   Left out, `--actor` falls back by forge. On your own machine only `$USER` is set, so pass `--actor`.
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
@@ -82,9 +106,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 
    <Captured step="wave-refused" cmd="just example approve" optional />
 
-   The record names the wave's set digest, which hashes every root's plan digest. The seal covers the record, so an edited record no longer verifies.
-
-   `init` lists each wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson). Once it names any gate, every wave needs a seal that verifies against the signers file at base.
+   The record names the wave's set digest, which hashes every root's plan digest.
 
 4. Run the stage again.
 
@@ -92,9 +114,9 @@ One wave applied, with an approval recorded in your repo that names the exact pl
    |---|---|
    | `apply.when: merge` (the default), GitHub or Forgejo | Comment `/terragucci apply` on the merged pull request (add `wave-2` to stop after that wave), or re-run the job. Needs write access. |
    | `apply.when: merge`, GitLab | Retry the job. |
-   | `apply.when: pull-request` | Comment `/terragucci apply` on the open pull request again. Signers come from the default branch, so the pull request cannot add its own approver. The forge's review is also required. |
+   | `apply.when: pull-request` | Comment `/terragucci apply` on the open pull request again. The mode and the signers come from the default branch, so the pull request cannot relax them or add its own approver. The forge's review is also required. |
 
-   The comment approves nothing. A wave without a sealed approval waits, with the command in the reply; one whose plans changed is refused; otherwise it applies, resuming where it stopped. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
+   The comment approves nothing. A wave without an approval that counts in its mode waits, with the command in the reply; one whose plans changed is refused; otherwise it applies, resuming where it stopped. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
 
    The report then shows the wave as approved, linked to its record.
 
@@ -105,6 +127,8 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 terragucci's gate reads neither HCP Terraform's run approvals nor its locks. Set workspaces to local execution. Remote execution adds HCP's own approvals and locks.
 
 ## Set up the signers file
+
+Only `approval: sealed` reads it. Set `approval: sealed` in `terragucci.yml` and run `terragucci init`, which lists each wave under `identity.gates` so `chant approve` asks for `--sign` too.
 
 <Steps>
 
@@ -135,7 +159,7 @@ terragucci's gate reads neither HCP Terraform's run approvals nor its locks. Set
 
 ### Which commit the rule is read from
 
-The signers file, `.chant/trust.json` and `chant.workspace.json` are read from base, the applied commit's first parent. A pull request's change to them governs only later merges.
+The `approval` key in `terragucci.yml`, the signers file, `.chant/trust.json` and `chant.workspace.json` are read from base, the applied commit's first parent. A pull request's change to them governs only later merges: one that switches `sealed` to `ledger` is still judged sealed.
 
 | Merge method | Base is | Safe |
 |---|---|---|
@@ -144,13 +168,13 @@ The signers file, `.chant/trust.json` and `chant.workspace.json` are read from b
 | Rebase of one commit | the default branch before the merge | yes |
 | Rebase of several commits | the pull request's own next-to-last commit | no: merge with a merge commit or a squash |
 
-Sealing turns off for later merges when `chant.workspace.json` is deleted or its `identity.gates` emptied, so that change needs the same review as the signers file. The [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses it.
+Sealing turns off for later merges when `approval` changes to `ledger`, or, with no `approval` key, when `chant.workspace.json` is deleted or its `identity.gates` emptied, so those changes need the same review as the signers file. The [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses it.
 
 ## Who can push to `chant/lifecycle`
 
 Approvers push records as fast-forwards with their own credentials. The apply job pushes pending records with its token (`github.token`, or `GITLAB_TOKEN` on GitLab); on GitHub no rule can tell it from another workflow.
 
-The seal decides what counts: a line whose seal does not verify against the signers file at base counts for nothing. Protection keeps history from being rewritten.
+Under `sealed` the seal decides what counts: a line whose seal does not verify against the signers file at base counts for nothing. Under `ledger` every line of the digest counts, so who can push here is who can approve. Protection keeps history from being rewritten.
 
 | Forge | Protect `chant/lifecycle` with |
 |---|---|

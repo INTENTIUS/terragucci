@@ -59,7 +59,7 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
    | Choice | Command | Result |
    |---|---|---|
-   | Keep the new plan | `npx chant approve tf-apply wave-2 --plan <new digest> --sign`, then run the stage again ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
+   | Keep the new plan | `npx chant approve tf-apply wave-2 --plan <new digest>` (add `--sign` under `approval: sealed`), then run the stage again ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
    | Drop it | Revert the change on the default branch. | The old approval does not come back: the refused run recorded a newer pending fact, so the wave waits for a fresh `chant approve`. |
 
 </Steps>

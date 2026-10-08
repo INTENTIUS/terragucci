@@ -173,15 +173,13 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
 ## Before your first approval
 
-Only approving needs this. Approvals are sealed with an ssh key.
+Only approving needs this.
 
 <Steps>
 
-1. Install [chant](/terragucci/concepts/glossary/#chant) where you approve: `npm i -D @intentius/chant`.
+1. Install [chant](/terragucci/concepts/glossary/#chant) where you approve: `npm i -D @intentius/chant`. With the default `approval: ledger`, that is all.
 
-2. Add your public key to `.chant/allowed_signers` in a reviewed pull request to the default branch ([format](/terragucci/guides/approve-a-wave/#set-up-the-signers-file)).
-
-3. Merge it before the first change that destroys something. A merge counts only keys listed before it.
+2. Only with `approval: sealed`: add your public key to `.chant/allowed_signers` in a reviewed pull request to the default branch ([format](/terragucci/guides/approve-a-wave/#set-up-the-signers-file)), and merge it before the first change that destroys something. A merge counts only keys listed before it.
 
 </Steps>
 

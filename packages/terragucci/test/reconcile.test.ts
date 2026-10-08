@@ -59,9 +59,9 @@ describe("reconcile", () => {
     const { fetch, calls } = recordingFetch();
     const out = await reconcile(config, { mode: "dry-run", fetch, env: {} });
     expect(out.map((o) => [o.key, o.status, o.changes.map((c) => c.path)])).toEqual([
-      ["github.com/acme/infra", "would-change", [".github/workflows/terragucci.yml", "chant.workspace.json"]],
-      ["gitlab.example.com/platform/network", "would-change", [".gitlab-ci.yml", "chant.workspace.json"]],
-      ["codeberg.org/acme/edge", "would-change", [".forgejo/workflows/terragucci.yml", "chant.workspace.json"]],
+      ["github.com/acme/infra", "would-change", [".github/workflows/terragucci.yml"]],
+      ["gitlab.example.com/platform/network", "would-change", [".gitlab-ci.yml"]],
+      ["codeberg.org/acme/edge", "would-change", [".forgejo/workflows/terragucci.yml"]],
     ]);
     expect(calls).toEqual([]);
     expect(() => git(bares.github, "rev-parse", "--verify", BRANCH)).toThrow();

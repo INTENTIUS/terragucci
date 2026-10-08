@@ -119,3 +119,4 @@ Exit 0 when handled. An unknown event or a missing flag exits 2 with `results` n
 | `file` | the config file read |
 | `ok` | whether it has no problems |
 | `problems` | a list of strings; a config with problems exits 2 |
+| `approval` | for a repo's own config with no problems: `mode` (`ledger` or `sealed`), `source` (the key, [`identity.gates`](/terragucci/concepts/glossary/#identitygates), or the default) and a `note` when the repo should change something |

@@ -6,6 +6,10 @@
   "results": {
     "file": "terragucci.yml",
     "ok": true,
-    "problems": []
+    "problems": [],
+    "approval": {
+      "mode": "ledger",
+      "source": "the default"
+    }
   }
 }

@@ -21,7 +21,7 @@ prompt: |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, and pushes an agent's change; the generated pipeline runs it |
 | `comment-apply` | reads a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
-| `config check` | validates the config file and lists every problem |
+| `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `install` | fetches a release of OpenTofu, Terraform, Terragrunt or [choudoufu](/terragucci/concepts/glossary/#choudoufu), verified against its checksums |
@@ -30,19 +30,20 @@ prompt: |
 ## init
 
 ```bash
-terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--force] [--dry-run]
+terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|sealed] [--force] [--dry-run]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--forge` | the forge, when the remote cannot tell |
 | `--binary` | the binary, when detection picks the wrong one: `tofu`, `terraform` or `choudoufu` |
+| `--approval` | `ledger` or `sealed`, when the config names no mode; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `--dry-run` | compute everything and write nothing |
 | `--force` | overwrite a pipeline file terragucci did not write |
 
 A flag detection would not reach goes into a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
 
-`init` also writes chant's `chant.workspace.json`, with each wave's gate (`wave-1`, `wave-2`) under [`identity.gates`](/terragucci/concepts/glossary/#identitygates), so a wave counts only an approval sealed with [`chant approve --sign`](/terragucci/concepts/glossary/#chant). An existing file gains missing gates. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
+Under `approval: sealed`, `init` also writes chant's `chant.workspace.json`, with each wave's gate (`wave-1`, `wave-2`) under [`identity.gates`](/terragucci/concepts/glossary/#identitygates), so a wave counts only an approval sealed with [`chant approve --sign`](/terragucci/concepts/glossary/#chant); an existing file gains missing gates. Under `ledger`, the default, it writes none, and with `approval: ledger` set it drops the wave gates an earlier `init` listed. `--approval ledger|sealed` picks the mode and saves it to `terragucci.yml` when detection would not reach it. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
 
 ## reconcile
 
@@ -61,7 +62,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
     [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
-    [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
+    [--gate always|on-destroy|never] [--approval ledger|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
 ```
 
 | Flag | Environment | Meaning |
@@ -87,7 +88,8 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 |---|---|---|
 | `--wave` | | the wave to apply |
 | `--gate` | | `always`, `on-destroy` (the default) or `never` |
-| `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
+| `--approval` | | the mode when the config at base names none and `chant.workspace.json` there lists no gate; a control repo's pipeline passes it |
+| `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, approval mode, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
 
 ## publish
 

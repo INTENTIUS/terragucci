@@ -19,6 +19,13 @@ import { parseYAML } from "@intentius/chant/yaml";
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
 export const GATES = ["always", "on-destroy", "never"] as const;
+/**
+ * What counts as the approval of a waiting wave (`approval:`). `ledger` (the
+ * default): any `chant approve` of the wave's set digest on chant/lifecycle,
+ * signed or not. `sealed`: only one sealed with a key the signers file at
+ * base lists for its approver. Every mode binds the digest.
+ */
+export const APPROVALS = ["ledger", "sealed"] as const;
 /** Every stage runs on the forge's CI. */
 export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
@@ -41,6 +48,7 @@ export const APPLY_REQUIRES = ["approved", "mergeable", "undiverged", "checks"] 
 export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
 export type Gate = (typeof GATES)[number];
+export type Approval = (typeof APPROVALS)[number];
 export type Runtime = (typeof RUNTIMES)[number];
 export type Dependents = (typeof DEPENDENTS)[number];
 export type PolicyEngine = (typeof POLICY_ENGINES)[number];
@@ -233,6 +241,8 @@ export interface ProjectSettings {
   url?: string;
   /** When a wave waits for an approval. */
   gate?: Gate;
+  /** What counts as a waiting wave's approval; see APPROVALS. Read from the config at base, never the applied commit's own. */
+  approval?: Approval;
   /** When a change applies; see ApplySettings. */
   apply?: ApplySettings;
   waves?: { canary?: string[] };
@@ -342,7 +352,7 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "apply", "waves", "drift", "runtime",
+  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "waves", "drift", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
 ]);
 
@@ -376,6 +386,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
+  oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems);
   if (s.forge === "gitlab" && isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.apply.when: ${NO_GITLAB_PR_APPLY}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
