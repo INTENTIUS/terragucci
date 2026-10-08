@@ -1,6 +1,6 @@
 ---
 // The home page's two ends. `part="top"` (the default) is the wordmark, the
-// tagline and what terragucci is; the cards that route by goal follow it in
+// tagline and where it runs, then what it does; the cards that route by goal follow it in
 // index.mdx. `part="agent"` is the prompt to hand a coding agent, further down
 // the page: the setup prompt from src/prompts.ts, which the agents page and the
 // README carry too. The tagline is the one the README and the site description
@@ -21,10 +21,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 		<h1 class="claim">CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check</h1>
 
 		<p class="lede">
-			One grouped plan note per pull request; <a href={`${base}/concepts/glossary/#root`}>roots</a> applied in waves, with a destroy waiting for an
-			approval bound to its <a href={`${base}/concepts/glossary/#set-digest`}>set digest</a>; scheduled drift reports. CI does this: every
-			job runs in your <a href={`${base}/concepts/glossary/#forge`}>forge's</a> CI and lands in your git and your bucket, with no account and
-			no sign-in. <a href={`${base}/concepts/how-it-works/`}>How it works</a>.
+			CI does this: every job runs in your <a href={`${base}/concepts/glossary/#forge`}>forge's</a> CI and lands in your git and your
+			bucket. No account, no sign-in, no platform. Each pull request gets one grouped plan note,
+			<a href={`${base}/concepts/glossary/#root`}>roots</a> apply in waves with a destroy waiting for an approval bound to its
+			<a href={`${base}/concepts/glossary/#set-digest`}>set digest</a>, and drift is reported on a schedule.
+			<a href={`${base}/concepts/how-it-works/`}>How it works</a>.
 		</p>
 	</section>
 ) : (
