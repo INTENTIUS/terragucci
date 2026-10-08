@@ -36,6 +36,10 @@
 #              exit code 3 and prints chant approve, no status call is
 #              refused, terragucci/apply is failed with the wave's command,
 #              and the bucket does not exist.
+#   own-jobs   gitlab only: a repo with its own .gitlab-ci.yml (one job, no
+#              stage). init adds the include of .gitlab/terragucci.yml and
+#              keeps the job; a push to a branch goes green, the repo's job
+#              runs in the test stage, and terragucci's check runs beside it.
 #
 # The images are the ones the generated pipeline pins by digest; the runner
 # (gitlab-runner, or act on the host) pulls each the first time.
@@ -43,7 +47,9 @@
 # BREAK=1 breaks the property each claim is about: a check claim puts its bad
 # file in the clean push; an apply claim drops the apply job so the run stays
 # green; reconcile runs a dry run, which opens nothing; gate-wait drops the
-# `|| exit $?` after each job's heredoc, so the waiting job ends with 1.
+# `|| exit $?` after each job's heredoc, so the waiting job ends with 1;
+# own-jobs writes terragucci's jobs over the repo's .gitlab-ci.yml, as init
+# did before it kept the file, so the repo's job is gone.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,8 +65,9 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs)" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
 case "$FORGE:$CLAIM" in forgejo:check|forgejo:apply|forgejo:reconcile) echo "forgejo's $CLAIM is validate.sh's own; this script runs its tg-* and cdf-* claims" >&2; exit 2 ;; esac
 
@@ -230,6 +237,34 @@ run_gate_wait() {
   log "the pipeline ended failed, the wave's job ended with exit code 3, terragucci/apply is failed with the wave's command, and nothing applied"
 }
 
+# A repo that has its own .gitlab-ci.yml before init: one job naming no
+# stage, which GitLab puts in test. It prints its stage, so the log shows it
+# ran and where.
+run_own_jobs() {
+  local repo=validate-own dir="$WORK/own" sha
+  forge_reset_repo "$repo"
+  rm -rf "$dir"; mkdir -p "$dir"
+  cp -R "$FIXTURE/infra" "$dir/"
+  cat > "$dir/.gitlab-ci.yml" <<'YML'
+# The repo's own pipeline, before terragucci.
+unit-tests:
+  script:
+    - echo "own job ran in stage $CI_JOB_STAGE"
+YML
+  (cd "$dir" && git init -q -b main && "$TERRAGUCCI" init --binary tofu >/dev/null && rm -f terragucci.yml)
+  [ -f "$dir/$PIPELINE_FILE" ] || fail "init wrote no $PIPELINE_FILE"
+  grep -q 'local: .gitlab/terragucci.yml' "$dir/.gitlab-ci.yml" || fail "init added no include of $PIPELINE_FILE to the repo's .gitlab-ci.yml"
+  grep -q '^unit-tests:' "$dir/.gitlab-ci.yml" || fail "init dropped the repo's own job from .gitlab-ci.yml"
+  [ -n "$BREAK" ] && cp "$dir/$PIPELINE_FILE" "$dir/.gitlab-ci.yml"
+  sha="$(forge_push "$dir" "$repo" validate/own "$(msg)")"
+  log "pushed the repo with its own .gitlab-ci.yml to $repo validate/own at ${sha:0:8}"
+  forge_run "$repo" validate/own "$sha"
+  if [ "$RUN_STATUS" != success ]; then forge_logs; fail "the pipeline ended '$RUN_STATUS'; expected success"; fi
+  grep -q "own job ran in stage test" "$RUN_LOG" || { forge_logs; fail "the repo's own job did not run in the test stage"; }
+  grep -q "^----- job 'check' -----" "$RUN_LOG" || { forge_logs; fail "terragucci's check job did not run"; }
+  log "the repo's own job ran in the test stage, and terragucci's check ran beside it"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -248,6 +283,7 @@ case "$CLAIM" in
     log "terragucci-validate-cdf carries the tofu-estate marker"
     ;;
   gate-wait) run_gate_wait ;;
+  own-jobs) run_own_jobs ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done

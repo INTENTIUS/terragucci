@@ -35,6 +35,9 @@ function repo(): string {
   return dir;
 }
 
+/** A repo's own GitLab pipeline: a job with no stage, which GitLab puts in test. */
+const OWN_JOBS = "# The repo's own pipeline.\nvariables:\n  APP: shop\n\nunit-tests:\n  script:\n    - echo the repo's own job ran\n";
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("--json", () => {
@@ -75,6 +78,24 @@ describe("--json", () => {
     const { code, out } = await run(dir, "reconcile", "--json");
     expect(code).toBe(0);
     golden("reconcile-dry-run", out);
+  });
+
+  it("init --dry-run in a GitLab repo with its own .gitlab-ci.yml writes the jobs beside it and adds the include", async () => {
+    const dir = twoRootRepo();
+    git(dir, "init", "-q");
+    git(dir, "remote", "add", "origin", "git@gitlab.com:acme/infra.git");
+    write(dir, { ".gitlab-ci.yml": OWN_JOBS });
+    const { code, out } = await run(dir, "init", "--dry-run", "--binary", "tofu", "--json");
+    expect(code).toBe(0);
+    golden("init-gitlab-own-jobs", out);
+  });
+
+  it("reconcile --json on a GitLab project with its own .gitlab-ci.yml adds the include and keeps its jobs", async () => {
+    const project = write(twoRootRepo(), { ".gitlab-ci.yml": OWN_JOBS });
+    const dir = write(tmp(), { "terragucci.yml": `defaults:\n  binary: tofu\nprojects:\n  gitlab.example.com/platform/network:\n    url: ${bareFrom(project)}\n` });
+    const { code, out } = await run(dir, "reconcile", "--json");
+    expect(code).toBe(0);
+    golden("reconcile-gitlab-own-jobs", out);
   });
 
   it("plan with no match is a usage error", async () => {

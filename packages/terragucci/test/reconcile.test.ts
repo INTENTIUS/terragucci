@@ -60,7 +60,7 @@ describe("reconcile", () => {
     const out = await reconcile(config, { mode: "dry-run", fetch, env: {} });
     expect(out.map((o) => [o.key, o.status, o.changes.map((c) => c.path)])).toEqual([
       ["github.com/acme/infra", "would-change", [".github/workflows/terragucci.yml"]],
-      ["gitlab.example.com/platform/network", "would-change", [".gitlab-ci.yml"]],
+      ["gitlab.example.com/platform/network", "would-change", [".gitlab/terragucci.yml", ".gitlab-ci.yml"]],
       ["codeberg.org/acme/edge", "would-change", [".forgejo/workflows/terragucci.yml"]],
     ]);
     expect(calls).toEqual([]);
@@ -108,6 +108,26 @@ describe("reconcile", () => {
     const out = await reconcile(config, { mode: "apply", fetch: second.fetch, env, project: "github.com/acme/infra" });
     expect(out[0].status).toBe("unchanged");
     expect(second.calls).toEqual([]);
+  });
+
+  it("a GitLab project's own .gitlab-ci.yml gains the include and keeps its jobs, and once merged is in line", async () => {
+    const own = "unit-tests:\n  script:\n    - echo own\n";
+    const bare = bareFrom(write(twoRootRepo(), { ".gitlab-ci.yml": own }));
+    const config = validateConfig({ defaults: { binary: "tofu" }, projects: { "gitlab.example.com/platform/network": { url: bare } } }, "t");
+    const out = await reconcile(config, { mode: "apply", fetch: recordingFetch().fetch, env });
+    expect(out[0].changes.map((c) => [c.path, c.status])).toEqual([[".gitlab/terragucci.yml", "created"], [".gitlab-ci.yml", "updated"]]);
+    expect(git(bare, "show", `${BRANCH}:.gitlab-ci.yml`)).toBe(`include:\n  - local: .gitlab/terragucci.yml\n\n${own}`);
+    git(bare, "update-ref", "refs/heads/main", `refs/heads/${BRANCH}`);
+    const again = recordingFetch();
+    expect((await reconcile(config, { mode: "apply", fetch: again.fetch, env }))[0].status).toBe("unchanged");
+    expect(again.calls).toEqual([]);
+  });
+
+  it("a GitLab project whose own stages leave out terragucci's fails alone, and says what to add", async () => {
+    const bare = bareFrom(write(twoRootRepo(), { ".gitlab-ci.yml": "stages: [lint]\nlint:\n  stage: lint\n  script: [echo]\n" }));
+    const config = validateConfig({ defaults: { binary: "tofu" }, projects: { "gitlab.example.com/platform/network": { url: bare } } }, "t");
+    const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
+    expect(out[0]).toMatchObject({ status: "failed", error: expect.stringMatching(/lists its own stages.*add check, plan, apply, tips to them, in that order/) });
   });
 
   it("one project failing does not stop the others", async () => {

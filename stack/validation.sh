@@ -38,7 +38,8 @@ gitlab|tg-check|the generated pipeline for a Terragrunt repo fails an unformatte
 gitlab|tg-apply|the generated pipeline for a Terragrunt repo applies both of its units on the default branch
 gitlab|cdf-check|the generated pipeline for a choudoufu estate fails a resource that live-check refuses and names it
 gitlab|cdf-apply|the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
-gitlab|gate-wait|a wave that waits for its approval ends its job with exit code 3 and fails the terragucci/apply status with its approval command, so the pipeline ends'
+gitlab|gate-wait|a wave that waits for its approval ends its job with exit code 3 and fails the terragucci/apply status with its approval command, so the pipeline ends
+gitlab|own-jobs|init adds an include to a repo with its own .gitlab-ci.yml, and the pipeline runs that repo job in its stage beside the generated check'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }

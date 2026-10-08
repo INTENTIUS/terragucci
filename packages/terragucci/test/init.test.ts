@@ -24,17 +24,18 @@ describe("init", () => {
 
   it.each([
     ["https://github.com/acme/infra.git", ".github/workflows/terragucci.yml"],
-    ["git@gitlab.com:acme/infra.git", ".gitlab-ci.yml"],
+    ["git@gitlab.com:acme/infra.git", ".gitlab/terragucci.yml"],
     ["https://codeberg.org/acme/infra.git", ".forgejo/workflows/terragucci.yml"],
   ])("a repo whose origin is %s gets %s", async (remote, path) => {
     const dir = withRemote(remote);
     const r = await init(dir, { binary: "tofu" });
-    // approval: ledger is the default, and it needs no chant.workspace.json.
-    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"]]);
+    // approval: ledger is the default, and it needs no chant.workspace.json. On GitLab the repo's .gitlab-ci.yml includes the pipeline.
+    const gitlab = path.startsWith(".gitlab/");
+    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"], ...(gitlab ? [[".gitlab-ci.yml", "created"]] : [])]);
     const text = readFileSync(join(dir, path), "utf-8");
     expect(text.startsWith(MARKER)).toBe(true);
     const parsed = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, unknown>;
-    expect(Object.keys(parsed)).toEqual(expect.arrayContaining(path === ".gitlab-ci.yml" ? ["stages", "check", "apply-wave-1"] : ["name", "on", "jobs"]));
+    expect(Object.keys(parsed)).toEqual(expect.arrayContaining(gitlab ? ["stages", "check", "apply-wave-1"] : ["name", "on", "jobs"]));
   });
 
   it("the pipeline applies the network before the app, and validates both", async () => {
@@ -69,7 +70,7 @@ describe("init", () => {
     const r = await init(dir, { forge: "gitlab" });
     expect(r.configNote).toMatch(/records forge/);
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("forge: gitlab\n");
-    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged"]);
+    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 
   it("a detectable choice is not written to terragucci.yml", async () => {
