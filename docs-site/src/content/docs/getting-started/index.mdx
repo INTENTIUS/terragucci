@@ -17,11 +17,24 @@ import Shot from '../../../components/Shot.astro';
 
 <Badge text="About 10 minutes" variant="note" size="medium" />
 
+| You get | Where it is shown |
+|---|---|
+| No server to host | [What runs where](/terragucci/concepts/how-it-works/#what-runs-where) |
+| GitHub, GitLab or Forgejo | [Per forge](/terragucci/guides/add-to-a-repo/#per-forge) |
+| Object storage on AWS, GCP or Azure | [Credentials](/terragucci/reference/pipeline/#credentials) |
+| Tracing and metrics | [Traces and metrics](/terragucci/reference/observability/) |
+| Rich lifecycles | [How terragucci works](/terragucci/concepts/how-it-works/) |
+| Gated waves | [How waves and approvals work](/terragucci/concepts/waves-and-approvals/) |
+| Aggregated plan output | [Why plans are grouped](/terragucci/concepts/why-plans-are-grouped/) |
+| Module publishing and pinned rollouts | [Publish your modules](/terragucci/guides/publish-modules/), [roll out a version](/terragucci/guides/roll-out-a-module-version/) |
+
+Everything runs as jobs in your CI and lands in your git and your bucket: no account, no sign-in.
+
 <CardGrid>
 <LinkCard title="Try it on an example first" description="A 15-root example on your laptop, with no cloud account." href="/terragucci/tutorial/" />
 <LinkCard title="Hand it to my agent" description="A prompt for Claude Code, Codex or Cursor that stops at a pull request." href="/terragucci/getting-started/agents/" />
 <LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
-<LinkCard title="Coming from Atlantis, HCP Terraform, Spacelift or OpenTaco" description="Where terragucci is different, and where the others go further." href="/terragucci/compare/" />
+<LinkCard title="Switching from Atlantis or OpenTaco" description="Their commands and settings, and the terragucci equivalent of each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
 </CardGrid>
 
 ## What you end up with
