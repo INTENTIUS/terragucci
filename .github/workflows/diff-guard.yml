@@ -1,0 +1,35 @@
+name: diff-guard
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diff-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diff-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: '0'
+      - name: The pull request undoes no commit main has
+        run: scripts/diff-guard.sh "origin/$BASE_REF" "$HEAD_SHA"
+        env:
+          BASE_REF: '${{ github.base_ref }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          DIFF_GUARD_ALLOW: '${{ contains(github.event.pull_request.labels.*.name, ''revert'') && ''1'' || '''' }}'

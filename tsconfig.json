@@ -18,6 +18,8 @@
     "capture/**/*.ts",
     "nightly/**/*.ts",
     "publish/**/*.ts",
+    "ci-red/**/*.ts",
+    "diff-guard/**/*.ts",
     "observability/**/*.ts",
     "front-door/**/*.ts",
     "scripts/*.ts",

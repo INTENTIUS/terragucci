@@ -1,5 +1,5 @@
 /**
- * The validation claims that are too heavy for every pull request, run nightly.
+ * The validation claims that are too heavy for every push to main, run nightly.
  *
  * `just ci` renders this into .github/workflows/nightly.yml. GitLab CE is
  * several gigabytes and boots in minutes; a GitHub runner is amd64, which is

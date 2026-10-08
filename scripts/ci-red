@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Tells people when main stays red, or a green commit is revoked,
+# through one GitHub issue titled "main is red": GitHub notifies the repo's
+# watchers (and anyone in TERRAGUCCI_RED_MENTION) when it's opened or
+# commented on. .github/workflows/ci-red.yml runs it every hour.
+#
+#   main has had commits for more than TERRAGUCCI_RED_HOURS hours (6) and none
+#   of them has a ci/green tag      open the issue, or comment on it once
+#                                   per red stretch (it names the stretch's
+#                                   first commit)
+#   a ci/revoked tag from the last two days the issue doesn't name yet
+#                                   the same, naming it
+#   main's newest green commit is newer than every revocation the issue
+#   names, and main isn't too long red
+#                                   comment that it's green and close it
+#
+# It reads main and the ci/ tags from this checkout (fetch them all first:
+# the workflow's checkout has fetch-depth 0) and writes with gh (GH_TOKEN,
+# issues: write). The ci/ tags come from chant-ci-green.yml.
+set -euo pipefail
+
+repo=${GITHUB_REPOSITORY:-INTENTIUS/terragucci}
+hours=${TERRAGUCCI_RED_HOURS:-6}
+mention=${TERRAGUCCI_RED_MENTION:-}
+now=${TERRAGUCCI_RED_NOW:-$(date +%s)}
+title="main is red"
+main=$(git rev-parse --verify "${TERRAGUCCI_RED_MAIN:-origin/main}^{commit}")
+short() { git rev-parse --short=12 "$1"; }
+subject() { git log -1 --format=%s "$1"; }
+
+has_tag() { git rev-parse -q --verify "refs/tags/ci/$1/$2" >/dev/null; }
+green=''
+for c in $(git rev-list --first-parent --max-count 200 "$main"); do
+  if has_tag green "$c" && ! has_tag revoked "$c"; then green=$c; break; fi
+done
+
+# The red stretch: main's commits since the newest green one, from the
+# oldest, which has been waiting longest.
+red_since=''
+if [ "$green" != "$main" ]; then
+  if [ -n "$green" ]; then red_since=$(git rev-list --first-parent --reverse "$green..$main" | head -1)
+  else red_since=$(git rev-list --first-parent --reverse --max-count 200 "$main" | head -1); fi
+fi
+too_long=0
+if [ -n "$red_since" ]; then
+  age=$(( (now - $(git log -1 --format=%ct "$red_since")) / 3600 ))
+  [ "$age" -lt "$hours" ] || too_long=1
+fi
+
+# The newest issue with the title, open or closed, and what it says.
+issue='' state='' said=''
+found=$(gh issue list -R "$repo" --state all --search "in:title \"$title\"" --limit 20 \
+  --json number,title,state --jq ".[] | select(.title == \"$title\") | \"\\(.number) \\(.state)\"")
+read -r issue state <<<"$found" || true
+if [ -n "$issue" ]; then
+  said=$(gh issue view "$issue" -R "$repo" --json body,comments --jq '.body, .comments[].body')
+fi
+
+news=''
+if [ "$too_long" = 1 ] && [[ "$said" != *"red since $red_since"* ]]; then
+  if [ -n "$green" ]; then last="the newest green one is $(short "$green") ($(subject "$green"))"
+  else last="none of main's last 200 is green"; fi
+  news+="- No commit on main has passed CI for ${age} hours: red since $red_since ($(subject "$red_since")); $last."$'\n'
+fi
+while read -r sha when; do
+  [ -n "$sha" ] || continue
+  [ $((now - when)) -lt $((2 * 86400)) ] || continue
+  [[ "$said" != *"ci/revoked/$sha"* ]] || continue
+  news+="- $(short "$sha") ($(subject "$sha")) passed CI and then failed a re-run: ci/revoked/$sha. Don't release from it."$'\n'
+done < <(git for-each-ref refs/tags/ci/revoked --format='%(refname:lstrip=4) %(creatordate:unix)')
+
+footer="main is at $(short "$main"). The ci/ tags come from chant-ci-green.yml; this is scripts/ci-red, every hour."
+if [ -n "$news" ]; then
+  if [ "$state" = OPEN ]; then
+    gh issue comment "$issue" -R "$repo" --body "$news"$'\n'"$footer"
+    echo "commented on #$issue"
+  else
+    gh issue create -R "$repo" --title "$title" --body "$news"$'\n'"$footer${mention:+$'\n\n'$mention}" >/dev/null
+    echo "opened \"$title\""
+  fi
+  printf '%s' "$news"
+  exit 0
+fi
+
+# Nothing new. An open issue closes once main is green past everything it
+# names.
+if [ "$state" = OPEN ]; then
+  if [ "$too_long" = 1 ]; then echo "#$issue stays open: red since $(short "$red_since")"; exit 0; fi
+  while read -r sha; do
+    [ -n "$sha" ] || continue
+    if [ -z "$green" ] || ! git merge-base --is-ancestor "$sha" "$green" 2>/dev/null; then
+      echo "#$issue stays open: no green commit after $(short "$sha") yet"; exit 0
+    fi
+  done < <(grep -oE 'ci/revoked/[0-9a-f]{40}' <<<"$said" | sed 's|ci/revoked/||' | sort -u)
+  gh issue comment "$issue" -R "$repo" --body "Green again: $(short "$green") ($(subject "$green")) passed CI. $footer"
+  gh issue close "$issue" -R "$repo" >/dev/null
+  echo "closed #$issue"
+  exit 0
+fi
+if [ -n "$green" ]; then echo "nothing to say: main's newest green commit is $(short "$green")"; else echo "nothing to say"; fi
