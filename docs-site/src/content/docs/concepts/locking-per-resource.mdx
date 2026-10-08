@@ -1,6 +1,6 @@
 ---
-title: Locking per resource, with no state file
-description: Applies of one estate that touch different resources run at once, each resource carries its estate as a tag, and one bucket serves every estate.
+title: Locks that settle at the API
+description: Applies of one estate that touch different resources run at once, settled by conditional writes to an S3 backend with no lock table or database to run; each resource carries its estate as a tag, and one bucket serves every estate.
 ---
 
 ## Locking per resource
@@ -32,7 +32,7 @@ Each resource carries its identity on the resource itself, as tags written in it
 
 | What the tags give you | How |
 |---|---|
-| No state file to host or lose | the next plan reads the tags back from the cloud |
+| Each address finds its real resource | the next plan matches the address to the resource that carries it in its tags |
 | An estate any cloud tool can list | filter on the tag, for example `aws ec2 describe-instances --filters Name=tag:tofu-estate,Values=prod` |
 | A role scoped to one estate | an IAM condition on the tag: the role applies its own estate, and IAM refuses it a change to another estate's resources |
 
