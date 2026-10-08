@@ -4,7 +4,7 @@
 #
 #   stack/bootstrap.sh forgejo     bring a profile up and print its env vars
 #   stack/validate.sh forgejo apply
-#   stack/down.sh                  remove every container, network and volume
+#   stack/down.sh                  remove every container, network and volume but the job cache
 #
 # Two rules every service here follows, learned on choudoufu's GitLab run:
 #
