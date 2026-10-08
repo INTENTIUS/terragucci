@@ -170,7 +170,7 @@ function slowTofu(dir: string): string {
   writeFileSync(path, `#!/bin/sh
 chdir="\${1#-chdir=}"; shift
 case "$1" in
-  init) exit 0 ;;
+  init) echo "$TF_PLUGIN_CACHE_DIR" >> "${dir}/inits.log"; exit 0 ;;
   plan)
     echo "start $chdir" >> "${dir}/plans.log"
     sleep "$(cat "$chdir/delay")"
@@ -233,7 +233,8 @@ describe("roots of a layer plan at once", () => {
       const logs: string[] = [];
       const out = join(tmp(), "report");
       const result = await runStage("tf-plan", repo, { binary: slowTofu(bin), layers, parallelism, out, env: { PATH: process.env.PATH } }, (l) => logs.push(l));
-      return { result, logs, files: filesUnder(out), plans: readFileSync(join(bin, "plans.log"), "utf-8").trim().split("\n") };
+      const inits = readFileSync(join(bin, "inits.log"), "utf-8").trim().split("\n");
+      return { result, logs, files: filesUnder(out), plans: readFileSync(join(bin, "plans.log"), "utf-8").trim().split("\n"), inits };
     };
     const serial = await run(1);
     const together = await run(8);
@@ -259,6 +260,10 @@ describe("roots of a layer plan at once", () => {
     expect(rootLines(together.logs).map((l) => l.split(":")[0])).toEqual(names);
     expect(together.logs).toContain("planning up to 8 roots at once (--parallelism)");
     expect(serial.logs).toContain("planning one root at a time (--parallelism)");
+    // With no cache of the job's, the roots share one of the stage's own, so a provider downloads once.
+    expect(together.inits).toHaveLength(names.length);
+    expect(new Set(together.inits).size).toBe(1);
+    expect(together.inits[0]).not.toBe("");
   });
 
   it("takes the default from the roots' state backend, as Terragrunt mode does", () => {

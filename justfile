@@ -21,6 +21,7 @@ lint:
     npx chant lint ci-red
     npx chant lint diff-guard
     npx chant lint observability
+    npx chant lint scale
     bash -n stack/smoke.sh
     node scripts/check-smoke.mjs
 
@@ -57,6 +58,7 @@ ci:
     npx chant build publish -o .github/workflows/publish.yml --format yaml
     npx chant build ci-red -o .github/workflows/ci-red.yml --format yaml
     npx chant build diff-guard -o .github/workflows/diff-guard.yml --format yaml
+    npx chant build scale -o .github/workflows/scale.yml --format yaml
     just render-observability
     just render-images
     just render-front-door
@@ -91,7 +93,7 @@ ci-check:
     out="$(mktemp -t terragucci-ci-XXXX.yml)"
     trap 'rm -f "$out"' EXIT
     rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "nightly:.github/workflows/nightly.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml"; do
+    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "nightly:.github/workflows/nightly.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml"; do
       src="${pair%%:*}"; committed="${pair#*:}"
       npx chant build "$src" -o "$out" --format yaml >/dev/null
       if diff -u "$committed" "$out"; then
@@ -239,6 +241,10 @@ example-terragrunt *args="up":
 [doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], drift, capture, prove [--record FILE], reset, shot <view>|all|list, minutes.")]
 sandbox *args:
     stack/sandbox-github.sh {{args}}
+
+[doc("The scale bench, on its own stack (compose project tgscale): up, run <scale>..., record [file], down. Scale 136 is 10,069 resources in 1,361 roots.")]
+scale *args:
+    stack/scale/scale.sh {{args}}
 
 [doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
 see-runs:

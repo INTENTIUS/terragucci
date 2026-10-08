@@ -1,0 +1,84 @@
+# The scale bench's own stack: floci, Forgejo and one forgejo-runner, under the
+# compose project tgscale. It shares nothing with the validation stack in
+# stack/docker-compose.yml: other container, network and volume names, other
+# host ports, its own job cache. Both can run at once.
+#
+#   stack/scale/scale.sh up       start it, register the runner, mint a token
+#   stack/scale/scale.sh down     remove its containers, network and volumes
+#
+# The pins are the validation stack's (stack/README.md, Pins).
+name: tgscale
+
+networks:
+  default:
+    name: tgscale
+
+volumes:
+  forgejo-data:
+    name: tgscale-forgejo-data
+  forgejo-runner-data:
+    name: tgscale-forgejo-runner-data
+  # Mounted at /cache in every job container: the provider plugin cache.
+  job-cache:
+    name: tgscale-job-cache
+
+services:
+  floci:
+    image: ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813
+    container_name: tgscale-floci
+    environment:
+      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: "false"
+    ports:
+      - "${TGSCALE_FLOCI_PORT:-4690}:4566"
+    networks:
+      default:
+        aliases: [floci, 000000000000.floci]
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    container_name: tgscale-forgejo
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__DOMAIN: forgejo
+      FORGEJO__server__ROOT_URL: http://forgejo:3000/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_PORT: "0"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__actions__ENABLED: "true"
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__log__LEVEL: warn
+    ports:
+      - "${TGSCALE_FORGEJO_PORT:-3410}:3000"
+    volumes:
+      - forgejo-data:/data
+    networks:
+      default:
+        aliases: [forgejo]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/version"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  forgejo-runner:
+    image: data.forgejo.org/forgejo/runner:13.2.0
+    container_name: tgscale-forgejo-runner
+    user: "0:0"
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - forgejo-runner-data:/data
+      - job-cache:/cache
+    working_dir: /data
+    command:
+      - sh
+      - -c
+      - |
+        echo "waiting for /data/config.yml (written by stack/scale/scale.sh up)"
+        while [ ! -s /data/config.yml ]; do sleep 1; done
+        exec forgejo-runner daemon -c /data/config.yml
+    restart: unless-stopped

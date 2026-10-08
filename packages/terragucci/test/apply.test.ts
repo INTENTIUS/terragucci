@@ -708,7 +708,12 @@ case "$2" in
     rm -f "$RUN/running.$root"
     echo "Plan: 1 to add" ;;
   show) echo '{"resource_changes":[]}' ;;
-  apply) echo "Apply complete! Resources: 0 added, 0 changed, 0 destroyed." ;;
+  apply)
+    touch "$RUN/applying.$root"
+    ls "$RUN" | grep -c '^applying\\.' >> "$RUN/applies"
+    sleep 0.3
+    mv "$RUN/applying.$root" "$RUN/applied.$root"
+    echo "Apply complete! Resources: 0 added, 0 changed, 0 destroyed." ;;
 esac
 exit 0
 `;
@@ -726,7 +731,7 @@ exit 0
     vi.spyOn(console, "log").mockImplementation(() => {});
     return { work, bin, run };
   }
-  const most = (run: string): number => Math.max(...readFileSync(join(run, "counts"), "utf-8").split("\n").filter(Boolean).map(Number));
+  const most = (run: string, file = "counts"): number => Math.max(...readFileSync(join(run, file), "utf-8").split("\n").filter(Boolean).map(Number));
   const roots = ["r1", "r2", "r3", "r4", "r5", "r6"];
 
   it("never plans more roots at once than --parallelism", async () => {
@@ -734,6 +739,13 @@ exit 0
     expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 2 })).toBe(0);
     expect(most(run)).toBeLessThanOrEqual(2);
     expect(most(run)).toBe(2);
+  });
+
+  it("never applies more roots at once than it plans", async () => {
+    const { work, bin, run } = wave(roots);
+    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 2 })).toBe(0);
+    expect(readFileSync(join(run, "applies"), "utf-8").split("\n").filter(Boolean)).toHaveLength(roots.length);
+    expect(most(run, "applies")).toBe(2);
   });
 
   it("plans one root at a time with a bound of 1", async () => {

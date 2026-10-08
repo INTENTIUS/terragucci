@@ -82,7 +82,7 @@ import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
 import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
-import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts, unitTimes } from "./report/stage";
+import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -410,22 +410,38 @@ export function lockTimeoutArgs(command: "plan" | "apply", env: NodeJS.ProcessEn
 
 const indent = (s: string): string => s.trim().split("\n").map((l) => `    ${l}`).join("\n");
 
-async function planRoot(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver): Promise<PlannedRoot> {
+/** The provider cache a wave's roots share, and the turns their inits take in it. */
+interface WaveCache {
+  dir: string;
+  initTurn: Turn;
+}
+
+/**
+ * The wave's roots share one provider cache: the job's `TF_PLUGIN_CACHE_DIR`,
+ * or one of the wave's own. The cache is not safe for inits that run
+ * together, so they take turns. A cache per root would download and unpack
+ * each provider once per root, some 700 MB for the AWS provider, which a wave
+ * of a hundred roots cannot hold on a runner's disk.
+ */
+function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
+  return { dir: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "cache-")), initTurn: oneAtATime() };
+}
+
+async function planRoot(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache): Promise<PlannedRoot> {
   const timing = observer.root(root);
   try {
-    return await planTimed(repo, binary, root, work, i, observer, timing);
+    return await planTimed(repo, binary, root, work, i, observer, timing, cache);
   } finally {
     observer.endRoot(timing);
   }
 }
 
-async function planTimed(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming): Promise<PlannedRoot> {
+async function planTimed(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache): Promise<PlannedRoot> {
   const dir = join(repo, root);
-  // Each root gets its own provider cache: a cache shared by roots that init together is not safe.
-  const env = { ...process.env, TF_PLUGIN_CACHE_DIR: mkdtempSync(join(work, "cache-")) };
+  const env = { ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir };
   const planFile = join(work, `${i}.tfplan`);
   const base = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "" };
-  const init = await timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir);
+  const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir));
   if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
   const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);
   if (plan.code !== 0) return { ...base, error: `plan failed\n${plan.out}` };
@@ -654,8 +670,9 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   const planned: PlannedRoot[] = new Array(roots.length);
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
+  const cache = waveCache(work, process.env);
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binary, r, work, i, w.observer);
+    planned[i] = await planRoot(repo, binary, r, work, i, w.observer, cache);
   });
   w.planned = planned;
   w.roots = roots;
@@ -682,8 +699,12 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys }, facts, w);
   if (held !== undefined) return held;
 
-  // The roots of a wave do not read each other, so they apply together.
-  const ok = await Promise.all(planned.map((p) => applyRoot(repo, binary, p, w.observer)));
+  // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
+  // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
+  const ok: boolean[] = new Array(planned.length);
+  await eachLimited(planned, limit.value, async (p, i) => {
+    ok[i] = await applyRoot(repo, binary, p, w.observer);
+  });
   if (ok.includes(false)) {
     console.log(`${label}: an apply failed`);
     return EXIT.failed;
