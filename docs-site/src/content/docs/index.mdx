@@ -101,19 +101,18 @@ terragucci reads your roots and runs your binary. Code, state backend and provid
 <LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
 </CardGrid>
 
-## More with choudoufu
+## Locking per resource, with no state file
 
-Set `binary: choudoufu` in `terragucci.yml` and the stages gain these. [The glossary](/terragucci/concepts/glossary/#choudoufu) says what choudoufu is. It keeps no state file: each resource carries a tag, and the next plan reads those tags back ([how](/terragucci/guides/use-a-binary/#choudoufu)).
+Every resource carries its estate as a tag from its create call and keeps its own record in your bucket. [How it works](/terragucci/concepts/locking-per-resource/).
 
-| You get | Where you see it |
-|---|---|
-| A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
-| No state file to host or lose | [your cloud's own tags](/terragucci/guides/use-a-binary/#choudoufu) |
-| How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
-| Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
-| Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
-| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner, named | [use a binary](/terragucci/guides/use-a-binary/#choudoufu) |
-| A role scoped to one estate by its ownership tag, refused on another estate's resources | [use a binary](/terragucci/guides/use-a-binary/#choudoufu) |
+| You get | How | Page |
+|---|---|---|
+| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner, named | every record write is a conditional S3 write, so the second write to one resource fails and overwrites nothing | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
+| No state file to host or lose, and an estate any cloud tool can list by its tag | the next plan reads the tags back from the cloud | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
+| A role scoped to one estate, refused on another estate's resources | an IAM condition on the `tofu-estate` tag | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
+| One bucket for every estate | each estate writes under its own prefix | [One backend for all your estates](/terragucci/concepts/locking-per-resource/#one-backend-for-all-your-estates) |
+
+<small>These need <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci (<a href="/terragucci/guides/use-a-binary/#choudoufu">set it up</a>). It also adds a live check before any plan and timings for slow provider calls; <a href="/terragucci/guides/use-a-binary/#choudoufu">Choose your binary</a> lists all of it.</small>
 
 ## Hand the setup to your agent
 
