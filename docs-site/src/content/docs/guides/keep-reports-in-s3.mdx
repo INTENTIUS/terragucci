@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/keep-reports-in-s3/.
   Add the `reports:` block for bucket <bucket>, rerun `npx terragucci init`, write
   the IAM policy the page gives as a file for me to review, and open a pull request.
-  Do not create the role, the bucket or any secret.
+  Do not create the role, the bucket, any secret or the front door stack.
   Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
@@ -45,7 +45,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
      AWS_REGION: eu-west-2
    ```
 
-   `url` is where a browser reads the reports (step 5). The plan note links `report.html` there instead of the CI run. On GitHub and Forgejo that run's artifact is a download.
+   `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` there instead of the CI run. On GitHub and Forgejo that run's artifact is a download.
 
 2. Write the pipeline again, and commit the result.
 
@@ -112,7 +112,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
    | GitLab | `CI_COMMIT_SHA` |
    | Forgejo | `GITHUB_SHA` |
 
-5. <span id="5-serve-the-index"></span>Serve the index.
+5. <span id="5-serve-the-index"></span>Open the reports.
 
    Every upload adds the run's row to two `index.json` files, one at the project's path and one at the top of the prefix, and writes `index.html` from each. Writes are retried up to 8 times:
 
@@ -122,7 +122,34 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
    | No ETag | plain write, last run wins |
    | `501 Not Implemented` | the condition is dropped |
 
-   A served bucket publishes every plan, including each attribute value not marked sensitive. Put it behind your identity provider (CloudFront signed cookies, Cloudflare Access, IAP); never make it public. `url` is that front door.
+   The bucket holds every plan, including each attribute value not marked sensitive. Keep it private and open it one of two ways:
+
+   | | Presigned link | Front door |
+   |---|---|---|
+   | You deploy | nothing | one CloudFormation stack in your account, in `us-east-1` |
+   | Who can open it | anyone holding the link, until it expires | whoever your identity provider signs in |
+   | What opens | one object; its links to other reports need links of their own | every report and index, with their links |
+   | `reports.url` | not set: the plan note links the CI run | `https://<DomainName>` |
+
+   <Tabs syncKey="open-reports">
+     <TabItem label="Presigned link">
+       Sign one object for an hour:
+
+       ```bash
+       aws s3 presign s3://acme-terragucci/reports/github.com/acme/infra/index.html --expires-in 3600
+       ```
+
+       A link made with an IAM user's keys lasts up to 7 days. A link made with a role's credentials stops working when that session ends.
+     </TabItem>
+     <TabItem label="Front door">
+       Deploy the template in [The front door](#the-front-door) below, then set `url` to its address:
+
+       ```yaml
+       reports:
+         url: https://reports.acme.example
+       ```
+     </TabItem>
+   </Tabs>
 
    A run that sent a trace also gets `traces/<trace id>.html` under the prefix, forwarding to its report. With `dashboards: true`, the Runs dashboard links it.
 
@@ -131,6 +158,73 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 </Steps>
 
 Retention is your bucket's lifecycle rule.
+
+## The front door
+
+The template is CloudFront with Origin Access Control in front of the bucket, an OpenID Connect sign-in at the edge with a signed session cookie, a TLS certificate and the DNS name. It runs in your account and talks to nothing of terragucci's.
+
+Register a web application with your identity provider first, with the redirect URI `https://reports.acme.example/_terragucci/callback` and the `openid` and `email` scopes. Any provider whose token endpoint takes `client_secret_post` works, Google, Microsoft Entra ID and Okta among them.
+
+<Steps>
+
+1. Store the client secret in Secrets Manager, in `us-east-1`:
+
+   ```bash
+   aws secretsmanager create-secret --region us-east-1 \
+     --name terragucci-reports-client --secret-string '<client secret>'
+   ```
+
+2. Deploy the template:
+
+   ```bash
+   curl -fsSLO https://intentius.io/terragucci/reports-front-door.json
+   aws cloudformation deploy --region us-east-1 --stack-name terragucci-reports \
+     --template-file reports-front-door.json --capabilities CAPABILITY_IAM \
+     --parameter-overrides ReportsBucket=acme-terragucci ReportsBucketRegion=us-east-1 \
+       DomainName=reports.acme.example HostedZoneId=Z0123456789ABCDEFGHIJ \
+       OidcIssuer=https://accounts.google.com OidcClientId=<client id> \
+       OidcClientSecretName=terragucci-reports-client AllowedEmailDomain=acme.example
+   ```
+
+3. Let the distribution read the bucket. Add the statement in the stack's `BucketPolicyStatement` output to the bucket's policy:
+
+   ```bash
+   aws cloudformation describe-stacks --region us-east-1 --stack-name terragucci-reports \
+     --query "Stacks[0].Outputs[?OutputKey=='BucketPolicyStatement'].OutputValue" --output text
+   ```
+
+   For a bucket with no policy of its own, `WriteBucketPolicy=true` writes it instead. A bucket encrypted with your own KMS key also needs `kms:Decrypt` for `cloudfront.amazonaws.com`, on the same `AWS:SourceArn` condition.
+
+4. Set `url: https://reports.acme.example` under `reports:` and run `npx terragucci init` again.
+
+</Steps>
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `ReportsBucket` | required | `reports.bucket` without `s3://` |
+| `ReportsBucketRegion` | `us-east-1` | the bucket's region |
+| `DomainName` | required | the name people open |
+| `HostedZoneId` | empty | the Route 53 zone of `DomainName`, for its A and AAAA alias records and the certificate's validation; empty writes no record |
+| `CertificateArn` | empty | an ACM certificate in `us-east-1` for `DomainName`; empty requests one |
+| `OidcIssuer` | required | such as `https://accounts.google.com` or `https://login.microsoftonline.com/<tenant>/v2.0` |
+| `OidcClientId` | required | the web application's client id |
+| `OidcClientSecretName` | required | the secret from step 1 |
+| `AllowedEmailDomain` | empty | only verified addresses at this domain get in; empty admits anyone the issuer signs in |
+| `SessionHours` | `12` | how long a sign-in lasts |
+| `WriteBucketPolicy` | `false` | `true` writes the bucket policy |
+
+| The stack makes | Named |
+|---|---|
+| CloudFront distribution, caching nothing, HTTPS only | `DistributionId` output |
+| Origin Access Control, signing every request to the bucket | the stack name |
+| Lambda@Edge function on every viewer request, and its role | the stack name |
+| Secrets Manager secret with the settings and a generated session key | the stack name |
+| ACM certificate, when `CertificateArn` is empty | its ARN |
+| Route 53 A and AAAA alias records, when `HostedZoneId` is set | `DomainName` |
+
+A request without a session cookie goes to the identity provider and then back to its report. `/_terragucci/logout` clears the session. A parameter change reaches the edge within five minutes.
+
+Deleting the stack can fail on the function while CloudFront removes its copies, which takes a few hours. Delete it again after that.
 
 ## Next
 

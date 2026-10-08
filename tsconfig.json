@@ -19,6 +19,7 @@
     "nightly/**/*.ts",
     "publish/**/*.ts",
     "observability/**/*.ts",
+    "front-door/**/*.ts",
     "scripts/*.ts",
     "workflows/**/*.ts",
     "test/**/*.ts",
