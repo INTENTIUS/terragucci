@@ -172,7 +172,8 @@
             "type": "object",
             "required": ["branch", "path"],
             "properties": { "branch": { "type": "string" }, "path": { "type": "string" } }
-          }
+          },
+          "waiting_since": { "type": "string", "description": "On a waiting wave, when it began waiting for an approval of this digest (minor 8)." }
         }
       }
     },

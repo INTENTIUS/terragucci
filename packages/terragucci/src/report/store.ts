@@ -6,6 +6,8 @@
  * `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-N]/`, and the
  * index at the project's path and at the top of the prefix gains a row.
  * Links inside a report are relative, so they resolve in both layouts.
+ * An index keeps INDEX_ROWS rows and the newest of each project, stage and
+ * wave; `terragucci estate` (estate.ts) reads nothing else.
  *
  * With `reports.url`, the address that serves the bucket to a browser, the
  * run's copy has an absolute address (`reportUrl`), which the note, the drift
@@ -102,8 +104,20 @@ export interface IndexEntry {
   groups: number;
   totals: { create: number; update: number; replace: number; delete: number };
   refused: number;
-  /** Every destroy and replacement, as `root: address`. */
+  /** Roots that failed to plan or apply (a provisional preview never counts). Absent on rows written before it was kept. */
+  failed?: number;
+  /** Roots with at least one change; on a tf-drift row, the roots that drifted. */
+  changed?: number;
+  /** A tf-apply wave's gate: waiting, approved or not-required. */
+  approval?: "waiting" | "approved" | "not-required";
+  /** When a waiting wave began waiting for an approval of its digest. */
+  waiting_since?: string;
+  /** When a tf-apply wave finished applying: its gate let it through and no root failed. */
+  applied?: string;
+  /** Destroys and replacements, as `root: address`: the first INDEX_DESTROYS of them. */
   destroys: string[];
+  /** How many there are, when there are more than the row lists. */
+  destroys_total?: number;
   /** The commit's page on the forge. */
   commit_url?: string;
   /** The pull or merge request, by number, and its page. */
@@ -120,8 +134,18 @@ export interface ReportIndex {
   reports: IndexEntry[];
 }
 
+/** At most this many rows in an index, beyond the newest row of each project, stage and wave (capIndex). */
+export const INDEX_ROWS = 500;
+
+/** At most this many destroys listed in a row. */
+export const INDEX_DESTROYS = 50;
+
 export function indexEntry(report: Report, path: string): IndexEntry {
   const t = report.totals;
+  const destroys = report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => `${n.root}: ${n.address}`);
+  const failed = report.roots.filter((r) => r.status === "failed" && !r.terragrunt?.provisional).length;
+  const wave = report.run.stage === "tf-apply" ? report.waves[0] : undefined;
+  const approval = wave && wave.approval !== "not-requested" ? wave.approval : undefined;
   return {
     project: report.run.project,
     commit: report.run.commit,
@@ -133,7 +157,13 @@ export function indexEntry(report: Report, path: string): IndexEntry {
     groups: report.groups.length,
     totals: { create: t.create, update: t.update, replace: t.replace, delete: t.delete },
     refused: report.named.filter((n) => n.action === "refused").length,
-    destroys: report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => `${n.root}: ${n.address}`),
+    failed,
+    changed: report.roots.filter((r) => r.status === "planned" && r.changes.length > 0).length,
+    ...(approval ? { approval } : {}),
+    ...(approval === "waiting" ? { waiting_since: wave!.waiting_since ?? report.run.finished } : {}),
+    ...(approval && approval !== "waiting" && failed === 0 ? { applied: report.run.finished } : {}),
+    destroys: destroys.slice(0, INDEX_DESTROYS),
+    ...(destroys.length > INDEX_DESTROYS ? { destroys_total: destroys.length } : {}),
     ...(report.run.commit_url ? { commit_url: report.run.commit_url } : {}),
     ...(report.run.pull_request ? { pull_request: report.run.pull_request } : {}),
     ...(report.run.pull_request_url ? { pull_request_url: report.run.pull_request_url } : {}),
@@ -142,7 +172,28 @@ export function indexEntry(report: Report, path: string): IndexEntry {
   };
 }
 
-/** The index with `entry` added (or as it is, without one). A row at the same path is replaced, so a rerun does not list twice. Newest first. */
+/** What makes a row the latest of its kind: its project, stage and wave. */
+const rowKind = (r: IndexEntry): string => `${r.project}\n${r.stage}\n${r.wave ?? ""}`;
+
+/**
+ * The first `rows` of a newest-first list, and after them the newest row of
+ * each project, stage and wave the cut left out, so an index never loses the
+ * latest state of anything (the estate page reads it).
+ */
+export function capIndex(reports: IndexEntry[], rows = INDEX_ROWS): IndexEntry[] {
+  if (reports.length <= rows) return reports;
+  const seen = new Set(reports.slice(0, rows).map(rowKind));
+  const kept = reports.slice(0, rows);
+  for (const r of reports.slice(rows)) {
+    const kind = rowKind(r);
+    if (seen.has(kind)) continue;
+    seen.add(kind);
+    kept.push(r);
+  }
+  return kept;
+}
+
+/** The index with `entry` added (or as it is, without one). A row at the same path is replaced, so a rerun does not list twice. Newest first, capped by capIndex. */
 export function addToIndex(existing: string | undefined, entry?: IndexEntry): ReportIndex {
   let reports: IndexEntry[] = [];
   if (existing) {
@@ -155,13 +206,14 @@ export function addToIndex(existing: string | undefined, entry?: IndexEntry): Re
   }
   if (entry) reports = [...reports.filter((r) => r.path !== entry.path), entry];
   reports.sort((a, b) => (a.finished < b.finished ? 1 : a.finished > b.finished ? -1 : a.path < b.path ? -1 : 1));
-  return { schema: INDEX_SCHEMA, reports };
+  return { schema: INDEX_SCHEMA, reports: capIndex(reports) };
 }
 
 export function renderIndexHtml(index: ReportIndex, title: string): string {
   const rows = index.reports.map((r) => {
     const t = r.totals;
-    const destroys = r.destroys.length ? `<details><summary>${r.destroys.length}</summary><ul>${r.destroys.map((d) => `<li><code>${esc(d)}</code></li>`).join("")}</ul></details>` : "0";
+    const more = (r.destroys_total ?? r.destroys.length) - r.destroys.length;
+    const destroys = r.destroys.length ? `<details><summary>${r.destroys_total ?? r.destroys.length}</summary><ul>${r.destroys.map((d) => `<li><code>${esc(d)}</code></li>`).join("")}${more > 0 ? `<li>${more} more in the report</li>` : ""}</ul></details>` : "0";
     const commit = `<code>${esc(r.commit.slice(0, 12))}</code>`;
     const pr = r.pull_request ? (r.pull_request_url ? `<a href="${esc(r.pull_request_url)}">#${esc(r.pull_request)}</a>` : `#${esc(r.pull_request)}`) : "";
     const links = [

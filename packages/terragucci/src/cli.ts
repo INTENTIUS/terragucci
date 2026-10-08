@@ -3,6 +3,7 @@
  *
  *   terragucci init [--forge f] [--binary b] [--approval ledger|sealed] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
+ *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
@@ -44,6 +45,7 @@ import { assertLinux, install, type Tool } from "./install";
 import { plan } from "./plan";
 import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
+import { describeEstate, estate } from "./estate";
 import { RenderError } from "./render";
 import { applyWave } from "./apply";
 import { checkPolicyTests, checkRoot, emitCheck } from "./check";
@@ -58,6 +60,7 @@ import { parseImport } from "./respond/drift";
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|sealed] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
+  terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
@@ -163,6 +166,20 @@ export async function main(argv: string[]): Promise<number> {
         if (json) return emit(envelope("reconcile", code, { mode, projects: outcomes }));
         console.log(describeReconcile(outcomes, mode));
         return code;
+      }
+      case "estate": {
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const hours = str(flags, "link-hours");
+        const linkSeconds = hours === undefined ? undefined : Math.round(Number(hours) * 3600);
+        if (hours !== undefined && !(Number(hours) > 0)) throw new ConfigError(`--link-hours is ${JSON.stringify(hours)}; use a number of hours, up to 168`);
+        const bucket = str(flags, "bucket");
+        const result = await estate(cwd, path ? await loadConfig(resolve(path)) : {}, {
+          ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
+          ...(linkSeconds !== undefined ? { linkSeconds } : {}),
+          ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
+        });
+        console.log(describeEstate(result, cwd));
+        return result.unreadable.length ? 1 : 0;
       }
       case "plan": {
         const results = await plan(cwd, { root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config") }, json ? () => {} : console.log);

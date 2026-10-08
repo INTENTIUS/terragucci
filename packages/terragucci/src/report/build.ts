@@ -50,6 +50,7 @@ export interface WaveInput {
   roots: string[];
   approval?: ReportWave["approval"];
   gate?: ReportWave["gate"];
+  waitingSince?: string;
 }
 
 export interface BuildInput {
@@ -272,6 +273,7 @@ export function buildReport(input: BuildInput): Report {
       set_digest: failed || members.length === 0 ? null : changeSetDigest(members),
       approval: w.approval ?? "not-requested",
       ...(w.gate ? { gate: w.gate } : {}),
+      ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
     };
   });
 

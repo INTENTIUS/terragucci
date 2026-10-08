@@ -13,6 +13,7 @@ prompt: |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
+| `estate` | writes one page for every project, `estate.html` and `estate.json`, to the reports bucket, and prints a presigned link to it |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
@@ -52,6 +53,22 @@ terragucci reconcile [--config <file>] [--mode dry-run|apply] [--project <host/p
 ```
 
 `--config` defaults to the config file in the working directory and `--mode` to `dry-run`. `--mode apply` opens a pull request per changed project and never runs `terraform apply` ([glossary](/terragucci/concepts/glossary/#words-that-mean-something-else-in-terraform)). `--project` limits the run to one project.
+
+## estate
+
+```bash
+terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
+    [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--config` | the config file; default the one in the working directory |
+| `--out` | where the page is written locally; default `terragucci-estate` |
+| `--link-hours` | how long the presigned link lives; default 24, at most 168 |
+| `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write, in place of `reports` in a repo's config |
+
+It reads each project's `index.json` and nothing else, then writes `estate.html` and `estate.json` at the top of the prefix. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. Exit code 1 when a project's index could not be read; the page names it.
 
 ## plan and stage
 

@@ -1,0 +1,169 @@
+---
+title: See every project in one page
+description: A scheduled job writes one page to your reports bucket with every project's latest plan, drift check and waiting waves, and a link to open it.
+draft: true
+claims: [estate]
+prompt: |
+  Read https://intentius.io/terragucci/guides/see-every-project/.
+  In this control repo, add the scheduled estate job the page gives for my forge,
+  and write the IAM policy for bucket <bucket> as a file for me to review. Open a pull request.
+  Do not create the role, the bucket or any secret.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+`estate.html` and `estate.json` at the top of your reports prefix, rebuilt on a schedule. Nothing is hosted: the page is an object in your bucket, opened by a presigned link the job prints.
+
+| The page shows | From |
+|---|---|
+| projects, waves waiting, projects drifted, roots failed | four counts at the top |
+| each waiting wave and how long it has waited | the newest commit that ran `tf-apply` |
+| per project: latest plan, latest drift check, apply waves | each project's `index.json` |
+| the 20 newest runs | every project's `index.json` |
+
+The page reads `index.json` files only. It never opens a report, a plan's text or a root's plan JSON.
+
+## Before you start
+
+- [Reports in S3](/terragucci/guides/keep-reports-in-s3/) for every project you want on the page.
+- A repo to run the job in: your [control repo](/terragucci/guides/govern-many-repos/), or any repo whose `terragucci.yml` names the bucket.
+
+## Steps
+
+<Steps>
+
+1. Pick where the projects come from.
+
+   | Run from | Projects on the page | Read from | Page written to |
+   |---|---|---|---|
+   | a control repo | its `projects:` | each project's own `reports` | `defaults.reports` |
+   | one repo | every project in the top `index.json` | that repo's `reports` | the same bucket |
+
+   Projects in other accounts work two ways:
+
+   | Option | Set up |
+   |---|---|
+   | one central bucket | every project's `reports.bucket` names it, each writing with a `reports.role` of its own |
+   | a bucket per account | the project's `reports` in the control repo names its bucket and a `role` that can read it |
+
+2. Give the job an identity. It reads the indexes, writes two objects and signs the link:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/estate.html"] },
+       { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json"] }
+     ]
+   }
+   ```
+
+   Credentials are read as for reports: [Keep reports in S3, step 3](/terragucci/guides/keep-reports-in-s3/#3-give-the-job-an-identity-that-writes-only-reports).
+
+3. Add the scheduled job.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       `.github/workflows/estate.yml`:
+
+       ```yaml
+       name: estate
+       on:
+         schedule:
+           - cron: "23 * * * *"
+         workflow_dispatch: {}
+       permissions:
+         contents: read
+         id-token: write
+       jobs:
+         estate:
+           runs-on: ubuntu-latest
+           steps:
+             - uses: actions/checkout@v4
+             - uses: actions/setup-node@v4
+               with:
+                 node-version: 24
+             - uses: aws-actions/configure-aws-credentials@v4
+               with:
+                 role-to-assume: arn:aws:iam::123456789012:role/terragucci-estate
+                 aws-region: us-east-1
+             - run: npx --yes @intentius/terragucci estate
+       ```
+     </TabItem>
+     <TabItem label="GitLab">
+       A job in `.gitlab-ci.yml`, and a schedule under Build, Pipeline schedules:
+
+       ```yaml
+       estate:
+         image: node:24
+         rules:
+           - if: $CI_PIPELINE_SOURCE == "schedule"
+         id_tokens:
+           AWS_TOKEN:
+             aud: sts.amazonaws.com
+         variables:
+           AWS_ROLE_ARN: arn:aws:iam::123456789012:role/terragucci-estate
+           AWS_REGION: us-east-1
+         script:
+           - echo "$AWS_TOKEN" > "$CI_BUILDS_DIR/aws-token"
+           - export AWS_WEB_IDENTITY_TOKEN_FILE="$CI_BUILDS_DIR/aws-token"
+           - npx --yes @intentius/terragucci estate
+       ```
+     </TabItem>
+     <TabItem label="Forgejo">
+       `.forgejo/workflows/estate.yml`, with `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as repository secrets:
+
+       ```yaml
+       name: estate
+       on:
+         schedule:
+           - cron: "23 * * * *"
+         workflow_dispatch: {}
+       jobs:
+         estate:
+           runs-on: docker
+           container: node:24
+           steps:
+             - uses: actions/checkout@v4
+             - run: npx --yes @intentius/terragucci estate
+               env:
+                 AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                 AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                 AWS_REGION: us-east-1
+       ```
+     </TabItem>
+   </Tabs>
+
+4. Run it once. The log ends with the link:
+
+   ```text
+   estate: 3 projects, 1 wave waiting, 1 project drifted, 0 roots failed
+     gitlab.example.com/platform/network: wave 2 waits, for 3h 0m
+     github.com/acme/data: 2 roots drifted
+   wrote terragucci-estate/estate.json and terragucci-estate/estate.html
+   copied to s3://acme-terragucci/reports/estate.json and reports/estate.html
+   link, until 2026-10-08T12:00:00.000Z:
+   https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/estate.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
+   ```
+
+   The job fails (exit 1) when a project's index could not be read; the page still goes up and names that project.
+
+5. Share the link. Post it where your team looks, such as the drift issue or a chat channel.
+
+   | Link lifetime | Set by |
+   |---|---|
+   | 24 hours | the default |
+   | up to 168 hours | `--link-hours` |
+   | shorter | the job's role session, when that ends first; the log prints the real end |
+
+</Steps>
+
+The page's own numbers need nothing else. Its links to each run's report open where the bucket is served: `reports.url`, or your own front door.
+
+## Next
+
+- [CLI commands](/terragucci/reference/cli/#estate) lists the flags.
+- [Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) describes `estate.json` and the index rows.
