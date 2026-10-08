@@ -37,9 +37,11 @@ done
 # The red stretch: main's commits since the newest green one, from the
 # oldest, which has been waiting longest.
 red_since=''
+# sed reads the whole list: head would exit after one line, and under pipefail
+# the SIGPIPE rev-list then gets ends the script with 141 and no output.
 if [ "$green" != "$main" ]; then
-  if [ -n "$green" ]; then red_since=$(git rev-list --first-parent --reverse "$green..$main" | head -1)
-  else red_since=$(git rev-list --first-parent --reverse --max-count 200 "$main" | head -1); fi
+  if [ -n "$green" ]; then red_since=$(git rev-list --first-parent --reverse "$green..$main" | sed -n 1p)
+  else red_since=$(git rev-list --first-parent --reverse --max-count 200 "$main" | sed -n 1p); fi
 fi
 too_long=0
 if [ -n "$red_since" ]; then
