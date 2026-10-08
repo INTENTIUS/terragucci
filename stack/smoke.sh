@@ -8993,10 +8993,12 @@ HCL
 }
 
 claim_cdktn_synth() {
-  # A CDK Terrain app (fixtures/cdktn) with two stacks, and synth in
-  # terragucci.yml. The stacks are synthesized on the host so init finds them
-  # under cdktf.out/stacks; the pushed pipeline runs synth itself, since
-  # cdktf.out is not committed. The push to main passes check and applies
+  # A CDK Terrain app (fixtures/cdktn) on cdktn 0.24.0 with two stacks, and
+  # synth in terragucci.yml. Its .npmrc sets engine-strict, so npm ci stops
+  # on a job image whose Node is older than the 22.19 cdktn 0.24 needs. The
+  # stacks are synthesized on the host so init finds them under
+  # cdktf.out/stacks; the pushed pipeline runs synth itself, since cdktf.out
+  # is not committed. The push to main passes check and applies
   # both stacks; a pull request that changes the size of prod in main.js gets
   # a passing terragucci/plan whose job ran cdktn synth before tf-plan and
   # planned both stacks.

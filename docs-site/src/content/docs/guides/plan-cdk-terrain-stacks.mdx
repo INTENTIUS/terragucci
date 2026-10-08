@@ -20,7 +20,8 @@ A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or appl
 
 | You need | Why |
 |---|---|
-| A [CDK Terrain](https://github.com/open-constructs/cdk-terrain) app with `cdktf.json` at the repo root | `cdktn synth` reads it and writes one directory per stack |
+| A [CDK Terrain](https://cdktn.io) app ([repository](https://github.com/open-constructs/cdk-terrain)) with `cdktf.json` at the repo root | `cdktn synth` reads it and writes one directory per stack |
+| `cdktn` and `cdktn-cli` in `package.json`, such as 0.24.0 | the jobs run them with Node 22.23 from the terragucci image; cdktn 0.24 needs Node 22.19 or later |
 | A remote backend in each stack, such as `S3Backend` | each job starts from a fresh checkout, so a local state file does not outlive it |
 | `package-lock.json` committed | the job installs the app's packages with `npm ci` |
 | The [pipeline](/terragucci/getting-started/) | `init` adds the synth step to it |
