@@ -26,6 +26,7 @@ prompt: |
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
 | `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and runs `chant approve policy-override <root> --plan <digest> --note <reason>`; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
+| `notify` | posts a wave that waits, is refused or fails to the Slack and Teams webhooks `notify` names; the generated apply jobs run it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
@@ -253,6 +254,22 @@ Merges the pull request while its head is still `--sha`, then releases its root 
 It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
 
 With `--forge gitlab` it first looks for the `mr-apply` reply, from `TG_TOKEN`'s user, that says every wave of `--sha` applied in this pipeline (`CI_PIPELINE_ID`). Without one it prints `nothing to merge` and exits 0. The approval it checks is one given after the merge request's latest push.
+
+## notify
+
+```text
+terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--report <dir>]
+```
+
+Posts one wave's outcome to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK`, whichever are set. The generated apply jobs run it with `notify` set, on exit 3, 4 and any other failure.
+
+| Read from | For |
+|---|---|
+| `--outcome`, the stage's `TG_OUTCOME` line | the approve command of a waiting wave, and the roots of a refused one |
+| `--report` (default `terragucci-report`) | the project and the wave's roots |
+| `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`, or `CI_JOB_URL` | the run's link |
+
+A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.
 
 ## config check
 

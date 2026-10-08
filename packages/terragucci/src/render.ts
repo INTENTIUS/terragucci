@@ -112,6 +112,8 @@ export interface PipelineInput {
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
+  /** `notify`: the secrets holding a Slack or Teams incoming webhook, which the apply jobs post a waiting, refused or failed wave to. */
+  notify?: { slack?: string; teams?: string };
   env: Record<string, string>;
   /** Cloud identities the jobs take over OIDC (AWS roles, GCP service accounts, Azure clients): plan reads, apply writes. */
   oidc?: OidcSettings;
@@ -266,6 +268,11 @@ export function synthScript(command: string, status?: string): string {
     "# synth in terragucci.yml: write the roots before reading them.",
     `( set -e; ${command} ) || { ${status ? `tg status ${status} failure "the synth command failed"; ` : ""}echo "terragucci: the synth command failed" >&2; exit 1; }`,
   ].join("\n");
+}
+
+/** With `notify`, the line a wave's outcome runs: post it to the chat webhooks. A webhook that fails never fails the job. */
+function notifyLine(event: "waiting" | "refused" | "failed", wave: string): string {
+  return `terragucci notify ${event} --wave ${wave} --outcome "$outcome" || true; `;
 }
 
 export function checkScript(binary: Binary, roots: string[], synth?: string): string {
@@ -583,6 +590,8 @@ export interface ApplyWaveInput {
   terragrunt?: { prelude: string };
   /** `synth`: the command that writes the roots, run before the credentials. */
   synth?: string;
+  /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
+  notify?: boolean;
 }
 
 /**
@@ -643,10 +652,10 @@ export function applyScript(
     'case "$rc" in',
     "  0) ;;",
     // GitLab reuses a running status and refuses to move it to pending or running again (400), and a status left running keeps the pipeline running, so a waiting wave fails it there; a retry posts a new one.
-    `  3) tg status terragucci/apply ${forge === "gitlab" ? "failure" : "pending"} "$(cat "$outcome")"; exit 3 ;;`,
+    `  3) tg status terragucci/apply ${forge === "gitlab" ? "failure" : "pending"} "$(cat "$outcome")"; ${input.notify ? notifyLine("waiting", waveNow) : ""}exit 3 ;;`,
     // A wave waiting at a gate (3) is not a failure. A refused wave (4) and a failed apply are, and each gets its response before the job fails.
-    `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${waveNow} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}exit 4 ;;`,
-    `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}exit 1 ;;`,
+    `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${waveNow} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}${input.notify ? notifyLine("refused", waveNow) : ""}exit 4 ;;`,
+    `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}${input.notify ? notifyLine("failed", waveNow) : ""}exit 1 ;;`,
     "esac",
     ...(last
       ? tg
@@ -681,6 +690,8 @@ export interface CommentApplyInput {
   terragrunt?: { prelude: string };
   /** `synth`: the command that writes the roots, run on the checked-out commit before the credentials. */
   synth?: string;
+  /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
+  notify?: boolean;
 }
 
 /**
@@ -718,18 +729,21 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
     `      digest="$(sed -n 's/.*--plan \\([^ ]*\\).*/\\1/p' "$outcome")"`,
     `      cmd="$(sed -n 's/^wave [0-9]* waits: //p' "$outcome")"`,
     `      tg reply "wave $wave waits for an approval of its set digest $digest, so nothing in it was applied\${done_waves:+ (applied: wave $done_waves)}. ${again}. $run_url"`,
+    ...(input.notify ? [`      ${notifyLine("waiting", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
     "      exit 3 ;;",
     "    4)",
     ...status('      tg status terragucci/apply failure "$(cat "$outcome")"'),
     // The responses a push's wave runs, on the same exit codes (applyScript).
     ...(refused ? [`      terragucci respond wave-refused --wave "$wave" --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current${base ? ` ${base}` : ""} || true`] : []),
     '      tg reply "wave $wave was refused: its plans changed since it was approved, so nothing in it was applied (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). $run_url"',
+    ...(input.notify ? [`      ${notifyLine("refused", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
     "      exit 4 ;;",
     "    *)",
     ...status('      tg status terragucci/apply failure "an apply failed"'),
     ...(triage ? [`      terragucci respond apply-failed --log "$log"${base ? ` ${base}` : ""} || true`] : []),
     '      why="$(cat "$outcome")"',
     '      tg reply "wave $wave did not apply${why:+ ($why)}${done_waves:+; applied: wave $done_waves}. The run has the log: $run_url"',
+    ...(input.notify ? [`      ${notifyLine("failed", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
     "      exit 1 ;;",
     "  esac",
     "done",
@@ -1342,6 +1356,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const audience = oidc?.audience ?? AUDIENCE;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth);
   const synth = input.synth ? { synth: input.synth } : {};
+  // notify: the apply jobs post a waiting, refused or failed wave to the webhooks, read from the secrets the key names.
+  const notifyOn = input.notify ? { notify: true } : {};
+  const notifyEnv = Object.fromEntries(
+    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"]] as const)
+      .filter(([k]) => input.notify?.[k])
+      .map(([k, v]) => [v, forge === "gitlab" ? `$${input.notify![k]}` : `\${{ secrets.${input.notify![k]} }}`]),
+  );
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destroy";
@@ -1349,7 +1370,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
     name: `apply-wave-${i + 1}`,
-    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth }),
+    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn }),
   }));
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
@@ -1363,7 +1384,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch.
   const writesLedger = gate !== "never";
   const what = tg ? "unit" : "root";
@@ -1453,7 +1474,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         stage: "apply",
         image: jobImage,
         ...(i > 0 ? { needs: [applyJobs[i - 1].name] } : {}),
-        variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA" },
+        variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv },
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-apply",
         ...idTokens,
@@ -1480,7 +1501,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("mr-apply", new GitLabJob({
         stage: "apply",
         image: jobImage,
-        variables: { ...gitlabEnv, GIT_DEPTH: "0" },
+        variables: { ...gitlabEnv, GIT_DEPTH: "0", ...notifyEnv },
         rules: [new Rule({ if: mrApplyRule })],
         resource_group: "terragucci-apply",
         ...idTokens,
@@ -1715,7 +1736,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...openid(needsToken),
     concurrency: applyConcurrency(forge),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv },
     ...(autoMerge ? { outputs: { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } } : {}),
     steps: [
       ...steps(new Step({ ...(autoMerge ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true),
@@ -1792,6 +1813,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_BEFORE: "${{ github.event.before }}",
         TG_BRANCH: "${{ github.event.repository.default_branch }}",
         ...headersEnv,
+        ...notifyEnv,
       },
       steps: [
         ...steps(new Step({ name: `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),

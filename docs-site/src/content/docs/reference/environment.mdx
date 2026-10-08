@@ -73,6 +73,8 @@ Each names a secret in your forge's store.
 | `agent.token_env` | none, required | the token the agent's change is pushed with |
 | `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto` | a token that may push to the default branch |
 | `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
+| `notify.slack` | none | a Slack incoming webhook address; the apply jobs get it as `TERRAGUCCI_SLACK_WEBHOOK` |
+| `notify.teams` | none | a Microsoft Teams incoming webhook address; the apply jobs get it as `TERRAGUCCI_TEAMS_WEBHOOK` |
 | `telemetry.headers_secret` | none | the value of `OTEL_EXPORTER_OTLP_HEADERS` |
 | `token_env` | by forge, see above | the forge token |
 

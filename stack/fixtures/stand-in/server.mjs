@@ -1,8 +1,8 @@
 // A stand-in service for the smoke claims (stack/smoke.sh) that need a
 // service the stack does not run: a typed-decision service in the Jev shape,
-// an OTLP/HTTP collector that wants a header, or an STS that says which roles
-// it was asked for. It runs in a CI image (they all carry node) on the
-// stack's network.
+// an OTLP/HTTP collector that wants a header, an STS that says which roles
+// it was asked for, or a chat incoming webhook. It runs in a CI image (they
+// all carry node) on the stack's network.
 //
 //   MODE=decide  POST /v1/systemone answers every noul question with NOUL
 //                (default 0.95), as the model the request pins (or MODEL)
@@ -11,6 +11,8 @@
 //   MODE=sts     AWS STS: AssumeRoleWithWebIdentity and AssumeRole answer
 //                keys for any role (floci takes any keys), and
 //                GetCallerIdentity answers the account 000000000000
+//   MODE=webhook a chat incoming webhook (Slack, Teams): any POST answers
+//                200 "ok", as Slack's does, and is kept with its JSON body
 //   MODE=s3      S3, forwarded to UPSTREAM (floci:4566). HOLD_PATH holds the
 //                first two PUTs to that path until both arrived (or 60s
 //                passed), then sends them at once, so two writers race on
@@ -60,6 +62,11 @@ function sts(form) {
     return [200, xml(`${creds}<AssumedRoleUser><Arn>${form.RoleArn ?? ""}/${form.RoleSessionName ?? "smoke"}</Arn><AssumedRoleId>stand-in:smoke</AssumedRoleId></AssumedRoleUser>`), "text/xml"];
   }
   return [400, `<ErrorResponse><Error><Code>InvalidAction</Code><Message>${action} is not answered here</Message></Error></ErrorResponse>`, "text/xml"];
+}
+
+function webhook(req) {
+  if (req.method !== "POST") return [405, "only POST", "text/plain"];
+  return [200, "ok", "text/plain"];
 }
 
 function otlp(req) {
@@ -145,7 +152,7 @@ http
         body = undefined;
       }
       const form = /x-www-form-urlencoded/.test(req.headers["content-type"] ?? "") ? Object.fromEntries(new URLSearchParams(raw)) : undefined;
-      const [status, out, type] = mode === "otlp" ? otlp(req) : mode === "sts" ? sts(form ?? Object.fromEntries(new URL(req.url, "http://x").searchParams)) : decide(req, body);
+      const [status, out, type] = mode === "webhook" ? webhook(req) : mode === "otlp" ? otlp(req) : mode === "sts" ? sts(form ?? Object.fromEntries(new URL(req.url, "http://x").searchParams)) : decide(req, body);
       seen.push({ method: req.method, path: req.url, status, headers: req.headers, body, form });
       answer(res, status, out, type);
     });
