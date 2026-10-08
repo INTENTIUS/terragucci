@@ -54,7 +54,7 @@ A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-
 | Apply on merge | not offered | `on_commit_to_default: [digger apply]` | the default, `apply.when: merge` |
 | Merge after apply | `automerge` | `auto_merge` | `apply.merge: auto` with `apply.when: pull-request` |
 | Release locks on close | automatic | `on_pull_request_closed: [digger unlock]` | automatic: a lock whose pull request merged or closed counts as released |
-| Policy | conftest, set in the server's config | a conftest step you add | `policy`: conftest or OPA over each plan, with Rego in the repo; the base branch's key and directory decide |
+| Policy | conftest, set in the server's config | a conftest step you add | `policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo at a pinned ref (`policy.source`); the base branch's key decides |
 | Custom steps | `workflows` | `workflows` | none: the jobs are generated; `env` sets variables every job gets |
 | Cloud credentials | the server's environment | `aws-role-to-assume` in your workflow, over OIDC | `oidc`: a plan role and an apply role per cloud, from the forge's identity token |
 | Many repos | the server's repo config | | a control repo's `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
