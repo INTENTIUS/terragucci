@@ -97,5 +97,6 @@ The OpenTofu fork from the team behind terragucci. It keeps no state file: each 
 | `--mode apply` on `rollout`, `respond` and `reconcile` | push the commit or open the pull request that the dry run described | `terraform apply`, which none of the three runs |
 | layer | a step of the dependency order | a wave, an apply batch built from layers |
 | `/terragucci apply` | rerun `tf-apply` on a merged pull request, or an open one with `apply.when: pull-request`; gated waves still need a sealed approval | Atlantis `apply`, which applies its stored plan; here each wave plans again |
-| `/terragucci unlock` | with `apply.when: pull-request`, release the root locks a pull request took when it applied | Atlantis `unlock`, which also discards plans; none are kept here |
+| `/terragucci lock` | with `apply.when: pull-request`, lock the roots a pull request reaches without applying it | the lock Atlantis takes on every plan; a plan here locks nothing |
+| `/terragucci unlock` | with `apply.when: pull-request`, release the root locks a pull request took when it applied or locked | Atlantis `unlock`, which also discards plans; none are kept here |
 | run | a forge pipeline run, with its jobs | an HCP Terraform run, which is one plan and apply in one workspace |

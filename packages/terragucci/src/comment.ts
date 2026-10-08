@@ -2,11 +2,11 @@
  * `terragucci comment`: the pull request comment command. A comment that reads
  * `/terragucci plan [root]` re-plans what the pull request changes, read-only.
  * Nothing here applies, approves or unlocks, and a re-plan changes nothing an
- * approval covers, since approvals bind digests. `/terragucci apply [wave-<n>]`
- * and `/terragucci unlock` parse here too, and are decided by `terragucci
- * comment-apply` (comment-apply.ts): it re-runs an already approved apply
- * after the merge, or, with `apply.when: pull-request`, applies an open pull
- * request and releases its root locks.
+ * approval covers, since approvals bind digests. `/terragucci apply [wave-<n>]`,
+ * `/terragucci lock` and `/terragucci unlock` parse here too, and are decided
+ * by `terragucci comment-apply` (comment-apply.ts): it re-runs an already
+ * approved apply after the merge, or, with `apply.when: pull-request`,
+ * applies an open pull request, and takes and releases its root locks.
  *
  * The comment is untrusted input. It is read from the event file, never from
  * an expression in a script, and it is parsed against one strict grammar. The
@@ -42,6 +42,8 @@ export type ParsedComment =
   | { kind: "plan"; root?: string }
   /** `/terragucci apply [wave-<n>]`: re-run the merged pull request's apply, through wave n when one is named. */
   | { kind: "apply"; wave?: number }
+  /** `/terragucci lock`: take the root locks of the roots the pull request reaches, applying nothing (`apply.when: pull-request`). */
+  | { kind: "lock" }
   /** `/terragucci unlock`: release the root locks the pull request holds (`apply.when: pull-request`). */
   | { kind: "unlock" }
   | { kind: "agent"; ask: string }
@@ -61,6 +63,7 @@ export function parseComment(body: unknown): ParsedComment | undefined {
   const verb = words[1];
   if (verb === undefined) return { kind: "refused", reason: "the command is `/terragucci plan [root]`" };
   if (verb === "apply") return parseApply(words);
+  if (verb === "lock") return words.length === 2 ? { kind: "lock" } : { kind: "refused", reason: "`/terragucci lock` takes nothing after it: it locks every root the pull request reaches" };
   if (verb === "unlock") return words.length === 2 ? { kind: "unlock" } : { kind: "refused", reason: "`/terragucci unlock` takes nothing after it: it releases every lock the pull request holds" };
   if (verb === "agent") {
     // The ask is the rest of the line, as written; it is never split or run.
@@ -228,7 +231,12 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     await reply(reason);
     return stop(reason);
   }
-  // With `apply.when: pull-request` the comment-apply job reads `/terragucci unlock`; any other pipeline takes no locks.
+  // With `apply.when: pull-request` the comment-apply job reads `/terragucci lock` and `/terragucci unlock`; any other pipeline takes no locks.
+  if (parsed.kind === "lock") {
+    const reason = "this repository applies after merge, so pull requests take no locks";
+    await reply(reason);
+    return stop(reason);
+  }
   if (parsed.kind === "unlock") {
     const reason = "this repository applies after merge, so no pull request holds a lock and there is nothing to unlock";
     await reply(reason);

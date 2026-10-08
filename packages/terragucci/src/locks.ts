@@ -1,6 +1,7 @@
 /**
  * Root locks for `apply.when: pull-request`. A pull request that applies
- * before it merges holds a lock on each root its change reaches, so no other
+ * before it merges, or that a writer locks with `/terragucci lock`, holds a
+ * lock on each root its change reaches, so no other
  * pull request applies those roots until it merges or closes, or someone with
  * write access comments `/terragucci unlock` on it.
  *
@@ -26,12 +27,14 @@ const REMOTE_REF = `refs/remotes/origin/${LIFECYCLE}`;
 export const LOCKS_PATH = "_locks/tf-apply.json";
 const GIT_ID = { GIT_AUTHOR_NAME: "terragucci", GIT_AUTHOR_EMAIL: "terragucci@localhost", GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" };
 
-/** One root's lock: the pull request that holds it, who asked, when, and the head it applied. */
+/** One root's lock: the pull request that holds it, who asked, when, and the head it applied or locked. */
 export interface RootLock {
   pr: number;
   by: string;
   at: string;
   head: string;
+  /** `lock` when `/terragucci lock` took it without applying. Absent for a lock an apply took. */
+  via?: "lock";
 }
 
 export interface LockFile {
@@ -67,7 +70,7 @@ export function parseLocks(text: string): LockFile {
     if (doc?.version === 1 && doc.locks && typeof doc.locks === "object" && !Array.isArray(doc.locks)) {
       const locks: Record<string, RootLock> = {};
       for (const [root, l] of Object.entries(doc.locks as Record<string, any>)) {
-        if (Number.isInteger(l?.pr) && typeof l.by === "string" && typeof l.at === "string" && typeof l.head === "string") locks[root] = { pr: l.pr, by: l.by, at: l.at, head: l.head };
+        if (Number.isInteger(l?.pr) && typeof l.by === "string" && typeof l.at === "string" && typeof l.head === "string") locks[root] = { pr: l.pr, by: l.by, at: l.at, head: l.head, ...(l.via === "lock" ? { via: "lock" as const } : {}) };
       }
       return { version: 1, locks };
     }
@@ -112,7 +115,8 @@ function write(repo: string, parent: string, file: LockFile, message: string): b
  * Lock `roots` for pull request `holder.pr`. A root locked by another pull
  * request that `isOpen` says is still open is held, and nothing is locked;
  * a root locked by one that merged or closed is taken over. Roots this pull
- * request already holds stay its own, with the new head.
+ * request already holds stay its own, with the new head. An apply takes over
+ * the pull request's own `/terragucci lock` locks as apply locks.
  */
 export async function takeLocks(repo: string, roots: readonly string[], holder: RootLock, isOpen: (pr: number) => Promise<boolean>): Promise<TakeResult> {
   const open = new Map<number, boolean>();
@@ -151,5 +155,5 @@ export function releaseLocks(repo: string, pr: number): string[] {
 export function describeHeld(held: readonly HeldLock[]): string {
   const byPr = new Map<number, HeldLock[]>();
   for (const h of held) byPr.set(h.pr, [...(byPr.get(h.pr) ?? []), h]);
-  return [...byPr].map(([pr, hs]) => `${hs.map((h) => `\`${h.root}\``).join(", ")} ${hs.length === 1 ? "is" : "are"} locked by pull request ${pr} (applied by ${hs[0]!.by})`).join("; ");
+  return [...byPr].map(([pr, hs]) => `${hs.map((h) => `\`${h.root}\``).join(", ")} ${hs.length === 1 ? "is" : "are"} locked by pull request ${pr} (${hs[0]!.via === "lock" ? "locked with `/terragucci lock`" : "applied"} by ${hs[0]!.by})`).join("; ");
 }
