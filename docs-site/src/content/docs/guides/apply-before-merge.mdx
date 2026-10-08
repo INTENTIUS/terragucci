@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/apply-before-merge/.
   Add `apply.when: pull-request` to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with the result.
   List the merge token and the branch protection I must set; do not create tokens or change branch protection yourself.
-  Never comment `/terragucci apply` or `/terragucci unlock`, never run `chant approve` or `--mode apply`, and never merge.
+  Never comment `/terragucci apply`, `/terragucci lock` or `/terragucci unlock`, never run `chant approve` or `--mode apply`, and never merge.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -54,7 +54,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 3. Open the change as usual and get its head approved on the forge by a reviewer other than its author. A push after the review needs a fresh approval.
 
-4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#when-a-comment-runs-nothing). A head behind the default branch needs it merged or rebased in, then a new plan and approval.
+4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#when-a-comment-runs-nothing). A head behind the default branch needs it merged or rebased in, then a new plan and approval; one with conflicts needs them resolved. [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of approval, mergeable, up to date and green checks the comment needs; all four by default.
 
 5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives its [chant](/terragucci/concepts/glossary/#chant) approve command; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again.
 
@@ -84,6 +84,7 @@ An unreadable default-branch config fails the wave before anything applies.
 | Event | Lock |
 |---|---|
 | The change applies | each root it reaches is locked |
+| `/terragucci lock` on the change, by anyone with write access | each root it reaches is locked, and nothing applies; the reply names the roots |
 | Another change reaches a locked root | refused; the reply names the holder |
 | The holder merges or closes | released |
 | `/terragucci unlock` on the holder, by anyone with write access | released; the reply names what it released |

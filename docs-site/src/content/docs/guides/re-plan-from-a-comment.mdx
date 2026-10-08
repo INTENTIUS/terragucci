@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/re-plan-from-a-comment/.
   Check that the default branch's pipeline has the comment trigger; if it does not, run `npx terragucci init` and open a pull request with the result.
   You may comment `/terragucci plan` on a pull request and report what the note says.
-  Never comment `/terragucci apply` or `/terragucci unlock`, never run `chant approve` or `--mode apply`, and never merge.
+  Never comment `/terragucci apply`, `/terragucci lock` or `/terragucci unlock`, never run `chant approve` or `--mode apply`, and never merge.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
@@ -63,6 +63,7 @@ The text is untrusted and never reaches a script; `terragucci comment` reads it 
 | `/terragucci plan <root>` | a re-plan of that root, which must be exactly a root the pipeline knows | every GitHub and Forgejo pipeline |
 | `/terragucci apply` | the approved waves | merged pull requests; open ones with `apply.when: pull-request` |
 | `/terragucci apply wave-<n>` | the approved waves up to wave n | as above |
+| `/terragucci lock` | locks on the roots this pull request reaches, with no apply | `apply.when: pull-request` |
 | `/terragucci unlock` | a release of this pull request's locks | `apply.when: pull-request` |
 | `/terragucci agent <ask>` | a coding agent's change | `agent.comment` set; see [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
 
@@ -93,7 +94,9 @@ On GitLab, retry the job instead.
 
 With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies its head before merge. [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) has the steps.
 
-`/terragucci unlock` releases the pull request's locks so another one can apply those roots. Anyone with write access can use it, and the reply names what it released.
+`/terragucci lock` locks the roots the pull request reaches without applying anything, so no other pull request applies them first. It needs no approval or checks, and is refused naming the holder when another open pull request holds one of those roots.
+
+`/terragucci unlock` releases the pull request's locks so another one can apply those roots. Anyone with write access can use either, and the reply names what was locked or released.
 
 ## Next
 

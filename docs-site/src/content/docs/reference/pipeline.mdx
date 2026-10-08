@@ -16,7 +16,7 @@ Pushes apply one at a time in the order they arrived; none cancels another.
 | GitLab | a resource group |
 | Forgejo | a named group, plus a lock on the remote that a waiter takes over once the holder's run ends or its lease is two hours old |
 
-A wave whose commit is no longer the branch tip stands down on GitHub and Forgejo. Pull requests take no locks under the default `apply.when: merge`; under `apply.when: pull-request`, an applying pull request locks the roots it reaches.
+A wave whose commit is no longer the branch tip stands down on GitHub and Forgejo. Pull requests take no locks under the default `apply.when: merge`; under `apply.when: pull-request`, an applying pull request, or one a writer comments `/terragucci lock` on, locks the roots it reaches.
 
 `tf-plan`, `tf-drift` and `tf-apply` plan a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 16 otherwise. Roots that apply together each get a provider cache directory of their own; with a shared `TF_PLUGIN_CACHE_DIR`, inits take turns.
 
@@ -32,31 +32,33 @@ The comment approves nothing; a gated wave still needs its sealed record. [Apply
 
 Every comment command is checked before any credential is used. A failed check stops the job, and the reply starting `terragucci:` names it. GitLab has no comment commands.
 
-| Check | `plan` | `apply`, merged PR | `apply`, open PR | `agent` |
-|---|---|---|---|---|
-| The commenter has write access | yes | yes | yes | yes |
-| The comment is new; an edit does not run it again | yes | yes | yes | yes |
-| The comment is one line in a [form the job accepts](/terragucci/guides/re-plan-from-a-comment/#comment-forms) | yes | yes | yes | yes |
-| The head is in this repository, not a fork | yes | yes | yes | yes |
-| The pull request is open | yes | merged instead | yes | yes |
-| `apply.when` is `pull-request` | | | yes | |
-| `agent.comment` is set | | | | yes |
-| The base is the default branch | | yes | yes | |
-| The head is not the default branch | | | | yes |
-| A named root is a root of the pipeline | yes | | | |
-| A named wave exists | | yes | yes | |
-| The merge commit is still on the default branch | | yes | | |
-| At most 50 commits reached the default branch after the merge commit | | yes | | |
-| No later commit on the default branch has an apply of its own (the reply links it) | | yes | | |
-| A reviewer other than the author approved the head, and no reviewer's last review asks for changes | | | yes | |
-| No status or check on the head failed or is running, and `terragucci/plan` passed on it | | | yes | |
-| The head did not move while the comment was read | | | yes | |
-| The head contains the default branch as it is now | | | yes | |
-| The pull request does not change the pipeline file | | | yes | |
-| No other open pull request holds a lock on a root the change reaches | | | yes | |
-| The ask is at most 2000 characters, with no control characters | | | | yes |
+| Check | `plan` | `apply`, merged PR | `apply`, open PR | `lock` | `agent` |
+|---|---|---|---|---|---|
+| The commenter has write access | yes | yes | yes | yes | yes |
+| The comment is new; an edit does not run it again | yes | yes | yes | yes | yes |
+| The comment is one line in a [form the job accepts](/terragucci/guides/re-plan-from-a-comment/#comment-forms) | yes | yes | yes | yes | yes |
+| The head is in this repository, not a fork | yes | yes | yes | yes | yes |
+| The pull request is open | yes | merged instead | yes | yes | yes |
+| `apply.when` is `pull-request` | | | yes | yes | |
+| `agent.comment` is set | | | | | yes |
+| The base is the default branch | | yes | yes | yes | |
+| The head is not the default branch | | | | | yes |
+| A named root is a root of the pipeline | yes | | | | |
+| A named wave exists | | yes | yes | | |
+| The merge commit is still on the default branch | | yes | | | |
+| At most 50 commits reached the default branch after the merge commit | | yes | | | |
+| No later commit on the default branch has an apply of its own (the reply links it) | | yes | | | |
+| `approved`: a reviewer other than the author approved the head, and no reviewer's last review asks for changes | | | `apply.requires` | | |
+| `checks`: no status or check on the head failed or is running | | | `apply.requires` | | |
+| `terragucci/plan` passed on the head | | | yes | | |
+| `mergeable`: the forge reports no conflicts, and on GitHub no branch protection blocks the merge | | | `apply.requires` | | |
+| The head did not move while the comment was read | | | yes | yes | |
+| `undiverged`: the head contains the default branch as it is now | | | `apply.requires` | | |
+| The pull request does not change the pipeline file | | | yes | | |
+| No other open pull request holds a lock on a root the change reaches | | | yes | yes | |
+| The ask is at most 2000 characters, with no control characters | | | | | yes |
 
-A `plan` or `agent` comment from someone without write access gets no reply at all. `/terragucci unlock` needs only write access and `apply.when: pull-request`.
+A cell that reads `apply.requires` is checked when [`apply.requires`](/terragucci/reference/config/#apply-before-merge) lists it, and it lists all four by default. A `plan` or `agent` comment from someone without write access gets no reply at all. `/terragucci unlock` needs only write access and `apply.when: pull-request`.
 
 No comment approves a wave. These verbs are refused by name: `approve`, `merge`, `destroy`, `import`, `state`, `force-unlock`.
 
@@ -66,7 +68,7 @@ With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-mer
 
 | Job | Runs on | Does |
 |---|---|---|
-| `apply-comment` | `/terragucci apply [wave-<n>]` or `/terragucci unlock` on an open pull request | checks the [open-PR column](#when-a-comment-runs-nothing), locks the roots the change reaches, and applies the head wave by wave with the apply role while no other apply runs; or releases its locks |
+| `apply-comment` | `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` on an open pull request | checks the [open-PR column](#when-a-comment-runs-nothing), locks the roots the change reaches, and applies the head wave by wave with the apply role while no other apply runs; for `lock`, checks the `lock` column and takes the locks with no credential and no apply; for `unlock`, releases its locks |
 | `pr-merge` | with `apply.merge: auto`, after `apply-comment` applied every wave | merges while the head is still the applied commit and approved by a reviewer other than its author, then releases the locks |
 | `confirm` | each push to the default branch | plans every root and applies nothing; its `terragucci/apply` status fails naming roots that plan a change |
 

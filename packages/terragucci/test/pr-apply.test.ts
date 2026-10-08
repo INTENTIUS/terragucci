@@ -46,7 +46,7 @@ function repos(o: { behind?: boolean; pipeline?: boolean } = {}): { work: string
 interface Sent { method: string; path: string; body?: any }
 
 const OPEN = (head: string, extra: Record<string, unknown> = {}) => ({
-  state: "open", merged: false, number: 7, user: { login: "author" },
+  state: "open", merged: false, mergeable: true, mergeable_state: "clean", number: 7, user: { login: "author" },
   head: { sha: head, ref: "feature", repo: { full_name: "acme/infra" } }, base: { ref: "main" }, ...extra,
 });
 
@@ -57,6 +57,8 @@ interface Forge {
   checkRuns?: unknown[];
   permission?: Record<string, string>;
   others?: Record<number, string>;
+  /** Answers to the later reads of pull request 7, one each, the last repeated; the first read answers `pr`. */
+  later?: any[];
 }
 
 function setup(comment: string, f: Forge, forgejo = false): { env: NodeJS.ProcessEnv; fetch: Fetch; sent: Sent[] } {
@@ -81,7 +83,10 @@ function setup(comment: string, f: Forge, forgejo = false): { env: NodeJS.Proces
     if (path.includes("/check-runs")) return answer(200, { check_runs: f.checkRuns ?? [] }) as never;
     const other = /pulls\/(\d+)$/.exec(path);
     if (other && Number(other[1]) !== 7) return answer(200, { state: f.others?.[Number(other[1])] ?? "closed" }) as never;
-    if (path.endsWith("pulls/7")) return answer(200, f.pr) as never;
+    if (path.endsWith("pulls/7")) {
+      const reads = sent.filter((x) => x.path.endsWith("pulls/7")).length;
+      return answer(200, reads === 1 || !f.later?.length ? f.pr : f.later[Math.min(reads - 2, f.later.length - 1)]) as never;
+    }
     return answer(201, {}) as never;
   };
   return { env: { GITHUB_EVENT_PATH: file, GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://forge.test/api/v1", TG_TOKEN: "t" }, fetch, sent };
@@ -92,8 +97,8 @@ const approved = (head: string, by = "rev") => [{ user: { login: by }, state: "A
 const GREEN = [{ id: 1, context: "terragucci/plan", state: "success" }, { id: 2, context: "terragucci / check (push)", state: "success" }];
 
 describe("apply.when: pull-request, an open pull request", () => {
-  const decide = (r: ReturnType<typeof repos>, s: ReturnType<typeof setup>, forge?: "forgejo") =>
-    decideApplyComment({ layers, env: s.env, fetch: s.fetch, git: r.git, repo: r.work, when: "pull-request", ...(forge ? { forge } : {}) });
+  const decide = (r: ReturnType<typeof repos>, s: ReturnType<typeof setup>, forge?: "forgejo", requires?: ("approved" | "mergeable" | "undiverged" | "checks")[]) =>
+    decideApplyComment({ layers, env: s.env, fetch: s.fetch, git: r.git, repo: r.work, when: "pull-request", wait: async () => {}, ...(forge ? { forge } : {}), ...(requires ? { requires } : {}) });
 
   it("applies the head once it is approved, green and up to date, and locks the roots it reaches", async () => {
     const r = repos();
@@ -208,6 +213,96 @@ describe("apply.when: pull-request, an open pull request", () => {
     const merge = setup("/terragucci unlock", { pr: OPEN(r.head) });
     await decideApplyComment({ layers, env: merge.env, fetch: merge.fetch, git: r.git, repo: r.work });
     expect(replies(merge)[0]).toContain("there is nothing to unlock");
+  });
+
+  it("apply.requires: an approved head behind the default branch applies with [approved], and the default refuses it", async () => {
+    const r = repos({ behind: true });
+    const only = setup("/terragucci apply", { pr: OPEN(r.head), reviews: approved(r.head), statuses: GREEN });
+    expect(await decide(r, only, undefined, ["approved"])).toMatchObject({ go: true, open: true, sha: r.head });
+    const r2 = repos({ behind: true });
+    const all = setup("/terragucci apply", { pr: OPEN(r2.head), reviews: approved(r2.head), statuses: GREEN });
+    expect((await decide(r2, all)).go).toBe(false);
+    expect(replies(all)[0]).toContain("is not up to date with main");
+  });
+
+  it("apply.requires: without approved no review is read, without checks a failed check does not hold it, and the plan must pass either way", async () => {
+    const r = repos();
+    const noReview = setup("/terragucci apply", { pr: OPEN(r.head), reviews: [], statuses: GREEN });
+    expect((await decide(r, noReview, undefined, ["mergeable", "undiverged", "checks"])).go).toBe(true);
+    expect(noReview.sent.some((x) => x.path.includes("/reviews"))).toBe(false);
+    const r2 = repos();
+    const red = setup("/terragucci apply", { pr: OPEN(r2.head), reviews: approved(r2.head), statuses: [...GREEN, { id: 3, context: "lint", state: "failure" }] });
+    expect((await decide(r2, red, undefined, ["approved"])).go).toBe(true);
+    const r3 = repos();
+    const noPlan = setup("/terragucci apply", { pr: OPEN(r3.head), reviews: [], statuses: [] });
+    expect((await decide(r3, noPlan, undefined, [])).go).toBe(false);
+    expect(replies(noPlan)[0]).toContain("the plan of pull request 7 has not passed");
+  });
+
+  it("mergeable: refuses a pull request the forge reports conflicts on, and one branch protection blocks on GitHub", async () => {
+    const r = repos();
+    const conflict = setup("/terragucci apply", { pr: OPEN(r.head, { mergeable: false, mergeable_state: "dirty" }), reviews: approved(r.head), statuses: GREEN });
+    expect((await decide(r, conflict)).go).toBe(false);
+    expect(replies(conflict)[0]).toContain("pull request 7 is not mergeable: the forge reports conflicts with main");
+    expect(readLocks(r.work).locks).toEqual({});
+    const blocked = setup("/terragucci apply", { pr: OPEN(r.head, { mergeable_state: "blocked" }), reviews: approved(r.head), statuses: GREEN });
+    expect((await decide(r, blocked)).go).toBe(false);
+    expect(replies(blocked)[0]).toContain("branch protection on main blocks its merge");
+    // Forgejo has no mergeable_state, and behind is left to undiverged.
+    const behind = setup("/terragucci apply", { pr: OPEN(r.head, { mergeable_state: "behind" }), reviews: approved(r.head), statuses: GREEN });
+    expect((await decide(r, behind)).go).toBe(true);
+    const r2 = repos();
+    const off = setup("/terragucci apply", { pr: OPEN(r2.head, { mergeable: false, mergeable_state: "dirty" }), reviews: approved(r2.head), statuses: GREEN });
+    expect((await decide(r2, off, undefined, ["approved", "undiverged", "checks"])).go).toBe(true);
+  });
+
+  it("mergeable: reads the pull request again while the forge is still checking it, and refuses when it never says", async () => {
+    const r = repos();
+    const later = setup("/terragucci apply", { pr: OPEN(r.head, { mergeable: null, mergeable_state: "unknown" }), later: [OPEN(r.head, { mergeable: null }), OPEN(r.head)], reviews: approved(r.head), statuses: GREEN });
+    expect((await decide(r, later)).go).toBe(true);
+    expect(later.sent.filter((x) => x.path.endsWith("pulls/7")).length).toBe(3);
+    const r2 = repos();
+    const never = setup("/terragucci apply", { pr: OPEN(r2.head, { mergeable: null }), reviews: approved(r2.head), statuses: GREEN });
+    expect((await decide(r2, never)).go).toBe(false);
+    expect(replies(never)[0]).toContain("the forge has not worked out whether pull request 7 can merge");
+    const r3 = repos();
+    const checking = setup("/terragucci apply", { pr: OPEN(r3.head, { mergeable: false }), later: [OPEN(r3.head)], reviews: [{ user: { login: "rev" }, state: "APPROVED", commit_id: r3.head }], statuses: [{ id: 1, context: "terragucci/plan", status: "success" }] }, true);
+    expect((await decide(r3, checking, "forgejo")).go).toBe(true);
+  });
+
+  it("/terragucci lock locks the roots the pull request reaches and applies nothing; a second pull request is refused naming the holder", async () => {
+    const r = repos();
+    const s = setup("/terragucci lock", { pr: OPEN(r.head) });
+    const d = await decide(r, s);
+    expect(d.go).toBe(false);
+    expect(d.fail).toBeUndefined();
+    expect(replies(s)[0]).toContain("locked `network` for pull request 7");
+    expect(replies(s)[0]).toContain("nothing was applied");
+    // A lock needs no approval and no green checks.
+    expect(s.sent.some((x) => x.path.includes("/reviews") || x.path.endsWith("/status"))).toBe(false);
+    expect(readLocks(r.work).locks).toEqual({ network: expect.objectContaining({ pr: 7, by: "dev", head: r.head, via: "lock" }) });
+    // Pull request 9 reaches network too.
+    await expect(takeLocks(r.work, ["network"], { pr: 9, by: "erin", at: "2026-10-07T00:00:00.000Z", head: "c".repeat(40) }, async () => true))
+      .resolves.toEqual({ ok: false, held: [expect.objectContaining({ root: "network", pr: 7, via: "lock" })] });
+    // The holder's own apply takes the lock over as an apply lock.
+    const apply = setup("/terragucci apply", { pr: OPEN(r.head), reviews: approved(r.head), statuses: GREEN });
+    expect((await decide(r, apply)).go).toBe(true);
+    expect(readLocks(r.work).locks.network?.via).toBeUndefined();
+  });
+
+  it("/terragucci lock is refused when another open pull request holds a root, on a fork, and under apply.when merge", async () => {
+    const r = repos();
+    await takeLocks(r.work, ["network"], { pr: 3, by: "erin", at: "2026-10-07T00:00:00.000Z", head: "c".repeat(40), via: "lock" }, async () => true);
+    const held = setup("/terragucci lock", { pr: OPEN(r.head), others: { 3: "open" } });
+    expect((await decide(r, held)).go).toBe(false);
+    expect(replies(held)[0]).toContain("`network` is locked by pull request 3 (locked with `/terragucci lock` by erin), so pull request 7 is not locked");
+    expect(readLocks(r.work).locks.network?.pr).toBe(3);
+    const fork = setup("/terragucci lock", { pr: OPEN(r.head, { head: { sha: r.head, ref: "feature", repo: { full_name: "evil/infra" } } }) });
+    expect((await decide(r, fork)).go).toBe(false);
+    expect(replies(fork)[0]).toContain("fork");
+    const merge = setup("/terragucci lock", { pr: OPEN(r.head) });
+    await decideApplyComment({ layers, env: merge.env, fetch: merge.fetch, git: r.git, repo: r.work });
+    expect(replies(merge)[0]).toContain("pull requests take no locks");
   });
 });
 

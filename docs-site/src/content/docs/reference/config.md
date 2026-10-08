@@ -119,7 +119,7 @@ dashboards: true
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
-| `apply` | `when: merge` | `when`, `merge` and `merge_token_env`; see [Apply before merge](#apply-before-merge) |
+| `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
@@ -151,15 +151,26 @@ apply:
   when: pull-request   # default: merge
   merge: auto          # default: manual
   merge_token_env: MERGE_TOKEN   # the secret the merge is made with
+  requires: [approved, mergeable, undiverged, checks]   # the default: all four
 ```
 
 | Setting | Does | Allowed on |
 |---|---|---|
 | `when: merge` | only merged code applies, and the apply role never meets a pull request's code | every forge |
-| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; roots stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | GitHub and Forgejo, plain roots; `init` and `config check` refuse it on GitLab, `init` refuses it in a Terragrunt repo |
+| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; `/terragucci lock` takes the locks without applying; roots stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | GitHub and Forgejo, plain roots; `init` and `config check` refuse it on GitLab, `init` refuses it in a Terragrunt repo |
 | `merge: manual` | a person merges | `when: pull-request` only; `config check` refuses `merge` without it |
 | `merge: auto` | `pr-merge` merges once every wave applied, never after a partial apply | `when: pull-request` only |
 | `merge_token_env` | the secret the merge is made with; only `pr-merge`, which runs no pull request code, gets it | required on Forgejo |
+| `requires` | what an open pull request needs before `/terragucci apply` applies it; see the next table | `when: pull-request` only; with `merge: auto` it must list `approved` |
+
+| `requires` entry | The open pull request needs |
+|---|---|
+| `approved` | an approval of its head by a reviewer other than its author, and no reviewer whose last review asks for changes |
+| `mergeable` | the forge to say it merges: no conflicts with the default branch, and on GitHub no branch protection blocking it |
+| `undiverged` | its head to contain the default branch as it is now |
+| `checks` | every status and check on its head to have passed |
+
+Leaving an entry out drops that check, and `requires: []` drops all four. Three checks stay whatever `requires` lists: `terragucci/plan` passed on the head (a policy denial fails it), the change leaves the pipeline file alone, and no other open pull request holds a lock on a root it reaches. On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status that only the apply posts, such as `terragucci/apply`, blocks every apply; leave it out of branch protection.
 
 Gate, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check an apply comment must pass.
 

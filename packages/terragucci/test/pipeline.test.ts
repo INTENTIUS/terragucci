@@ -432,19 +432,20 @@ describe("the comment trigger", () => {
 });
 
 describe("apply before merge (apply.when: pull-request)", () => {
-  const renderPr = (forge: ForgeName, merge?: "auto" | "manual", mergeToken?: string): Record<string, any> =>
-    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, applyWhen: "pull-request", ...(merge ? { applyMerge: merge } : {}), ...(mergeToken ? { applyMergeTokenEnv: mergeToken } : {}) }).content);
+  const renderPr = (forge: ForgeName, merge?: "auto" | "manual", mergeToken?: string, requires?: ("approved" | "mergeable" | "undiverged" | "checks")[]): Record<string, any> =>
+    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, applyWhen: "pull-request", ...(merge ? { applyMerge: merge } : {}), ...(mergeToken ? { applyMergeTokenEnv: mergeToken } : {}), ...(requires ? { applyRequires: requires } : {}) }).content);
 
-  it.each(["github", "forgejo"] as const)("%s: the comment job takes apply and unlock, and the push after the merge confirms instead of applying", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: the comment job takes apply, lock and unlock, and the push after the merge confirms instead of applying", (forge) => {
     const doc = renderPr(forge);
     const job = doc.jobs["apply-comment"];
-    expect(job.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))");
-    expect(doc.jobs.replan.if).toContain("!(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    expect(job.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    expect(doc.jobs.replan.if).toContain("!(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))");
     // Forgejo ignores permissions:, so only GitHub's jobs carry them.
     if (forge === "github") expect(job.permissions.contents).toBe("write");
     if (forge === "github") expect(job.permissions.checks).toBe("read");
     const run = job.steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
     expect(run).toContain("--when pull-request");
+    expect(run).not.toContain("--requires");
     expect(doc.jobs["apply-wave-1"]).toBeUndefined();
     const confirm = doc.jobs.confirm;
     expect(confirm.needs).toBe("check");
@@ -455,6 +456,14 @@ describe("apply before merge (apply.when: pull-request)", () => {
     expect(plan).not.toContain(OIDC.apply_role);
     expect(plan).not.toContain("tf-apply");
     expect(doc.jobs.tips.needs).toBe("confirm");
+  });
+
+  it("apply.requires is written as --requires only when it leaves a requirement out", () => {
+    const run = (requires?: ("approved" | "mergeable" | "undiverged" | "checks")[]): string =>
+      renderPr("github", undefined, undefined, requires).jobs["apply-comment"].steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
+    expect(run(["checks", "undiverged", "mergeable", "approved"])).not.toContain("--requires");
+    expect(run(["approved"])).toContain("--when pull-request --requires approved --out");
+    expect(run([])).toContain("--requires none");
   });
 
   it("apply after merge is unchanged when apply.when is unset", () => {
