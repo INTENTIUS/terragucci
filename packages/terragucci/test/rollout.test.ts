@@ -341,6 +341,18 @@ describe("the forge", () => {
     expect(appliedState([{ name: "terragucci / check (push)", state: "success" }], "x")).toBe("pending");
   });
 
+  it("reads an empty Forgejo repo, whose pull request list answers 404, as having none, and throws on any other 404", async () => {
+    const forge = (empty: boolean) => {
+      const fetch: Fetch = async (url) => {
+        const repo = url.endsWith("/api/v1/repos/acme/infra");
+        return { ok: repo, status: repo ? 200 : 404, json: async () => ({ empty }), text: async () => (repo ? "" : "The target couldn't be found.") };
+      };
+      return fetchForge(fetch, { forge: "forgejo", origin: "https://forge.example.com", path: "acme/infra", token: "" });
+    };
+    expect(await forge(true).findPullRequest("w1")).toBeNull();
+    await expect(forge(false).findPullRequest("w1")).rejects.toThrow(/answered 404/);
+  });
+
   it("reads one apply job per wave, and the terragucci/apply status over them", () => {
     const waves = (a: CommitCheck["state"], b: CommitCheck["state"]): CommitCheck[] => [
       { name: "terragucci / apply-wave-1 (push)", state: a },
