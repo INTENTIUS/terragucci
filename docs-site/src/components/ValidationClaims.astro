@@ -13,7 +13,7 @@ const claims = record.claims as Array<{
 const names: Record<string, string> = { aws: 'AWS emulator', forgejo: 'Forgejo', github: 'GitHub', gitlab: 'GitLab' };
 
 const result = (c: (typeof claims)[number]) => {
-	if (c.verdict === 'pending') return 'not run yet';
+	if (c.verdict === 'pending') return 'not recorded';
 	if (c.verdict === 'pass' && c.break === 'caught') return 'passes, and fails when broken';
 	if (c.verdict === 'pass') return 'passes';
 	return 'fails';

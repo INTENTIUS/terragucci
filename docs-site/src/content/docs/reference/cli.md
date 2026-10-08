@@ -29,7 +29,6 @@ prompt: |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `install` | fetches a release of OpenTofu, Terraform, Terragrunt or [choudoufu](/terragucci/concepts/glossary/#choudoufu), verified against its checksums |
-| `profiles` | prints the stack profiles a config needs, for the local validation stack |
 
 ## init
 
@@ -48,7 +47,15 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudou
 
 A flag detection would not reach goes into a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
 
-Under `approval: sealed`, `init` also writes chant's `chant.workspace.json`, with each wave's gate (`wave-1`, `wave-2`) under [`identity.gates`](/terragucci/concepts/glossary/#identitygates), so a wave counts only an approval sealed with [`chant approve --sign`](/terragucci/concepts/glossary/#chant); an existing file gains missing gates. Under `ledger`, the default, it writes none, and with `approval: ledger` set it drops the wave gates an earlier `init` listed. `--approval ledger|sealed` picks the mode and saves it to `terragucci.yml` when detection would not reach it. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
+What `init` writes besides the pipeline depends on the approval mode. `--approval ledger|pr-review|sealed` picks the mode and saves it to `terragucci.yml` when detection would not reach it.
+
+| Mode | `init` also |
+|---|---|
+| `ledger` (the default) | writes no `chant.workspace.json`; with `approval: ledger` set, drops the wave gates an earlier `init` listed under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) |
+| `pr-review` | the same as `ledger`; on GitHub and Forgejo adds the `approval` job and the `terragucci/approval` status ([the pipeline](/terragucci/reference/pipeline/#statuses-and-stale-plans)) |
+| `sealed` | writes chant's `chant.workspace.json` with each wave's gate (`wave-1`, `wave-2`) under `identity.gates`, so a wave counts only an approval sealed with [`chant approve --sign`](/terragucci/concepts/glossary/#chant); an existing file gains missing gates |
+
+[Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
 
 ## reconcile
 
@@ -173,7 +180,14 @@ Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and write
 | `run` | `agent` | decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`; a fork or default-branch pull request gets no agent |
 | `push` | `agent-push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them, and commits a passing patch to the pull request's head branch with the `TG_*` variables in [Environment variables](/terragucci/reference/environment/) |
 
-On GitLab, `--forge gitlab --poll` reads no event file. The generated `comments` job runs it on the comments schedule ([`comments`](/terragucci/reference/config/#keys)). It reads the notes of the merge requests updated in the last day and answers each `/terragucci` note once. Each reply carries a `<!-- terragucci:note=<id> -->` marker, and a note with one is never answered again. A note from anyone below Developer gets no reply. `plan` starts a merge request pipeline, and `apply` retries the merge commit's first apply job that did not succeed. The poll exits 1 when GitLab answers with an error.
+On GitLab, `--forge gitlab --poll` reads no event file. The generated `comments` job runs it on the comments schedule ([`comments`](/terragucci/reference/config/#keys)). It reads the notes of the merge requests updated in the last day and answers each `/terragucci` note once: each reply carries a `<!-- terragucci:note=<id> -->` marker, and a note with one is never answered again. The poll exits 1 when GitLab answers with an error.
+
+| Note | Checked | Does |
+|---|---|---|
+| any | the author is a Developer or above; anyone else gets no reply | |
+| `/terragucci plan [root]` | the merge request is open and from this project; a named root is a root of the pipeline | starts a merge request pipeline, which plans the whole merge request |
+| `/terragucci apply` | the merge request merged into the default branch from this project; no later commit there has an apply of its own; no `wave-<n>` | retries the merge commit's first apply job that did not succeed; its gate decides again |
+| `/terragucci lock`, `unlock`, `agent` | | replies that the verb does not run on GitLab |
 
 [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
 
@@ -207,7 +221,13 @@ Reads a `/terragucci apply [wave-<n>]` comment, checks the commenter's permissio
 terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]
 ```
 
-Merges the pull request while its head is still `--sha`, then releases its root locks. The generated `pr-merge` job runs it after the last wave applied before merge, with `apply.merge: auto`. The sha comes from a job that ran the pull request's code, so the command first checks with `TG_TOKEN` that the pull request is open, its head is `--sha`, and a reviewer other than the author approved that head. It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
+Merges the pull request while its head is still `--sha`, then releases its root locks. The generated `pr-merge` job runs it after the last wave applied before merge, with `apply.merge: auto`. The sha comes from a job that ran the pull request's code, so the command first checks with `TG_TOKEN` that:
+
+- the pull request is open;
+- its head is `--sha`;
+- a reviewer other than the author approved that head.
+
+It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
 
 ## config check
 

@@ -61,7 +61,7 @@ With no base it plans every root. On a pull request, or with `--base <ref>` or `
 
 The plan note stays under your forge's comment limit however many roots change. The detail lives in the HTML report.
 
-## Built for hundreds of plans
+## What the report opens and folds
 
 The report opens on what a reviewer looks for and folds the rest away.
 
@@ -177,6 +177,18 @@ With `tips` on, the default, the report ends with advice on how your roots are s
 
 ## The report index
 
-Every upload rewrites `index.html` and `index.json` for the project and, at the top of the prefix, for all projects. Each run has a row with its counts, its failed and changed roots, a wave's gate and how long it has waited, and up to 50 destroys. An index keeps 500 rows, plus the newest row of every project, stage and wave beyond them. [`terragucci estate`](/terragucci/reference/cli/#estate) builds one page for every project from these rows. Served as a static site, the index publishes every report in the bucket: put the site behind your identity provider and keep the bucket private. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#5-serve-the-index) has the choices. Retention is your bucket's lifecycle rule.
+Every upload rewrites `index.html` and `index.json`.
+
+| Item | Value |
+|---|---|
+| Where | one index for the project, and one at the top of the prefix for all projects |
+| A row per run | its counts, its failed and changed roots, a wave's gate and how long it has waited, and up to 50 destroys |
+| Rows kept | 500, plus the newest row of every project, stage and wave beyond them |
+| Built on it | [`terragucci estate`](/terragucci/reference/cli/#estate), one page for every project |
+| Retention | your bucket's lifecycle rule |
+
+:::caution
+Served as a static site, the index publishes every report in the bucket: put the site behind your identity provider and keep the bucket private. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#5-serve-the-index) has the choices.
+:::
 
 <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />
