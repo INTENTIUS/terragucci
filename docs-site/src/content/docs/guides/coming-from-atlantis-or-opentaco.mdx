@@ -13,9 +13,9 @@ prompt: |
 
 ## What you end up with
 
-The Atlantis or OpenTaco command and setting you know, beside what does the same in terragucci. Every row says what terragucci does.
+Each Atlantis and OpenTaco command and setting below sits beside the terragucci comment, key or job that does the same work.
 
-terragucci needs no server: `init` writes jobs into your forge's CI. Everything below is a comment on a pull request, a key in `terragucci.yml`, or a job the pipeline already has.
+terragucci runs as jobs in your forge's CI and writes to your git and your bucket, with no server and no account: `init` writes the jobs.
 
 ## Comment commands
 
@@ -30,12 +30,12 @@ Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merg
 | Apply | `atlantis apply`, before merge | `digger apply`, before merge by default | merge: the default branch's wave jobs apply ([before merge](#apply-before-or-after-merge) is a setting) |
 | Apply part of the change | `atlantis apply -d <dir>` or `-p <project>` | `digger apply -p <project>` | `/terragucci apply wave-<n>` applies the approved waves up to wave n; no single-root apply |
 | Re-run an approved apply | `atlantis apply` | `digger apply` | `/terragucci apply` on the merged pull request |
-| Lock | at plan time | `digger lock`, or at plan time | none at plan; with `apply.when: pull-request` an applying pull request locks the roots it reaches |
-| Unlock | `atlantis unlock` | `digger unlock` | `/terragucci unlock`, with `apply.when: pull-request` |
+| Lock | at plan time | `digger lock`, or at plan time | with [`locks: plan`](/terragucci/reference/config/#plan-locks) (GitHub, Forgejo), from the first plan; otherwise when it applies before merge or on `/terragucci lock`, with `apply.when: pull-request` |
+| Unlock | `atlantis unlock` | `digger unlock` | `/terragucci unlock`, with `apply.when: pull-request` or `locks: plan` |
 | Import | `atlantis import <address> <id>` | none | refused; [an `import` block](#left-out-on-purpose) in the change |
 | Remove from state | `atlantis state rm <address>` | none | refused; [a `removed` block](#left-out-on-purpose) in the change |
 | Pass a failed policy | `atlantis approve_policies` | none | refused; [no override](/terragucci/reference/policy/#no-override) |
-| Approve | the forge's review | the forge's review | [`chant approve`](/terragucci/concepts/glossary/#chant) on your machine, for a wave its gate holds |
+| Approve | the forge's review | the forge's review | [`terragucci approve`](/terragucci/reference/cli/#approve) (it runs [`chant approve`](/terragucci/concepts/glossary/#chant)) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes) |
 
 A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply saying a comment never runs it. [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) lists what each command accepts.
 
@@ -51,7 +51,7 @@ A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-
 | Required approval | `apply_requirements: [approved]` | `apply_requirements: [approved]` | branch protection for a merge; with `apply.when: pull-request`, a reviewer other than the author approved the head |
 | Checks green | `mergeable` | `mergeable` | with `apply.when: pull-request`, no status failed or running and `terragucci/plan` passed |
 | Up to date | `undiverged` | `undiverged` | with `apply.when: pull-request`, the head contains the default branch |
-| Apply on merge | not offered | `on_commit_to_default: [digger apply]` | the default, `apply.when: merge` |
+| Apply on merge | | `on_commit_to_default: [digger apply]` | the default, `apply.when: merge` |
 | Merge after apply | `automerge` | `auto_merge` | `apply.merge: auto` with `apply.when: pull-request` |
 | Release locks on close | automatic | `on_pull_request_closed: [digger unlock]` | automatic: a lock whose pull request merged or closed counts as released |
 | Policy | conftest, set in the server's config | a conftest step you add | `policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo at a pinned ref (`policy.source`); the base branch's key decides |
@@ -59,9 +59,7 @@ A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-
 | Cloud credentials | the server's environment | `aws-role-to-assume` in your workflow, over OIDC | `oidc`: a plan role and an apply role per cloud, from the forge's identity token |
 | Many repos | the server's repo config | | a control repo's `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
 | Terragrunt | a custom workflow, or terragrunt-atlantis-config | `generate_projects` with Terragrunt parsing | detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/)) |
-| Drift | drift webhooks, and an alpha API | drift detection | `drift`, a cron schedule |
-
-An empty cell means that product's docs name no such setting.
+| Drift | drift webhooks | drift detection | `drift`, a cron schedule |
 
 ## Apply before or after merge
 
@@ -74,14 +72,14 @@ An empty cell means that product's docs name no such setting.
 
 ## Left out on purpose
 
-| Not here | Why | Do this instead |
+| Not here | terragucci's rule | Do this instead |
 |---|---|---|
-| `import` or `state rm` from a comment | a state edit from a comment skips review, and no plan or approval covers it | an `import` or `removed` block in the change: it plans, shows in the plan note and waits at the gate like any other change |
-| Passing a failed policy | a waiver from a comment lets the person asking decide | change the code, or change the policy in a reviewed pull request |
-| Approving from a comment | anyone with write access can comment | `chant approve` with your key; the approval names the wave's set digest |
+| `import` or `state rm` from a comment | every state change comes from a reviewed commit, through a plan and the gate | an `import` or `removed` block in the change: it plans, shows in the plan note and waits at the gate like any other change |
+| Passing a failed policy | a policy decides from the base branch; a change to it goes through review | change the code, or change the policy in a reviewed pull request |
+| Approving from a comment | an approval binds the wave's set digest, which a comment does not carry | `terragucci approve` from a checkout, or a review under `approval: pr-review`; the approval is signed only under `approval: sealed` |
 | Applying one root of a wave | an approval covers the wave's plans as one set | split the change, or `waves.canary` to send roots out first |
-| Flags at run time | a flag would change what an approval covers | the change itself, or a key in `terragucci.yml` |
-| A server or web UI | the jobs run in your CI and write to your repo and bucket | the plan note, the report artifact, and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+| Flags at run time | what an approval covers is fixed by the commit and the config | the change itself, or a key in `terragucci.yml` |
+| A server or web UI | the jobs run in your CI and write to your git and your bucket | the plan note, the report artifact, and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
 
 ## Next
 
