@@ -21,13 +21,13 @@
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
- *   terragucci comment --forge gitlab --poll --layers <a,b;c>   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
+ *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none]   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
  *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo]   (read a `/terragucci agent <ask>` comment)
  *   terragucci comment --agent push --change <dir> [--policy-dir <dir>]   (push the agent's change to the pull request's head branch)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]   (locks: plan: lock the roots a pull request's head reaches, or release them; run by the generated pipeline)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]
-  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
- *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
+  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
+ *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
@@ -40,13 +40,14 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, NO_GITLAB_PR_APPLY, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
 import { approvalStatus } from "./review";
 import { approve, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
+import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
@@ -84,11 +85,11 @@ const USAGE = `usage:
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
-  terragucci comment --forge gitlab --poll --layers <a,b;c>
+  terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none]
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
   terragucci comment --agent push --change <dir> [--policy-dir <dir>]
-  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
-  terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]
+  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
+  terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
   terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
@@ -104,6 +105,13 @@ Docs: https://intentius.io/terragucci/`;
 function approvalFlag(v: string | undefined): Approval | undefined {
   if (v !== undefined && !(APPROVALS as readonly string[]).includes(v)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
   return v as Approval | undefined;
+}
+
+/** `--requires`: a comma-separated list of APPLY_REQUIRES, or none; undefined when not given. */
+function requiresOf(v: string | undefined, cmd: string): ApplyRequire[] | undefined {
+  const list = v === undefined ? undefined : v === "none" ? [] : v.split(",");
+  if (list?.some((r) => !(APPLY_REQUIRES as readonly string[]).includes(r))) throw new ConfigError(`${cmd}'s --requires is a comma-separated list of ${APPLY_REQUIRES.join(", ")}, or none`);
+  return list as ApplyRequire[] | undefined;
 }
 
 /** `--parallelism`: a whole number of 1 or more. */
@@ -308,7 +316,10 @@ export async function main(argv: string[]): Promise<number> {
           // GitLab: no event file, so the comments schedule's job polls the merge requests' notes.
           if (forge !== "gitlab" || flags.poll !== true) throw new ConfigError("comment --poll is GitLab's: run it as comment --forge gitlab --poll --layers <a,b;c>");
           if (!layers) throw new ConfigError("comment --forge gitlab --poll needs --layers <a,b;c>");
-          const poll = await pollGitLabComments({ layers: parseLayers(layers) });
+          const when = str(flags, "when") ?? "merge";
+          if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment's --when is merge or pull-request");
+          const requires = requiresOf(str(flags, "requires"), "comment");
+          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}) });
           for (const n of poll.outcomes) console.log(`terragucci comment: !${n.mr} note ${n.note}: ${n.ran ? "" : "nothing run: "}${n.reason}`);
           if (poll.outcomes.length === 0 && !poll.fail) console.log("terragucci comment: no new /terragucci notes");
           if (poll.fail) console.error(`terragucci comment: failed: ${poll.fail}`);
@@ -341,12 +352,22 @@ export async function main(argv: string[]): Promise<number> {
         const canary = str(flags, "canary");
         const when = str(flags, "when") ?? "merge";
         if (!layers || !out) throw new ConfigError("comment-apply needs --layers <a,b;c> and --out <file>");
-        if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment-apply's --forge is github or forgejo");
+        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("comment-apply's --forge is github, forgejo or gitlab");
         if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment-apply's --when is merge or pull-request");
-        const requiresFlag = str(flags, "requires");
-        const requires = requiresFlag === undefined ? undefined : requiresFlag === "none" ? [] : requiresFlag.split(",");
-        if (requires?.some((r) => !(APPLY_REQUIRES as readonly string[]).includes(r))) throw new ConfigError(`comment-apply's --requires is a comma-separated list of ${APPLY_REQUIRES.join(", ")}, or none`);
-        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(requires ? { requires: requires as ApplyRequire[] } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
+        const requires = requiresOf(str(flags, "requires"), "comment-apply");
+        if (forge === "gitlab") {
+          // GitLab: the mr-apply job of the pipeline the comments job started; the merge request, the note and the head come from its variables, read again from the API.
+          if (when !== "pull-request") throw new ConfigError("comment-apply --forge gitlab is apply before merge's: pass --when pull-request");
+          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+          writeDecision(resolve(cwd, out), decision);
+          if (decision.fail) {
+            console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
+            return 1;
+          }
+          console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
+          return 0;
+        }
+        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(requires ? { requires } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
         writeDecision(resolve(cwd, out), decision);
         if (decision.fail) {
           console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
@@ -375,9 +396,9 @@ export async function main(argv: string[]): Promise<number> {
         const sha = str(flags, "sha");
         const forge = str(flags, "forge") ?? "github";
         if (!Number.isInteger(pr) || pr < 1 || !sha) throw new ConfigError("pr-merge needs --pr <n> and --sha <sha>");
-        if (forge !== "github" && forge !== "forgejo") throw new ConfigError("pr-merge's --forge is github or forgejo");
+        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("pr-merge's --forge is github, forgejo or gitlab");
         try {
-          console.log(`terragucci pr-merge: ${await mergePullRequest({ pr, sha, forge })}`);
+          console.log(`terragucci pr-merge: ${forge === "gitlab" ? await mergeGitLabMR({ pr, sha }) : await mergePullRequest({ pr, sha, forge })}`);
           return 0;
         } catch (e) {
           if (e instanceof ConfigError) throw e;
@@ -430,7 +451,7 @@ export async function main(argv: string[]): Promise<number> {
           approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.
           if (config.apply?.when === "pull-request" && !config.forge && detectForge(dirname(resolve(path)))?.value === "gitlab") {
-            problems.push(`apply.when: ${NO_GITLAB_PR_APPLY}`);
+            problems.push(...gitlabPrApplyProblems(config as Record<string, unknown>, "config"));
           }
         } catch (e) {
           if (!(e instanceof ConfigError)) throw e;
