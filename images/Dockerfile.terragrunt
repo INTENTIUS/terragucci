@@ -13,7 +13,7 @@ COPY --from=fetch /out/ /usr/local/bin/
 COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci
 LABEL org.opencontainers.image.title="terragucci-terragrunt"
 LABEL org.opencontainers.image.description="Terragrunt 1.1.6, OpenTofu 1.13.1 and the terragucci engine"
-LABEL org.opencontainers.image.version="0.4.0"
+LABEL org.opencontainers.image.version="0.4.1"
 LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 CMD ["bash"]
