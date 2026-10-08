@@ -100,7 +100,7 @@ Other changes are only reported:
 | never set in the root | it comes from a default |
 | on a resource deleted outside Terraform | the next apply makes it again |
 
-For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
+For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14.1 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
 
 <Shot step="responses" view="drift" alt="The Codify drift pull request in Forgejo, from the terragucci/drift branch: its body lists the queue timeout written from its live value and the queue to import" optional />
 
