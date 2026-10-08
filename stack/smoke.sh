@@ -5630,6 +5630,10 @@ review_merge() { # name -> REVIEW_MERGE, the merge commit, once its run ended
   wait_run "$USER/$1" "$REVIEW_MERGE" push
 }
 
+head_runs() { # name, sha, [ended] -> how many runs the head has (only the ended ones with ended)
+  api "$URL/api/v1/repos/$USER/$1/actions/runs?head_sha=$2" | jq --arg d "${3:-}" '[.workflow_runs[] | select($d == "" or (.status | IN("success","failure","cancelled","skipped")))] | length'
+}
+
 approval_status() { # name, sha -> the state and description of terragucci/approval on sha
   api "$URL/api/v1/repos/$USER/$1/commits/$2/statuses?limit=50" | jq -r '[.[] | select(.context == "terragucci/approval")] | sort_by(.id) | last | if . == null then "" else .status + ":" + .description end'
 }
@@ -5725,11 +5729,17 @@ claim_pr_review_status() {
   st="$(approval_status pr-review-status "$REVIEW_HEAD")"
   log "after the plan: terragucci/approval is ${st:-absent}"
   case "$st" in pending:*"wave 1"*"waits"*) ;; *) log "expected terragucci/approval pending, naming wave 1"; rc=1 ;; esac
+  local runs0
+  runs0="$(head_runs pr-review-status "$REVIEW_HEAD")"
   [ $rc = 0 ] && { review_approve pr-review-status "$REVIEW_HEAD" || rc=1; }
   if [ $rc = 0 ]; then
+    # The review starts its own run on the head. Once it ended, the status it
+    # set is final: under BREAK that is still pending, with nothing left to wait for.
     for i in $(seq 1 $(( TIMEOUT / 3 ))); do
       st="$(approval_status pr-review-status "$REVIEW_HEAD")"
       case "$st" in success:*) break ;; esac
+      [ "$(head_runs pr-review-status "$REVIEW_HEAD" ended)" -gt "$runs0" ] && break
+      [ $(( i % 20 )) = 0 ] && log "waiting for the review's run on ${REVIEW_HEAD:0:8} (${st:-absent})"
       sleep 3
     done
     log "after the review: terragucci/approval is ${st:-absent}"
