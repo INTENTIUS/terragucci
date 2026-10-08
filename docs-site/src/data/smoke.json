@@ -1002,7 +1002,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "5234ce4"
     },
     {
       "claim": "audit",
