@@ -528,11 +528,13 @@ async function applyOneWave(repo: string, options: ApplyWaveOptions): Promise<{ 
   const facts: WaveFacts = {};
   observer.wave = { number: options.wave, facts };
   const wave: WaveRun = { observer };
+  let code: number | undefined;
   try {
-    const code = await runWave(repo, options, work, wave, facts);
+    code = await runWave(repo, options, work, wave, facts);
     observer.wave.code = code;
     return { code, ...(wave.count !== undefined ? { count: wave.count } : {}) };
   } finally {
+    if (code !== undefined) writeOutcomeJson(env, options.wave, code, wave);
     // The report is written once the wave's roots planned, whatever came of the gate and the apply.
     if (wave.planned) await writeWaveReport(repo, options, wave as Required<WaveRun>, env).catch((e) => console.log(`wave ${options.wave}: the report was not written: ${(e as Error).message}`));
     rmSync(work, { recursive: true, force: true });
@@ -562,6 +564,14 @@ interface WaveRun {
   waitingSince?: string;
   /** Under `approval: pr-review`, the pull request whose review would approve the waiting wave. */
   review?: ReportWave["review"];
+  /** The approval mode in force at the wave's gate. */
+  mode?: Approval;
+  /** The command that approves the wave's digest, when it waits or its plans moved after an approval or a review. */
+  command?: string;
+  /** The `TG_OUTCOME` line, when the wave wrote one. */
+  line?: string;
+  /** The roots whose apply failed. */
+  failed?: string[];
 }
 
 /**
@@ -708,6 +718,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     ok[i] = await applyRoot(repo, binary, p, w.observer);
   });
   if (ok.includes(false)) {
+    w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
     console.log(`${label}: an apply failed`);
     return EXIT.failed;
   }
@@ -761,10 +772,10 @@ async function policyGate(
       const roots = [...denied.keys()].sort();
       w.refused = { reason: moved ? "override" : "policy", roots };
       if (moved) {
-        writeOutcome(options.env, `wave ${wave} changed after its policy override: ${[...denied.keys()].join(", ")}`);
+        writeOutcome(options.env, `wave ${wave} changed after its policy override: ${[...denied.keys()].join(", ")}`, w);
         return EXIT.refused;
       }
-      writeOutcome(options.env, `wave ${wave} refused by policy: ${[...denied.keys()].join(", ")}`);
+      writeOutcome(options.env, `wave ${wave} refused by policy: ${[...denied.keys()].join(", ")}`, w);
       return EXIT.failed;
     }
   }
@@ -876,6 +887,7 @@ async function gateWave(
     console.log(`${label}: approval ${rule.mode} (${rule.source})`);
     if (rule.note) console.log(`${label}: note: ${rule.note}`);
     mode = rule.mode;
+    w.mode = mode;
     // Under sealed every wave gate needs a seal: a wave added after init is never left open.
     if (rule.mode === "sealed") {
       if (rule.gates.size > 0 && !rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
@@ -965,7 +977,8 @@ async function gateWave(
         mkdirSync(join(repo, "terragucci-report", "current"), { recursive: true });
         writeFileSync(join(repo, "terragucci-report", "current", "report.json"), report());
         w.refused = { reason: "review", approved: moved.reviewed, by: moved.by.join(", "), roots: members.map((m) => m.member).sort() };
-        writeOutcome(options.env, `wave ${wave} changed since its review in pull request ${moved.pr}`);
+        w.command = approveLine(wave, digest, mode);
+        writeOutcome(options.env, `wave ${wave} changed since its review in pull request ${moved.pr}`, w);
         return EXIT.refused;
       }
       if (decision.status === "refused") {
@@ -983,7 +996,8 @@ async function gateWave(
         }
         if (!approved || approved.status !== 0) console.log(`${label}: the approved plans were not kept, so only the roots that moved can be named`);
         w.refused = { reason: "approval", ...(decision.approved ? { approved: decision.approved } : {}), by: decision.by, roots: moved };
-        writeOutcome(options.env, `wave ${wave} changed after approval: ${moved.join(", ")}`);
+        w.command = approveLine(wave, digest, mode);
+        writeOutcome(options.env, `wave ${wave} changed after approval: ${moved.join(", ")}`, w);
         return EXIT.refused;
       }
       console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
@@ -993,7 +1007,8 @@ async function gateWave(
         ? "chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>."
         : "chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER; add --actor <name> to name yourself. Under approval: ledger the approval binds these plans, not the person.");
       console.log("Then run this job again.");
-      writeOutcome(options.env, `wave ${wave} waits: ${approveLine(wave, digest, mode)}`);
+      w.command = approveLine(wave, digest, mode);
+      writeOutcome(options.env, `wave ${wave} waits: ${w.command}`, w);
       return EXIT.waiting;
     }
   }
@@ -1174,6 +1189,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   const bad = applied.results.filter((r) => r.status !== "succeeded");
   if (applied.code !== 0 || bad.length > 0) {
     for (const r of bad) console.log(`FAILED ${r.unit}: ${r.result}${r.error ? `: ${r.error}` : ""}`);
+    w.failed = bad.map((r) => r.unit);
     console.log(`${label}: an apply failed`);
     return EXIT.failed;
   }
@@ -1183,7 +1199,79 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
 }
 
 /** The one line the job's status carries, written where the pipeline reads it (`TG_OUTCOME`). */
-function writeOutcome(env: NodeJS.ProcessEnv | undefined, line: string): void {
+function writeOutcome(env: NodeJS.ProcessEnv | undefined, line: string, w: WaveRun): void {
+  w.line = line.slice(0, 135);
   const file = (env ?? process.env).TG_OUTCOME;
-  if (file) writeFileSync(file, line.slice(0, 135));
+  if (file) writeFileSync(file, w.line);
+}
+
+/** `terragucci.outcome/v1`: how a `tf-apply` wave ended, as JSON, for a program (notify, a chat front end) to read instead of the line. */
+export const OUTCOME_SCHEMA = "terragucci.outcome/v1";
+
+export type OutcomeStatus = "applied" | "waiting" | "refused" | "failed";
+
+export interface WaveOutcome {
+  schema: typeof OUTCOME_SCHEMA;
+  status: OutcomeStatus;
+  /** The stage's exit code: 0, 3, 4 or 1. */
+  exit: number;
+  wave: number;
+  /** The wave's roots (units, in a Terragrunt repo). Empty when the repo has no such wave. */
+  roots: string[];
+  /** The `TG_OUTCOME` line, when the wave wrote one. */
+  line?: string;
+  /** chant's set digest over the roots that change: the digest an approval binds. */
+  set_digest?: string;
+  /** Where the gate's record lives, when a gate holds the wave. */
+  gate?: { name: string; branch: string; path: string };
+  approval?: ReportWave["approval"];
+  /** The mode in force at the gate: which approvals count. */
+  approval_mode?: Approval;
+  /** The command that approves `set_digest`, when the wave waits or its plans moved after an approval or a review. */
+  approve_command?: string;
+  waiting_since?: string;
+  /** Under `approval: pr-review`, the pull request whose approving review of its head would approve the waiting wave. */
+  review?: { pull_request: number; url: string };
+  /** Why the wave applied nothing although it planned: the reason, the digest approved, by whom, and the roots that moved or were denied. */
+  refused?: ReportWave["refused"];
+  /** The roots the policy denied. */
+  policy_denied?: string[];
+  /** The roots that failed to plan or apply. */
+  failed_roots?: string[];
+}
+
+/** The wave's outcome as `terragucci.outcome/v1`. */
+export function waveOutcome(wave: number, code: number, w: WaveRun): WaveOutcome {
+  const status: OutcomeStatus = code === EXIT.applied ? "applied" : code === EXIT.waiting ? "waiting" : code === EXIT.refused ? "refused" : "failed";
+  const denied = w.refused && (w.refused.reason === "policy" || w.refused.reason === "override") ? w.refused.roots : [];
+  const failed = [...new Set([...(w.planned ?? []).filter((p) => p.error && !denied.includes(p.root)).map((p) => p.root), ...(w.failed ?? [])])].sort();
+  return {
+    schema: OUTCOME_SCHEMA,
+    status,
+    exit: code,
+    wave,
+    roots: w.roots ?? [],
+    ...(w.line ? { line: w.line } : {}),
+    ...(w.digest ? { set_digest: w.digest } : {}),
+    ...(w.gate ? { gate: { name: waveGate(wave), ...w.gate } } : {}),
+    ...(w.approval ? { approval: w.approval } : {}),
+    ...(w.mode && w.gate ? { approval_mode: w.mode } : {}),
+    ...(w.command && (status === "waiting" || status === "refused") ? { approve_command: w.command } : {}),
+    ...(w.waitingSince && status === "waiting" ? { waiting_since: w.waitingSince } : {}),
+    ...(w.review && status === "waiting" ? { review: w.review } : {}),
+    ...(w.refused ? { refused: w.refused } : {}),
+    ...(denied.length > 0 && w.refused?.reason === "policy" ? { policy_denied: denied } : {}),
+    ...(status === "failed" && failed.length > 0 ? { failed_roots: failed } : {}),
+  };
+}
+
+/** Write the wave's outcome where the pipeline asks for it (`TG_OUTCOME_JSON`), whatever came of the wave. */
+function writeOutcomeJson(env: NodeJS.ProcessEnv, wave: number, code: number, w: WaveRun): void {
+  const file = env.TG_OUTCOME_JSON;
+  if (!file) return;
+  try {
+    writeFileSync(file, JSON.stringify(waveOutcome(wave, code, w)) + "\n");
+  } catch (e) {
+    console.log(`wave ${wave}: the outcome was not written to ${file}: ${(e as Error).message}`);
+  }
 }
