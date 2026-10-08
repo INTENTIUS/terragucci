@@ -190,7 +190,18 @@
             "required": ["branch", "path"],
             "properties": { "branch": { "type": "string" }, "path": { "type": "string" } }
           },
-          "waiting_since": { "type": "string", "description": "On a waiting wave, when it began waiting for an approval of this digest (minor 8)." }
+          "waiting_since": { "type": "string", "description": "On a waiting wave, when it began waiting for an approval of this digest (minor 8)." },
+          "refused": {
+            "type": "object",
+            "description": "Why a tf-apply wave applied nothing although it planned: its plans changed after an approval, a review or an override, or the policy denied a root (minor 11).",
+            "required": ["reason", "roots"],
+            "properties": {
+              "reason": { "enum": ["approval", "review", "override", "policy"] },
+              "approved": { "type": "string" },
+              "by": { "type": "string" },
+              "roots": { "type": "array", "items": { "type": "string" } }
+            }
+          }
         }
       }
     },

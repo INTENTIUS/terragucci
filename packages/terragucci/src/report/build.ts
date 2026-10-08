@@ -55,6 +55,8 @@ export interface WaveInput {
   waitingSince?: string;
   /** A `tf-apply` wave's gate digest, which the report shows as its set digest: the digest over the roots that change. */
   setDigest?: string;
+  /** Why a `tf-apply` wave applied nothing although it planned. */
+  refused?: ReportWave["refused"];
 }
 
 export interface BuildInput {
@@ -292,6 +294,7 @@ export function buildReport(input: BuildInput): Report {
       ...review,
       ...(w.gate ? { gate: w.gate } : {}),
       ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
+      ...(w.refused ? { refused: w.refused } : {}),
     };
   });
 

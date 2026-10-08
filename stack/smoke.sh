@@ -275,7 +275,11 @@ blob-gcs-key|with a service_account key file the job writes the report and both 
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
-cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans every synthesized stack|'
+cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans every synthesized stack|
+audit|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
+audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
+audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
+audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -8997,6 +9001,310 @@ claim_cdktn_synth() {
   return $rc
 }
 
+# ── the audit trail ───────────────────────────────────────────────────────
+# A repo with one root, app, a terraform_data with local state, whose
+# reports go to the bucket under a fresh prefix, and beside it origin.git,
+# which holds main and, once a wave records something, chant/lifecycle.
+audit_repo() { # work, prefix -> $1/wave and $1/origin.git
+  local work="$1" prefix="$2"
+  mkdir -p "$work/wave/app"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "first"\n}\n' > "$work/wave/app/main.tf"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+}
+
+audit_origin() { # work -> commits $1/wave and pushes it to $1/origin.git, its origin as the image sees it
+  git init -q --bare "$1/origin.git"
+  git -C "$1/wave" init -q -b main
+  git -C "$1/wave" add -A && git -C "$1/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke audit"
+  git -C "$1/wave" push -q "$1/origin.git" main
+  git -C "$1/wave" remote add origin /origin.git
+}
+
+audit_in() { # work, command... -> runs it in the CI image in /repo ($1/wave), with /origin.git
+  local work="$1" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
+  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$(image_tag tofu)" "$@"
+}
+
+audit_wave() { # work, gate -> AUDIT_CODE, the exit code of wave 1
+  AUDIT_CODE=0
+  audit_in "$1" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate "$2" > "$1/run.log" 2>&1 || AUDIT_CODE=$?
+  cat "$1/run.log" >&2
+  clean_mounted "$1/wave" "$(image_tag tofu)"
+}
+
+audit_run() { # work, flags... -> AUDIT_OUT and AUDIT_CODE of terragucci audit, run in the repo
+  local work="$1"; shift
+  AUDIT_CODE=0
+  AUDIT_OUT="$(audit_in "$work" terragucci audit --link-hours 1 "$@" 2>&1)" || AUDIT_CODE=$?
+  printf '%s\n' "$AUDIT_OUT" >&2
+  clean_mounted "$work/wave" "$(image_tag tofu)"
+}
+
+audit_approve() { # origin.git, clone dir, actor, gate, [digest] -> an approval line on chant/lifecycle: the digest given, else the gate's newest pending one
+  local origin="$1" clone="$2" actor="$3" gate="$4" digest="${5:-}"
+  if [ -d "$clone" ]; then git -C "$clone" pull -q --ff-only origin chant/lifecycle || return 1
+  else git clone -q -b chant/lifecycle "$origin" "$clone" || return 1; fi
+  [ -n "$digest" ] || digest="$(jq -rs --arg g "$gate" '[.[] | select(.kind == "pending" and .gate == $g)] | last | .planDigest // empty' "$clone/_gates/tf-apply.jsonl")"
+  [ -n "$digest" ] || { echo "no pending line for $gate" >&2; return 1; }
+  # The approval is stamped to the second and must be newer than the pending line, which carries milliseconds.
+  sleep 1
+  printf '%s\n' "$(jq -cn --arg d "$digest" --arg g "$gate" --arg a "$actor" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: $g, resolvedBy: $a, timestamp: $t, planDigest: $d}')" >> "$clone/_gates/tf-apply.jsonl"
+  git -C "$clone" -c user.name="$actor" -c user.email="$actor@localhost" -c commit.gpgsign=false commit -qam "approve $gate" && git -C "$clone" push -q origin chant/lifecycle
+}
+
+audit_record() { # prefix, file -> downloads the record
+  curl -fsS -o "$2" "$FLOCI/$REPORT_BUCKET/$1/audit.jsonl"
+}
+
+audit_unrecorded() { # origin.git, ledger file, entry kind, record -> each approval or override line of the ledger with no entry of that kind: who, digest, time
+  comm -23 <(git -C "$1" show "chant/lifecycle:$2" 2>/dev/null | jq -r 'select(.kind != "pending") | "\(.resolvedBy) \(.planDigest) \(.timestamp)"' | sort) \
+    <(jq -r --arg k "$3" 'select(.kind == $k) | "\(.who) \(.digest) \(.at)"' "$4" | sort)
+}
+
+claim_audit() {
+  # A repo whose reports go to the bucket: wave 1 waits, smoke-approver
+  # approves its digest on chant/lifecycle, and the next run applies it.
+  # terragucci audit, run in the repo, writes audit.jsonl, audit.html and
+  # audit.json to the prefix with a presigned link. Every approval line on the
+  # ledger has an entry with its approver, digest and time, the request has
+  # one, and the apply names the approval it applied under. terragucci audit
+  # --check passes, and terragucci estate links audit.html from its page.
+  # BREAK: an approval of wave-2 lands on the ledger after the record was
+  # written, so the record lacks it, and --check names it and exits 1.
+  log() { echo "[smoke audit] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="audit-$STAMP" approval missing
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  audit_repo "$work" "$prefix"
+  audit_wave "$work" always
+  [ "$AUDIT_CODE" = 3 ] || { log "the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; }
+  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 0 ] || { log "the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE"; rc=1; }
+    grep -Eq "X-Amz-Signature=[0-9a-f]{64}" <<<"$AUDIT_OUT" || { log "terragucci audit printed no presigned link"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    audit_approve "$work/origin.git" "$work/ledger" late-approver wave-2 "sha256:$(printf '%064d' 2)" || { log "could not write the late approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then audit_record "$prefix" "$work/audit.jsonl" || { log "no audit.jsonl at $REPORT_BUCKET/$prefix"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    missing="$(audit_unrecorded "$work/origin.git" _gates/tf-apply.jsonl approval "$work/audit.jsonl")"
+    [ -z "$missing" ] || { log "approvals on the ledger with no entry in the record: $missing"; rc=1; }
+    jq -se '[.[] | select(.schema == "terragucci.audit/v1" and .kind == "approval-requested" and .what == "wave-1" and (.digest | type == "string"))] | length >= 1' "$work/audit.jsonl" >/dev/null \
+      || { log "the record has no entry for the request of wave 1"; rc=1; }
+    approval="$(jq -rs '[.[] | select(.kind == "approval" and .who == "smoke-approver" and .what == "wave-1")] | last | .id // empty' "$work/audit.jsonl")"
+    jq -se --arg a "$approval" '[.[] | select(.kind == "apply" and .result == "applied" and .who == "smoke-approver" and .detail.approval == $a and .evidence.source == "report")] | length == 1' "$work/audit.jsonl" >/dev/null \
+      || { log "the apply of wave 1 does not name the approval it applied under: $(jq -c 'select(.kind == "apply") | {who, result, detail}' "$work/audit.jsonl")"; rc=1; }
+    curl -fsS -o /dev/null "$FLOCI/$REPORT_BUCKET/$prefix/audit.html" || { log "no audit.html at $REPORT_BUCKET/$prefix"; rc=1; }
+    audit_run "$work" --check
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit --check exited $AUDIT_CODE: the record lacks an entry the sources hold"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || log "terragucci estate exited non-zero"
+    clean_mounted "$work/wave" "$image"
+    curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html" | grep -q 'href="audit.html" id="audit-trail"' || { log "estate.html does not link audit.html"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the record holds the request, the approval by smoke-approver and the apply that names it, --check passes, and the estate page links it"
+  return $rc
+}
+
+claim_audit_override() {
+  # The policy-wave repo with policy.override and reports in the bucket. Its
+  # wave is denied and terragucci audit runs; smoke-approver overrides the
+  # denial, the next run applies app (its report replaces the denied one) and
+  # terragucci audit runs again. The record keeps the refusal
+  # (denied-by-policy, app denied) and appends the override (who, the reason,
+  # the rules and the plan digest of the denial it answers) and the apply
+  # that names it. Every override line on the ledger has an entry, and
+  # --check passes.
+  # BREAK: the override is written after the record, so the record lacks it,
+  # and --check names it and exits 1.
+  log() { echo "[smoke audit-override] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="audit-override-$STAMP" missing
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  mkdir -p "$work/wave"
+  cp -R "$HERE/fixtures/policy-wave/." "$work/wave/"
+  printf 'policy:\n  engine: conftest\n  path: policy\n  override: [smoke-approver]\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" >> "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  audit_wave "$work" never
+  [ "$AUDIT_CODE" = 1 ] || { log "the first run exited $AUDIT_CODE, not 1: the policy did not deny the wave"; rc=1; }
+  # A scheduled audit records the refusal while its report stands; the run after the override replaces that report.
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE after the denial"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then policy_override_write "$work" smoke-approver || rc=1; fi
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    audit_wave "$work" never
+    [ "$AUDIT_CODE" = 0 ] || { log "the run after the override exited $AUDIT_CODE, not 0"; rc=1; }
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE after the apply"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then audit_record "$prefix" "$work/audit.jsonl" || { log "no audit.jsonl at $REPORT_BUCKET/$prefix"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    missing="$(audit_unrecorded "$work/origin.git" _gates/policy-override.jsonl override "$work/audit.jsonl")"
+    [ -z "$missing" ] || { log "overrides on the ledger with no entry in the record: $missing"; rc=1; }
+    jq -se '[.[] | select(.kind == "refused" and .result == "denied-by-policy" and .detail.denied == ["app"] and (.detail.rules.app | length > 0))] | length >= 1' "$work/audit.jsonl" >/dev/null \
+      || { log "the record has no denied-by-policy refusal of app: $(jq -c 'select(.kind == "refused")' "$work/audit.jsonl")"; rc=1; }
+    jq -se '[.[] | select(.kind == "override" and .what == "app" and .who == "smoke-approver" and .detail.reason == "smoke: the probe goes out" and (.detail.rules | length > 0) and (.detail.plan_digest | type == "string"))] | length == 1' "$work/audit.jsonl" >/dev/null \
+      || { log "the override of app is not in the record with its reason, rules and plan digest: $(jq -c 'select(.kind == "override")' "$work/audit.jsonl")"; rc=1; }
+    jq -se '[.[] | select(.kind == "apply" and .result == "applied" and .detail.overrides[0].root == "app" and .detail.overrides[0].by == "smoke-approver")] | length == 1' "$work/audit.jsonl" >/dev/null \
+      || { log "the apply of app does not name its override: $(jq -c 'select(.kind == "apply")' "$work/audit.jsonl")"; rc=1; }
+    audit_run "$work" --check
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit --check exited $AUDIT_CODE: the record lacks an entry the sources hold"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the record holds the denial of app, the override by smoke-approver with its reason and rules, and the apply under it"
+  return $rc
+}
+
+claim_audit_refused() {
+  # Wave 1 waits and smoke-approver approves its digest; then app changes in
+  # a new commit and wave 1 runs again. Its plans moved, so it applies nothing
+  # and exits 4, and its report says why in waves[].refused. terragucci audit
+  # records the refusal: changed-after-approval, by smoke-approver, with the
+  # digest approved and app as the root that moved.
+  # BREAK: app does not change, so the second run applies and nothing is refused.
+  log() { echo "[smoke audit-refused] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="audit-refused-$STAMP" approved
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  audit_repo "$work" "$prefix"
+  audit_wave "$work" always
+  [ "$AUDIT_CODE" = 3 ] || { log "the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; }
+  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    approved="$(jq -rs '[.[] | select(.kind == "resolution" and .gate == "wave-1")] | last | .planDigest' "$work/ledger/_gates/tf-apply.jsonl")"
+    if [ -z "${BREAK:-}" ]; then
+      printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "moved"\n}\n' > "$work/wave/app/main.tf"
+      git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app moves after its approval"
+    fi
+    audit_wave "$work" always
+    log "the run after the approval exited $AUDIT_CODE"
+    jq -e '.waves[0].refused | .reason == "approval" and .by == "smoke-approver" and .roots == ["app"]' "$work/wave/terragucci-report/report.json" >/dev/null 2>&1 \
+      || { log "the wave report does not say it was refused after the approval: $(jq -c '.waves[0]' "$work/wave/terragucci-report/report.json" 2>/dev/null)"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then audit_record "$prefix" "$work/audit.jsonl" || { log "no audit.jsonl at $REPORT_BUCKET/$prefix"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    jq -se --arg d "$approved" '[.[] | select(.kind == "refused" and .result == "changed-after-approval" and .who == "smoke-approver" and .detail.approved == $d and .detail.moved == ["app"] and .digest != $d)] | length == 1' "$work/audit.jsonl" >/dev/null \
+      || { log "the record has no changed-after-approval refusal of wave 1: $(jq -c 'select(.kind == "refused" or .kind == "apply") | {kind, who, result, digest, detail}' "$work/audit.jsonl")"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the refused wave is in the record: changed after the approval by smoke-approver, app moved"
+  return $rc
+}
+
+claim_audit_control() {
+  # A control repo names two projects, smoke.local/audit/a and b, each a repo
+  # of its own (a.git and b.git, named by url:) copying its reports to the
+  # bucket. Wave 1 of each waits; smoke-approver approves a, and its next run
+  # applies (its report replaces the waiting run of the same commit).
+  # terragucci audit, run in the control repo, fetches each project
+  # chant/lifecycle from its url and reads each project reports: one record
+  # holds the request, approval and apply of a and the request and waiting
+  # run of b, and --check passes.
+  # BREAK: the url of b names a repo that does not exist, so its ledger
+  # cannot be read: the command exits 1 and the record lacks the request of b.
+  log() { echo "[smoke audit-control] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="audit-control-$STAMP" p code burl=/work/b.git out bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  [ -n "${BREAK:-}" ] && burl=/work/missing.git
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  control_in() { # dir under /work, command...
+    local dir="$1"; shift
+    run_copied --rm --network terragucci -v "$work:/work" -w "/work/$dir" \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      -e GITHUB_SERVER_URL=http://smoke.local -e "GITHUB_REPOSITORY=audit/$dir" "$image" "$@"
+  }
+  for p in a b; do
+    estate_project "$work/$p" "$(printf '  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s' "$REPORT_BUCKET" "$prefix")"
+    git init -q --bare "$work/$p.git"
+    git -C "$work/$p" push -q "$work/$p.git" main
+    git -C "$work/$p" remote add origin "/work/$p.git"
+    code=0
+    control_in "$p" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate always >&2 || code=$?
+    clean_mounted "$work/$p" "$image"
+    [ "$code" = 3 ] || { log "wave 1 of $p exited $code, not 3"; rc=1; }
+  done
+  if [ $rc = 0 ]; then audit_approve "$work/a.git" "$work/a-ledger" smoke-approver wave-1 || { log "could not approve wave 1 of a"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    code=0
+    control_in a terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate always >&2 || code=$?
+    clean_mounted "$work/a" "$image"
+    [ "$code" = 0 ] || { log "wave 1 of a exited $code after its approval, not 0"; rc=1; }
+  fi
+  mkdir -p "$work/control"
+  cat > "$work/control/terragucci.yml" <<YAML
+defaults:
+  reports:
+    bucket: s3://$REPORT_BUCKET
+    endpoint: http://floci:4566
+    prefix: $prefix
+projects:
+  smoke.local/audit/a:
+    url: /work/a.git
+  smoke.local/audit/b:
+    url: $burl
+YAML
+  if [ $rc = 0 ]; then
+    code=0
+    out="$(control_in control terragucci audit --link-hours 1 2>&1)" || code=$?
+    printf '%s\n' "$out" >&2
+    clean_mounted "$work/control" "$image"
+    [ "$code" = 0 ] || { log "terragucci audit exited $code"; rc=1; }
+    audit_record "$prefix" "$work/audit.jsonl" || { log "no audit.jsonl at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(jq -rs '[.[] | select(.project == "smoke.local/audit/a") | "\(.kind):\(.result)"] | sort | join(",")' "$work/audit.jsonl")" = "apply:applied,approval-requested:waiting,approval:unsigned" ] \
+      || { log "the entries of a are $(jq -rsc '[.[] | select(.project == "smoke.local/audit/a") | "\(.kind):\(.result)"] | sort' "$work/audit.jsonl")"; rc=1; }
+    [ "$(jq -rs '[.[] | select(.project == "smoke.local/audit/b") | "\(.kind):\(.result)"] | sort | join(",")' "$work/audit.jsonl")" = "apply:waiting,approval-requested:waiting" ] \
+      || { log "the entries of b are $(jq -rsc '[.[] | select(.project == "smoke.local/audit/b") | "\(.kind):\(.result)"] | sort' "$work/audit.jsonl")"; rc=1; }
+    code=0
+    control_in control terragucci audit --check >&2 || code=$?
+    clean_mounted "$work/control" "$image"
+    [ "$code" = 0 ] || { log "terragucci audit --check exited $code"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "one record holds both projects: the request, approval and apply of a and the request and waiting run of b"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -9196,6 +9504,10 @@ blob-azure-key       azurite! weight=120
 index-writes         self! weight=90
 cdf-shared-bucket    weight=120
 cdktn-synth          runner self! weight=200
+audit                weight=150
+audit-override       weight=150
+audit-refused        weight=150
+audit-control        weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
