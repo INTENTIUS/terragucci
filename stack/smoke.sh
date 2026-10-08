@@ -457,10 +457,20 @@ gated_applied() { # name -> the roots with state under <name>/, space-separated
 # The smoke stands in for the person who approves: it reads nothing and
 # approves the wave's standing plan, as `chant approve` would be run by hand,
 # unsigned, or with "sign" sealed with the approver's key.
-gated_approve() { # name, wave, [sign]
+gated_approve() { # name, wave, [sign|unlisted]
+  # unlisted: the approver's clone commits identity.gates away and points
+  # origin/HEAD, where chant reads the declaration, at that commit (only
+  # chant/lifecycle is pushed), so chant writes an unsigned approval of a gate
+  # the repo seals.
   local clone="$work/approve-$2-$RANDOM" sign=()
   [ "${3:-}" = sign ] && sign=(--sign "$work/approver")
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$1.git" "$clone" || return 1
+  if [ "${3:-}" = unlisted ] && [ -f "$clone/chant.workspace.json" ]; then
+    jq 'del(.identity.gates)' "$clone/chant.workspace.json" > "$clone/chant.workspace.json.new" && mv "$clone/chant.workspace.json.new" "$clone/chant.workspace.json"
+    git -C "$clone" -c commit.gpgsign=false commit -q -am "unlisted gates, never pushed" || return 1
+    git -C "$clone" symbolic-ref -d refs/remotes/origin/HEAD 2>/dev/null || true
+    git -C "$clone" update-ref refs/remotes/origin/HEAD HEAD || return 1
+  fi
   git -C "$clone" config user.name smoke-approver
   git -C "$clone" config user.email smoke-approver@terragucci.local
   (cd "$clone" && "$CHANT" approve tf-apply "wave-$2" --approver smoke-approver ${sign[@]+"${sign[@]}"}) >&2 || { log "chant approve tf-apply wave-$2 failed"; return 1; }
@@ -5076,7 +5086,7 @@ claim_approval_at_base() {
   gated_repo approval-at-base gated-waves sealed || { drop_work "$work"; return 1; }
   sha="$(push_tree "$work/tree" "$repo" main "approval-at-base: first, sealed")"
   wait_run "$repo" "$sha"
-  gated_approve approval-at-base 1 || rc=1
+  gated_approve approval-at-base 1 unlisted || rc=1
   if [ $rc = 0 ]; then
     sed -i.bak 's/^approval: sealed$/approval: ledger/' "$work/tree/terragucci.yml"
     rm -f "$work/tree/terragucci.yml.bak" "$work/tree/chant.workspace.json"
