@@ -82,7 +82,7 @@ export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
  * pipeline, so `when: pull-request` needs `comments:` (the schedule whose
  * job reads `/terragucci apply`) and `merge_token_env`, a variable whose
  * token may run pipelines on the default branch and merge there, with
- * `merge: manual` too (GITLAB_PR_APPLY_NEEDS).
+ * `merge: manual` too (PR_APPLY_NEEDS_ON_GITLAB).
  */
 export interface ApplySettings {
   when?: ApplyWhen;
@@ -517,13 +517,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
 }
 
-/**
- * Why GitLab has no apply before merge. GitLab builds a merge request's
- * pipeline from the merge request's own `.gitlab-ci.yml`, so a job that
- * applies it would run the checks before the apply (approval, locks, the
- * pipeline file) inside a pipeline the merge request controls, and the apply
- * role would have to trust every branch of the project.
- */
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
 export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
 
@@ -535,7 +528,7 @@ export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pip
  * variable whose token may start a pipeline on the protected default branch
  * (and, with `merge: auto`, merge there).
  */
-export const GITLAB_PR_APPLY_NEEDS = {
+export const PR_APPLY_NEEDS_ON_GITLAB = {
   comments: "pull-request on GitLab needs comments: <cron>: a merge request note starts no pipeline, so the comments schedule's job is what reads `/terragucci apply`",
   token: "pull-request on GitLab needs apply.merge_token_env: the comments job starts the apply pipeline on the default branch with that variable's token, which must be allowed to merge there, so name a protected, masked variable holding one",
 };
@@ -545,8 +538,8 @@ export function gitlabPrApplyProblems(s: Record<string, unknown>, where: string)
   const a = s.apply;
   if (!isObject(a) || a.when !== "pull-request") return [];
   return [
-    ...(s.comments ? [] : [`${where}.apply.when: ${GITLAB_PR_APPLY_NEEDS.comments}`]),
-    ...(a.merge_token_env ? [] : [`${where}.apply.when: ${GITLAB_PR_APPLY_NEEDS.token}`]),
+    ...(s.comments ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.comments}`]),
+    ...(a.merge_token_env ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.token}`]),
   ];
 }
 

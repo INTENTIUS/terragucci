@@ -50,7 +50,7 @@ const PLAN_CONTEXT = "terragucci/plan";
 const OWN_CONTEXTS = new Set(["terragucci/apply"]);
 
 /** The files GitLab builds the default branch's pipeline from: a merge request that changes one applies after it merges. */
-export const GITLAB_PIPELINE_FILES = [".gitlab-ci.yml", ".gitlab/terragucci.yml"];
+export const PIPELINE_FILES_ON_GITLAB = [".gitlab-ci.yml", ".gitlab/terragucci.yml"];
 
 /** The variables the comments job starts the apply pipeline with. */
 export const MR_VAR = "TERRAGUCCI_MR";
@@ -189,7 +189,7 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
     return { fail: `could not compare ${short(sha)} with ${base} (${(e as Error).message})` };
   }
   const paths = (Array.isArray(compare?.diffs) ? compare.diffs : []).flatMap((d: any) => [d?.old_path, d?.new_path]);
-  const touched = GITLAB_PIPELINE_FILES.filter((f) => paths.includes(f));
+  const touched = PIPELINE_FILES_ON_GITLAB.filter((f) => paths.includes(f));
   if (touched.length > 0) {
     return { refuse: `!${iid} changes ${touched.join(" and ")}, and the apply runs the pipeline of ${base}, so it is not applied before merge. Merge it; the push after the merge runs the pipeline it changes` };
   }

@@ -22,6 +22,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | Approvers: under `approval: ledger` anyone who can push to `chant/lifecycle`, under `sealed` the people `.chant/allowed_signers` lists | release a gated wave | the plan digest the approval names, and under `sealed` its seal |
 | Overriders: the people `policy.override` lists at base | let one denied plan of one root through `tf-apply` | the root, plan digest and rules the override names, and under `sealed` its seal |
 | The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone |
+| On GitLab, anyone allowed to run a pipeline on the default branch | start `mr-apply` with any variables | `mr-apply` reads the merge request, the note and the head from GitLab, and refuses a head the merge request does not have |
 | A fork's author | nothing | forks get no plan job and never apply |
 
 ## What the generated jobs reach
@@ -58,11 +59,17 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `apply-wave-<k>` | a push to the default branch | merged code | `GITLAB_TOKEN` | apply role |
 | `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
 | `tips` | a push to the default branch | merged code | `GITLAB_TOKEN` | none |
-| `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked | `GITLAB_TOKEN`, to reply and start or retry pipelines | none |
+| `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked | `GITLAB_TOKEN`, to reply and start or retry pipelines; with `apply.when: pull-request` also the merge token | none |
+| `mr-apply` | a default-branch pipeline `comments` starts, with `apply.when: pull-request` | the default branch's pipeline file, then the open change's head | `GITLAB_TOKEN` | apply role |
+| `pr-merge` | after `mr-apply`, with `apply.merge: auto` | none of the change's, and none of `mr-apply`'s artifacts | the merge token | none |
+| `confirm` | a push, with `apply.when: pull-request` | merged code | `GITLAB_TOKEN` | plan role |
 
 | GitLab fact | What it means |
 |---|---|
-| no apply before merge, no agent comment | the apply role meets only merged code |
+| no agent comment | no job pushes to a merge request's branch |
+| a merge request's own pipeline never applies | with `apply.when: pull-request` the apply runs in a pipeline of the default branch, so its OIDC subject is the default branch's and the apply role keeps trusting that alone |
+| the `comments` job starts that pipeline with the merge token | the one token that may run a pipeline on the protected default branch; protected and scoped to the `terragucci-merge` environment, which only `comments` and `pr-merge` name |
+| the pipeline's variables name the merge request, the note and the head | they are pointers: `mr-apply` reads the note, its author's role, the merge request and its head from GitLab before any credential, and refuses a head that differs |
 | `GITLAB_TOKEN` cannot be a protected variable | the merge request's plan job posts its note with it, so any branch's pipeline can read it |
 | the OIDC subject carries the pipeline's branch | a merge request's plan job has its source branch, so the plan role trusts every branch |
 
@@ -117,12 +124,13 @@ No generated job runs `terragucci override` or writes an override line: the wave
 
 ## Apply before merge
 
-With `apply.when: pull-request`, the open change's head runs with the apply role. The reviewer who approves the head is the guard.
+With `apply.when: pull-request`, the open change's head runs with the apply role. The reviewer who approves the head is the guard. On GitLab the `comments` job runs the checks, and `mr-apply` runs them again.
 
 | Check before any credential | Stops |
 |---|---|
 | Forks never apply | outside code meeting the apply role |
-| A reviewer other than the author approved the head; no reviewer's last review asks for changes | unreviewed code meeting the apply role |
+| A reviewer other than the author approved the head; no reviewer's last review asks for changes (on GitLab, an approval after the latest push) | unreviewed code meeting the apply role |
+| On GitLab, the head the pipeline's variable names is the merge request's head now | a pipeline started by hand for code nobody approved |
 | The head did not move while the comment was read, and contains the default branch as it is now | applying code nobody reviewed, or undoing merged changes |
 | The change does not edit the pipeline file | a change rewriting the job that applies it |
 | Waves, gate, signers, policy and config come from the default branch | a change loosening its own gate |
@@ -170,6 +178,7 @@ Each of these is a writer's own code in a job the forge gives a token to. Branch
 | Merge requests | An approval rule requiring one approval, with approval by the author prevented (GitLab Premium and Ultimate) | a second person reads each change |
 | Merge requests | Merge commit; with fast-forward merges, squash commits set to Require | a fast-forward of several commits makes base the change's own commit |
 | `chant/lifecycle` | Protected: push and merge for a role your approvers and `GITLAB_TOKEN` both hold, force push off | approval history stays |
+| `apply.merge_token_env` variable | Protected, masked, environment scope `terragucci-merge`; a token whose role may merge into the default branch | only `comments` and `pr-merge` read it, and neither runs a change's code |
 | Apply role | Trust only `project_path:<group>/<project>:ref_type:branch:ref:<default branch>`, never `ref:*` | no branch assumes it |
 
 `GITLAB_TOKEN` reaches every branch's pipeline: give it a role with no more than posting notes and statuses and pushing `chant/lifecycle` needs.

@@ -58,7 +58,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, GITLAB_PR_APPLY_NEEDS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, PR_APPLY_NEEDS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { MR_VAR } from "./comment-apply-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
@@ -1240,8 +1240,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
   if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
   // GitLab: the comments job reads `/terragucci apply` and starts the mr-apply pipeline with the merge token.
-  if (prApply && forge === "gitlab" && !input.comments) throw new RenderError(`apply.when: ${GITLAB_PR_APPLY_NEEDS.comments}`);
-  if (prApply && forge === "gitlab" && !input.applyMergeTokenEnv) throw new RenderError(`apply.when: ${GITLAB_PR_APPLY_NEEDS.token}`);
+  if (prApply && forge === "gitlab" && !input.comments) throw new RenderError(`apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.comments}`);
+  if (prApply && forge === "gitlab" && !input.applyMergeTokenEnv) throw new RenderError(`apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.token}`);
   const locksPlan = input.locksPlan === true;
   if (locksPlan && forge === "gitlab") throw new RenderError(`locks: ${NO_GITLAB_PLAN_LOCKS}`);
   const pushApplyJobs = prApply ? [] : applyJobs;
