@@ -16,7 +16,7 @@ Pushes apply one at a time in the order they arrived; none cancels another.
 | GitLab | a resource group |
 | Forgejo | a named group, plus a lock on the remote that a waiter takes over once the holder's run ends or its lease is two hours old |
 
-A wave whose commit is no longer the branch tip stands down on GitHub and Forgejo. Pull requests take no locks under the default `apply.when: merge`; under `apply.when: pull-request`, an applying pull request, or one a writer comments `/terragucci lock` on, locks the roots it reaches.
+A wave whose commit is no longer the branch tip stands down on GitHub and Forgejo. Pull requests take no locks under the default `apply.when: merge`; under `apply.when: pull-request`, an applying pull request, or one a writer comments `/terragucci lock` on, locks the roots it reaches (in a Terragrunt repo, the units).
 
 `tf-plan`, `tf-drift` and `tf-apply` plan a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 16 otherwise. Roots that apply together each get a provider cache directory of their own; with a shared `TF_PLUGIN_CACHE_DIR`, inits take turns.
 
@@ -70,7 +70,7 @@ With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-mer
 |---|---|---|
 | `apply-comment` | `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` on an open pull request | checks the [open-PR column](#when-a-comment-runs-nothing), locks the roots the change reaches, and applies the head wave by wave with the apply role while no other apply runs; for `lock`, checks the `lock` column and takes the locks with no credential and no apply; for `unlock`, releases its locks |
 | `pr-merge` | with `apply.merge: auto`, after `apply-comment` applied every wave | merges while the head is still the applied commit and approved by a reviewer other than its author, then releases the locks |
-| `confirm` | each push to the default branch | plans every root and applies nothing; its `terragucci/apply` status fails naming roots that plan a change |
+| `confirm` | each push to the default branch | plans every root (every unit, after the Terragrunt caches and plan roles) and applies nothing; its `terragucci/apply` status fails naming roots that plan a change |
 
 `init` and `config check` refuse `apply.when: pull-request` on GitLab, which builds a merge request's pipeline from its own `.gitlab-ci.yml`.
 
@@ -82,7 +82,7 @@ Each wave reads its approval mode, gate rule, signers file and config from the d
 | `apply.merge: auto` with `apply.merge_token_env` | `pr-merge`, the only job given that token; it runs no pull request code |
 | `apply.merge: auto` with no merge token | `pr-merge` with the job's own token: Forgejo refuses it; on GitHub the merge starts no workflow, so the next push confirms it |
 
-Locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A lock whose pull request merged or closed counts as released.
+In a Terragrunt repo, `apply-comment` runs the waves of units with `--terragrunt`, as the apply jobs do, and the locks are on units: [Locks](/terragucci/guides/apply-before-merge/#locks) says which. Locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A lock whose pull request merged or closed counts as released.
 
 ### What the pull request's code can reach
 

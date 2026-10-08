@@ -31,7 +31,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	'apply-when': {
 		mark: 'good',
-		text: 'Both, per project: apply.when merge (default) or pull-request; before merge on plain roots on GitHub and Forgejo, after merge on GitLab and in Terragrunt repos',
+		text: 'Both, per project: apply.when merge (default) or pull-request; before merge on GitHub and Forgejo, after merge on GitLab',
 		page: 'reference/config/#apply-before-merge',
 	},
 	'approval-binds': {
@@ -51,7 +51,7 @@ export const terragucci: Record<RowId, OwnCell> = {
 	},
 	locks: {
 		mark: 'good',
-		text: 'A project applies one push at a time; a pull request applied before merge holds its roots until it merges or closes, and /terragucci unlock releases them (plain roots, GitHub and Forgejo)',
+		text: 'A project applies one push at a time; a pull request applied before merge holds its roots, or its Terragrunt units, until it merges or closes, and /terragucci unlock releases them (GitHub and Forgejo)',
 		page: 'reference/pipeline/#apply-before-merge',
 	},
 	terragrunt: {
@@ -110,9 +110,9 @@ export const terragucci: Record<RowId, OwnCell> = {
 		page: 'https://github.com/INTENTIUS/terragucci/releases',
 	},
 	'tg-before-merge': {
-		mark: 'bad',
-		text: 'A Terragrunt repo applies after merge; init refuses apply.when: pull-request there',
-		page: 'guides/use-terragrunt/',
+		mark: 'good',
+		text: 'With apply.when: pull-request on GitHub and Forgejo, the open pull request applies its waves of units from its head, under the same gates, with its units and their dependents locked',
+		page: 'guides/apply-before-merge/',
 	},
 	'gitlab-comments': {
 		mark: 'bad',

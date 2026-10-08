@@ -68,8 +68,8 @@ export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
  * its own, with the token in the secret `merge_token_env` names when it is
  * set (required on Forgejo, whose job token cannot push to the default
  * branch). `requires` lists what an open pull request needs before it
- * applies (APPLY_REQUIRES, all by default). Plain roots on GitHub and
- * Forgejo only (NO_GITLAB_PR_APPLY).
+ * applies (APPLY_REQUIRES, all by default). GitHub and Forgejo only
+ * (NO_GITLAB_PR_APPLY), for plain roots and Terragrunt units alike.
  */
 export interface ApplySettings {
   when?: ApplyWhen;

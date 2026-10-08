@@ -529,8 +529,25 @@ describe("apply before merge (apply.when: pull-request)", () => {
     expect(renderPr("forgejo", "manual").jobs["apply-comment"].outputs).toBeUndefined();
   });
 
-  it("a Terragrunt repo refuses apply.when pull-request", () => {
-    expect(() => renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/dev/app"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] }, applyWhen: "pull-request" })).toThrow(/needs plain roots/);
+  it.each(["github", "forgejo"] as const)("%s: a Terragrunt repo applies before merge: the comment locks units, the waves of units run from the head, and the confirm job plans every unit after the plan prelude", (forge) => {
+    const tgLayers = [["live/canary/one"], ["live/fleet/two"]];
+    const doc = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: tgLayers, env: {}, gate: "always", terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] }, applyWhen: "pull-request", applyMerge: "auto", ...(forge === "forgejo" ? { applyMergeTokenEnv: "MERGE_TOKEN" } : {}) }).content);
+    expect(doc.jobs["apply-wave-1"]).toBeUndefined();
+    expect(doc.jobs["pr-merge"]).toBeDefined();
+    const run = doc.jobs["apply-comment"].steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run as string;
+    expect(run).toContain("--when pull-request --terragrunt --out terragucci-comment.json");
+    expect(run).toContain('terragucci stage tf-apply --wave "$wave" --layers \'live/canary/one;live/fleet/two\' --binary tofu --gate always --terragrunt $tf_base $rest');
+    // Forgejo decides again once it holds the apply lock, and says nothing twice.
+    if (forge === "forgejo") expect(run).toContain("--terragrunt --again --out");
+    else expect(run).not.toContain("--again");
+    const confirm = doc.jobs.confirm.steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-plan")).run as string;
+    expect(confirm).toContain("--terragrunt");
+    expect(confirm).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
+    expect(confirm.indexOf("TG_DOWNLOAD_DIR")).toBeLessThan(confirm.indexOf("terragucci stage tf-plan"));
+    expect(confirm).toContain("every unit plans no change");
+    // A merge-mode Terragrunt pipeline's decision carries no --terragrunt: it takes no locks.
+    const merge = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: tgLayers, env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }).content);
+    expect(merge.jobs["apply-comment"].steps.find((s: { run?: string }) => s.run?.includes("terragucci comment-apply")).run).not.toContain("--terragrunt --out");
   });
 
   describe("in the step's own shell", () => {
@@ -589,7 +606,11 @@ describe("apply before merge (apply.when: pull-request)", () => {
         const odd = await runStep(`cd ${work} && ${mergeScript("github")}`, { ...env, ...envFor(api.url, dir, {}), TG_PR: "7", TG_SHA: sha, TG_WAVES: "1, 2 `id` $(id)" });
         expect(odd.status, odd.out).toBe(0);
         const reply = api.hits.find((h) => h.url === "/repos/acme/infra/issues/7/comments")?.body.body as string;
-        expect(reply).toContain("applied wave 1, 2   of pull request 7");
+        expect(reply).toContain("applied wave 1, 2 of pull request 7");
+        // A Terragrunt run's last wave says it ran every wave after it; the reply keeps the numbers.
+        const tg = await runStep(`cd ${work} && ${mergeScript("github")}`, { ...env, ...envFor(api.url, dir, {}), TG_PR: "7", TG_SHA: sha, TG_WAVES: "1, 2 and every wave after it" });
+        expect(tg.status, tg.out).toBe(0);
+        expect(api.hits.filter((h) => h.url === "/repos/acme/infra/issues/7/comments").at(-1)?.body.body).toContain("applied wave 1, 2 of pull request 7 at");
       } finally {
         api.close();
       }

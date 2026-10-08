@@ -63,7 +63,7 @@ The text is untrusted and never reaches a script; `terragucci comment` reads it 
 | `/terragucci plan <root>` | a re-plan of that root, which must be exactly a root the pipeline knows | every GitHub and Forgejo pipeline |
 | `/terragucci apply` | the approved waves | merged pull requests; open ones with `apply.when: pull-request` |
 | `/terragucci apply wave-<n>` | the approved waves up to wave n | as above |
-| `/terragucci lock` | locks on the roots this pull request reaches, with no apply | `apply.when: pull-request` |
+| `/terragucci lock` | locks on the roots (in a Terragrunt repo, the units) this pull request reaches, with no apply | `apply.when: pull-request` |
 | `/terragucci unlock` | a release of this pull request's locks | `apply.when: pull-request` |
 | `/terragucci agent <ask>` | a coding agent's change | `agent.comment` set; see [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
 

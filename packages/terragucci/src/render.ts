@@ -123,7 +123,7 @@ export interface PipelineInput {
   policy?: boolean;
   /** `agent.comment` is set: `/terragucci agent <ask>` gets the agent and agent-push jobs (render-agent.ts). GitHub and Forgejo only. */
   agentComment?: AgentCommentInput;
-  /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (GitHub and Forgejo), and the push after the merge only confirms. Plain roots only. */
+  /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (GitHub and Forgejo), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
   applyWhen?: ApplyWhen;
   /** `apply.merge`: with `auto`, a pull request whose every wave applied is merged. */
   applyMerge?: ApplyMerge;
@@ -713,7 +713,8 @@ export function mergeScript(forge: Exclude<ForgeName, "gitlab">): string {
     forgeApi(forge),
     'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
     'case "$TG_SHA" in ""|*[!0-9a-f]*) echo "terragucci: the apply job handed on no commit sha, so nothing is merged" >&2; exit 1 ;; esac',
-    `waves="$(printf '%s' "\${TG_WAVES:-}" | tr -cd '0-9, ')"`,
+    // A Terragrunt run's last wave reads "2 and every wave after it": the words go, and so do the spaces they leave.
+    `waves="$(printf '%s' "\${TG_WAVES:-}" | tr -cd '0-9, ' | tr -s ' ' | sed 's/ *$//')"`,
     `if merged="$(terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA"${forge === "github" ? "" : ` --forge ${forge}`} 2>&1)"; then`,
     `  tg reply "${applied}, and \${merged#terragucci pr-merge: }. $run_url"`,
     "else",
@@ -751,7 +752,10 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
   const canaryArg = input.canary?.length ? ` --canary ${sh(input.canary.join(","))}` : "";
   // Fewer requirements than every one are written out; `none` for an empty list.
   const requires = prMode && input.requires && !APPLY_REQUIRES.every((r) => input.requires!.includes(r)) ? ` --requires ${input.requires.length ? input.requires.join(",") : "none"}` : "";
-  const decide = `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""}${prMode ? " --when pull-request" : ""}${requires} --out terragucci-comment.json || exit 1`;
+  // Before merge, a Terragrunt repo's locks are on the units a pull request reaches.
+  const tgLocks = prMode && input.terragrunt ? " --terragrunt" : "";
+  const decideWith = (again: string) => `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""}${prMode ? " --when pull-request" : ""}${requires}${tgLocks}${again} --out terragucci-comment.json || exit 1`;
+  const decide = decideWith("");
   const decisionJs = prMode ? PR_DECISION_JS : APPLY_DECISION_JS;
   return [
     READS_EXIT,
@@ -770,7 +774,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
       ? [
           forgejoLock(false),
           // A push may have applied while this run waited for the lock: decide again, now that nothing else applies.
-          decide,
+          decideWith(tgLocks ? " --again" : ""),
           prMode ? "read -r again _ _ _ _ <<EOF" : "read -r again _ _ <<EOF",
           `$(node -e '${decisionJs}' terragucci-comment.json)`,
           "EOF",
@@ -1010,6 +1014,8 @@ const CHANGED_JS = 'const r=JSON.parse(require("fs").readFileSync(process.argv[1
  * report, and posts `terragucci/apply` on the commit: success when every
  * root plans no change, failure naming the roots that still plan one (a
  * change pushed without a pull request, or the world moving since the apply).
+ * In a Terragrunt repo it plans every unit with `--terragrunt`, after the plan
+ * jobs' prelude (caches, the auth provider's plan roles).
  */
 export function confirmScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
   const args = [
@@ -1021,11 +1027,14 @@ export function confirmScript(binary: Binary, layers: string[][], forge: ForgeNa
     ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
+    ...(report.terragrunt ? ["--terragrunt"] : []),
   ];
+  const what = report.terragrunt ? "unit" : "root";
   return [
     READS_EXIT,
     forgeApi(forge),
     ...cloudScripts(forge, oidc, "plan", "terragucci-confirm"),
+    ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "confirming the merge applied"',
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
@@ -1035,11 +1044,11 @@ export function confirmScript(binary: Binary, layers: string[][], forge: ForgeNa
     "fi",
     `changed="$(node -e '${CHANGED_JS}' ${REPORT_DIR}/report.json)"`,
     'if [ -n "$changed" ]; then',
-    '  echo "applied before merge, and these roots still plan a change: $changed"',
-    '  tg status terragucci/apply failure "roots still plan a change after the merge: $changed"',
+    `  echo "applied before merge, and these ${what}s still plan a change: $changed"`,
+    `  tg status terragucci/apply failure "${what}s still plan a change after the merge: $changed"`,
     "  exit 1",
     "fi",
-    'tg status terragucci/apply success "applied before merge; every root plans no change"',
+    `tg status terragucci/apply success "applied before merge; every ${what} plans no change"`,
   ].join("\n");
 }
 
@@ -1104,7 +1113,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   }));
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
-  if (prApply && tg) throw new RenderError("apply.when: pull-request needs plain roots: a Terragrunt repo applies after merge, so leave apply.when unset");
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
   if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
   if (prApply && forge === "gitlab") throw new RenderError(`apply.when: ${NO_GITLAB_PR_APPLY}`);

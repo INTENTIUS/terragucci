@@ -19,7 +19,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 | You need | Why |
 |---|---|
-| Plain roots on GitHub or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/) | Terragrunt repos and GitLab apply after merge; `init` refuses `apply.when: pull-request` there |
+| Plain roots or a Terragrunt repo on GitHub or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/) or [Use Terragrunt](/terragucci/guides/use-terragrunt/) | GitLab applies after merge; `init` and `config check` refuse `apply.when: pull-request` there |
 | Branch protection on the default branch that requires a review | the review is the guard: the applying job runs the change's code with the apply role |
 | The [trade](/terragucci/reference/config/#apply-before-merge) accepted | [what the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) with the apply role |
 
@@ -60,7 +60,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
 
-   After the merge, `confirm` plans every root. Its `terragucci/apply` status passes when nothing plans a change.
+   After the merge, `confirm` plans every root, or every unit in a Terragrunt repo. Its `terragucci/apply` status passes when nothing plans a change.
 
 </Steps>
 
@@ -75,7 +75,7 @@ An open change's apply reads its settings from the default branch. Edits to `ter
 | `approval`, the gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
 | `reports`, `telemetry`, `parallelism` and every other key of `terragucci.yml` | the default branch |
 | `respond` | the default branch; if unreadable, no response |
-| The roots, modules and code that plan and apply | the change's head |
+| The roots, units, modules and code that plan and apply | the change's head |
 
 An unreadable default-branch config fails the wave before anything applies.
 
@@ -85,9 +85,19 @@ An unreadable default-branch config fails the wave before anything applies.
 |---|---|
 | The change applies | each root it reaches is locked |
 | `/terragucci lock` on the change, by anyone with write access | each root it reaches is locked, and nothing applies; the reply names the roots |
-| Another change reaches a locked root | refused; the reply names the holder |
+| Another change reaches a locked root | refused; the reply names the root and the holder |
 | The holder merges or closes | released |
 | `/terragucci unlock` on the holder, by anyone with write access | released; the reply names what it released |
+
+In a Terragrunt repo the locks are on units, worked out from git without running Terragrunt:
+
+| The change touches | Locked |
+|---|---|
+| a file in a unit's directory | that unit, and every unit whose `dependency` or `dependencies` block names it by a plain path, followed through |
+| a file in no unit's directory, such as `root.hcl` or a module | every unit; the reply says which file |
+| Markdown files only | nothing |
+
+A Terragrunt change applies its waves of units from the head, one dependency layer at a time, so a unit applies before the units that read its outputs.
 
 ## Next
 

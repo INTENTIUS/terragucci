@@ -177,7 +177,7 @@ Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and write
 
 ```text
 terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
-    [--when merge|pull-request] [--requires <list>|none]
+    [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
 ```
 
 Reads a `/terragucci apply [wave-<n>]` comment, checks the commenter's permission as `comment` does, and writes a decision to `--out`: the merge commit and last wave to apply, or why nothing applies. The generated `apply-comment` job runs it before any credential, and on Forgejo again once it holds the apply lock. See [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request).
@@ -187,7 +187,7 @@ Reads a `/terragucci apply [wave-<n>]` comment, checks the commenter's permissio
 | `merge` (the default) | does not apply |
 | `pull-request` (written when `apply.when` is `pull-request`) | applies from its head once the checks in [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) pass; the command takes the root locks, `/terragucci lock` takes them without applying, and `/terragucci unlock` releases them |
 
-`--requires` is a comma-separated list of `approved`, `mergeable`, `undiverged` and `checks`, or `none`; without it all four apply. `init` writes it from [`apply.requires`](/terragucci/reference/config/#apply-before-merge) when that leaves one out.
+`--requires` is a comma-separated list of `approved`, `mergeable`, `undiverged` and `checks`, or `none`; without it all four apply. `init` writes it from [`apply.requires`](/terragucci/reference/config/#apply-before-merge) when that leaves one out. `--terragrunt` (written in a Terragrunt repo under `apply.when: pull-request`) puts the locks on the units the pull request reaches, as [Locks](/terragucci/guides/apply-before-merge/#locks) describes. `--again` marks the second decision on Forgejo, which does not repeat a reply the first one posted.
 
 ## pr-merge
 

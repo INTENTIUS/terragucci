@@ -76,6 +76,7 @@ export const placements: Placement[] = [
 	{ section: 'everyone', rows: ['locks'], headline: 'Root locks' },
 	{ section: 'everyone', rows: ['drift'], headline: 'Drift detection' },
 	{ section: 'everyone', rows: ['apply-when'], headline: 'Apply before or after merge' },
+	{ section: 'everyone', rows: ['tg-before-merge'], headline: 'Apply before merge in a Terragrunt repo' },
 	{ section: 'everyone', rows: ['credentials'], headline: 'Short-lived cloud credentials' },
 	{ section: 'everyone', rows: ['state'], headline: 'State in your own backend' },
 	{ section: 'everyone', rows: ['licence'], headline: 'Open source or a free plan' },
@@ -96,12 +97,6 @@ export const placements: Placement[] = [
 		rows: ['maturity'],
 		headline: 'Years in production',
 		why: 'A longer record, more users and more answers already written down.',
-	},
-	{
-		section: 'further',
-		rows: ['tg-before-merge'],
-		headline: 'Apply before merge in a Terragrunt repo',
-		why: 'A Terragrunt change applies from the open pull request, before it merges.',
 	},
 	{
 		section: 'further',

@@ -171,7 +171,7 @@ report-oidc|with no static keys, the plan job writes its report to the bucket as
 tg-gate-wait|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
 tg-gate-refuse|a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved|
 tg-sealed|under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists|
-pr-apply|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto, and with apply.when: merge it applies nothing|
+pr-apply|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto|
 pr-apply-lock|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
 pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
 tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request|
@@ -194,7 +194,9 @@ pr-review-status|with approval: pr-review terragucci/approval on the head of a p
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
-approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|'
+approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
+tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
+tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -4940,6 +4942,114 @@ claim_tg_comment_apply() {
   return $rc
 }
 
+# ── apply before merge in a Terragrunt repo ──
+# The Terragrunt gated fixture (stack/fixtures/tg-gated-waves) with gate never,
+# apply.when: pull-request, and live/fleet/two after live/canary/one through a
+# dependencies block, so the lock claim has a unit reached only through one.
+# A user of its own approves the pull requests, as for the plain claims.
+
+tg_pr_repo() { # name, merge (auto|manual), [merge] -> the repo in $work/tree, its pipeline written for apply before merge (or after, with a third argument)
+  gated_repo "$1" tg-gated-waves || return 1
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  printf '\ndependencies {\n  paths = ["../../canary/one"]\n}\n' >> "$work/tree/live/fleet/two/terragrunt.hcl"
+  [ -n "${3:-}" ] || printf 'apply:\n  when: pull-request\n  merge: %s\n' "$2" >> "$work/tree/terragucci.yml"
+  if [ -z "${3:-}" ] && [ "$2" = auto ]; then
+    echo '  merge_token_env: TG_SMOKE_MERGE_TOKEN' >> "$work/tree/terragucci.yml"
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "$TOKEN" '{data: $d}')" "$URL/api/v1/repos/$USER/$1/actions/secrets/TG_SMOKE_MERGE_TOKEN" \
+      || { log "could not set TG_SMOKE_MERGE_TOKEN on $USER/$1"; return 1; }
+  fi
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+}
+
+claim_tg_pr_apply() {
+  # A Terragrunt repo with apply.when: pull-request and apply.merge: auto. A
+  # pull request changes live/canary/one; once its runs finished, a reviewer
+  # approves its head and the admin comments /terragucci apply on it while it
+  # is open. The reply must say both waves of units applied from the head and
+  # the pull request was merged; the forge must show it merged; every unit
+  # must have state, and live/canary/one must hold the value of the pull request.
+  # BREAK: the pipeline is written without apply.when, so it applies after
+  # merge only: the comment on the open pull request is refused, the unit
+  # never holds the value of the pull request, and nothing merges.
+  log() { echo "[smoke tg-pr-apply] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-pr-apply" wf head pr reply applied merged rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_pr_repo tg-pr-apply auto ${BREAK:+merge} || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -z "${BREAK:-}" ]; then
+    grep -q 'comment-apply .*--when pull-request.* --terragrunt' "$wf" || { log "the apply-comment job does not decide with --terragrunt"; drop_work "$work"; return 1; }
+    grep -q '^  confirm:' "$wf" || { log "the Terragrunt pipeline has no confirm job"; drop_work "$work"; return 1; }
+  fi
+  push_tree "$work/tree" "$repo" main "tg-pr-apply: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-tg-pr-apply || { drop_work "$work"; return 1; }
+  echo opened > "$work/tree/live/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" change "tg-pr-apply: change live/canary/one")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" change "tg-pr-apply: change live/canary/one")" || { drop_work "$work"; return 1; }
+  pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
+  applied="$(tg_gated_applied tg-pr-apply)"
+  merged="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merged)"
+  log "reply: ${reply:-none}; state for: ${applied:-nothing}; merged: $merged"
+  grep -q "applied wave 1, 2 of pull request $pr at ${head:0:8}, and merged pull request $pr" <<<"$reply" || { log "the reply does not say both waves of units applied from the head and the pull request merged"; rc=1; }
+  [ "$merged" = true ] || { log "pull request $pr was not merged"; rc=1; }
+  [ "$applied" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "not every unit has state"; rc=1; }
+  [ "$(pr_state_input tg-pr-apply live/canary/one/terraform)" = opened ] || { log "live/canary/one does not hold the value of the pull request"; rc=1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-tg-pr-apply?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the open pull request applied its waves of units from its head and was merged after the last one"
+  return $rc
+}
+
+claim_tg_pr_apply_lock() {
+  # A Terragrunt repo with apply.when: pull-request and apply.merge: manual.
+  # Pull request A changes live/canary/one, and B changes live/fleet/two, which
+  # names live/canary/one in its dependencies block and in no other way. A is
+  # applied on a comment and stays open, holding live/canary/one and its
+  # dependent live/fleet/two. /terragucci apply on B must be refused, naming
+  # live/fleet/two and pull request A, and live/fleet/two must still hold the
+  # value A applied.
+  # BREAK: the lock file is deleted from chant/lifecycle after A applied, so
+  # nothing holds live/fleet/two and the comment on B applies it.
+  log() { echo "[smoke tg-pr-apply-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-pr-apply-lock" head_a head_b pr_a pr_b reply clone rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_pr_repo tg-pr-apply-lock manual || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "tg-pr-apply-lock: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-tg-pr-apply-lock || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/live/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" change-a "tg-pr-apply-lock: a")" || { drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q main
+  echo b > "$work/tree/live/fleet/two/rev.txt"
+  head_b="$(push_tree "$work/tree" "$repo" change-b "tg-pr-apply-lock: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "tg-pr-apply-lock: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" change-b "tg-pr-apply-lock: b")" || { drop_work "$work"; return 1; }
+  { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
+  log "A ($pr_a): ${reply:-no reply}; live/fleet/two holds $(pr_state_input tg-pr-apply-lock live/fleet/two/terraform)"
+  grep -q "Merge it when you are ready" <<<"$reply" || { log "A did not apply"; rc=1; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    clone="$work/lifecycle"
+    { git clone -q --branch chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" \
+      && git -C "$clone" rm -q _locks/tf-apply.json \
+      && git -C "$clone" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -qm "drop the locks" \
+      && git -C "$clone" push -q origin chant/lifecycle; } || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
+    log "B ($pr_b) while A holds the lock: ${reply:-no reply}; live/fleet/two holds $(pr_state_input tg-pr-apply-lock live/fleet/two/terraform)"
+    grep -q "\`live/fleet/two\` is locked by pull request $pr_a" <<<"$reply" || { log "B was not refused for the lock A holds on live/fleet/two"; rc=1; }
+    [ "$(pr_state_input tg-pr-apply-lock live/fleet/two/terraform)" = 1 ] || { log "live/fleet/two moved while A held it"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-tg-pr-apply-lock?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "B, which reaches live/canary/one only through the dependencies block of live/fleet/two, was refused while A held it"
+  return $rc
+}
+
 claim_front_door() {
   # The reports front door template the site offers
   # (docs-site/public/reports-front-door.json) deploys through floci's
@@ -6097,6 +6207,8 @@ cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
 approve-command      runner self! weight=250
+tg-pr-apply          runner self! weight=300
+tg-pr-apply-lock     runner self! weight=300
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
