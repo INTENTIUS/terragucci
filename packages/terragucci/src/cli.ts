@@ -4,6 +4,7 @@
  *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+ *   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
@@ -57,6 +58,7 @@ import { plan } from "./plan";
 import { describePublish, publish } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
+import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
 import { applyWave } from "./apply";
 import { checkPolicyTests, checkRoot, emitCheck } from "./check";
@@ -72,6 +74,7 @@ const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+  terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
@@ -130,7 +133,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "check"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -203,6 +206,22 @@ export async function main(argv: string[]): Promise<number> {
         });
         console.log(describeEstate(result, cwd));
         return result.unreadable.length ? 1 : 0;
+      }
+      case "audit": {
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const hours = str(flags, "link-hours");
+        const linkSeconds = hours === undefined ? undefined : Math.round(Number(hours) * 3600);
+        if (hours !== undefined && !(Number(hours) > 0)) throw new ConfigError(`--link-hours is ${JSON.stringify(hours)}; use a number of hours, up to 168`);
+        const bucket = str(flags, "bucket");
+        const check = flags.check === true;
+        const result = await audit(cwd, path ? await loadConfig(resolve(path)) : {}, {
+          ...(check ? { check } : {}),
+          ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
+          ...(linkSeconds !== undefined ? { linkSeconds } : {}),
+          ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
+        });
+        console.log(describeAudit(result, cwd, check));
+        return result.unreadable.length || (check && result.added.length) ? 1 : 0;
       }
       case "plan": {
         const results = await plan(cwd, { root: str(flags, "root"), project: str(flags, "project"), config: str(flags, "config") }, json ? () => {} : console.log);

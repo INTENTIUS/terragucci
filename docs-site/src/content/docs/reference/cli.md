@@ -14,6 +14,7 @@ prompt: |
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
 | `estate` | writes one page for every project, `estate.html` and `estate.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
+| `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
@@ -80,7 +81,24 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 | `--link-hours` | how long the link lives; default 24, at most 168 |
 | `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), in place of `reports` in a repo's config |
 
-It reads each project's `index.json` and nothing else, then writes `estate.html` and `estate.json` at the top of the prefix. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. Exit code 1 when a project's index could not be read; the page names it.
+It reads each project's `index.json`, then writes `estate.html` and `estate.json` at the top of the prefix. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. When `audit.json` is beside the page, the page links the audit trail. Exit code 1 when a project's index could not be read; the page names it.
+
+## audit
+
+```bash
+terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>]
+    [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--check` | build the entries again and compare them with the record; write nothing; exit code 1 naming each entry the record lacks |
+| `--config` | the config file; default the one in the working directory |
+| `--out` | where the record, page and summary are written locally; default `terragucci-audit` |
+| `--link-hours` | how long the link to `audit.html` lives; default 24, at most 168 |
+| `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write, in place of `reports` in a repo's config |
+
+It reads each project's `chant/lifecycle` history and its `tf-apply` wave reports, appends the entries `audit.jsonl` lacks, and writes `audit.html` and `audit.json` beside it at the top of the prefix. In a control repo the projects are its `projects:`, each ledger fetched from the project's repo and each project's reports read from its own `reports`; the record goes to `defaults.reports`. In a repo of its own the project is the checkout's, its ledger read from `origin`. Exit code 1 when a project's ledger or index could not be read. [The audit trail](/terragucci/reference/audit-trail/) describes every entry.
 
 ## plan and stage
 

@@ -237,6 +237,8 @@ describe("a wave behind its gate", () => {
     const diff = refusedDiff(read("approved"), read("current"), 1);
     expect(diff.approved_set).toBe(digest);
     expect(diff.roots.map((r) => [r.root, r.changes.map((c) => [c.address, c.attributes])])).toEqual([["a", [["terraform_data.x", ["input"]]]]]);
+    // The wave's own report says why it applied nothing, for the audit trail.
+    expect(JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).waves[0].refused).toEqual({ reason: "approval", approved: digest, by: "alice", roots: ["a"] });
   });
 
   /** Append one resolution line to origin's ledger, as `chant approve` would from a person's machine. */

@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 10;
+export const REPORT_MINOR = 11;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -330,6 +330,23 @@ export interface ReportWave {
   gate?: { branch: string; path: string };
   /** On a waiting wave, when it began waiting for an approval of this digest (minor 8): the first run that asked for it, not the latest. */
   waiting_since?: string;
+  /** Why a `tf-apply` wave applied nothing although it planned (minor 11). Absent when it was not refused. */
+  refused?: ReportRefusal;
+}
+
+/**
+ * A refused wave (minor 11): its plans changed after an approval, a review
+ * or an override (exit 4), or the policy denied a root that no override lets
+ * through.
+ */
+export interface ReportRefusal {
+  reason: "approval" | "review" | "override" | "policy";
+  /** The digest the approval, review or override was for. */
+  approved?: string;
+  /** Who wrote it, as the ledger or the review names them. */
+  by?: string;
+  /** The roots that planned differently since (every changing root, for a review), or the roots the policy denied. */
+  roots: string[];
 }
 
 export type NamedAction = "delete" | "replace" | "refused" | "forget" | "import";

@@ -11,7 +11,9 @@
  * In a single repo the projects are the ones the top-of-prefix index lists.
  *
  * It reads `index.json` and nothing else: never a report, a plan's text or a
- * root's plan JSON (see report/estate.ts).
+ * root's plan JSON (see report/estate.ts). The one other object it reads is
+ * `audit.json`, the summary `terragucci audit` writes beside the page
+ * (./audit.ts), so the page can link the audit trail.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -53,7 +55,7 @@ const trim = (s: string): string => s.replace(/^\/+|\/+$/g, "");
 const key = (...p: string[]): string => p.map(trim).filter(Boolean).join("/");
 
 /** A bucket's name with its scheme, s3:// for a bare name. */
-const named = (bucket: string): string => {
+export const named = (bucket: string): string => {
   try {
     return bucketUrl(parseReportsBucket(bucket));
   } catch {
@@ -62,10 +64,10 @@ const named = (bucket: string): string => {
 };
 
 /** Two `reports` blocks name the same objects. */
-const sameBucket = (a: Reports | undefined, b: Reports | undefined): boolean =>
+export const sameBucket = (a: Reports | undefined, b: Reports | undefined): boolean =>
   !!a && !!b && named(a.bucket) === named(b.bucket) && (a.endpoint ?? "") === (b.endpoint ?? "") && trim(a.prefix ?? "") === trim(b.prefix ?? "");
 
-function parseIndex(text: string, at: string): IndexEntry[] {
+export function parseIndex(text: string, at: string): IndexEntry[] {
   let parsed: Partial<ReportIndex>;
   try {
     parsed = JSON.parse(text) as Partial<ReportIndex>;
@@ -77,7 +79,7 @@ function parseIndex(text: string, at: string): IndexEntry[] {
 }
 
 /** One client per bucket, endpoint and role, so a role is assumed once. */
-function clients(env: NodeJS.ProcessEnv, fetchFn: StoreFetch | undefined): (r: Reports) => ObjectStore {
+export function clients(env: NodeJS.ProcessEnv, fetchFn: StoreFetch | undefined): (r: Reports) => ObjectStore {
   const held = new Map<string, ObjectStore>();
   return (r) => {
     const id = [r.bucket, r.endpoint ?? "", r.role ?? ""].join("\n");
@@ -122,6 +124,20 @@ async function sources(config: TerragucciConfig, options: EstateOptions, client:
   return { projects: [...new Set(rows.map((r) => r.project))].sort().map((project) => ({ project, reports: out })), out };
 }
 
+/** The audit trail `terragucci audit` wrote beside the page, from its summary; undefined when there is none or it cannot be read. */
+async function auditTrail(store: ObjectStore, prefix: string): Promise<Estate["audit"]> {
+  try {
+    const text = await store.get(key(prefix, "audit.json"));
+    if (text === undefined) return undefined;
+    const s = JSON.parse(text) as { schema?: unknown; entries?: unknown; generated?: unknown };
+    if (s.schema !== "terragucci.audit-summary/v1" || typeof s.entries !== "number" || typeof s.generated !== "string") return undefined;
+    return { page: "audit.html", entries: s.entries, generated: s.generated };
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
+    throw e;
+  }
+}
+
 export async function estate(cwd: string, config: TerragucciConfig, options: EstateOptions = {}): Promise<EstateResult> {
   const env = options.env ?? process.env;
   const now = options.now ?? new Date();
@@ -132,6 +148,10 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   const indexes: ProjectIndex[] = [];
   for (const p of projects) indexes.push(await readProject(p.project, p.reports, out, client));
   const page = buildEstate(indexes, now);
+  if (out?.bucket) {
+    const trail = await auditTrail(client(out), out.prefix ?? "");
+    if (trail) page.audit = trail;
+  }
   const files = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page) };
   const dir = resolve(cwd, options.out ?? "terragucci-estate");
   mkdirSync(dir, { recursive: true });
