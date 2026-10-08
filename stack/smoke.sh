@@ -206,7 +206,16 @@ blob-azure|with reports.bucket az://<account>/<container> and only the Azure OID
 blob-gcs|with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed|
 note-diff|the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block|
 note-split|a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays|
-note-report-link|with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci|'
+note-report-link|with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci|
+config-ts|init writes the pipeline from a terragucci.ts folded as data, and config check refuses a terragucci.ts that reads process.env at its line|
+role-refused|config check and init refuse an oidc block that names one role for plan and apply|
+description-check|with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json|
+decide-backends|decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env|
+otlp-headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
+pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
+drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
+estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
+estate-override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -6755,6 +6764,490 @@ claim_note_report_link() {
   return $rc
 }
 
+# ── config, decisions, telemetry and installs ─────────────────────────────
+
+claim_config_ts() {
+  # The example with its terragucci.yml written as terragucci.ts, the same
+  # keys as data. config check passes it, and init writes exactly the
+  # pipeline the example commits. A second terragucci.ts reads its binary
+  # from process.env: config check refuses it and names the rule and line.
+  # BREAK: the second file sets its binary as a literal, so nothing is refused.
+  log() { echo "[smoke config-ts] $*" >&2; }
+  local work rc=0 out binary='process.env.TG_BINARY'
+  [ -n "${BREAK:-}" ] && binary='"tofu"'
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/ts" "$work/env"
+  cp -R "$EXAMPLE/." "$work/ts/"
+  rm -f "$work/ts/terragucci.yml"
+  printf 'export default {\n  binary: "tofu",\n  waves: { canary: ["envs/dev/*"] },\n  drift: "0 6 * * *",\n};\n' > "$work/ts/terragucci.ts"
+  (cd "$work/ts" && "$TERRAGUCCI" config check) >&2 || { log "config check refused the TypeScript config"; rc=1; }
+  if (cd "$work/ts" && "$TERRAGUCCI" init) >&2; then
+    diff -u "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$work/ts/.forgejo/workflows/terragucci.yml" >&2 || { log "init from terragucci.ts wrote a different pipeline"; rc=1; }
+  else
+    log "init failed on terragucci.ts"; rc=1
+  fi
+  printf 'export default {\n  binary: %s,\n};\n' "$binary" > "$work/env/terragucci.ts"
+  if out="$(cd "$work/env" && "$TERRAGUCCI" config check 2>&1)"; then
+    echo "$out" >&2
+    log "config check passed a terragucci.ts that reads process.env"; rc=1
+  else
+    echo "$out" >&2
+    grep -q 'is not data (F-Eval-Ident): 2:' <<<"$out" || { log "the refusal does not name the rule and the line"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "init from terragucci.ts wrote the example pipeline; a terragucci.ts that reads process.env was refused at its line"
+  return $rc
+}
+
+claim_role_refused() {
+  # The example with oidc naming one role for plan and for apply. config
+  # check and init both refuse it and say why; nothing is written.
+  # BREAK: plan and apply name two roles, so nothing is refused.
+  log() { echo "[smoke role-refused] $*" >&2; }
+  local work rc=0 out apply=terragucci
+  [ -n "${BREAK:-}" ] && apply=terragucci-apply
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$EXAMPLE/." "$work/"
+  rm -rf "$work/.forgejo"
+  printf 'oidc:\n  plan_role: arn:aws:iam::123456789012:role/terragucci\n  apply_role: arn:aws:iam::123456789012:role/%s\n' "$apply" >> "$work/terragucci.yml"
+  if out="$(cd "$work" && "$TERRAGUCCI" config check 2>&1)"; then
+    echo "$out" >&2; log "config check passed one role for plan and apply"; rc=1
+  else
+    echo "$out" >&2
+    grep -q 'plan_role and apply_role are the same role' <<<"$out" || { log "config check failed without naming the shared role"; rc=1; }
+  fi
+  if out="$(cd "$work" && "$TERRAGUCCI" init 2>&1)"; then
+    log "init wrote a pipeline with one role for plan and apply"; rc=1
+  else
+    grep -q 'plan_role and apply_role are the same role' <<<"$out" || { echo "$out" >&2; log "init failed without naming the shared role"; rc=1; }
+  fi
+  [ -e "$work/.forgejo/workflows/terragucci.yml" ] && [ -z "${BREAK:-}" ] && { log "init wrote a pipeline anyway"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "config check and init refused one role for plan and apply"
+  return $rc
+}
+
+# A stand-in service (stack/fixtures/stand-in/server.mjs) on the stack's
+# network, in the tofu CI image. STANDIN is its container, STANDIN_CTL its
+# address from the host, where GET /_requests lists what it took.
+stand_in_up() { # work, name, port, KEY=VALUE...
+  local work="$1" name="$2" port="$3" i hostport kv
+  shift 3
+  local -a envs=()
+  for kv in "$@"; do envs+=(-e "$kv"); done
+  mkdir -p "$work/stand-in" && cp "$HERE/fixtures/stand-in/server.mjs" "$work/stand-in/" || return 1
+  STANDIN="$(run_copied -d --name "$name" --network terragucci -p "127.0.0.1::$port" -e "PORT=$port" ${envs[@]+"${envs[@]}"} \
+    -v "$work/stand-in:/stand-in:ro" "$(image_tag tofu)" node /stand-in/server.mjs)" || return 1
+  hostport="$(docker port "$STANDIN" "$port/tcp" | head -1 | sed 's/.*://')"
+  STANDIN_CTL="http://127.0.0.1:$hostport"
+  for i in $(seq 1 30); do
+    curl -fsS -o /dev/null "$STANDIN_CTL/_requests" 2>/dev/null && return 0
+    sleep 1
+  done
+  echo "the stand-in $name never answered on $STANDIN_CTL" >&2
+  return 1
+}
+
+stand_in_down() {
+  [ -n "${STANDIN:-}" ] && { docker rm -f "$STANDIN" >/dev/null 2>&1 || true; }
+  STANDIN=""
+}
+
+# One root, app, with two terraform_data applied in local state, then gone
+# removed and committed: a plan that destroys app: terraform_data.gone.
+# terragucci.yml takes the decide block given and respond.description: check.
+description_repo() { # dir, decide block (YAML lines under decide:)
+  local dir="$1"
+  mkdir -p "$dir/app"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "keep" {\n  input = "keep"\n}\n\nresource "terraform_data" "gone" {\n  input = "gone"\n}\n' > "$dir/app/main.tf"
+  printf 'binary: tofu\nforge: forgejo\nroots: ["app"]\nrespond:\n  description: check\ndecide:\n%s\n' "$2" > "$dir/terragucci.yml"
+  in_image "$dir" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || return 1
+  clean_mounted "$dir"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "keep" {\n  input = "keep"\n}\n' > "$dir/app/main.tf"
+  git -C "$dir" init -q -b main
+  git -C "$dir" add -A && git -C "$dir" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke description: drop gone"
+  in_image "$dir" terragucci stage tf-plan --layers app >&2
+  clean_mounted "$dir"
+  jq -e '[.roots[].changes[]? | select(.action == "delete")] | length == 1' "$dir/terragucci-report/report.json" >/dev/null 2>&1 \
+    || { echo "the plan of app does not destroy terraform_data.gone" >&2; return 1; }
+}
+
+# The description check the plan job runs, with the title and description a
+# pull request would carry. Extra arguments go before it, such as env K=V.
+description_check() { # dir, [env K=V...]
+  local dir="$1"
+  shift
+  in_image "$dir" "$@" terragucci respond description --mode apply --report terragucci-report --title "retag app" --description "Tags only." >&2
+}
+
+claim_description_check() {
+  # A repo with respond.description: check and decide: pointing at a stand-in
+  # for the decision service, which answers yes at 0.95. init puts the check
+  # in the plan job. The plan destroys app: terraform_data.gone, and the pull
+  # request says Tags only: the check run as the plan job runs it writes a
+  # flag naming the destroy at the top of note.md and in report.html, and
+  # writes intent.json with the decision.
+  # BREAK: the stand-in answers no (0.05), so nothing is flagged.
+  log() { echo "[smoke description-check] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 name="tgs-decide-$STAMP" noul=0.95 dir first
+  [ -n "${BREAK:-}" ] && noul=0.05
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  stand_in_up "$work" "$name" 8790 MODE=decide "NOUL=$noul" || { stand_in_down; return 1; }
+  description_repo "$work/repo" "$(printf '  backend: laya\n  url: http://%s:8790' "$name")" || rc=1
+  if [ $rc = 0 ]; then
+    (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; rc=1; }
+    grep -q 'terragucci respond description --mode apply --report terragucci-report' "$work/repo/.forgejo/workflows/terragucci.yml" \
+      || { log "the plan job does not run the description check"; rc=1; }
+  fi
+  [ $rc = 0 ] && { description_check "$work/repo" || { log "respond description failed"; rc=1; }; }
+  dir="$work/repo/terragucci-report"
+  if [ $rc = 0 ]; then
+    jq -e '.flagged == true and (.unmentioned | index("app: terraform_data.gone"))' "$dir/intent.json" >/dev/null 2>&1 \
+      || { log "intent.json does not flag app: terraform_data.gone: $(jq -c . "$dir/intent.json" 2>/dev/null)"; rc=1; }
+    first="$(head -1 "$dir/note.md")"
+    grep -q 'Check the description of this pull request.*terraform_data.gone.*(destroy)' <<<"$first" || { log "the note does not open with the flag: $first"; rc=1; }
+    grep -q 'id="description-flag"' "$dir/report.html" || { log "report.html has no flag"; rc=1; }
+    jq -e '.intent.flagged == true' "$dir/report.json" >/dev/null || { log "report.json does not carry the decision"; rc=1; }
+  fi
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "the note opens with a flag naming app: terraform_data.gone (destroy), and intent.json records the decision"
+  return $rc
+}
+
+claim_decide_backends() {
+  # The description check of description_repo asked through decide.backend
+  # von, decider and jev in turn, each at a stand-in that answers yes at 0.95
+  # in the shape all three speak. config check passes each block; each flags
+  # the destroy and names the pinned model; the request pins that model, and
+  # jev alone sends its key from token_env as a bearer token.
+  # BREAK: the stand-in answers yes at 0.55, under the 0.8 threshold, so no
+  # backend flags anything.
+  log() { echo "[smoke decide-backends] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 name="tgs-backends-$STAMP" noul=0.95 dir backend model block req key="smoke-jev-$STAMP"
+  [ -n "${BREAK:-}" ] && noul=0.55
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  stand_in_up "$work" "$name" 8790 MODE=decide "NOUL=$noul" || { stand_in_down; return 1; }
+  description_repo "$work/repo" "$(printf '  backend: von\n  url: http://%s:8790\n  model: von-1.0.0' "$name")" || rc=1
+  dir="$work/repo/terragucci-report"
+  for backend in von decider jev; do
+    [ $rc = 0 ] || break
+    model="$backend-1.0.0"
+    block="$(printf '  backend: %s\n  url: http://%s:8790\n  model: %s' "$backend" "$name" "$model")"
+    [ "$backend" = jev ] && block="$(printf '%s\n  token_env: SMOKE_JEV_KEY' "$block")"
+    printf 'binary: tofu\nforge: forgejo\nroots: ["app"]\nrespond:\n  description: check\ndecide:\n%s\n' "$block" > "$work/repo/terragucci.yml"
+    (cd "$work/repo" && "$TERRAGUCCI" config check) >&2 || { log "$backend: config check refused the decide block"; rc=1; continue; }
+    description_check "$work/repo" env "SMOKE_JEV_KEY=$key" || { log "$backend: respond description failed"; rc=1; continue; }
+    jq -e --arg m "$model" '.flagged == true and .model == $m' "$dir/intent.json" >/dev/null 2>&1 \
+      || { log "$backend: intent.json does not flag the destroy as $model: $(jq -c '{status, flagged, decision, model}' "$dir/intent.json" 2>/dev/null)"; rc=1; }
+    req="$(curl -fsS "$STANDIN_CTL/_requests" | jq -c 'map(select(.path | startswith("/v1/systemone"))) | last')"
+    [ "$(jq -r '.body.model' <<<"$req")" = "$model" ] || { log "$backend: the request pinned $(jq -r '.body.model' <<<"$req"), not $model"; rc=1; }
+    if [ "$backend" = jev ]; then
+      [ "$(jq -r '.headers.authorization // ""' <<<"$req")" = "Bearer $key" ] || { log "jev: the request carried no bearer token from token_env"; rc=1; }
+    else
+      [ "$(jq -r '.headers.authorization // ""' <<<"$req")" = "" ] || { log "$backend: the request carried a token it was not given"; rc=1; }
+    fi
+    [ $rc = 0 ] && log "$backend: flagged as $model"
+  done
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "von, decider and jev each answered the description check through the same client, each pinned to its model, jev with its bearer token"
+  return $rc
+}
+
+claim_otlp_headers() {
+  # A collector stand-in that answers 401 unless the request carries
+  # x-api-key. init with telemetry.headers_secret maps the secret into the
+  # jobs as OTEL_EXPORTER_OTLP_HEADERS; a plan run with that variable sends
+  # its spans, and the stand-in takes them. A plan run whose endpoint does
+  # not answer stays green and writes its report.
+  # BREAK: the plan run has no OTEL_EXPORTER_OTLP_HEADERS, so every span
+  # is refused.
+  log() { echo "[smoke otlp-headers] $*" >&2; }
+  local work rc=0 name="tgs-otlp-$STAMP" key="smoke-$STAMP" headers=() code=0 taken
+  [ -z "${BREAK:-}" ] && headers=(-e "OTEL_EXPORTER_OTLP_HEADERS=x-api-key=$key")
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  note_repo "$work/repo" "$(printf 'forge: forgejo\nbinary: tofu\nenv:\n  OTEL_EXPORTER_OTLP_ENDPOINT: http://%s:4318\ntelemetry:\n  headers_secret: OTLP_HEADERS' "$name")"
+  (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; rc=1; }
+  if [ $rc = 0 ]; then
+    # shellcheck disable=SC2016 # the expression the forge expands
+    grep -qF 'OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTLP_HEADERS }}' "$work/repo/.forgejo/workflows/terragucci.yml" \
+      || { log "the pipeline does not map OTLP_HEADERS into OTEL_EXPORTER_OTLP_HEADERS"; rc=1; }
+    git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke otlp: pipeline"
+  fi
+  [ $rc = 0 ] && { stand_in_up "$work" "$name" 4318 MODE=otlp "REQUIRE=x-api-key=$key" || rc=1; }
+  otlp_plan() { # endpoint, docker run args...
+    local endpoint="$1" code=0
+    shift
+    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      -e "OTEL_EXPORTER_OTLP_ENDPOINT=$endpoint" "$@" "$(image_tag tofu)" terragucci stage tf-plan --layers small >&2 || code=$?
+    clean_mounted "$work/repo"
+    return $code
+  }
+  if [ $rc = 0 ]; then
+    otlp_plan "http://$name:4318" ${headers[@]+"${headers[@]}"} || true
+  fi
+  if [ $rc = 0 ]; then
+    taken="$(curl -fsS "$STANDIN_CTL/_requests" | jq '[.[] | select(.path == "/v1/traces" and .status == 200)
+      | select(any(.body.resourceSpans[]?.resource.attributes[]?; .key == "service.name" and .value.stringValue == "terragucci"))] | length')"
+    log "the stand-in took $taken trace posts from terragucci, and refused $(curl -fsS "$STANDIN_CTL/_requests" | jq '[.[] | select(.status == 401)] | length')"
+    [ "${taken:-0}" -ge 1 ] || { log "no span of the plan run reached the collector that wants the key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    rm -rf "$work/repo/terragucci-report"
+    otlp_plan "http://tgs-nowhere-$STAMP:4318" || code=$?
+    [ "$code" = 0 ] || { log "with a collector that does not answer the plan run exited $code"; rc=1; }
+    [ -f "$work/repo/terragucci-report/report.json" ] || { log "with a collector that does not answer the plan run wrote no report"; rc=1; }
+  fi
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "spans reached the collector with the key from OTEL_EXPORTER_OTLP_HEADERS, and a collector that does not answer left the plan green"
+  return $rc
+}
+
+claim_pinned_install() {
+  # A repo that pins OpenTofu 1.10.6, which the tofu image does not carry.
+  # init adds an install step to the jobs; the step, run in the tofu image as
+  # the job runs it, fetches the release, checks it against its SHA256SUMS,
+  # and puts it on the path, where tofu version says 1.10.6.
+  # BREAK: the step runs with every sum in SHA256SUMS replaced by zeros, so
+  # the check refuses the download and the step fails.
+  log() { echo "[smoke pinned-install] $*" >&2; }
+  local work rc=0 wf out preload=()
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  note_repo "$work/repo" "$(printf 'forge: forgejo\nbinary: tofu\nversion: 1.10.6')"
+  (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/repo/.forgejo/workflows/terragucci.yml"
+  # shellcheck disable=SC2016 # the step's own text
+  if ! grep -q 'name: Install tofu 1.10.6' "$wf" || ! grep -qF 'dir="$(terragucci install tofu 1.10.6)"' "$wf"; then
+    log "the pipeline has no step that installs tofu 1.10.6"; rc=1
+  fi
+  if [ -n "${BREAK:-}" ]; then
+    cat > "$work/repo/zero-sums.cjs" <<'JS'
+// Every sum in a SHA256SUMS the job fetches reads as zeros.
+const real = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  const res = await real(url, init);
+  if (!String(url).includes("SHA256SUMS")) return res;
+  const text = (await res.text()).replace(/^[0-9a-f]{64}/gm, "0".repeat(64));
+  return new Response(text, { status: res.status });
+};
+JS
+    preload=(env NODE_OPTIONS=--require=/repo/zero-sums.cjs)
+  fi
+  if [ $rc = 0 ]; then
+    # The step as the pipeline writes it, then the job's next step with the path it added.
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    if out="$(in_image "$work/repo" ${preload[@]+"${preload[@]}"} sh -c 'export GITHUB_PATH=/tmp/github-path; dir="$(terragucci install tofu 1.10.6)" && echo "$dir" >> "$GITHUB_PATH" && PATH="$(cat "$GITHUB_PATH"):$PATH" tofu version' 2>&1)"; then
+      echo "$out" >&2
+      grep -q '^OpenTofu v1.10.6' <<<"$out" || { log "the step put another tofu on the path"; rc=1; }
+    else
+      echo "$out" >&2
+      log "the install step failed"; rc=1
+    fi
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the install step fetched OpenTofu 1.10.6, checked it against its SHA256SUMS and put it on the path"
+  return $rc
+}
+
+claim_drift_close() {
+  # A queue applied with a visibility timeout of 30, then set to 45 in floci
+  # outside OpenTofu: tf-drift opens the drift issue naming app. The timeout
+  # goes back to 30, and the next tf-drift run finds no drift and closes the
+  # issue.
+  # BREAK: the timeout stays at 45, so the second run still finds drift and
+  # the issue stays open.
+  log() { echo "[smoke drift-close] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/drift-close" queue="tg-drift-close-$STAMP" key="respond/drift-close-$STAMP.tfstate" url issue state rc=0 back=30
+  [ -n "${BREAK:-}" ] && back=45
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo drift-close || return 1
+  respond_tree "$work" "$repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+}")"
+  push_tree "$work/tree" "$repo" main "a queue with a timeout of 30" >/dev/null || return 1
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
+  in_image "$work/tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the apply failed"; return 1; }
+  clean_mounted "$work/tree"
+  drift_issues() { api "$URL/api/v1/repos/$repo/issues?state=$1&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]'; }
+  drift_stage() {
+    in_image "$work/tree" env "GITHUB_REPOSITORY=$repo" GITHUB_SERVER_URL=http://forgejo:3000 GITHUB_API_URL=http://forgejo:3000/api/v1 "TG_TOKEN=$TOKEN" \
+      terragucci stage tf-drift --forge forgejo --report-url "http://forgejo:3000/$repo/actions" >&2
+    clean_mounted "$work/tree"
+  }
+  queue_timeout() { sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"$1\"}}" >/dev/null; }
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+  [ -n "$url" ] || { log "$queue is not in floci"; return 1; }
+  queue_timeout 45
+  drift_stage || { log "the first drift run failed"; rc=1; }
+  if [ $rc = 0 ]; then
+    issue="$(drift_issues open | jq -r '.[0].number // empty')"
+    [ -n "$issue" ] || { log "the first run opened no drift issue"; rc=1; }
+    [ -n "$issue" ] && { drift_issues open | jq -r '.[0].body' | grep -q 'app' || { log "the drift issue does not name app"; rc=1; }; }
+  fi
+  if [ $rc = 0 ]; then
+    queue_timeout "$back"
+    drift_stage || { log "the second drift run failed"; rc=1; }
+    state="$(api "$URL/api/v1/repos/$repo/issues/$issue" | jq -r .state)"
+    [ "$state" = closed ] || { log "drift issue $issue is $state after a run with no drift"; rc=1; }
+    [ "$(drift_issues open | jq length)" = 0 ] || { log "a drift issue is still open"; rc=1; }
+  fi
+  sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "drift issue $issue opened for the changed timeout and closed by the run that found none"
+  return $rc
+}
+
+# ── the estate page ───────────────────────────────────────────────────────
+
+# A project with one root, app, whose terragucci.yml names its reports block.
+estate_project() { # dir, reports block (YAML lines under reports:)
+  mkdir -p "$1/app"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$(basename "$1")" > "$1/app/main.tf"
+  printf 'binary: tofu\nreports:\n%s\n' "$2" > "$1/terragucci.yml"
+  git -C "$1" init -q -b main
+  git -C "$1" add -A && git -C "$1" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate $(basename "$1")"
+}
+
+claim_estate_control() {
+  # Two projects of a control repo, forgejo:3000/smoke/estate-a and -b, each
+  # copying its plan report to a bucket of its own. The control repo names
+  # each project's bucket with a reports.role of its own, and the page's
+  # bucket under defaults.reports with a third. terragucci estate, run with
+  # no static keys and only an OIDC token, assumes each role through STS,
+  # reads both indexes, and writes one page listing both projects to the
+  # defaults bucket.
+  # BREAK: estate-b's reports name no role, so with no static keys its index
+  # cannot be read.
+  log() { echo "[smoke estate-control] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 prefix="estate-control-$STAMP" p page out roleb=$'\n      role: arn:aws:iam::000000000000:role/estate-b-reader' bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  [ -n "${BREAK:-}" ] && roleb=""
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  for p in a b; do
+    curl -fsS -o /dev/null -X PUT "$FLOCI/terragucci-estate-$p" || true
+    estate_project "$work/estate-$p" "$(printf '  bucket: s3://terragucci-estate-%s\n  endpoint: http://floci:4566\n  prefix: %s' "$p" "$prefix")"
+    in_image "$work/estate-$p" env "GITHUB_REPOSITORY=smoke/estate-$p" GITHUB_SERVER_URL=http://forgejo:3000 terragucci stage tf-plan --layers app >&2 \
+      || { log "the plan of estate-$p failed"; rc=1; }
+    clean_mounted "$work/estate-$p"
+    curl -fsS -o /dev/null "$FLOCI/terragucci-estate-$p/$prefix/forgejo:3000/smoke/estate-$p/index.json" \
+      || { log "estate-$p has no index in its own bucket"; rc=1; }
+  done
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  mkdir -p "$work/control"
+  cat > "$work/control/terragucci.yml" <<YAML
+defaults:
+  reports:
+    bucket: s3://$REPORT_BUCKET
+    endpoint: http://floci:4566
+    prefix: $prefix
+    role: arn:aws:iam::000000000000:role/estate-page
+projects:
+  forgejo:3000/smoke/estate-a:
+    reports:
+      bucket: s3://terragucci-estate-a
+      endpoint: http://floci:4566
+      prefix: $prefix
+      role: arn:aws:iam::000000000000:role/estate-a-reader
+  forgejo:3000/smoke/estate-b:
+    reports:
+      bucket: s3://terragucci-estate-b
+      endpoint: http://floci:4566
+      prefix: $prefix$roleb
+YAML
+  printf '%s' 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnNtb2tlL2NvbnRyb2w6cmVmOnJlZnMvaGVhZHMvbWFpbiJ9.c21va2U' > "$work/control/.oidc-token"
+  if [ $rc = 0 ]; then
+    out="$(run_copied --rm --network terragucci -v "$work/control:/control" -w /control -v "$bundle:/usr/local/bin/terragucci:ro" \
+      "${AWS_DOCKER_ENV[@]}" -e AWS_ACCESS_KEY_ID= -e AWS_SECRET_ACCESS_KEY= -e AWS_WEB_IDENTITY_TOKEN_FILE=/control/.oidc-token -e AWS_ROLE_SESSION_NAME=smoke \
+      "$(image_tag tofu)" terragucci estate --link-hours 1 2>&1)" || log "terragucci estate exited non-zero"
+    printf '%s\n' "$out" >&2
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(jq -r '[.projects[] | select(.status == "ok" and .plan != null) | .project] | join(",")' <<<"$page")" = "forgejo:3000/smoke/estate-a,forgejo:3000/smoke/estate-b" ] \
+      || { log "the page does not show both projects with their plans: $(jq -c '[.projects[] | {project, status, error}]' <<<"$page")"; rc=1; }
+    grep -Eq "X-Amz-Signature=[0-9a-f]{64}" <<<"$out" || { log "the command printed no presigned link"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "one page in $REPORT_BUCKET/$prefix lists estate-a and estate-b, each read from its own bucket with its own role"
+  return $rc
+}
+
+claim_estate_override() {
+  # The policy-override repo copies its reports to the bucket. Its wave is
+  # denied, smoke-approver overrides it, and the next run applies app. Then
+  # terragucci estate reads the index: estate.json counts one root applied
+  # by policy override, for the project and in the totals, and estate.html
+  # shows the count.
+  # BREAK: nobody overrides the denial, so nothing applies under an override.
+  log() { echo "[smoke estate-override] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image code rc=0 prefix="estate-override-$STAMP" page bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  mkdir -p "$work/wave"
+  cp -R "$HERE/fixtures/policy-wave/." "$work/wave/"
+  printf 'policy:\n  engine: conftest\n  path: policy\n  override: [smoke-approver]\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" >> "$work/wave/terragucci.yml"
+  git init -q --bare "$work/origin.git"
+  git -C "$work/wave" init -q -b main
+  git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate override"
+  git -C "$work/wave" push -q "$work/origin.git" main
+  git -C "$work/wave" remote add origin /origin.git
+  override_wave() {
+    code=0
+    run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >"$work/run.log" 2>&1 || code=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+  }
+  override_wave
+  [ "$code" = 1 ] || { log "the first run exited $code, not 1: the policy did not deny the wave"; rc=1; }
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then policy_override_write "$work" smoke-approver || rc=1; fi
+  if [ $rc = 0 ]; then
+    override_wave
+    log "the run after the override exited $code"
+    mkdir -p "$work/page"
+    run_copied --rm --network terragucci -v "$work/page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+      "$image" terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1 >&2 || log "terragucci estate exited non-zero"
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -e '.totals.overridden_roots == 1 and ([.projects[].overridden // 0] | add) == 1' <<<"$page" >/dev/null \
+      || { log "estate.json does not count one root applied by policy override: $(jq -c '{totals, projects: [.projects[] | {project, overridden}]}' <<<"$page")"; rc=1; }
+    curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html" | grep -q '<b>1</b><span>root applied by policy override</span>' \
+      || { log "estate.html does not show one root applied by policy override"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "after an overridden apply, estate.json and estate.html count one root applied by policy override"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -6909,6 +7402,15 @@ blob-gcs             gcs! weight=120
 note-diff            ex runner self! after=boot weight=200
 note-split           weight=60
 note-report-link     weight=60
+config-ts            weight=20
+role-refused         weight=20
+description-check    weight=60
+decide-backends      weight=80
+otlp-headers         weight=60
+pinned-install       weight=60
+drift-close          self! weight=90
+estate-control       self! weight=80
+estate-override      weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
