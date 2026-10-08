@@ -272,12 +272,12 @@ describe("roots of a layer plan at once", () => {
       "g/main.tf": 'terraform {\n  backend "http" {\n    address = "https://gitlab.com/api/v4/projects/7/terraform/state/g"\n  }\n}\n',
       "h/main.tf": 'terraform {\n  backend "http" {}\n}\n',
     });
-    expect(rootsParallelism(repo, ["a"], {})).toEqual({ value: 16, reason: "the s3 backend" });
+    expect(rootsParallelism(repo, ["a"], {})).toEqual({ value: 4, reason: "the s3 backend" });
     expect(rootsParallelism(repo, ["a", "g"], {})).toEqual({ value: 3, reason: "GitLab-managed state rate-limits concurrent inits" });
-    expect(rootsParallelism(repo, ["h"], {})).toEqual({ value: 16, reason: "the http backend" });
+    expect(rootsParallelism(repo, ["h"], {})).toEqual({ value: 4, reason: "the http backend" });
     expect(rootsParallelism(repo, ["h"], {}, { TF_HTTP_ADDRESS: "https://gitlab.example.com/api/v4/projects/9/terraform/state/h" }).value).toBe(3);
     expect(rootsParallelism(repo, ["a", "g"], { parallelism: 5 })).toEqual({ value: 5, reason: "terragucci.yml" });
-    expect(rootsParallelism(repo, [], {})).toEqual({ value: 16, reason: "the default" });
+    expect(rootsParallelism(repo, [], {})).toEqual({ value: 4, reason: "the default" });
   });
 
   it("runs at most the limit at once and stops starting work after a throw", async () => {

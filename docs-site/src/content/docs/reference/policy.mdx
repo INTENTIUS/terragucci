@@ -153,7 +153,7 @@ policy:
 
 2. A listed approver reads the plan and the denial, then runs that command in a checkout, with the reason ([`override`](/terragucci/reference/cli/#override)). It runs `chant approve policy-override <root> --plan <digest> --note <reason>`, with `--sign` under `approval: sealed`.
 
-3. Run the wave's job again. It applies the root, and its report and note name the override.
+3. Run the wave's job again. It applies the root, and its report and note name the override. Before it applies, it marks the override used in `_gates/policy-override/applied.jsonl`.
 
 </Steps>
 
@@ -162,7 +162,7 @@ policy:
 | Part | Effect |
 |---|---|
 | one root | every other root's denial stands |
-| its plan digest | a plan that changes gives another digest: the override counts for nothing, the wave applies nothing and exits 4, and the next run asks again |
+| its plan digest | a plan that changes before the override applied gives another digest: the override counts for nothing, the wave applies nothing and exits 4, and the next run asks again. Once a wave applied under the override, the root's next denial is recorded as a new one and exits 1, waiting for its own override |
 | the rule ids | `--rule` names exactly the rules that denied the plan; a rule added or gone needs a new override |
 | a reason | required; kept on the ledger line and shown in the report |
 

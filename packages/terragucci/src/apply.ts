@@ -286,6 +286,8 @@ const REMOTE_REF = `refs/remotes/origin/${LIFECYCLE}`;
 const LEDGER_PATH = `_gates/${APPLY_OP}.jsonl`;
 /** Where the waves record each approval they applied under: beside the reports, out of chant's sight. */
 export const APPLIED_PATH = `_gates/${APPLY_OP}/applied.jsonl`;
+/** The applied file beside an op's ledger: `_gates/<op>.jsonl` keeps it at `_gates/<op>/applied.jsonl`. */
+export const appliedPathFor = (ledgerPath: string): string => `${ledgerPath.replace(/\.jsonl$/, "")}/applied.jsonl`;
 const GIT_ID = { GIT_AUTHOR_NAME: "terragucci", GIT_AUTHOR_EMAIL: "terragucci@localhost", GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" };
 
 function git(repo: string, args: string[], input?: string, env: NodeJS.ProcessEnv = process.env) {
@@ -307,8 +309,7 @@ export function readLedger(repo: string, path: string = LEDGER_PATH): GateLedger
   if (!fetchLifecycle(repo)) return { pending: [], resolutions: [] };
   const show = git(repo, ["show", `${REMOTE_REF}:${path}`]);
   const ledger = parseLedger(show.status === 0 ? show.stdout : "");
-  if (path !== LEDGER_PATH) return ledger;
-  const applied = git(repo, ["show", `${REMOTE_REF}:${APPLIED_PATH}`]);
+  const applied = git(repo, ["show", `${REMOTE_REF}:${appliedPathFor(path)}`]);
   return { ...ledger, applied: parseApplied(applied.status === 0 ? applied.stdout : "") };
 }
 
@@ -331,9 +332,9 @@ export function appendPending(repo: string, record: PendingRecord, files: Record
   appendRecord(repo, record, files, `Pending gate record: ${record.op} ${record.gate}`, path);
 }
 
-/** Append one line to the ledger (`path`, the waves' file by default) and push it, as appendPending does. */
-function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord, files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
-  const line = JSON.stringify(record);
+/** Append lines to the ledger (`path`, the waves' file by default) and push them in one commit, as appendPending does. */
+function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord | AppliedRecord[], files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
+  const line = (Array.isArray(record) ? record : [record]).map((r) => JSON.stringify(r)).join("\n");
   for (let attempt = 0; attempt < 5; attempt++) {
     const exists = fetchLifecycle(repo);
     const parent = exists ? git(repo, ["rev-parse", REMOTE_REF]).stdout.trim() : "";
@@ -698,6 +699,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   if (changes === 0) facts.nothing = true;
   const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys }, facts, w);
   if (held !== undefined) return held;
+  recordOverridesUsed(repo, options, planned);
 
   // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
@@ -776,7 +778,8 @@ async function policyGate(
  * with none gets a pending fact for its plan and rules, and the command that
  * overrides it. A root the policy could not check is never overridden.
  * Returns true when, for a root still denied, an override stands for an
- * earlier plan or other rules: the changed-wave refusal.
+ * earlier plan or other rules that no wave applied: the changed-wave refusal.
+ * An override a wave applied under refuses nothing.
  */
 async function overrideDenials(repo: string, options: ApplyWaveOptions, label: string, planned: WavePlan[], denied: Map<string, string>, w: WaveRun): Promise<boolean> {
   const overridable = planned.filter((p) => denied.has(p.root) && p.policy?.result === "denied" && p.member?.planDigest);
@@ -810,6 +813,9 @@ async function overrideDenials(repo: string, options: ApplyWaveOptions, label: s
       continue;
     }
     for (const why of decision.refusals) console.log(`${p.root}: an override does not count: ${why}`);
+    if (decision.status === "none" && decision.spent) {
+      console.log(`${p.root}: the override of ${decision.spent.digest} by ${decision.spent.by} was used by the apply of that plan, so this plan needs an override of its own`);
+    }
     const digest = overrideDigest(p.root, planDigest, rules);
     if (decision.status === "moved") {
       moved = true;
@@ -842,6 +848,37 @@ async function overrideDenials(repo: string, options: ApplyWaveOptions, label: s
   }
   if (overridden.length > 0 && w.policy) w.policy.overridden = overridden.sort();
   return moved;
+}
+
+/**
+ * Record each override the wave is about to apply under, in
+ * `_gates/policy-override/applied.jsonl`, so the root's next denial is not
+ * refused for it (decideOverride). Written before anything applies, as the
+ * approvals are; a record that cannot be pushed stops the wave.
+ */
+function recordOverridesUsed(repo: string, options: ApplyWaveOptions, applying: WavePlan[]): void {
+  const used = applying.filter((p) => p.policy?.override);
+  if (used.length === 0) return;
+  const env = options.env ?? process.env;
+  const now = options.now ?? new Date().toISOString();
+  const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
+  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const records: AppliedRecord[] = used.map((p) => {
+    const o = p.policy!.override!;
+    return {
+      version: 1,
+      kind: "applied",
+      op: OVERRIDE_OP,
+      gate: p.root,
+      planDigest: o.digest,
+      approvedAt: o.at,
+      approvedBy: o.by,
+      timestamp: now,
+      ...(runId ? { runId } : {}),
+      ...(commit ? { commit } : {}),
+    };
+  });
+  appendRecord(repo, records, {}, `Applied under override: ${OVERRIDE_OP} ${used.map((p) => p.root).join(", ")}`, appliedPathFor(OVERRIDE_LEDGER));
 }
 
 /**
@@ -1162,6 +1199,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
   const stop = await gateWave(repo, options, { label, roots: changing.map((p) => p.root), planned: changing, members, digest, changes, destroys }, facts, w);
   if (stop !== undefined) return stop;
+  recordOverridesUsed(repo, options, changing);
   // The saved plans, and nothing planned anew.
   const applied = await applyTerragruntWave({ ...run, units: changing.map((p) => p.root), workDir: planDir });
   console.log(applied.log.trim());
