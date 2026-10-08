@@ -12,6 +12,7 @@
 import { groupAnchor, rootAnchor } from "./build";
 import { actionWord, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRootTimings } from "./schema";
 import { duration } from "./spans";
+import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
 export const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -286,11 +287,12 @@ export function renderHtml(report: Report): string {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
 <meta name="color-scheme" content="light dark">
 <title>${esc(title)}</title>
-<style>${CSS}</style>
+${TACO_ICON}
+<style>${CSS}${TACO_CSS}</style>
 </head>
 <body>
 <main>
-<h1>${esc(run.project)}: ${esc(run.stage)}${run.wave !== undefined ? `, wave ${run.wave}` : ""}</h1>
+<h1 class="brand">${TACO_IMG}${esc(run.project)}: ${esc(run.stage)}${run.wave !== undefined ? `, wave ${run.wave}` : ""}</h1>
 <p class="run">commit ${run.commit_url ? `<a href="${esc(run.commit_url)}"><code>${esc(run.commit)}</code></a>` : `<code>${esc(run.commit)}</code>`}${run.base ? ` against <code>${esc(run.base)}</code>` : ""}${pullRequest(run)}, ${esc(run.binary)} on ${esc(run.runtime)}, ${esc(run.started)} to ${esc(run.finished)}${run.job_url ? `, <a href="${esc(run.job_url)}">job</a>` : ""}${traceLink(run)}<br>${report.units} ${report.unit === "instance" ? "instances" : "roots"} in ${report.groups.length} groups: ${esc(totals)}. Change set <code class="digest">${esc(report.change_set)}</code></p>
 <p class="notice">Every value a plan marks sensitive is replaced with <code>${esc(report.redaction.marker)}</code> in the stored plans (${report.redaction.values} in this run). Plan digests are taken before that, over the plans as planned.</p>
 ${pinned}

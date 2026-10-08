@@ -8,6 +8,7 @@
 // no import for it; a page that places <AgentPrompt /> itself gets it there
 // instead. Every prompt forbids apply, approve and merge (lint-prompts.mjs).
 import { promptText } from '../prompts';
+import Taco from './Taco.astro';
 
 interface Props {
 	label?: string;
@@ -24,7 +25,7 @@ const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt
 {prompt && (
 	<figure class="tg-prompt not-content">
 		<figcaption>
-			<span>{label}</span>
+			<span class="tg-prompt-label"><Taco scale="small" />{label}</span>
 			<button type="button" class="tg-prompt-copy" data-copy={prompt} aria-label="Copy the prompt">Copy</button>
 		</figcaption>
 		<p class="tg-prompt-note">{note}</p>
@@ -69,6 +70,11 @@ const prompt = text ?? promptText(Astro.locals.starlightRoute?.entry.data.prompt
 		border-bottom: 1px solid var(--tg-rule);
 		font-size: 0.8rem;
 		color: var(--sl-color-gray-3);
+	}
+	.tg-prompt-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 	button {
 		font: inherit;

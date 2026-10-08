@@ -1,5 +1,7 @@
 ---
 // A rollout in waves: a gated wave's approval covers exactly the plans it was shown, by their digest.
+// The taco marks the wave terragucci applied.
+import Taco from './Taco.astro';
 const waves = [
 	{ label: 'wave 1', roots: 3, digest: 'set:4f1a…c09e', state: 'applied', note: 'the canary roots, approved by alex' },
 	{ label: 'wave 2', roots: 97, digest: 'set:b77d…12a4', state: 'waiting', note: 'npx terragucci approve wave-2' },
@@ -13,7 +15,7 @@ const waves = [
 				<span class="label">{w.label}</span>
 				<span class="roots">{w.roots} roots</span>
 				<code class="digest">{w.digest}</code>
-				<span class="state">{w.state}</span>
+				<span class="state">{w.state === 'applied' && <Taco scale="small" />}{w.state}</span>
 				<span class="note">{w.note}</span>
 			</li>
 		))}
@@ -73,6 +75,9 @@ const waves = [
 		overflow-wrap: anywhere;
 	}
 	.state {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 		font-family: var(--sl-font-mono);
 		font-size: 0.72rem;
 		letter-spacing: 0.06em;

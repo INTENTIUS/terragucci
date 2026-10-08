@@ -15,7 +15,8 @@ import { S3Client, S3Error, s3FromEnv, sign, type S3Fetch } from "../src/report/
 import { REDACTED, type Report } from "../src/report/schema";
 import { artifactReportUrl, preventDestroyIn, projectFromRemote, reportLinks, runFacts } from "../src/report/stage";
 import { addToIndex, bucketReportUrl, copyToRun, INDEX_TRIES, indexEntry, renderIndexHtml, reportsBase, runPath, traceKey, updateIndex, uploadReport, writeReportDir } from "../src/report/store";
-import { isArtifactPage, renderGitLabTerraform, renderNote, renderText } from "../src/report/views";
+import { isArtifactPage, NOTE_FOOTER, renderGitLabTerraform, renderNote, renderText } from "../src/report/views";
+import { TACO_NOTE_URL, TACO_PNG } from "../src/report/taco";
 import { fixture200, plan, rc, RUN, smallFixture } from "./report-fixtures";
 import { tmp, write } from "./helpers";
 
@@ -111,6 +112,17 @@ describe("every view renders from the JSON alone", () => {
     for (const g of report.groups) expect(note).toContain(`(https://ci/a/report.html#group-${g.id})`);
     expect(note).toContain("(https://ci/a/report.html#root-envs/prod/orders) (destroy)");
     expect(note).toContain("(https://ci/a/report.html#root-envs/prod/search) (refused to plan)");
+  });
+
+  it("the note ends with the small taco from the docs site, and the HTML carries it inline", () => {
+    const note = renderNote(report);
+    expect(note.endsWith(`\n${NOTE_FOOTER}\n`)).toBe(true);
+    expect(NOTE_FOOTER).toBe(`<sub><img src="${TACO_NOTE_URL}" width="26" height="16" alt=""> Posted by [terragucci](https://intentius.io/terragucci/)</sub>`);
+    const html = renderHtml(report);
+    expect(html).toContain(`<link rel="icon" type="image/png" href="${TACO_PNG}">`);
+    expect(html).toContain(`<h1 class="brand"><img class="taco" src="${TACO_PNG}" width="51" height="31" alt="">`);
+    // A few hundred bytes, so the report stays one small file.
+    expect(TACO_PNG.length).toBeLessThan(1200);
   });
 });
 
@@ -285,11 +297,12 @@ describe("the 200-root fixture", () => {
     expect([...note].length).toBeLessThanOrEqual(3000);
     for (const n of report.named.filter((x) => x.action === "delete")) expect(note).toContain(`${n.root}: ${n.address}`);
     expect(note).toMatch(/\*\*Cut:\*\* this note leaves out/);
+    expect(note.endsWith(`${NOTE_FOOTER}\n`)).toBe(true);
   });
 });
 
 /** Every relative href in the HTML, without its fragment. */
-const hrefs = (html: string): string[] => [...new Set([...html.matchAll(/href="([^"#][^"]*)"/g)].map((m) => m[1]).filter((h) => !/^https?:/.test(h)))];
+const hrefs = (html: string): string[] => [...new Set([...html.matchAll(/href="([^"#][^"]*)"/g)].map((m) => m[1]).filter((h) => !/^(https?|data):/.test(h)))];
 
 describe("where reports go", () => {
   const plans = (report: Report) => new Map(report.roots.map((r) => [r.path, { text: `plan of ${r.path}\n`, json: "{}\n" }]));
