@@ -835,6 +835,14 @@ describe("credentials", () => {
     expect(never.jobs["apply-wave-1"].permissions.contents).toBe("read");
   });
 
+  it("github: with a drift schedule the plan and re-plan jobs read the drift job's runs, and without one they do not", () => {
+    const drift = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *" }).content);
+    expect(drift.jobs.plan.permissions.actions).toBe("read");
+    expect(drift.jobs.replan.permissions.actions).toBe("read");
+    expect(drift.jobs.drift.permissions.actions).toBeUndefined();
+    expect(body(render("github")).jobs.plan.permissions.actions).toBeUndefined();
+  });
+
   it("forgejo: the jobs that assume a role set enable-openid-connect, and the token comes from the runner's OIDC endpoint", () => {
     const text = render("forgejo", OIDC);
     const doc = body(text);

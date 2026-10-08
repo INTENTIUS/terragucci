@@ -99,7 +99,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    <Tabs syncKey="forge">
    <TabItem label="GitHub">
 
-   The jobs use the run's `github.token`. The plan job adds `statuses: write` and `pull-requests: write` and runs only for pull requests from branches in the same repo, so a fork reaches no job with them.
+   The jobs use the run's `github.token`. The plan job adds `statuses: write` and `pull-requests: write` (and `actions: read` with a `drift` schedule) and runs only for pull requests from branches in the same repo, so a fork reaches no job with them.
 
    </TabItem>
    <TabItem label="GitLab">

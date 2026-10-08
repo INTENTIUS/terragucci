@@ -113,6 +113,18 @@ npx terragucci stage tf-drift
 
 With no forge token, it writes the report and `issue.md` only. `--forge` tells GitHub from Forgejo.
 
+### Overdue drift checks
+
+A schedule can stop with no error: GitHub turns a scheduled workflow off after 60 days with no activity in the repo, and a GitLab project runs the drift job only once someone adds a schedule. With `drift` set, each `tf-plan` asks the forge when the drift job last ran, from its schedule or by hand. When the cron has come round at least twice since then, or since the pipeline file was added if it never ran, the job log and the plan note say the drift checks are overdue and what to do.
+
+| Forge | What the plan job reads | The note adds |
+|---|---|---|
+| GitHub | the workflow's scheduled and manual runs, and its state; the plan jobs get `actions: read` | the workflow is off, or how to turn it on again |
+| GitLab | the scheduled pipelines and the active schedules, with `token_env` | the project has no schedule, and the cron to add |
+| Forgejo | the repo's scheduled and manual runs | to check that Actions is on and a runner is up |
+
+A forge that does not answer leaves a line in the log, and the plan goes on.
+
 <Shot step="drift" view="issue" alt="The open issue titled terragucci: drift found, filed by the Forgejo Actions bot. It says 1 of 15 roots has drifted and lists envs/staging/orders with one object, an SQS queue, that no longer exists." />
 
 ## Gated waves

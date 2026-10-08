@@ -1284,13 +1284,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         : []),
     ],
   } as never);
+  // With a drift schedule the plan reads the drift job's runs, to say when the schedule has stopped.
+  const driftRead = drift && forge === "github" ? { actions: "read" } : {};
   // Plan runs a pull request's code, so it gets the read-only role, and never
   // runs for a fork, whose pull requests carry no token and no OIDC.
   const plan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'pull_request' && ${sameRepo}`,
-    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...driftRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     env: {
       TG_TOKEN: "${{ github.token }}",
@@ -1321,7 +1323,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !${APPLY_COMMENT}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
-    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...driftRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
     env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv, ...reportKeyEnv(forge, input.reports) },
