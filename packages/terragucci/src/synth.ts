@@ -10,16 +10,53 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, normalize, relative } from "node:path";
+import { join, normalize, relative, resolve } from "node:path";
 
 /** Never compared: what init and an apply leave beside the code. */
 const SKIP_DIRS = new Set([".terraform", ".terragrunt-cache"]);
 const isState = (name: string): boolean => /\.tfstate(\.backup)?$/.test(name);
 
-/** Each file under `dir` by its path from `dir`, as a SHA-256 of its bytes. Empty when `dir` is missing. */
-export function treeDigest(dir: string): Map<string, string> {
+/**
+ * The ways a checkout's own directory can be spelled, longest first. A synth
+ * writes it into its output (CDK Terrain's default local backend names
+ * `<project>/terraform.<stack>.tfstate` by its absolute path), so it is
+ * taken out before two checkouts' files are compared.
+ */
+export function checkoutPaths(repo: string): string[] {
+  const paths = new Set([resolve(repo)]);
+  try {
+    paths.add(realpathSync(repo));
+  } catch {
+    // The path as given is taken out alone.
+  }
+  return [...paths].sort((a, b) => b.length - a.length);
+}
+
+/** `bytes` with every occurrence of each of `paths` replaced by a fixed marker. */
+function withoutPaths(bytes: Buffer, paths: string[]): Buffer {
+  let out = bytes;
+  for (const path of paths) {
+    const needle = Buffer.from(path);
+    if (out.indexOf(needle) < 0) continue;
+    const parts: Buffer[] = [];
+    let at = 0;
+    for (let i = out.indexOf(needle); i >= 0; i = out.indexOf(needle, at)) {
+      parts.push(out.subarray(at, i), Buffer.from("<checkout>"));
+      at = i + needle.length;
+    }
+    parts.push(out.subarray(at));
+    out = Buffer.concat(parts);
+  }
+  return out;
+}
+
+/**
+ * Each file under `dir` by its path from `dir`, as a SHA-256 of its bytes with
+ * the checkout's own directory (`paths`) taken out. Empty when `dir` is missing.
+ */
+export function treeDigest(dir: string, paths: string[] = []): Map<string, string> {
   const out = new Map<string, string>();
   const walk = (at: string): void => {
     for (const name of readdirSync(at).sort()) {
@@ -28,7 +65,7 @@ export function treeDigest(dir: string): Map<string, string> {
       if (st.isDirectory()) {
         if (!SKIP_DIRS.has(name)) walk(abs);
       } else if (st.isFile() && !isState(name)) {
-        out.set(relative(dir, abs), createHash("sha256").update(readFileSync(abs)).digest("hex"));
+        out.set(relative(dir, abs), createHash("sha256").update(withoutPaths(readFileSync(abs), paths)).digest("hex"));
       }
     }
   };
@@ -92,14 +129,18 @@ export function localModules(repo: string, root: string): string[] {
  * The roots whose synthesized files differ between two trees, each with the
  * first difference found, and the roots that match. A root's own directory
  * is compared, then every local module it calls outside it, followed through
- * the modules those call (as the head has them).
+ * the modules those call (as the head has them). Each side's own directory
+ * is taken out of its files first, so an absolute path a synth writes does
+ * not set the checkouts apart.
  */
 export function compareSynthesized(baseRepo: string, headRepo: string, roots: string[]): { changed: Map<string, string>; unchanged: string[] } {
   const changed = new Map<string, string>();
   const unchanged: string[] = [];
   const digests = new Map<string, string | undefined>();
+  const basePaths = checkoutPaths(baseRepo);
+  const headPaths = checkoutPaths(headRepo);
   const differs = (path: string): string | undefined => {
-    if (!digests.has(path)) digests.set(path, firstDifference(treeDigest(join(baseRepo, path)), treeDigest(join(headRepo, path))));
+    if (!digests.has(path)) digests.set(path, firstDifference(treeDigest(join(baseRepo, path), basePaths), treeDigest(join(headRepo, path), headPaths)));
     return digests.get(path);
   };
   for (const root of roots) {

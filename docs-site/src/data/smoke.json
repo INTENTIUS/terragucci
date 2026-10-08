@@ -1004,11 +1004,11 @@
     },
     {
       "claim": "cdktn-synth",
-      "says": "with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans every synthesized stack",
+      "says": "with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "5234ce4"
+      "commit": "0fd52aa"
     },
     {
       "claim": "audit",
@@ -1065,6 +1065,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "66f2fcd"
+    },
+    {
+      "claim": "cdktn-affected",
+      "says": "with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged",
+      "needs": null,
+      "verdict": "fail",
+      "break": "caught",
+      "commit": "0fd52aa"
     }
   ]
 }

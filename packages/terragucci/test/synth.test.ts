@@ -123,6 +123,17 @@ describe("synth: plan only the stacks a change affects", () => {
     expect([...treeDigest(join(head, "out/stacks/dev")).keys()]).toEqual(["cdk.tf.json"]);
   });
 
+  it("takes each checkout's own directory out of its files, as CDK Terrain's default local backend writes it", () => {
+    const local = (repo: string, stack: string): string => JSON.stringify({ terraform: { backend: { local: { path: `${repo}/terraform.${stack}.tfstate` } } } });
+    const base = tmp();
+    const head = tmp();
+    write(base, { "out/stacks/dev/cdk.tf.json": local(base, "dev"), "out/stacks/prod/cdk.tf.json": local(base, "prod") });
+    write(head, { "out/stacks/dev/cdk.tf.json": local(head, "dev"), "out/stacks/prod/cdk.tf.json": local(`${head}/other`, "prod") });
+    const { changed, unchanged } = compareSynthesized(base, head, ["out/stacks/dev", "out/stacks/prod"]);
+    expect(unchanged).toEqual(["out/stacks/dev"]);
+    expect(Object.fromEntries(changed)).toEqual({ "out/stacks/prod": "cdk.tf.json differs" });
+  });
+
   it("reads local module sources from Terraform JSON and HCL, and leaves out registry sources and paths outside the repo", () => {
     const repo = write(tmp(), {
       "stacks/a/cdk.tf.json": JSON.stringify({ module: [{ x: { source: "../../modules/x" } }, { r: { source: "terraform-aws-modules/vpc/aws" } }], terraform: {} }),
