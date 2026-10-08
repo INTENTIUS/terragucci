@@ -295,7 +295,21 @@ just sandbox shot all              # each one logged out, light and dark
 just sandbox reset                 # close the pull requests and issues, delete the branches, main back to its first commit
 just sandbox minutes 2026-10-07T00:00:00Z   # Actions run time since then
 just sandbox capture               # all of the docs' GitHub views, from reset to reset
+just sandbox prove                 # the github.com claims, from reset to reset; --record FILE writes their rows
 ```
+
+`just sandbox prove` resets the sandbox and commits to main, with `[skip ci]`, what its claims need: `locks: plan`, a `policy` whose Rego denies a replacement, `oidc` with a plan and an apply role, and `envs/dev/oidc`, a root whose `data "external"` program checks the job's OIDC token and writes what it found to `terragucci-report/oidc-<plan|apply>.json`, which the job keeps in its report artifact. `init` of the release then rewrites the pipeline. Then it runs the claims and resets again. It takes about 15 minutes.
+
+| Claim | Steps | Holds when |
+|---|---|---|
+| `affected` | `change one-root` | the plan note's first line covers `envs/dev/orders` alone and `terragucci/plan` counts 1 root |
+| `comment-plan` | `plan-comment one-root` | the comment's run finishes its `replan` job and the note was edited after the comment |
+| `pr-lock` | `change orders-note` | one-root's `terragucci/lock` holds `envs/dev/orders`; orders-note, a second change to that root, fails it, and its reply names the root and pull request one-root |
+| `policy` | `change replace` | `terragucci/plan` fails and the note names the denial |
+| `oidc` | `change oidc`, `merge oidc` | in the pull request's plan job and main's apply job, the token verifies against GitHub's keys and names the repo, run, commit, event and `sts.amazonaws.com`; the plan job holds the plan role and the apply job the apply role |
+| `gate-wait` | `change destroy`, `merge destroy`, `approve` | wave 4 stops with its approve command, and the re-run after a sealed `chant approve` succeeds |
+
+No claim runs broken on purpose, and no token is traded with STS: the sandbox has no cloud account (the Forgejo claim `forgejo-oidc` does the trade). `--record docs-site/src/data/validation.json` writes the rows as forge `github.com`, after the `github` rows. The nightly workflow (`nightly/pipeline.ts`, job `sandbox`) runs `just sandbox prove` on the newest published release and `just sandbox reset` after it, and keeps `prove.json` and the logs as the `sandbox-prove` artifact. It needs the repo secret `TERRAGUCCI_SANDBOX_TOKEN`: a token from an admin of the sandbox, fine-grained on INTENTIUS/terragucci-sandbox with Administration, Contents, Workflows, Pull requests, Issues and Actions read and write and Commit statuses read, or classic with `repo` and `workflow`. Without it the job stops at its first step and says so.
 
 `just sandbox capture` resets the sandbox, runs `change one-root`, `plan-comment one-root`, `change unformatted`, `change destroy`, `merge destroy` and `drift`, shoots each view right after its step, writes them as the step `github`, and resets the sandbox again. It takes about 15 minutes. A page uses them as it uses a Forgejo step's: `<Shot step="github" view="note" alt="..." />`, and `<Captured step="github" />` for the commands and the lines of the two job logs a logged-out reader cannot open.
 
