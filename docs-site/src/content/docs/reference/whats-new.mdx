@@ -29,6 +29,7 @@ terragucci 0.4.2 is on npm as `@intentius/terragucci@0.4.2`, and its [GitHub rel
 | What | Where |
 |---|---|
 | A wave applies at most `parallelism` roots at once; before, it applied every root of the wave together | [Config](/terragucci/reference/config/) |
+| `parallelism` defaults to 4 instead of 16, so a wave of AWS roots fits a 7 GB runner | [terragucci.yml keys](/terragucci/reference/config/#keys) |
 | A wave's roots share one provider cache, and plan and drift stages download each provider once instead of once per root | [Pipeline](/terragucci/reference/pipeline/) |
 
 ## Fixes
@@ -36,6 +37,8 @@ terragucci 0.4.2 is on npm as `@intentius/terragucci@0.4.2`, and its [GitHub rel
 | What | Where |
 |---|---|
 | An approval that already applied no longer refuses the next wave; under `approval: pr-review` every merge after a review-approved apply was refused before | [Approve a wave](/terragucci/guides/approve-a-wave/) |
+| A policy override that already applied no longer refuses the root's next plan: the new denial is recorded and waits for its own override | [Overriding a denial](/terragucci/reference/policy/#overriding-a-denial) |
+| `reconcile` writes the control repo's `reports` into each project's `terragucci.yml`, so apply waves copy their reports to the bucket | [Govern many repos](/terragucci/guides/govern-many-repos/) |
 | The Terraform image is 1.14.9, so `terraform query` imports generate config | [Choose your binary](/terragucci/guides/use-a-binary/) |
 | Rollouts read an empty Forgejo repo as having no pull requests | [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) |
 | An import that also updates a resource is named in the report | [Report](/terragucci/reference/report/) |
