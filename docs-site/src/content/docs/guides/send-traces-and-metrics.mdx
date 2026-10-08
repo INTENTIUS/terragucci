@@ -1,7 +1,7 @@
 ---
 title: Send traces and metrics
 description: Point the pipeline at your OpenTelemetry collector, get one trace per stage run and its metrics, and load the Grafana dashboards and alerts init writes.
-claims: [traces, metrics, dash-pipeline, dash-changes, dash-waves, dash-drift, dash-estate, dash-runs, dash-slos, drill-down]
+claims: [traces, metrics, dash-pipeline, dash-changes, dash-waves, dash-drift, dash-estate, dash-runs, dash-slos, drill-down, otlp-headers]
 prompt: |
   Read https://intentius.io/terragucci/guides/send-traces-and-metrics/.
   Add `OTEL_EXPORTER_OTLP_ENDPOINT` under `env:` in terragucci.yml, `telemetry.headers_secret` if the collector needs a key, and `dashboards: true`.
