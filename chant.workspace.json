@@ -1,0 +1,19 @@
+{
+  "name": "terragucci",
+  "schema": 1,
+  "minReader": "0.108.0",
+  "members": [],
+  "ci": {
+    "green": {
+      "branch": "main",
+      "window": "24h",
+      "phases": {
+        "check": ["check"],
+        "validate-aws": ["validate-aws"],
+        "validate-forgejo": ["validate-forgejo"],
+        "validate-github": ["validate-github"]
+      },
+      "require": ["check", "validate-aws", "validate-forgejo", "validate-github"]
+    }
+  }
+}

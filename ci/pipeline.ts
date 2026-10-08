@@ -8,7 +8,7 @@
  * The check job runs `just check`, the same chain a person runs before
  * pushing. The validate jobs boot one profile of the local validation stack
  * each (aws, forgejo, github) and run its claims plain and broken. GitLab is
- * too heavy for every pull request and runs nightly (nightly/pipeline.ts).
+ * too heavy for every push to main and runs nightly (nightly/pipeline.ts).
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
@@ -19,13 +19,16 @@ export const workflow = new Workflow({
   name: "terragucci",
   on: {
     push: { branches: ["main"] },
-    pull_request: { branches: ["main"] },
     workflow_dispatch: {},
   },
   permissions: { contents: "read" },
-  // A new push to a pull request cancels the run it supersedes; main's runs
-  // all finish. GitHub keeps one run going and one waiting per group, so a
-  // burst of merges to main runs the first and the newest.
+  // main's pushes only, never pull requests: merges land without waiting for
+  // a run each, and chant-ci-green.yml tags the commits that pass ci/green/<sha>
+  // (chant.workspace.json's ci.green). A branch runs by hand:
+  // `gh workflow run ci.yml --ref BRANCH`, and a newer one cancels its run in
+  // progress. main's runs all finish. GitHub keeps one run going and one
+  // waiting per group, so a burst of merges to main runs the first and the
+  // newest, and the commits between are never tagged.
   concurrency: { group: "ci-${{ github.ref }}", "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}" },
 });
 

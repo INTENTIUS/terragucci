@@ -18,6 +18,8 @@ lint:
     npx chant lint images
     npx chant lint capture
     npx chant lint nightly
+    npx chant lint ci-red
+    npx chant lint diff-guard
     npx chant lint observability
     bash -n stack/smoke.sh
     node scripts/check-smoke.mjs
@@ -53,6 +55,8 @@ ci:
     npx chant build nightly -o .github/workflows/nightly.yml --format yaml
     npx chant build image-ci -o .github/workflows/images.yml --format yaml
     npx chant build publish -o .github/workflows/publish.yml --format yaml
+    npx chant build ci-red -o .github/workflows/ci-red.yml --format yaml
+    npx chant build diff-guard -o .github/workflows/diff-guard.yml --format yaml
     just render-observability
     just render-images
     just render-front-door
@@ -87,7 +91,7 @@ ci-check:
     out="$(mktemp -t terragucci-ci-XXXX.yml)"
     trap 'rm -f "$out"' EXIT
     rc=0
-    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "nightly:.github/workflows/nightly.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml"; do
+    for pair in "ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "capture:.github/workflows/capture.yml" "nightly:.github/workflows/nightly.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml"; do
       src="${pair%%:*}"; committed="${pair#*:}"
       npx chant build "$src" -o "$out" --format yaml >/dev/null
       if diff -u "$committed" "$out"; then
@@ -276,6 +280,14 @@ tutorial-capture:
 [doc("Capture tutorial steps on demand: `just capture <step>...`, `just capture --reuse <step>` on the running example, `just capture --list`.")]
 capture *args:
     stack/tutorial-capture.sh {{args}}
+
+[doc("Fail when HEAD would undo a commit BASE already has, as a rebase that keeps a stale file does: the pull request check.")]
+diff-guard base="origin/main" head="HEAD":
+    scripts/diff-guard.sh {{base}} {{head}}
+
+[doc("Name the commit a release tags: the newest on main that passed CI (chant ci last-green), at VERSION. TERRAGUCCI_RELEASE_SKIP_GREEN=1 skips the green check.")]
+release-preflight version commit="":
+    scripts/release-preflight.sh {{version}} {{commit}}
 
 [doc("Build the terragucci CLI into one bundled file, as a release does.")]
 build-cli:

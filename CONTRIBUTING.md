@@ -2,7 +2,7 @@
 
 ```bash
 npm install
-just check      # what CI runs: typecheck, lint, tests, the docs' prose and the tutorial
+just check      # what CI's check job runs: typecheck, lint, tests, the docs' prose and the tutorial
 just docs       # serve the docs locally with hot reload and open them
 just docs-preview  # build the docs as CI does and open that build
 ```
@@ -57,10 +57,12 @@ The client is `packages/terragucci/src/decide/` (`decide`, `isConfident`, `summa
 
 A release puts the CI images on GHCR and then `@intentius/terragucci` on npm. The npm package must name the images by digest, and the digests exist only after the images are pushed, so the order is fixed:
 
-1. Set the version in `packages/terragucci/package.json`, merge to main, and push the tag `v<version>` on that commit. Image tags carry the package version (`imageTag` in `packages/terragucci/src/images.ts`).
+1. Set the version in `packages/terragucci/package.json` and merge to main. Once a commit at that version passes CI, `just release-preflight <version>` names it (`chant ci last-green`, never a hand-picked commit) and prints the `git tag v<version> <sha> && git push origin v<version>` to run. Image tags carry the package version (`imageTag` in `packages/terragucci/src/images.ts`).
 2. The images workflow runs on the tag. Its publish job pushes the four images to GHCR and prints each reference with its digest.
 3. Record those digests in `packages/terragucci/src/image-digests.json`, keyed by the references `npx tsx scripts/images.ts tags` prints, run `just ci` and `just example-patches` (`init` now pins by digest, so generated files change), and merge to main.
 4. Run the publish workflow on main: `gh workflow run publish.yml --ref main` (its `ref` input defaults to main; pass `-f ref=<ref>` to publish another one).
+
+`scripts/release-preflight.sh` fetches main and the `ci/` tags, and refuses a commit with no `ci/green/<sha>`, one with `ci/revoked/<sha>`, and one whose package is at another version. The tags are a convenience: when main has no green commit (the tick has not run, or every recent commit changed a workflow and `CI_GREEN_TOKEN` is missing) it says so, and `TERRAGUCCI_RELEASE_SKIP_GREEN=1 just release-preflight <version> [<commit>]` releases main, or the commit given, without the check.
 
 The tag starts the publish workflow too. At that point the digests are not recorded yet, so that run refuses and the step 4 dispatch publishes. A tag pushed after its digests are already on main publishes directly.
 
@@ -100,6 +102,9 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `capture/pipeline.ts` | `.github/workflows/capture.yml` |
 | `image-ci/pipeline.ts` | `.github/workflows/images.yml` |
 | `publish/pipeline.ts` | `.github/workflows/publish.yml` |
+| `nightly/pipeline.ts` | `.github/workflows/nightly.yml` |
+| `ci-red/pipeline.ts` | `.github/workflows/ci-red.yml` |
+| `diff-guard/pipeline.ts` | `.github/workflows/diff-guard.yml` |
 | `images/images.ts` | `images/Dockerfile.*` |
 | `front-door/stack.ts` (the `ReportsFrontDoor` composite in `front-door/front-door.ts`, with the edge code `front-door/edge.cjs` minified into it) | `docs-site/public/reports-front-door.json`, the CloudFormation template the Keep reports in S3 guide deploys; `test/front-door.test.ts` runs that inlined code |
 | `workflows/shared.ts` | the pins they share |
@@ -107,6 +112,40 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `packages/terragucci/src/dashboards/index.ts` (through `scripts/render-dashboards.ts`) | `packages/terragucci/src/dashboards/rendered.json`, the template `init` fills, and `stack/observability/terragucci/`, the dashboards and rules the stack's Grafana and Prometheus load, rendered with the stack's reports address (`http://localhost:4580/terragucci-reports`, prefix `reports`) so the Runs and Estate links resolve in the `drill-down` claim, and `stack/observability/grafana-datasources.yaml` |
 
 The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/render-dashboards.ts` renders the declarations with a placeholder for each value `terragucci.yml` sets (the `dashboards:` settings, and the reports address, rendered once with it and once without) and writes the result to `rendered.json`; `init` fills the placeholders (`src/dashboards/template.ts`), and `just build-cli` puts the template into the bundle gzipped. So the bundle carries neither the grafana, prometheus and otel lexicons nor js-yaml or the lezer PromQL parser, and `just bundle-check` fails if any of them, or `src/dashboards/index.ts`, reaches it. Before it writes or checks anything, the script fills the template with several settings, odd YAML values among them, and fails unless each comes out byte for byte as the declarations render it. `just ci-check` fails when `rendered.json` is stale. After an edit to the declarations, run `just ci` and commit `rendered.json` with the stack's files.
+
+## CI on main, and the one pull request check
+
+A pull request runs one check, `diff-guard`, which takes seconds. The test suite and the validation stack (`ci.yml`: `check`, `validate-aws`, `validate-forgejo`, `validate-github`) run on each push to main, so many merges can land without waiting for a run each. A branch runs them by hand: `gh workflow run ci.yml --ref <branch>`.
+
+| Workflow | Runs | What it does |
+|---|---|---|
+| `diff-guard.yml` | every pull request to main | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has |
+| `ci.yml` | each push to main, and by hand | `just check` and each stack profile's claims, plain and under `BREAK=1` |
+| `chant-ci-green.yml` | when `ci.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
+| `ci-red.yml` | hourly | `scripts/ci-red`: opens one issue, "main is red", when main has had no green commit for `TERRAGUCCI_RED_HOURS` (6) hours or a green commit is revoked, and closes it once main is green again |
+| `nightly.yml` | nightly | the GitLab claims, too heavy for every push |
+
+main's runs of `ci.yml` are never cancelled. GitHub keeps one run going and one waiting per concurrency group, so in a burst of merges the first and the newest are tested and the commits between them get no tag. A run by hand on a branch cancels that branch's run in progress.
+
+### diff-guard
+
+A rebase that keeps a stale copy of a file puts back the lines that a commit merged meanwhile changed, and the squash then reverts that commit without saying so (#465 reverted #464 this way). For each file the pull request changes, `scripts/diff-guard.sh` takes the commits among the merge base's last 20 first parents (`DIFF_GUARD_DEPTH`) that changed it, and fails when one of their changes would apply to the pull request's tree and not to the merge base's: the pull request holds the lines as they were before that commit. It names the file and the commit. Rebase again and keep main's copy. A pull request that reverts on purpose gets the label `revert`, which lets it through with the findings printed. Run it before pushing:
+
+```bash
+just diff-guard             # origin/main against HEAD
+```
+
+### Green commits
+
+`chant.workspace.json` declares `ci.green` for main over the four `ci.yml` jobs, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here: after changing `ci.green` or a job name in `ci.yml`, regenerate it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`.
+
+```bash
+git fetch origin --tags
+npx chant ci last-green                        # the newest commit on main that passed
+npx chant ci tick --dry-run                    # what a tick would tag; needs GITHUB_REPOSITORY and GH_TOKEN, never CI_GREEN_TOKEN
+```
+
+The tick pushes its tags with the repository secret `CI_GREEN_TOKEN`, a fine-grained personal access token for this repository with Contents and Workflows read and write. GitHub refuses the Actions token a new ref to a commit that changes `.github/workflows/`, so without the secret such a commit gets no green tag, and the tick reports it. Nothing else needs the secret: CI, `diff-guard`, `ci-red` and every local run work without it. `chant ci workflow` writes the checkout with `token: ${{ secrets.CI_GREEN_TOKEN }}` and no fallback, so until the secret exists the tick's checkout fails and no commit is tagged; releases then go through `TERRAGUCCI_RELEASE_SKIP_GREEN=1` (below).
 
 ## The site
 

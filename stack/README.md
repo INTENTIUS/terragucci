@@ -67,7 +67,7 @@ The `tg-*` and `cdf-*` claims run in `terragucci-terragrunt` and `terragucci-cho
 
 ## In CI
 
-Every pull request boots the aws, forgejo and github profiles in separate jobs and runs `just validate-forge <forge>`, which runs each of that forge's claims plain and under `BREAK=1`. The gitlab profile runs nightly on an amd64 runner (`.github/workflows/nightly.yml`). The weekly capture workflow runs `just validation-record`, which boots each forge in turn and rewrites `docs-site/src/data/validation.json`, the table on the validation page. Pass forge names to record only those: `just validation-record gitlab`. The workflows are declared in `ci/`, `nightly/` and `capture/`.
+Each push to main boots the aws, forgejo and github profiles in separate jobs (`ci.yml`) and runs `just validate-forge <forge>`, which runs each of that forge's claims plain and under `BREAK=1`. The gitlab profile runs nightly on an amd64 runner (`.github/workflows/nightly.yml`). The weekly capture workflow runs `just validation-record`, which boots each forge in turn, runs the published images init pins, and rewrites `docs-site/src/data/validation.json`, the table on the validation page. Pass forge names to record only those: `just validation-record gitlab`. The workflows are declared in `ci/`, `nightly/` and `capture/`.
 
 ## Running it
 
