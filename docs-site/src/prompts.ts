@@ -6,7 +6,7 @@
 export const SITE = 'https://intentius.io/terragucci';
 
 export const neverLine =
-	'Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.';
+	'Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.';
 
 export const setupPrompt = [
 	'Set up terragucci in this repository.',

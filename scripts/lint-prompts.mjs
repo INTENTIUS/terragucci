@@ -39,6 +39,7 @@ const NEVER_PARTS = [
   ["approve (a pull request review", "a pull request review"],
   ["`terragucci approve`", "`terragucci approve`"],
   ["`chant approve`", "`chant approve`"],
+  ["override a policy denial (`terragucci override`)", "`terragucci override`"],
   ["use `--mode apply`", "`--mode apply`"],
   ["or merge;", "merge"],
   ["never touch `.chant/allowed_signers`", "the signers file"],

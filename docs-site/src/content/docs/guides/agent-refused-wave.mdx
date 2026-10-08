@@ -7,7 +7,7 @@ prompt: |
   Add the explain-refusal job for wave <k> to the apply workflow as the guide's
   tab for this forge shows it, with no permission beyond what that tab gives,
   and open a pull request.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';

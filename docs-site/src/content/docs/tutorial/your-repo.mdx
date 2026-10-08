@@ -11,7 +11,7 @@ prompt: |
   Read https://intentius.io/terragucci/tutorial/your-repo/.
   In the terragucci clone, run `just example down` and confirm the local stack is gone.
   Then, in my own repository, run `npx terragucci init --dry-run --json` and show me the findings, run `npx terragucci init`, and open a pull request with the files it wrote. Do not create secrets.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 :::note[Where the example stands]
