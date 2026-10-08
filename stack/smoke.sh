@@ -185,7 +185,8 @@ pr-lock|/terragucci lock on an open pull request locks the roots it reaches and 
 front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|
 ledger-default|with no approval key a wave counts an unsigned approval of its set digest, init declares no gate, and the waiting wave prints the approval command without --sign|
 approval-at-base|a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger|
-sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|'
+sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|
+estate|terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -5099,6 +5100,111 @@ claim_sealed_migrate() {
   return $rc
 }
 
+claim_estate() {
+  # Three projects copy their reports to one bucket prefix: a plan, a drift
+  # check that finds a queue deleted outside OpenTofu, and a gated tf-apply wave
+  # that waits for an approval. `terragucci estate` then reads the indexes and
+  # writes estate.json and estate.html to the prefix, with a presigned link:
+  # three projects, the waiting wave and the drift are on the page.
+  # BREAK: the wave runs with --gate never, so no wave waits and the page shows none.
+  log() { echo "[smoke estate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" gate=always code=0 rc=0 prefix queue url out page name
+  [ -n "${BREAK:-}" ] && gate=never
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  prefix="estate-$(date +%s)"   # a fresh prefix, so the page lists only these three
+  queue="estate-smoke-$(date +%s)"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  # Each project is a repo whose directory name is its project name (no remote names it).
+  for name in estate-plan estate-drift estate-wave; do
+    mkdir -p "$work/$name"
+    printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/$name/terragucci.yml"
+  done
+  mkdir -p "$work/estate-plan/app" "$work/estate-wave/gate" "$work/estate-drift/queue"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "estate-plan"\n}\n' > "$work/estate-plan/app/main.tf"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "gate" {\n  input = "estate-wave"\n}\n' > "$work/estate-wave/gate/main.tf"
+  cat > "$work/estate-drift/queue/main.tf" <<HCL
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+  }
+
+  backend "local" {}
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_sqs_queue" "jobs" {
+  name = "$queue"
+}
+HCL
+  # The example's lock pins the provider the job cache already holds.
+  cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/estate-drift/queue/"
+  for name in estate-plan estate-drift estate-wave; do
+    git -C "$work/$name" init -q -b main
+    git -C "$work/$name" add -A && git -C "$work/$name" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate $name"
+  done
+  git init -q --bare "$work/origin.git"
+  git -C "$work/estate-wave" remote add origin /origin.git
+  in_image() { # project dir, then the command
+    local dir="$1"; shift
+    run_copied --rm --network terragucci -v "$work/$dir:/projects/$dir" -v "$work/origin.git:/origin.git" -w "/projects/$dir" \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" "$@"
+  }
+  in_image estate-plan terragucci stage tf-plan --layers app >&2 || { log "the plan run failed"; rc=1; }
+  clean_mounted "$work/estate-plan" "$image"
+  if [ $rc = 0 ]; then
+    in_image estate-drift sh -c 'cd queue && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color' >&2 || { log "the drift project did not apply"; rc=1; }
+    clean_mounted "$work/estate-drift" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    sqs() { curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: AmazonSQS.$1" -H 'Content-Type: application/x-amz-json-1.0' -d "$2"; }
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+    [ -n "$url" ] && sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null || { log "could not delete $queue from floci"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image estate-drift terragucci stage tf-drift --layers queue >&2 || true
+    clean_mounted "$work/estate-drift" "$image"
+    jq -e '[.roots[] | select(.changes | length > 0)] | length >= 1' "$work/estate-drift/terragucci-report/report.json" >/dev/null 2>&1 || { log "the drift check found no drift"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    in_image estate-wave terragucci stage tf-apply --wave 1 --layers gate --binary tofu --gate "$gate" >&2 || code=$?
+    clean_mounted "$work/estate-wave" "$image"
+    log "the wave exited $code"
+  fi
+  if [ $rc = 0 ]; then
+    mkdir -p "$work/estate-page"
+    out="$(run_copied --rm --network terragucci -v "$work/estate-page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+      "$image" terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1)" || { log "terragucci estate failed"; rc=1; }
+    printf '%s\n' "$out" >&2
+  fi
+  if [ $rc = 0 ]; then
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(jq -r '[.projects[].project] | join(",")' <<<"$page")" = "estate-drift,estate-plan,estate-wave" ] || { log "the page lists $(jq -c '[.projects[].project]' <<<"$page"), not the three projects"; rc=1; }
+    [ "$(jq -r '[.projects[].waiting[] | "\(.project) wave \(.wave)"] | join(",")' <<<"$page")" = "estate-wave wave 1" ] || { log "the waiting waves are $(jq -c '[.projects[].waiting[]]' <<<"$page"), not estate-wave wave 1"; rc=1; }
+    [ "$(jq -r '[.projects[] | select(.drifted > 0) | .project] | join(",")' <<<"$page")" = "estate-drift" ] || { log "the drifted projects are $(jq -c '[.projects[] | select(.drifted > 0) | .project]' <<<"$page"), not estate-drift"; rc=1; }
+    curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html" | grep -q '<b>1</b><span>wave waiting</span>' || { log "estate.html does not show one wave waiting"; rc=1; }
+    grep -Eq "X-Amz-Signature=[0-9a-f]{64}" <<<"$out" || { log "the command printed no presigned link"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "three projects on one page, estate-wave wave 1 waiting and estate-drift drifted, with a presigned link"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -5232,6 +5338,7 @@ front-door           self! weight=40
 ledger-default       runner self! weight=200
 approval-at-base     runner self! weight=250
 sealed-migrate       runner self! weight=250
+estate               weight=120
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

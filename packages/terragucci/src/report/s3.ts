@@ -1,6 +1,6 @@
 /**
- * The little of S3 the report needs: put an object and get one, signed with
- * AWS Signature Version 4 from `node:crypto`. Any S3-compatible store
+ * The little of S3 the report needs: put an object, get one, and presign a
+ * link to one, signed with AWS Signature Version 4 from `node:crypto`. Any S3-compatible store
  * answers it: S3, R2, Google Cloud Storage's interoperability API, MinIO.
  * A PUT can be conditional (If-Match, If-None-Match), so the index is
  * rewritten only over the copy it read. With no static keys, a role is
@@ -136,8 +136,7 @@ const encodeKey = (key: string): string => key.split("/").map((s) => encodeURICo
 
 /** The URL and signed headers for one request. A custom endpoint is addressed path-style, AWS virtual-hosted. */
 export function signRequest(t: S3Location & S3Credentials, method: string, key: string, body: string | Uint8Array, now = new Date(), contentType?: string, extra: Record<string, string> = {}): { url: string; headers: Record<string, string> } {
-  const base = t.endpoint ? `${t.endpoint}/${t.bucket}` : `https://${t.bucket}.s3.${t.region}.amazonaws.com`;
-  const url = `${base}/${encodeKey(key)}`;
+  const url = objectUrl(t, key);
   return { url, headers: sign(t, method, url, { ...(contentType ? { "content-type": contentType } : {}), ...extra }, sha256(body), now) };
 }
 
@@ -161,6 +160,38 @@ export function sign(t: Pick<S3Location, "region"> & S3Credentials, method: stri
   const signature = createHmac("sha256", key4).update(toSign).digest("hex");
   const { host: _host, ...sent } = headers;
   return { ...sent, authorization: `AWS4-HMAC-SHA256 Credential=${t.accessKeyId}/${scope}, SignedHeaders=${names.join(";")}, Signature=${signature}` };
+}
+
+/** The longest a presigned URL lives: seven days, S3's limit. */
+export const PRESIGN_MAX_SECONDS = 7 * 24 * 3600;
+
+/** The address of `key` in the bucket: path-style on a custom endpoint, virtual-hosted on AWS. */
+const objectUrl = (t: S3Location, key: string): string => `${t.endpoint ? `${t.endpoint}/${t.bucket}` : `https://${t.bucket}.s3.${t.region}.amazonaws.com`}/${encodeKey(key)}`;
+
+const encodeQuery = (v: string): string => encodeURIComponent(v).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+/**
+ * A presigned GET (Signature Version 4 in the query string): whoever holds
+ * the URL reads that one object, and nothing else, for `seconds`.
+ */
+export function presign(t: Pick<S3Location, "region"> & S3Credentials, rawUrl: string, seconds: number, now: Date): string {
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > PRESIGN_MAX_SECONDS) throw new S3Error(`a presigned link lives 1 to ${PRESIGN_MAX_SECONDS} seconds, not ${seconds}`);
+  const url = new URL(rawUrl);
+  const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const scope = `${amzDate.slice(0, 8)}/${t.region}/s3/aws4_request`;
+  const params: Record<string, string> = {
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${t.accessKeyId}/${scope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(seconds),
+    ...(t.sessionToken ? { "X-Amz-Security-Token": t.sessionToken } : {}),
+    "X-Amz-SignedHeaders": "host",
+  };
+  const query = Object.keys(params).sort().map((k) => `${encodeQuery(k)}=${encodeQuery(params[k])}`).join("&");
+  const canonical = ["GET", url.pathname, query, `host:${url.host}`, "", "host", "UNSIGNED-PAYLOAD"].join("\n");
+  const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonical)].join("\n");
+  const key4 = hmac(hmac(hmac(hmac(`AWS4${t.secretAccessKey}`, amzDate.slice(0, 8)), t.region), "s3"), "aws4_request");
+  return `${url.origin}${url.pathname}?${query}&X-Amz-Signature=${createHmac("sha256", key4).update(toSign).digest("hex")}`;
 }
 
 /** A condition on a PUT: the ETag the object must still have, or `*` for "there is no object yet". */
@@ -214,6 +245,20 @@ export class S3Client {
     if (!res.ok) throw new S3Error(`GET s3://${this.target.bucket}/${key}: ${res.status} ${(await res.text()).slice(0, 300)}`);
     const etag = res.headers?.get("etag") ?? undefined;
     return { body: await res.text(), ...(etag ? { etag } : {}) };
+  }
+
+  /**
+   * A presigned GET of `key` for `seconds`. `expires` is when it stops
+   * working: then, or sooner when the keys that signed it expire first (an
+   * assumed role's session).
+   */
+  async presign(key: string, seconds: number, now = new Date()): Promise<{ url: string; expires: Date }> {
+    const t = await this.signer();
+    const url = presign(t, objectUrl(t, key), seconds, now);
+    let expires = new Date(now.getTime() + seconds * 1000);
+    const held = this.creds ? await this.creds : undefined;
+    if (held?.expiration && held.expiration < expires) expires = held.expiration;
+    return { url, expires };
   }
 
   /** The object's text, or undefined when there is none. */
