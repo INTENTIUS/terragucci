@@ -11,7 +11,8 @@ import { groupAnchor, planFiles, rootAnchor } from "./build";
 import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
-import { actionWord, type Report, type ReportNamed } from "./schema";
+import { signed } from "./cost";
+import { actionWord, type Report, type ReportCost, type ReportNamed } from "./schema";
 import { duration } from "./spans";
 import { TACO_NOTE_URL } from "./taco";
 
@@ -59,6 +60,27 @@ export function planSummaryOf(report: Report): PlanSummary {
 /** The job-log view: chant's grouped summary. */
 export function renderText(report: Report): string {
   return renderPlanSummaryText(planSummaryOf(report));
+}
+
+/** The note's line on cost: the monthly change over every root estimated, in the estimator's currency. */
+export function costLine(cost: ReportCost): string {
+  const estimated = cost.roots.filter((r) => r.monthly_delta !== null).length;
+  const failed = cost.roots.filter((r) => r.error).length;
+  const tail = failed > 0 ? `; ${failed} could not be estimated` : "";
+  return cost.monthly_delta === null
+    ? `Monthly cost: no estimate from ${cost.estimator}${tail}.`
+    : `Monthly cost: **${signed(cost.monthly_delta)} ${cost.currency}** over ${estimated} of ${cost.roots.length} ${cost.roots.length === 1 ? "root" : "roots"}, from ${cost.estimator}${tail}.`;
+}
+
+/** Each root's monthly cost before and after its plan, and the change, with a total row. */
+export function costTable(cost: ReportCost, name: (root: string) => string = (r) => `\`${r}\``): string {
+  const amount = (n: number | null): string => (n === null ? "" : n.toFixed(2));
+  let t = `**Monthly cost (${cost.currency}, ${cost.estimator}):**\n\n| Root | Before | After | Change |\n|---|---|---|---|\n`;
+  for (const r of cost.roots) {
+    t += r.error ? `| ${name(r.root)} | | | not estimated: ${r.error.split(/\s+/).join(" ").replace(/\|/g, "\\|")} |\n` : `| ${name(r.root)} | ${amount(r.past_monthly_total)} | ${amount(r.monthly_total)} | ${r.monthly_delta === null ? "" : signed(r.monthly_delta)} |\n`;
+  }
+  t += `| **Total** | ${amount(cost.past_monthly_total)} | ${amount(cost.monthly_total)} | **${cost.monthly_delta === null ? "none" : signed(cost.monthly_delta)}** |\n`;
+  return t;
 }
 
 /** GitLab's `reports:terraform` artifact: create, update and delete counts for the merge-request widget. */
@@ -196,6 +218,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   for (const n of options.notices ?? []) head.push(`> ${n}`, "");
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
+  if (report.cost) head.push(costLine(report.cost), "");
   // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
   const slow = report.timings?.resources.slice(0, 3) ?? [];
   if (slow.length > 0) {
@@ -253,6 +276,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
+  if (report.cost && report.cost.roots.length > 0) blocks.push({ kind: "line", units: 0, text: costTable(report.cost, (root) => to(code(root), rootAnchor(root))) + "\n" });
   const unitsWord = report.unit === "instance" ? "Instances" : "Roots";
   for (const g of report.groups) {
     let title = `${to(`Group ${g.id}`, groupAnchor(g.id))}: ${plural(g.units.length, unitWord)}`;

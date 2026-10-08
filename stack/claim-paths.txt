@@ -25,9 +25,9 @@ packages/terragucci/src/apply.ts          boot waves apply-serial pr-apply* tg-w
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-synth
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-synth notify-chat
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-synth notify-chat cost-estimate
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-*
-packages/terragucci/src/install.ts        pinned-install tf-terraform tg-terraform cdf-*
+packages/terragucci/src/install.ts        pinned-install tf-terraform tg-terraform cdf-* cost-estimate
 packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile estate-control audit-control
@@ -58,6 +58,7 @@ packages/terragucci/src/report/audit.ts   audit*
 packages/terragucci/src/report/highlight.ts highlight*
 packages/terragucci/src/report/azure-blob.ts blob-azure*
 packages/terragucci/src/report/gcs.ts     blob-gcs*
+packages/terragucci/src/report/cost.ts   cost-estimate
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
@@ -80,5 +81,5 @@ stack/bootstrap.sh                        ALL
 stack/docker-compose.yml                  ALL
 stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-synth
-stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat
+stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat cost-estimate
 example-terragrunt/                       tg-*

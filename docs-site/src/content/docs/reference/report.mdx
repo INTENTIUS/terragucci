@@ -47,6 +47,7 @@ With no base it plans every root. On a pull request, or with `--base <ref>` or `
 | `gitlab-terraform.json` | the counts for GitLab's merge-request widget |
 | `roots/<root>/plan.txt` | the root's full plan, as the binary printed it, with every value the plan marks sensitive masked |
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
+| `roots/<root>/cost.json` | with `cost` set, the estimator's output for the root |
 
 [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the body of the drift issue; see [Drift](/terragucci/reference/stages/#drift).
 

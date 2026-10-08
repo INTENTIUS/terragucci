@@ -280,7 +280,8 @@ audit|terragucci audit writes one record to the bucket: every approval on the le
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
-notify-chat|with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each|'
+notify-chat|with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each|
+cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -9361,6 +9362,71 @@ claim_notify_chat() {
   return $rc
 }
 
+claim_cost_estimate() {
+  # Two roots, app and net, and cost in terragucci.yml naming the secret
+  # COST_KEY and a command, cost.mjs, that sends the root's plan with that key
+  # to a cost stand-in, which answers Infracost's JSON: 10.00 a month for each
+  # resource a plan creates, and 401 without the key. A pull request that adds
+  # a resource to app gets a plan note whose cost table names app at +20.00
+  # (its two resources, as the job holds no state) and a total of +20.00, and
+  # the stand-in took the estimate with the key the plan job got from the secret.
+  # BREAK: terragucci.yml has no cost, so the plan runs no estimator and the
+  # note has no cost table.
+  log() { echo "[smoke cost-estimate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cost-estimate" name="tgs-cost-$STAMP" key="smoke-cost-$STAMP" tree wf sha head pr note root rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  fresh_repo cost-estimate || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "$key" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/COST_KEY" \
+    || { log "could not set the COST_KEY secret"; drop_work "$work"; return 1; }
+  for root in app net; do
+    mkdir -p "$tree/$root"
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "%s" {\n  input = 1\n}\n' "$root" > "$tree/$root/main.tf"
+  done
+  cat > "$tree/cost.mjs" <<'JS'
+// Sends the root's plan to the cost stand-in with the key, and prints its estimate.
+import { readFileSync } from "node:fs";
+const r = await fetch(process.env.COST_URL, { method: "POST", headers: { "content-type": "application/json", "x-api-key": process.env.INFRACOST_API_KEY ?? "" }, body: readFileSync(process.env.TG_PLAN_JSON) });
+if (!r.ok) {
+  console.error(`the cost stand-in answered ${r.status}`);
+  process.exit(1);
+}
+process.stdout.write(await r.text());
+JS
+  printf 'binary: tofu\nforge: forgejo\ngate: never\nenv:\n  COST_URL: http://%s:8790/estimate\n' "$name" > "$tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] || printf 'cost:\n  key_secret: COST_KEY\n  command: node cost.mjs\n' >> "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$tree/.forgejo/workflows/terragucci.yml"
+  # shellcheck disable=SC2016 # the expression the forge expands
+  [ -n "${BREAK:-}" ] || grep -qF 'INFRACOST_API_KEY: '"'"'${{ secrets.COST_KEY }}'"'" "$wf" || { log "the plan job does not map COST_KEY"; drop_work "$work"; return 1; }
+  stand_in_up "$work" "$name" 8790 MODE=cost "REQUIRE=x-api-key=$key" || { stand_in_down; drop_work "$work"; return 1; }
+  sha="$(push_tree "$tree" "$repo" main "cost-estimate: two roots")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    printf '\nresource "terraform_data" "more" {\n  input = 2\n}\n' >> "$tree/app/main.tf"
+    head="$(push_tree "$tree" "$repo" change "cost-estimate: one more resource in app")" || rc=1
+    git -C "$tree" checkout -q main
+  fi
+  [ $rc = 0 ] && { pr="$(pr_open "$repo" change "cost-estimate: one more resource in app")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+    grep -E 'Monthly cost|^\| ' <<<"$note" >&2 || true
+    grep -qF 'Monthly cost (USD' <<<"$note" || { log "the plan note of pull request $pr has no cost table"; rc=1; }
+    grep -qE '^\| \[?`app`.* \| 0\.00 \| 20\.00 \| \+20\.00 \|$' <<<"$note" || { log "the cost table does not give app +20.00"; rc=1; }
+    grep -qF '| **Total** | 0.00 | 20.00 | **+20.00** |' <<<"$note" || { log "the cost table does not total +20.00"; rc=1; }
+    [ "$(curl -fsS "$STANDIN_CTL/_requests" | jq '[.[] | select(.path == "/estimate" and .status == 200)] | length')" -ge 1 ] \
+      || { log "the cost stand-in took no estimate with the key"; rc=1; }
+  fi
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "the plan note gave app +20.00 a month and a total of +20.00, estimated with the key from the COST_KEY secret"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -9565,6 +9631,7 @@ audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150
 notify-chat          runner self! weight=150
+cost-estimate        runner self! weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

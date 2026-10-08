@@ -31,7 +31,7 @@ prompt: |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
-| `install` | fetches a release of OpenTofu, Terraform, Terragrunt or [choudoufu](/terragucci/concepts/glossary/#choudoufu), verified against its checksums |
+| `install` | fetches a release of OpenTofu, Terraform, Terragrunt, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Infracost, verified against its checksums |
 
 ## init
 
@@ -107,7 +107,7 @@ It reads each project's `chant/lifecycle` history and its `tf-apply` wave report
 terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
 terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>]
     [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--canary <globs>] [--bucket <url>]
-    [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
+    [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
     [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
@@ -123,6 +123,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--layers`, `--binary`, `--canary`, `--bucket` | | roots in apply order (layers split by `;`), binary, canary wave and bucket; each overrides `terragucci.yml` |
 | `--bucket-endpoint`, `--bucket-prefix`, `--bucket-url` | | the store's endpoint, the key prefix, and the address that serves the bucket to a browser |
 | `--terragrunt` | | run Terragrunt units, one `run --all` per wave; `tf-apply` applies each unit's saved plan |
+| `--no-cost` | | leave out the cost estimate `cost` asks for; the confirm job passes it |
 | `--rest` | | `tf-apply --terragrunt` only: run this wave, then each wave after it, stopping at the first that does not apply |
 | `--base` | `TG_BASE` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
 | `--forge` | | `github`, `forgejo` or `gitlab`, when the environment cannot tell; the plan note keeps to its comment limit, and `tf-drift` files its issue there |
@@ -339,7 +340,7 @@ terragucci check-policy [--config <file>] [--base <ref>]
 ## install
 
 ```bash
-terragucci install tofu|terraform|terragrunt|choudoufu <version>
+terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>
 ```
 
 Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds.

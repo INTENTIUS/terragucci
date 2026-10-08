@@ -1,0 +1,122 @@
+---
+title: Estimate the cost of a change
+description: Put the monthly cost change of each root, and the total, in the plan note, from Infracost on your own key.
+claims: [cost-estimate]
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/estimate-cost/.
+  Add `cost: true` to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request.
+  Tell me which secret I must create and which job gets it. Do not create the secret or an Infracost account.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A cost table in each pull request's plan note, with a row per root the change reaches and a total row. Infracost runs in your plan job on your key; terragucci holds no account and sends nothing anywhere else.
+
+```text
+Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
+
+| Root     | Before | After | Change |
+|----------|--------|-------|--------|
+| envs/app | 0.00   | 20.00 | +20.00 |
+| Total    | 0.00   | 20.00 | +20.00 |
+```
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| The [pipeline](/terragucci/getting-started/) | `init` adds the key and the install step to the plan jobs |
+| An Infracost API key | Infracost prices each resource through its pricing API, on your key |
+| Plain roots | a Terragrunt repo plans its units with one `run --all`, and `init` refuses `cost` there |
+
+## Steps
+
+<Steps>
+
+1. Store the key as a secret named `INFRACOST_API_KEY`.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       A repository secret under Settings, Secrets and variables, Actions.
+     </TabItem>
+     <TabItem label="GitLab">
+       A masked CI/CD variable, left unprotected, since the plan job runs in merge request pipelines.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The same as GitHub; Forgejo keeps them under Settings, Actions, Secrets.
+     </TabItem>
+   </Tabs>
+
+   The plan job runs the pull request's code, which can read the key. Give Infracost a key that does nothing but price.
+
+2. Turn it on in `terragucci.yml`:
+
+   ```yaml
+   cost: true
+   ```
+
+   With the key under another name:
+
+   ```yaml
+   cost:
+     key_secret: COST_KEY
+   ```
+
+3. Write the pipeline again and merge it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   | Job | Gets |
+   |---|---|
+   | plan, and a `/terragucci plan` re-plan | `INFRACOST_API_KEY` from the secret, and an install step that fetches Infracost 0.10.45 and checks it against the release's checksum |
+   | confirm (`apply.when: pull-request`) | nothing: it runs `tf-plan --no-cost` |
+   | apply, drift, check | nothing |
+
+4. Open a pull request. After each root plans, the job runs Infracost over its stored plan:
+
+   ```text
+   cost: envs/app: +20.00 USD a month
+   cost: +20.00 USD a month over 1 of 1 roots
+   ```
+
+</Steps>
+
+## What the report keeps
+
+| Where | What |
+|---|---|
+| the plan note | the line and the table above; a root Infracost could not price says why |
+| `report.json`, `cost` | the estimator, the currency, the change and the totals, and each root's figures; see [Report JSON schema](/terragucci/reference/report-schema/) |
+| `roots/<root>/cost.json` | Infracost's own output for the root, beside its `plan.json` |
+
+An estimate that fails never fails the plan.
+
+## Another estimator
+
+`command` runs any program that prints Infracost's JSON (`totalMonthlyCost`, `pastTotalMonthlyCost`, `diffTotalMonthlyCost` and `currency`). The plan jobs then install nothing.
+
+```yaml
+cost:
+  key_secret: COST_KEY
+  command: node scripts/cost.mjs
+```
+
+| The command gets | Value |
+|---|---|
+| `TG_PLAN_JSON` | the path of the root's plan, `show -json` with sensitive values redacted |
+| `TG_ROOT` | the root's path |
+| `INFRACOST_API_KEY` | the key from `key_secret` |
+| its working directory | the repo's root |
+
+It gets the job's environment less its forge tokens, as the binary does. Each root's estimate may take two minutes.
+
+## Next
+
+- [The plan report](/terragucci/reference/report/)
+- [terragucci.yml keys](/terragucci/reference/config/)

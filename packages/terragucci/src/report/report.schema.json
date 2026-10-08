@@ -249,6 +249,33 @@
         "overriders": { "type": "array", "items": { "type": "string" }, "description": "Who may override a denial, from policy.override at base (minor 10)." }
       }
     },
+    "cost": {
+      "description": "The cost estimate of a tf-plan run, when cost is on (minor 12): each root's monthly cost from the estimator, and the sums over the roots estimated.",
+      "type": "object",
+      "required": ["estimator", "currency", "monthly_delta", "monthly_total", "past_monthly_total", "roots"],
+      "properties": {
+        "estimator": { "type": "string" },
+        "currency": { "type": "string" },
+        "monthly_delta": { "type": ["number", "null"] },
+        "monthly_total": { "type": ["number", "null"] },
+        "past_monthly_total": { "type": ["number", "null"] },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "monthly_delta", "monthly_total", "past_monthly_total"],
+            "properties": {
+              "root": { "type": "string" },
+              "monthly_delta": { "type": ["number", "null"] },
+              "monthly_total": { "type": ["number", "null"] },
+              "past_monthly_total": { "type": ["number", "null"] },
+              "output": { "type": "string" },
+              "error": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
     "intent": {
       "description": "The description check's decision (minor 5). Written by respond description; absent when it did not run.",
       "type": "object",
