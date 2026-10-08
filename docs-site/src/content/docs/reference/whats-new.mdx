@@ -1,39 +1,42 @@
 ---
-title: What is new in 0.4.0
-description: "terragucci 0.4.0, released 2026-10-08."
+title: What is new in 0.4.2
+description: "terragucci 0.4.2, released 2026-10-08."
 ---
 
-terragucci 0.4.0 is on npm as `@intentius/terragucci@0.4.0`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.0) lists every change.
+terragucci 0.4.2 is on npm as `@intentius/terragucci@0.4.2`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.2) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.0 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.2 init`, then merge the pipeline it writes |
 
-## Approvals
-
-| What | Where |
-|---|---|
-| One `approval:` key: `ledger` (the default, no signing), `pr-review` or `sealed` | [Approve a wave](/terragucci/guides/approve-a-wave/) |
-| `terragucci approve` finds the waiting wave and its digest | [Approve a wave](/terragucci/guides/approve-a-wave/) |
-| The project token's own approval never counts | [Threat model](/terragucci/reference/threat-model/) |
-
-## Pull requests
+## One audit trail
 
 | What | Where |
 |---|---|
-| Apply before merge on GitHub, GitLab and Forgejo, Terragrunt repos included | [Apply before merge](/terragucci/guides/apply-before-merge/) |
-| `apply.requires`, `/terragucci lock` and `/terragucci unlock` | [Apply before merge](/terragucci/guides/apply-before-merge/) |
-| `locks: plan` on GitHub and Forgejo | [Config](/terragucci/reference/config/) |
-| Comment commands on GitLab, with no server | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
-| The plan note shows each change's diff and links the report in your bucket | [Report](/terragucci/reference/report/) |
+| `terragucci audit` writes every approval, apply, policy override and refused wave across your projects to one record in your bucket, as JSON lines, with a page linked from the estate page | [Audit trail](/terragucci/reference/audit-trail/) |
 
-## Waves, policy and reports
+## New settings
 
 | What | Where |
 |---|---|
-| Terragrunt waves follow the dependency layers | [Use Terragrunt](/terragucci/guides/use-terragrunt/) |
-| `policy.source` shares one policy across repos | [Policy](/terragucci/reference/policy/) |
-| A recorded policy override | [Policy](/terragucci/reference/policy/) |
-| One page for every project, in your bucket | [See every project](/terragucci/guides/see-every-project/) |
-| Reports in S3, GCS or Azure Blob | [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
-| The plan says when drift checks are overdue | [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) |
+| `synth`: run `cdktn synth` (or any command that writes the roots) before the jobs read them | [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| CDK Terrain on cdktn 0.24.0, and a pull request plans only the stacks whose synthesized output changed | [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| `notify`: a waiting, refused or failed wave posts to Slack or Teams | [Tell a chat channel when a wave stops](/terragucci/guides/notify-a-chat-channel/) |
+| `cost`: a monthly cost estimate per root in the plan note, from Infracost on your key | [Estimate the cost of a change](/terragucci/guides/estimate-cost/) |
+
+## Large estates
+
+| What | Where |
+|---|---|
+| A wave applies at most `parallelism` roots at once; before, it applied every root of the wave together | [Config](/terragucci/reference/config/) |
+| A wave's roots share one provider cache, and plan and drift stages download each provider once instead of once per root | [Pipeline](/terragucci/reference/pipeline/) |
+
+## Fixes
+
+| What | Where |
+|---|---|
+| An approval that already applied no longer refuses the next wave; under `approval: pr-review` every merge after a review-approved apply was refused before | [Approve a wave](/terragucci/guides/approve-a-wave/) |
+| The Terraform image is 1.14.9, so `terraform query` imports generate config | [Choose your binary](/terragucci/guides/use-a-binary/) |
+| Rollouts read an empty Forgejo repo as having no pull requests | [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) |
+| An import that also updates a resource is named in the report | [Report](/terragucci/reference/report/) |
+| `trust.json` is read the way chant reads it, and fails closed without `"schema": 1` | [Approve a wave](/terragucci/guides/approve-a-wave/) |
