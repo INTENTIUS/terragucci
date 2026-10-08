@@ -34,6 +34,7 @@ import { describeTips, repoTips } from "../tips";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf } from "../respond/drift";
+import { checkDriftSchedule } from "./drift-schedule";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { checkPlans, governingPolicy, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
@@ -92,6 +93,8 @@ export interface StageOptions {
   decideOptions?: DecideOptions;
   /** tf-plan with `policy:` set: how the engine runs and is fetched. Default: the real thing. */
   policy?: PolicyOptions;
+  /** tf-plan with `drift:` set: the time the drift schedule is checked against. Default: now. */
+  now?: Date;
 }
 
 /** `a,b;c` as layers: commas inside a layer, semicolons between. */
@@ -1015,7 +1018,14 @@ async function finish(
   const links = reportLinks(report, { reports, given: options.reportUrl, traceId: observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url });
   Object.assign(report.run, links.run);
   observer.reportUrl = links.run.report_url;
-  writeReportDir(dir, report, plans, links.note);
+  // A drift schedule that stopped cannot say so itself; the plan job, which runs on every pull request, does.
+  const notices: string[] = [];
+  if (!drift && typeof settings.drift === "string") {
+    const reader = targetFromEnv(options.forge ?? settings.forge, env, options.token ?? env.TG_TOKEN, true);
+    const late = reader ? await checkDriftSchedule(repo, settings.drift, reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), options.now ?? new Date(), log) : undefined;
+    if (late) notices.push(late.message);
+  }
+  writeReportDir(dir, report, plans, { ...links.note, ...(notices.length ? { notices } : {}) });
   let uploaded: Uploaded | undefined;
   if (reports?.bucket) {
     const s3 = new S3Client(s3FromEnv(reports, env), options.fetch);
