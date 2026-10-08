@@ -57,7 +57,7 @@ export interface ApplyCommentDecision extends Omit<CommentDecision, "root"> {
 }
 
 /** Permissions that may ask for an apply: the same as may push to the repo. */
-const MAY_APPLY = new Set(["admin", "owner", "maintain", "write"]);
+export const MAY_APPLY = new Set(["admin", "owner", "maintain", "write"]);
 
 /** How many commits after the merge commit are read for a later apply; more than this and the merge commit counts as superseded. */
 export const NEWER_LIMIT = 50;
@@ -273,7 +273,7 @@ export function reachedRoots(repo: string, git: Git, from: string, to: string, l
 }
 
 /** One review as GitHub and Forgejo list them. */
-interface Review {
+export interface Review {
   user?: { login?: string };
   state?: string;
   commit_id?: string;
@@ -289,7 +289,7 @@ interface Review {
  * On GitHub an approver needs write access; on Forgejo the review is
  * official, which says the same.
  */
-async function approvalOf(reviews: Review[], author: string | undefined, head: string, mayWrite: (login: string) => Promise<boolean>): Promise<{ by: string[]; changes: string[] }> {
+export async function approvalOf(reviews: Review[], author: string | undefined, head: string, mayWrite: (login: string) => Promise<boolean>): Promise<{ by: string[]; changes: string[] }> {
   const latest = new Map<string, Review>();
   for (const r of reviews) {
     const login = r?.user?.login;

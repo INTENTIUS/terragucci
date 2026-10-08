@@ -991,6 +991,8 @@ async function finish(
     roots: inputs,
     waves,
     redacted,
+    // The waves of a plan say which the gate will hold, and carry the digest approval: pr-review binds a review to.
+    ...(drift ? {} : { gate: settings.gate }),
     ...(mockReads?.length ? { mockReads } : {}),
     ...(deferred?.length ? { deferred } : {}),
     ...(policy ? { policy } : {}),

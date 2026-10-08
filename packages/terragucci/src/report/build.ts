@@ -8,6 +8,8 @@
 import { changeSetDigest, composeChangeSet, type ChangeSetEntry, type ChangeSetPart, type ChangeSetPlanner } from "@intentius/chant/change-set";
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
+import type { Gate } from "../config";
+import { changesSomething, destroysSomething } from "./changing";
 import { changeKind, foldChange } from "./highlight";
 import { isObject } from "./redact";
 import {
@@ -67,6 +69,8 @@ export interface BuildInput {
   deferred?: ReportDeferred[];
   /** The run's policy check, when `policy` is on. */
   policy?: ReportPolicy;
+  /** A `tf-plan` run's gate policy: each wave then carries its review digest and whether the gate will hold it. */
+  gate?: Gate;
 }
 
 /** The files a root's full plan is kept in, relative to the report: `roots/<root>/plan.{txt,json}`. */
@@ -267,11 +271,22 @@ export function buildReport(input: BuildInput): Report {
     // A provisional member is a preview: no wave's set digest covers it.
     const members = doc.members.filter((m) => w.roots.includes(m.member) && !m.provisional);
     const failed = members.some((m) => m.planDigest === null);
+    let review: Pick<ReportWave, "review_digest" | "waits"> = {};
+    if (input.gate) {
+      const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
+      const changing = members.filter((m) => changesSomething(plans.get(m.member)));
+      const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
+      review = {
+        review_digest: failed || changing.length === 0 ? null : changeSetDigest(changing),
+        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys)),
+      };
+    }
     return {
       number: w.number,
       roots: w.roots,
       set_digest: failed || members.length === 0 ? null : changeSetDigest(members),
       approval: w.approval ?? "not-requested",
+      ...review,
       ...(w.gate ? { gate: w.gate } : {}),
       ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
     };

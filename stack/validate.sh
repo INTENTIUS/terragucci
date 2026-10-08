@@ -63,7 +63,7 @@ fi
 
 case "$FORGE:$CLAIM" in
   forgejo:check|forgejo:apply) ;;
-  forgejo:tg-*|forgejo:cdf-*|github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
+  forgejo:tg-*|forgejo:cdf-*|forgejo:pr-review|github:*|gitlab:*) exec "$HERE/validate-generated.sh" "$FORGE" "$CLAIM" ;;
   fountain:*)
     echo "the $FORGE profile has no validate.sh claims; the steward smoke claim checks it (just smoke steward)" >&2; exit 2 ;;
   forgejo:*)
