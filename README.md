@@ -2,7 +2,7 @@
 
 # terragucci
 
-Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.
+One workflow and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.
 
 CI does this: each job runs in your forge's CI and lands in your git and your bucket, with no account to create and no platform to sign in to.
 
