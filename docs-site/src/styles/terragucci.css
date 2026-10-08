@@ -232,3 +232,14 @@ code, pre, kbd, samp {
 	border-radius: 6px;
 	box-sizing: content-box;
 }
+
+/* The launch party page's video: a phone-shaped player, centred. */
+.tg-launch-video {
+	display: block;
+	width: 100%;
+	max-width: 360px;
+	aspect-ratio: 9 / 16;
+	margin: 1.5rem auto;
+	border-radius: 0.5rem;
+	background: #000;
+}
