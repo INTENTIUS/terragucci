@@ -1,0 +1,125 @@
+---
+title: Plan CDK Terrain stacks
+description: Run cdktn synth in the pipeline before tf-plan, so each pull request plans the stacks your CDK Terrain app writes.
+claims: [cdktn-synth]
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/plan-cdk-terrain-stacks/.
+  Add `synth: npm ci && npx cdktn synth` to terragucci.yml, add cdktf.out/ and node_modules/ to .gitignore,
+  run `npx cdktn synth` and then `npx terragucci init`, and open a pull request with the result.
+  Tell me which stacks init found and whether each one's backend keeps its state outside the job.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or apply the stacks it wrote to `cdktf.out/stacks/`. The synthesized files stay out of git.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| A [CDK Terrain](https://github.com/open-constructs/cdk-terrain) app with `cdktf.json` at the repo root | `cdktn synth` reads it and writes one directory per stack |
+| A remote backend in each stack, such as `S3Backend` | each job starts from a fresh checkout, so a local state file does not outlive it |
+| `package-lock.json` committed | the job installs the app's packages with `npm ci` |
+| The [pipeline](/terragucci/getting-started/) | `init` adds the synth step to it |
+
+## Steps
+
+<Steps>
+
+1. Name the command in `terragucci.yml`:
+
+   ```yaml
+   synth: npm ci && npx cdktn synth
+   ```
+
+   It runs from the repo root. Any command that writes Terraform JSON or HCL works the same way.
+
+2. Keep the output and the packages out of git:
+
+   ```text
+   cdktf.out/
+   node_modules/
+   ```
+
+3. Synthesize once on your machine, then write the pipeline:
+
+   ```bash
+   npx cdktn synth
+   npx terragucci init
+   ```
+
+   `init` finds each stack by the backend or provider in its `cdk.tf.json` and names `cdktf.out/stacks/<stack>` as a root. With no stacks on disk it stops and says to run the synth command first. Run both again when you add or remove a stack.
+
+4. Read the step `init` wrote. It comes after the checkout and before any cloud credential:
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+   ```yaml
+   - name: Plan the roots the change reaches and write the plan report
+     shell: bash
+     run: |
+       ...
+       # synth in terragucci.yml: write the roots before reading them.
+       ( set -e; npm ci && npx cdktn synth ) || { tg status terragucci/plan failure "the synth command failed"; echo "terragucci: the synth command failed" >&2; exit 1; }
+       ...
+       terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'cdktf.out/stacks/dev,cdktf.out/stacks/prod' ...
+   ```
+     </TabItem>
+     <TabItem label="GitLab">
+   ```yaml
+   plan:
+     script:
+       - |-
+         bash <<'PLAN' || exit $?
+         ...
+         # synth in terragucci.yml: write the roots before reading them.
+         ( set -e; npm ci && npx cdktn synth ) || { tg status terragucci/plan failure "the synth command failed"; echo "terragucci: the synth command failed" >&2; exit 1; }
+         ...
+         terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'cdktf.out/stacks/dev,cdktf.out/stacks/prod' ...
+         PLAN
+   ```
+     </TabItem>
+     <TabItem label="Forgejo">
+   The same step as GitHub, in `.forgejo/workflows/terragucci.yml`.
+     </TabItem>
+   </Tabs>
+
+5. Open a pull request that changes the app. The plan job's log shows the synth, then the plan of every stack:
+
+   ```text
+   Generated Terraform code for the stacks: dev, prod
+   every root: synth writes them (npm ci && npx cdktn synth), so a change to the app can reach any of them
+   cdktf.out/stacks/dev: Plan: 1 to add, 0 to change, 0 to destroy.
+   cdktf.out/stacks/prod: Plan: 1 to add, 0 to change, 0 to destroy.
+   ```
+
+   The plan note groups the stacks as it groups roots.
+
+</Steps>
+
+## Which jobs run it
+
+| Job | Runs the command | Then |
+|---|---|---|
+| check | yes | checks the format of the files git tracks, and validates each stack |
+| plan, and a `/terragucci plan` re-plan | yes, on the pull request's head | `tf-plan` plans every stack |
+| each apply wave | yes | `tf-apply` plans the wave's stacks again and applies them behind the gate |
+| `/terragucci apply` | yes, after it checks out the commit to apply | the same waves |
+| drift | yes | `tf-drift` refreshes every stack |
+
+A command that fails ends the job; the plan job also sets `terragucci/plan` to failure. Without `synth`, a pipeline whose roots are not on disk stops with `found no roots`.
+
+| Behaviour | With `synth` |
+|---|---|
+| Which stacks a pull request plans | every one: the stacks are not in git, so no diff names them; a stack the change leaves alone plans no change |
+| Format check | the `.tf`, `.tofu` and `.tfvars` files git tracks, one directory at a time, so the packages `npm ci` installs are left out |
+| Terragrunt | not supported: `init` refuses `synth` in a Terragrunt repo |
+
+## Next
+
+- [terragucci.yml keys](/terragucci/reference/config/)
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
