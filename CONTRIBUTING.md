@@ -155,7 +155,19 @@ The site is for people using terragucci. It describes what works today and is tr
 
 ## The example, the checks and the tutorial
 
-`stack/README.md` covers the local stack, `just example`, `just smoke` and `just tutorial-capture`. The capture workflow refreshes the tutorial's output and screenshots weekly and opens a pull request when they change.
+`stack/README.md` covers the local stack, `just example`, `just smoke` and `just tutorial-capture`.
+
+To prove a change on the stack, run `just claims-affected` (or `just claims <name>...`). `stack/claims-affected.sh` picks the claims from the change since `origin/main` and prints why it picked each one:
+
+| Changed | Claims picked |
+|---|---|
+| a claim's row, group line or function in `stack/smoke.sh` | that claim |
+| a helper function in `stack/smoke.sh` | the claims that call it |
+| any other line of `stack/smoke.sh` | every claim |
+| a docs page | the claims its `claims:` line newly lists |
+| anything else | the claims `stack/claim-paths.txt` names for its path, none when no line names it |
+
+The picked claims run plain and under `BREAK=1`, six at a time with the locks `CLAIM_GROUPS` gives them, and their rows replace theirs in `smoke.json`. A run whose log stops growing for `SMOKE_STALL_MIN` minutes (10) is stopped and fails as stalled, with its last lines and the stack's job containers printed. The full `just smoke-record` and `just tutorial-capture` run for a release. The capture workflow refreshes the tutorial's output and screenshots weekly and opens a pull request when they change.
 
 ### Capturing one step or all of them
 

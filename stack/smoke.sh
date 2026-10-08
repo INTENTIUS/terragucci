@@ -6,6 +6,12 @@
 #   stack/smoke.sh <claim>       one claim
 #   BREAK=1 stack/smoke.sh boot  break the property; the claim must print "caught"
 #   stack/smoke.sh --record FILE every claim, plain and under BREAK=1, as JSON
+#   stack/smoke.sh --only a,b    the named claims, plain and under BREAK=1, in
+#                                parallel; with --record FILE their rows are
+#                                written into FILE and every other row is kept
+#   stack/smoke.sh --affected [base]
+#                                --only the claims stack/claims-affected.sh
+#                                picks from the change since base (origin/main)
 #
 # Each claim prints one line:
 #
@@ -24,12 +30,35 @@
 # stack/.state/smoke-logs/<time>); the SMOKE lines print as runs finish, and
 # the record lists claims in CLAIMS order whatever order they finished in.
 #
+# A run whose log has not grown for SMOKE_STALL_MIN minutes (default 10) is
+# stopped and fails as stalled, its last lines and the stack's job containers
+# printed, so nothing waits out a long timeout without anyone looking.
+#
 # A new claim: add its line to CLAIMS and its function claim_<name>, and give
 # it a line in CLAIM_GROUPS naming what it shares. A claim with no line there
 # runs alone, after boot and tg-waves: safe, and slow.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --only and --affected pick the claims; the rest of the arguments mean what
+# they mean without them. The names are checked once CLAIMS is known.
+SMOKE_ONLY="${SMOKE_ONLY:-}"
+case "${1:-}" in
+  --only)
+    SMOKE_ONLY="$(tr ', ' '\n\n' <<<"${2:?usage: smoke.sh --only claim[,claim...]}" | grep . || true)"
+    shift 2
+    [ -n "$SMOKE_ONLY" ] || { echo "smoke: --only names no claim" >&2; exit 2; }
+    ;;
+  --affected)
+    shift
+    base=origin/main
+    if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then base="$1"; shift; fi
+    SMOKE_ONLY="$("$HERE/claims-affected.sh" "$base")" || exit 2
+    [ -n "$SMOKE_ONLY" ] || { echo "smoke: the change affects no claim" >&2; exit 0; }
+    ;;
+esac
+export SMOKE_ONLY
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
 JOB_CACHE_VOLUME=terragucci-job-cache
 # shellcheck source=mounted.sh
@@ -8830,15 +8859,20 @@ claim_index_writes() {
   return $rc
 }
 
-names() { cut -d'|' -f1 <<<"$CLAIMS"; }
+names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
+# The names given, kept to SMOKE_ONLY when it is set.
+only() {
+  if [ -z "$SMOKE_ONLY" ]; then echo "$1"; return 0; fi
+  grep -xF -f <(echo "$SMOKE_ONLY") <<<"$1" || true
+}
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
   if [ -n "${SMOKE_AWS:-}" ]; then
     # Only the pilot's claims run on real AWS.
-    awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS" | while read -r n; do smoke_aws_claim "$n" && echo "$n"; done
+    only "$(awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS")" | while read -r n; do smoke_aws_claim "$n" && echo "$n"; done
     return 0
   fi
-  awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS"
+  only "$(awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS")"
 }
 
 # ── the runner ────────────────────────────────────────────────────────────
@@ -9237,6 +9271,29 @@ finish_run() { # run
   smoke_line "$line"
 }
 
+SMOKE_STALL_MIN="${SMOKE_STALL_MIN:-10}"
+case "$SMOKE_STALL_MIN" in ''|*[!0-9]*|0) SMOKE_STALL_MIN=10 ;; esac
+
+# A run whose log has not grown for SMOKE_STALL_MIN minutes: say what it was
+# doing and what the stack is running, stop it and its children, and leave a
+# failing SMOKE line in its log. Returns 1 while the run is still moving.
+stalled() { # pid, run
+  local pid="$1" run="$2" name="${2%:*}" mode="${2#*:}" log
+  log="$SMOKE_LOG_DIR/$name.$mode.log"
+  [ -n "$(find "$log" -mmin "+$SMOKE_STALL_MIN" 2>/dev/null)" ] || return 1
+  {
+    echo "[smoke] $name ($mode) stalled: no output for $SMOKE_STALL_MIN minutes; its last lines:"
+    tail -5 "$log" | sed 's/^/[smoke]   /'
+    echo "[smoke] job containers:"
+    docker ps --format '{{.Names}} {{.RunningFor}}' 2>/dev/null | grep -E 'ACTIONS-TASK|runner-' | sed 's/^/[smoke]   /' || echo "[smoke]   none"
+  } >&2
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  echo "SMOKE claim=$name verdict=fail stalled: no output for $SMOKE_STALL_MIN minutes" >>"$log"
+  return 0
+}
+
 # Run every run in $QUEUE, at most $SMOKE_JOBS at a time, each its own
 # smoke.sh process with its output in $SMOKE_LOG_DIR/<claim>.<mode>.log and its
 # SMOKE line in <claim>.<mode>.verdict. The runner takes a run's locks for it
@@ -9253,7 +9310,9 @@ run_queue() {
     still=""
     while read -r pid run; do
       [ -n "$pid" ] || continue
-      if kill -0 "$pid" 2>/dev/null; then still="$still$pid $run"$'\n'; continue; fi
+      if kill -0 "$pid" 2>/dev/null; then
+        stalled "$pid" "$run" || { still="$still$pid $run"$'\n'; continue; }
+      fi
       wait "$pid" 2>/dev/null || true
       finish_run "$run"
     done <<<"$SMOKE_RUNNING"
@@ -9372,6 +9431,13 @@ if [ -n "${SMOKE_AWS:-}" ]; then
   REPORT_BUCKET="$SMOKE_AWS_PREFIX-terragucci-reports"
 fi
 
+if [ -n "$SMOKE_ONLY" ]; then
+  for n in $SMOKE_ONLY; do
+    grep -q "^$n|" <<<"$CLAIMS" || { echo "smoke: unknown claim '$n'" >&2; exit 2; }
+  done
+  echo "[smoke] only: $(echo $SMOKE_ONLY)" >&2
+fi
+
 if [ "${1:-}" = --record ]; then
   out="${2:?usage: smoke.sh --record FILE}"
   SMOKE_LINES_TO=stderr
@@ -9400,6 +9466,20 @@ if [ "${1:-}" = --record ]; then
   "$HERE/example.sh" verify >&2 || "$HERE/example.sh" up --fresh >&2
   disk_check "$disk_start"
   new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
+  if [ -n "$SMOKE_ONLY" ]; then
+    # Only these claims ran: their rows replace the old ones and every other
+    # row stays as the last record left it, all in CLAIMS order. Each new row
+    # names the commit it ran on; the file's own commit is the last full record's.
+    [ -f "$out" ] || { echo "smoke: --only --record needs an existing $out" >&2; exit 2; }
+    new="$(jq --arg commit "$(git -C "$HERE/.." rev-parse --short HEAD)" --argjson order "$(cut -d'|' -f1 <<<"$CLAIMS" | jq -R . | jq -s .)" \
+      --slurpfile old "$out" '(map(. + {commit: $commit}) | map({key: .claim, value: .}) | from_entries) as $mine
+        | ($old[0].claims | map({key: .claim, value: .}) | from_entries) as $was
+        | [$order[] | ($mine[.] // $was[.]) | select(. != null)]' <<<"$new")"
+    if [ "$(jq -S .claims "$out")" = "$(jq -S . <<<"$new")" ]; then echo "unchanged $out" >&2; exit 0; fi
+    jq --argjson c "$new" '.claims = $c' "$out" > "$out.tmp" && mv "$out.tmp" "$out"
+    echo "wrote $(echo $SMOKE_ONLY | wc -w | tr -d ' ') rows into $out" >&2
+    exit 0
+  fi
   # Same verdicts as the last record: keep it, date and all, so nothing diffs.
   if [ -f "$out" ] && [ "$(jq -S .claims "$out")" = "$(jq -S . <<<"$new")" ]; then
     echo "unchanged $out" >&2
@@ -9428,6 +9508,9 @@ else
   runner_prep || exit 1
   mode=plain; [ -n "${BREAK:-}" ] && mode="break"
   SMOKE_BREAK_VALUE="${BREAK:-}"
+  # Claims picked by name run both ways: a claim proves nothing until its
+  # BREAK run is caught too.
+  if [ -n "$SMOKE_ONLY" ]; then mode="plain break"; SMOKE_BREAK_VALUE=1; fi
   record_pending
   # shellcheck disable=SC2046
   QUEUE="$(build_queue "$mode" $(runnable_names))"
