@@ -16,6 +16,11 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 A message in your channel each time an apply job stops at a wave. A message approves nothing. A person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). Under `approval: pr-review` an approving review of the pull request counts too.
 
+| You want | You set up |
+|---|---|
+| a notice in Slack or Teams, and under `approval: pr-review` a link straight to the review that approves the wave | `notify:` and an incoming webhook for the channel. Nothing to install or host. |
+| a chat click that becomes an approval on `chant/lifecycle` | a relay of your own: a bot or a function that receives the [signed event](#send-events-to-your-own-webhook) and, for the person who clicked, runs `terragucci approve wave-<k> --plan <digest>` with the digest the event named, so plans that moved since are never approved |
+
 | The wave | Exit | The message says |
 |---|---|---|
 | waits for an approval | 3 | the wave, its roots, its plan digest, the [`chant approve`](/terragucci/concepts/glossary/#chant) command for that digest, and the run; under `approval: pr-review`, first a link to review the pull request ([below](#approve-from-the-message-by-review)) |
@@ -129,7 +134,7 @@ After the review, run the wave again: comment `/terragucci apply` on the pull re
 
 ## Send events to your own webhook
 
-For a program rather than a channel, such as a chat bot or an incident tool, `notify` also posts one JSON event to any HTTPS endpoint. A key you hold signs it.
+For a program rather than a channel, such as a chat bot, an incident tool or a relay that approves from chat, `notify` also posts one JSON event to any HTTPS endpoint. A key you hold signs it. The default chat path above needs none of this.
 
 <Steps>
 
