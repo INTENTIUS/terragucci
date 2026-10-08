@@ -372,7 +372,9 @@ const GITLAB_STATE = /\/api\/v4\/projects\/[^"\s]*\/terraform\/state\//;
 /**
  * How many roots of a layer plan at once: the config's `parallelism`, else
  * from the roots' state backend, as Terragrunt mode sets it. GitLab-managed
- * state rate-limits concurrent inits, so it gets 3; every other backend 16.
+ * state rate-limits concurrent inits, so it gets 3; every other backend 4.
+ * Each root running starts its own providers, and the AWS provider alone
+ * takes about 800 MB, so 4 roots fit a hosted runner's 7 GB.
  * GitLab state is an `http` backend whose address, in the root or in
  * `TF_HTTP_ADDRESS`, is a GitLab project's state API.
  */
@@ -391,7 +393,7 @@ export function rootsParallelism(repo: string, roots: readonly string[], setting
   }
   if (gitlab) return { value: 3, reason: "GitLab-managed state rate-limits concurrent inits" };
   const named = [...backends].sort();
-  return { value: 16, reason: named.length === 1 ? `the ${named[0]} backend` : named.length > 1 ? `the ${named.join(", ")} backends` : "the default" };
+  return { value: 4, reason: named.length === 1 ? `the ${named[0]} backend` : named.length > 1 ? `the ${named.join(", ")} backends` : "the default" };
 }
 
 /** `state pull` output with no resources and no outputs, or no output at all. */

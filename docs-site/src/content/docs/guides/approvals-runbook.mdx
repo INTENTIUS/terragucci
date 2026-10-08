@@ -130,9 +130,10 @@ This needs [`policy.override`](/terragucci/reference/policy/#overriding-a-denial
 |---|---|
 | applies the root, and its report names the override | the override names this plan and these rules, and its author is listed at base |
 | exits 1 again, naming why the override does not count | its author is not listed, it gives no reason, or under `sealed` its seal does not verify |
-| exits 4 and applies nothing | the plan or its rules changed since; the next run records the new denial to override |
+| exits 4 and applies nothing | the plan or its rules changed before any run applied the override; the next run records the new denial to override |
+| exits 1 with a new `terragucci override` command | a run applied the override, and the root's plan changed since: the new plan needs its own override |
 
-The ledger is `_gates/policy-override.jsonl`, one gate per root. Revoke an override as an approval: delete its line before the wave runs.
+The ledger is `_gates/policy-override.jsonl`, one gate per root. Overrides that went out are listed in `_gates/policy-override/applied.jsonl`, so a changed plan of that root asks for a fresh override. Revoke an override as an approval: delete its line before the wave runs.
 
 ## List the waves waiting for an approval
 

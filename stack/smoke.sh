@@ -231,6 +231,7 @@ plan-lock-release|with locks: plan the merge of a pull request releases the lock
 policy-override|a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest|
 policy-override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
 policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|
+policy-override-applied|once a wave applied a root under its override, the next plan of that root the policy denies is recorded as a new denial and waits for its own override, and only an override no wave applied refuses|
 blob-azure|with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it|
 blob-gcs|with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed|
 note-diff|the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block|
@@ -6431,6 +6432,63 @@ claim_policy_override_unlisted() {
   return $rc
 }
 
+claim_policy_override_applied() {
+  # smoke-approver overrides the denial and the wave applies app, recording
+  # on chant/lifecycle that it used the override. Then a commit changes app:
+  # the policy denies the new plan, and since the override was used, the wave
+  # records a new denial and exits 1 with the command for its own override.
+  # BREAK: the record of the apply is emptied on chant/lifecycle before the
+  # change, so the override reads as one of a plan no wave applied: the wave
+  # exits 4.
+  log() { echo "[smoke policy-override-applied] $*" >&2; }
+  local work image code rc=0 first second
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/wave"
+  policy_override_repo "$work" smoke-approver
+  code="$(policy_override_wave "$work" "$image")"
+  [ "$code" = 1 ] || { log "the first run exited $code, not 1: the policy did not deny the wave"; rc=1; }
+  if [ $rc = 0 ]; then policy_override_write "$work" smoke-approver || rc=1; fi
+  if [ $rc = 0 ]; then
+    code="$(policy_override_wave "$work" "$image")"
+    [ "$code" = 0 ] || { log "the run after the override exited $code, not 0"; rc=1; }
+    policy_override_applied "$work" || { log "app has no state: the override did not let it apply"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    git clone -q -b chant/lifecycle "$work/origin.git" "$work/lifecycle" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    first="$(jq -rs '[.[] | select(.kind == "pending" and .gate == "app")] | last | .planDigest // empty' "$work/lifecycle/_gates/policy-override.jsonl")"
+    jq -e --arg d "$first" 'select(.gate == "app" and .planDigest == $d)' "$work/lifecycle/_gates/policy-override/applied.jsonl" >/dev/null 2>&1 \
+      || { log "chant/lifecycle holds no record that app applied under the override of ${first:-no digest}"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    : > "$work/lifecycle/_gates/policy-override/applied.jsonl"
+    git -C "$work/lifecycle" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -q -am "forget the apply" || rc=1
+    git -C "$work/lifecycle" push -q origin chant/lifecycle || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "probe" {\n  input = "policy, after the override applied"\n}\n' > "$work/wave/app/main.tf"
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "smoke: app changes after its override applied" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    code="$(policy_override_wave "$work" "$image")"
+    [ "$code" = 1 ] || { log "the run after app changed exited $code, not 1"; rc=1; }
+    grep -q "overrode an earlier plan or other rules" "$work/run.log" && { log "the wave was refused on the override it already applied under"; rc=1; }
+    grep -q "was used by the apply of that plan, so this plan needs an override of its own" "$work/run.log" || { log "the wave does not say the earlier override was used"; rc=1; }
+    grep -q "terragucci override app --rule" "$work/run.log" || { log "the wave gives no terragucci override command for the new plan"; rc=1; }
+    git -C "$work/lifecycle" pull -q origin chant/lifecycle || rc=1
+    second="$(jq -rs '[.[] | select(.kind == "pending" and .gate == "app")] | last | .planDigest // empty' "$work/lifecycle/_gates/policy-override.jsonl")"
+    log "the denial before: $first; after the change: ${second:-none}"
+    [ -n "$second" ] && [ "$second" != "$first" ] || { log "no new denial of app was recorded"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the override app applied under refused nothing; the new plan's denial waits for its own override"
+  return $rc
+}
+
 # ── reports on Azure Blob Storage and GCS ─────────────────────────────────
 # Each claim: one project whose reports.bucket names the emulator, a tf-plan
 # that copies its report there, then `terragucci estate` writing the page and
@@ -9729,6 +9787,7 @@ plan-lock-release    runner self! weight=200
 policy-override      weight=150
 policy-override-moved     weight=150
 policy-override-unlisted  weight=150
+policy-override-applied   weight=150
 blob-azure           azurite! weight=120
 blob-gcs             gcs! weight=120
 note-diff            ex runner self! after=boot weight=200

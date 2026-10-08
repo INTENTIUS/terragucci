@@ -41,7 +41,7 @@ drift: "17 4 * * *"
 
 ## A file for many repos
 
-In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). A project's jobs read `policy` from the project's own `terragucci.yml`, so `reconcile` writes the key there.
+In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). A project's jobs read `policy` and `reports` from the project's own `terragucci.yml`, so `reconcile` writes those keys there.
 
 ```yaml
 defaults:
@@ -138,7 +138,7 @@ dashboards: true
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, by forge | the forge token `reconcile`, `rollout` and `respond --mode apply` use |
 | `oidc` | none | plan and apply identities per cloud; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
-| `parallelism` | 3 for GitLab-managed state, else 16 | roots planned at once, and applied at once in a wave; Terragrunt uses `terragrunt.parallelism` |
+| `parallelism` | 3 for GitLab-managed state, else 4 | roots planned at once, and applied at once in a wave; Terragrunt uses `terragrunt.parallelism`. Each root running starts its own providers: with the AWS provider, about 800 MB each, so 4 fit a 7 GB runner and 16 need about 13 GB |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
 | `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`), [`source`](/terragucci/reference/policy/#a-shared-policy-source) (`git+https://<host>/<path>@<ref>`), [`override`](/terragucci/reference/policy/#overriding-a-denial) (who may let one denied plan through, read at base; unset, nobody); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
@@ -248,7 +248,7 @@ terragrunt:
 |---|---|---|
 | `version` | the version `terragrunt_version_constraint` pins exactly, or terragucci's | the Terragrunt release the jobs run |
 | `exclude` | none | unit globs to leave out; `catalog/**` and `.terragrunt-cache` are always left out |
-| `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once |
+| `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once; each unit running starts its own providers, about 800 MB each with the AWS provider, so 16 need about 13 GB: set 4 on a 7 GB runner |
 | `dependents` | `follow` | `follow`, or `plan` to preview them, provisional and undigested |
 | `credentials` | none | AWS roles by unit glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
 

@@ -57,6 +57,10 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
 
    `reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it.
 
+   A project's [`reports`](/terragucci/guides/keep-reports-in-a-bucket/), from `defaults` or its own entry, goes there too: the plan job gets the bucket from the pipeline, and the apply waves read it from that file.
+
+   A project with a `terragucci.yml` of its own keeps it. When its `policy` or `reports` differs from the control repo's, `reconcile` fails that project and names the key to set.
+
 2. Check the file.
 
    ```bash

@@ -165,7 +165,45 @@ describe("reconcile", () => {
     expect(out[1]).toMatchObject({ status: "failed", error: expect.stringMatching(/terragucci.yml exists and terragucci did not write it.*policy/) });
   });
 
-  it("writes no terragucci.yml into a project when the control repo sets no policy", async () => {
+  it("writes the control repo's reports key into each project's terragucci.yml, where its apply waves read it", async () => {
+    const own = twoRootRepo();
+    write(own, { "terragucci.yml": "binary: tofu\nreports:\n  bucket: s3://acme-reports\n  prefix: own\n" });
+    const other = twoRootRepo();
+    write(other, { "terragucci.yml": "binary: tofu\n" });
+    const config = validateConfig(
+      {
+        defaults: { binary: "tofu", reports: { bucket: "s3://acme-reports" } },
+        projects: {
+          "github.com/acme/infra": { url: bareFrom(twoRootRepo()), reports: { bucket: "s3://acme-reports", prefix: "infra" } },
+          "github.com/acme/own": { url: bareFrom(own), reports: { bucket: "s3://acme-reports", prefix: "own" } },
+          "github.com/acme/other": { url: bareFrom(other) },
+        },
+      },
+      "t",
+    );
+    const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
+    const file = out[0].changes.find((c) => c.path === "terragucci.yml");
+    expect(file?.status).toBe("created");
+    expect(validateConfig((await import("@intentius/chant/yaml")).parseYAML(file!.content), "t").reports).toEqual({ bucket: "s3://acme-reports", prefix: "infra" });
+    expect(file!.content.startsWith(PROJECT_CONFIG_HEADER)).toBe(true);
+    // A project's own terragucci.yml that already names the same reports is left alone.
+    expect(out[1].status).not.toBe("failed");
+    expect(out[1].changes.map((c) => c.path)).not.toContain("terragucci.yml");
+    // One that names none fails and says what to set.
+    expect(out[2]).toMatchObject({ status: "failed", error: expect.stringMatching(/jobs read reports from it; set its reports key to the control repo's/) });
+  });
+
+  it("writes policy and reports together into a project's terragucci.yml", async () => {
+    const config = validateConfig(
+      { defaults: { binary: "tofu", policy: { path: "policy" }, reports: { bucket: "s3://acme-reports" } }, projects: { "github.com/acme/infra": { url: bareFrom(twoRootRepo()) } } },
+      "t",
+    );
+    const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
+    const file = out[0].changes.find((c) => c.path === "terragucci.yml");
+    expect(validateConfig((await import("@intentius/chant/yaml")).parseYAML(file!.content), "t")).toMatchObject({ policy: { path: "policy" }, reports: { bucket: "s3://acme-reports" } });
+  });
+
+  it("writes no terragucci.yml into a project when the control repo sets no policy and no reports", async () => {
     const { config } = controlRepo();
     const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
     expect(out.flatMap((o) => o.changes.map((c) => c.path))).not.toContain("terragucci.yml");

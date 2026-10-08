@@ -19,6 +19,13 @@
  * earlier override counts for nothing: the wave applies nothing and exits 4,
  * as a wave whose plans changed after approval does.
  *
+ * Before a wave applies a root under an override it records that the override
+ * was used, in `_gates/policy-override/applied.jsonl` as a wave records the
+ * approval it applied under. An override a wave applied is spent: when the
+ * root plans again and is denied, the spent override refuses nothing, and the
+ * new denial is recorded and waits for its own override (exit 1). Only an
+ * override of a plan no wave applied makes the wave exit 4.
+ *
  * An override never touches the policy, and `tf-plan` still fails the root;
  * the plan note shows the override that stands for it.
  */
@@ -64,8 +71,11 @@ export interface OverrideRule {
 export type OverrideDecision =
   /** An override of this digest stands. */
   | { status: "overridden"; override: ReportOverride }
-  /** No override of this digest counts. `refusals` says why each that names it does not; `standing` as in decideGate. */
-  | { status: "none"; refusals: string[]; standing?: PendingRecord }
+  /**
+   * No override of this digest counts. `refusals` says why each that names it does not; `standing` as in decideGate.
+   * `spent` names the newest override of another digest that a wave applied under, which therefore refuses nothing.
+   */
+  | { status: "none"; refusals: string[]; standing?: PendingRecord; spent?: { digest: string; by: string } }
   /** An override counts for another digest: the plan or its rules changed since it was written. */
   | { status: "moved"; by: string; was: string | undefined; refusals: string[]; standing?: PendingRecord };
 
@@ -86,15 +96,21 @@ export function overrideRefusal(rule: OverrideRule, r: ResolutionRecord & { note
 /**
  * Decide one denied root against the override ledger, as decideGate decides a
  * wave: a line counts only when it is newer than the newest pending fact for
- * the root, names this digest, and passes `overrideRefusal`.
+ * the root, names this digest, and passes `overrideRefusal`. An override of
+ * another digest is the moved refusal, unless it is spent: a wave applied
+ * under an override of that digest made at or after it (the ledger's
+ * `applied` records).
  */
 export function decideOverride(ledger: GateLedger, rule: OverrideRule, root: string, planDigest: string, rules: readonly string[], now: string): OverrideDecision {
   const digest = overrideDigest(root, planDigest, rules);
   let latest: PendingRecord | undefined;
   for (const p of ledger.pending) if (p.op === OVERRIDE_OP && p.gate === root && (!latest || at(p.timestamp) >= at(latest.timestamp))) latest = p;
   const since = latest ? at(latest.timestamp) : 0;
+  const spent = (r: ResolutionRecord): boolean =>
+    r.planDigest !== undefined && (ledger.applied ?? []).some((a) => a.op === OVERRIDE_OP && a.gate === root && samePlanDigest(a.planDigest, r.planDigest) && at(a.approvedAt) >= at(r.timestamp));
   let matched: (ResolutionRecord & { note?: string }) | undefined;
   let mismatched: ResolutionRecord | undefined;
+  let used: ResolutionRecord | undefined;
   const refusals: string[] = [];
   for (const r of ledger.resolutions as (ResolutionRecord & { note?: string })[]) {
     if (r.op !== OVERRIDE_OP || r.gate !== root || at(r.timestamp) < since) continue;
@@ -102,7 +118,11 @@ export function decideOverride(ledger: GateLedger, rule: OverrideRule, root: str
     if (samePlanDigest(r.planDigest, digest)) {
       if (why !== null) refusals.push(why);
       else if (!matched || at(r.timestamp) >= at(matched.timestamp)) matched = r;
-    } else if (why === null && (!mismatched || at(r.timestamp) >= at(mismatched.timestamp))) {
+    } else if (why !== null) {
+      continue;
+    } else if (spent(r)) {
+      if (!used || at(r.timestamp) >= at(used.timestamp)) used = r;
+    } else if (!mismatched || at(r.timestamp) >= at(mismatched.timestamp)) {
       mismatched = r;
     }
   }
@@ -114,7 +134,7 @@ export function decideOverride(ledger: GateLedger, rule: OverrideRule, root: str
   }
   const standing = latest && at(latest.expiresAt) > at(now) && samePlanDigest(latest.planDigest, digest) ? latest : undefined;
   if (mismatched) return { status: "moved", by: mismatched.resolvedBy, was: mismatched.planDigest, refusals, ...(standing ? { standing } : {}) };
-  return { status: "none", refusals, ...(standing ? { standing } : {}) };
+  return { status: "none", refusals, ...(standing ? { standing } : {}), ...(used ? { spent: { digest: used.planDigest!, by: used.resolvedBy } } : {}) };
 }
 
 /** The denials on the ledger: each root's newest pending fact, the plan and rules a run of its wave last refused. Sorted by root. */

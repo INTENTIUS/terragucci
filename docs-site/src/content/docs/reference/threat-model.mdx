@@ -125,7 +125,7 @@ An override lets `tf-apply` apply one root's plan that the policy denies. It nev
 | `ledger` or `pr-review` | a line on `chant/lifecycle` names the root, its plan digest and the rules that denied it, is newer than the recorded denial, gives a reason, and names someone listed at base | a change adding its author to `policy.override` to pass itself; an override standing for a plan or rules that changed; a line by someone unlisted; a line a job recorded (`via`) | anyone who can push to `chant/lifecycle` writing that line in a listed name, the apply jobs' token included |
 | `sealed` | as above, and sealed by a key the signers file at base lists for that person | as above, and forged lines from writers and job tokens | a listed person's stolen key; a listed person overriding their own change |
 
-No generated job runs `terragucci override` or writes an override line: the wave records only the denial. A root the policy could not check is never overridden.
+No generated job runs `terragucci override` or writes an override line: the wave records the denial, and before it applies under an override it marks that override used in `_gates/policy-override/applied.jsonl`. A used override of another plan makes the wave record the new denial and exit 1 where it would exit 4; it lets nothing through, so a forged line there applies nothing. A root the policy could not check is never overridden.
 
 ## Apply before merge
 
