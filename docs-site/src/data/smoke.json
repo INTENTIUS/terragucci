@@ -29,21 +29,24 @@
       "says": "one note groups many plans",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "report",
       "says": "the report is JSON and HTML, and links every root to its full plan",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "highlight",
       "says": "destroys and outliers are open, identical groups are folded",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "waves",
@@ -95,7 +98,8 @@
       "says": "tips are on by default and name their rule",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "zero-config",
@@ -327,7 +331,8 @@
       "says": "the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "policy-wave",
@@ -397,7 +402,8 @@
       "says": "the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "policy-delete-key",
@@ -411,7 +417,8 @@
       "says": "with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "tg-gate-wait",
@@ -660,35 +667,40 @@
       "says": "with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "blob-gcs",
       "says": "with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "note-diff",
       "says": "the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "note-split",
       "says": "a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "note-report-link",
       "says": "with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "config-ts",
@@ -761,6 +773,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "6a8d796"
+    },
+    {
+      "claim": "reader-contracts",
+      "says": "the index.json files, estate.json and report.json a run and terragucci estate write to the bucket hold to the JSON Schemas the package ships, and a project named views writes nothing under the prefix kept for viewers",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "b961bd2"
     },
     {
       "claim": "comment-refused",
@@ -840,7 +860,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "b961bd2"
     },
     {
       "claim": "approval-revoke",
@@ -976,7 +996,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "b961bd2"
     },
     {
       "claim": "blob-azure-key",
@@ -984,7 +1004,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "b961bd2"
     },
     {
       "claim": "index-writes",
@@ -992,7 +1012,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "b961bd2"
     },
     {
       "claim": "cdf-shared-bucket",
@@ -1016,7 +1036,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "b961bd2"
     },
     {
       "claim": "audit-override",
@@ -1024,7 +1044,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "b961bd2"
     },
     {
       "claim": "audit-refused",
@@ -1032,7 +1052,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "b961bd2"
     },
     {
       "claim": "audit-control",
@@ -1040,7 +1060,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "b961bd2"
     },
     {
       "claim": "notify-chat",
