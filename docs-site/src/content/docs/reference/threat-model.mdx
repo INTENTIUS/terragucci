@@ -56,8 +56,13 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `apply-wave-<k>` | a push to the default branch | merged code | `GITLAB_TOKEN` | apply role |
 | `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
 | `tips` | a push to the default branch | merged code | `GITLAB_TOKEN` | none |
+| `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked | `GITLAB_TOKEN`, to reply and start or retry pipelines | none |
 
-GitLab has no apply before merge and no agent comment. Its comment commands come from the `comments` job, which a pipeline schedule runs from the default branch: it reads notes, checks the author's role, and starts or retries pipelines with `GITLAB_TOKEN`, with no cloud credentials. `GITLAB_TOKEN` cannot be a protected variable, because the merge request's plan job posts its note with it, so any branch's pipeline can read it. The OIDC subject carries the pipeline's branch: a merge request's plan job has its source branch, so the plan role trusts every branch.
+| GitLab fact | What it means |
+|---|---|
+| no apply before merge, no agent comment | the apply role meets only merged code |
+| `GITLAB_TOKEN` cannot be a protected variable | the merge request's plan job posts its note with it, so any branch's pipeline can read it |
+| the OIDC subject carries the pipeline's branch | a merge request's plan job has its source branch, so the plan role trusts every branch |
 
 </TabItem>
 <TabItem label="Forgejo">

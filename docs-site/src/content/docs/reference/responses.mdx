@@ -127,7 +127,13 @@ With `respond.drift: attribute`, each drifted attribute goes through three steps
 
 Where the step cannot run, it says so and step 3 follows.
 
-Controller writes and provider default changes are reported with a suggestion (`ignore_changes`, or pin the provider) and left out of the pull request. A human edit stays in it, with the actor when known. Nothing here applies or merges.
+| Attributed to | In the drift pull request | Suggestion |
+|---|---|---|
+| a controller write | left out | add `lifecycle { ignore_changes = [...] }` to the resource |
+| a provider default change | left out | pin the provider version that kept the old value, or set the attribute |
+| a human edit | kept, with the actor when known | accept or revert it in the pull request |
+
+Nothing here applies or merges.
 
 ## Pull request and release events
 

@@ -14,8 +14,6 @@ Before a release, every pipeline terragucci generates runs against an AWS emulat
 | GitHub | the generated workflow, run by `act` against a mock GitHub API |
 | GitLab | GitLab CE and its runner |
 
-Forgejo, GitHub and the AWS emulator are checked on every pull request to terragucci. GitLab is checked every night, because its server is heavy.
-
 ## The claims
 
 Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
@@ -32,12 +30,4 @@ The same setup runs on your laptop. [The tutorial](/terragucci/tutorial/) boots 
 
 ## Running it yourself
 
-```bash
-just stack-up forgejo
-just smoke
-just stack-down
-```
-
-`just validate <forge> <claim>` runs one claim and `just validate-forge <forge>` all of a forge's, plain and broken. `just validation-record` rewrites the table above after a full run.
-
-`just smoke` prints one line per check. `BREAK=1 just smoke <check>` breaks the property on purpose, and the line must then say `caught`.
+[CONTRIBUTING.md](https://github.com/INTENTIUS/terragucci/blob/main/CONTRIBUTING.md) says how to run these checks on your own machine.

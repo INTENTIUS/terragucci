@@ -3,16 +3,16 @@ title: Stages
 description: What each stage does, its inputs, permissions and outputs.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
 Every stage takes the root directories and the binary.
 
 | Stage | What it does | Forge permissions | Outputs |
 |---|---|---|---|
-| `tf-check` | format, `validate`, and with [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) a [live check](#check) that needs no cloud credentials; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository | pass or fail, the log, and the check report |
+| `tf-check` | format, `validate`, and with [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) a [live check](#check) that needs no cloud credentials; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository; with `respond.fmt: commit` (the default) outside a Terragrunt repo, push a `fmt` commit to the branch (`contents: write` and `TG_TOKEN` on GitHub and Forgejo, `TG_TOKEN` on GitLab) | pass or fail, the log, and the check report |
 | `tf-plan` | plans the affected roots in one run and posts the grouped summary; with [`policy`](/terragucci/reference/policy/) set, fails a denied root | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
-| `tf-apply` | applies one job per wave, each behind its own approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch | per wave, whether it waited and its approval command |
+| `tf-apply` | applies one job per wave; a wave the [gate policy](#gate-policy) holds (under the default `on-destroy`, one that destroys or replaces) waits for an approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch | per wave, whether it waited and its approval command |
 | `tf-drift` | plans every root `-refresh-only` on a schedule and groups what changed outside Terraform | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
@@ -46,14 +46,14 @@ Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes): 3 whi
 
 | Order | Command |
 |---|---|
-| 1 | `terragrunt hcl fmt --check` |
-| 2 | the binary's `fmt` |
+| 1 | the binary's `fmt -check -recursive -diff .` |
+| 2 | `terragrunt hcl fmt --check` |
 | 3 | `terragrunt hcl validate --inputs` |
   </TabItem>
   <TabItem label="choudoufu">
 
 :::tip[choudoufu's live check]
-[choudoufu](/terragucci/concepts/glossary/#choudoufu) is the OpenTofu fork from the team behind terragucci, and its live check runs here. Set `binary: choudoufu` and every pull request learns, before any plan and with no cloud credentials, whether choudoufu can track each resource without a state file.
+[choudoufu](/terragucci/concepts/glossary/#choudoufu)'s live check runs here. Set `binary: choudoufu` and every pull request learns, before any plan and with no cloud credentials, whether choudoufu can track each resource without a state file.
 :::
 
 | Order | Command | A difference |
@@ -115,7 +115,17 @@ With no forge token, it writes the report and `issue.md` only. `--forge` tells G
 
 ### Overdue drift checks
 
-A schedule can stop with no error: GitHub turns a scheduled workflow off after 60 days with no activity in the repo, and a GitLab project runs the drift job only once someone adds a schedule. With `drift` set, each `tf-plan` asks the forge when the drift job last ran, from its schedule or by hand. When the cron has come round at least twice since then, or since the pipeline file was added if it never ran, the job log and the plan note say the drift checks are overdue and what to do.
+A schedule can stop with no error: GitHub turns a scheduled workflow off after 60 days with no activity in the repo, and a GitLab project runs the drift job only once someone adds a schedule. With `drift` set, each `tf-plan` checks:
+
+<Steps>
+
+1. It asks the forge when the drift job last ran, from its schedule or by hand.
+
+2. It counts how often the cron has come round since then, or since the pipeline file was added if the job never ran.
+
+3. At two or more, the job log and the plan note say the drift checks are overdue and what to do.
+
+</Steps>
 
 | Forge | What the plan job reads | The note adds |
 |---|---|---|
@@ -129,7 +139,7 @@ A forge that does not answer leaves a line in the log, and the plan goes on.
 
 ## Gated waves
 
-Each wave waits behind an approval bound to its set digest; a changed plan stops it. See [Approve a waiting wave](/terragucci/guides/approve-a-wave/).
+A wave the [gate policy](#gate-policy) holds waits for an approval bound to its set digest; under the default `on-destroy` only a wave that destroys or replaces waits. A changed plan stops it. See [Approve a waiting wave](/terragucci/guides/approve-a-wave/).
 
 A waiting wave prints its set digest and approval command and exits 3:
 

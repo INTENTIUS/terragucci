@@ -46,7 +46,7 @@ A waiting wave exits with code 3 and prints the approval command; run it, then r
 
 ## One apply at a time
 
-A project applies one push at a time. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. [Per forge](/terragucci/reference/pipeline/#one-apply-at-a-time).
+A project applies one push at a time. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#one-apply-at-a-time).
 
 ## Where to go next
 

@@ -37,7 +37,12 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 In the plan, apply, drift and respond stages, the binary and Terragrunt never get `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, or any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN`. `TF_` variables pass as set, so a provider's token goes in a `TF_VAR_` variable. [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
 
-The check job is the exception. It runs `fmt`, `init -backend=false`, `validate` and [choudoufu](/terragucci/concepts/glossary/#choudoufu)'s `live-check` with the job's whole environment. Outside a Terragrunt repo that holds `TG_TOKEN` when `respond.fmt` is `commit` (the default), so the job can push the formatting, and on GitLab also `CI_JOB_TOKEN` and the project's variables, `GITLAB_TOKEN` among them. The check job holds no cloud role.
+The check job is the exception. It runs `fmt`, `init -backend=false`, `validate` and [choudoufu](/terragucci/concepts/glossary/#choudoufu)'s `live-check` with the job's whole environment, and holds no cloud role.
+
+| The check job's environment holds | When |
+|---|---|
+| `TG_TOKEN`, so the job can push the formatting | `respond.fmt` is `commit` (the default), outside a Terragrunt repo |
+| `CI_JOB_TOKEN` and the project's variables, `GITLAB_TOKEN` among them | on GitLab |
 
 ## Reports
 

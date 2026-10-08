@@ -67,9 +67,13 @@ The gates in `chant.workspace.json` (`init` lists all under `approval: sealed`) 
 
 The signers file: one ssh public key per approver, in ssh-keygen's allowed_signers format. It is read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
 
+### pr-review
+
+The `approval:` mode where the merged pull request's approving review of its head approves a gated wave, when the wave plans what the review saw. Any `chant approve` of the digest still counts, as under `ledger`. [Approve by review](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review).
+
 ### seal
 
-The ssh signature `chant approve --sign` puts on an approval. Under `approval: sealed` an unverified or edited record counts for nothing; under `ledger`, the default, no seal is needed.
+The ssh signature `chant approve --sign` puts on an approval. Under `approval: sealed` an unverified or edited record counts for nothing; under `ledger`, the default, and `pr-review` no seal is needed.
 
 ## Other tools
 
@@ -97,6 +101,6 @@ The OpenTofu fork from the team behind terragucci. It keeps no state file: each 
 | `--mode apply` on `rollout`, `respond` and `reconcile` | push the commit or open the pull request that the dry run described | `terraform apply`, which none of the three runs |
 | layer | a step of the dependency order | a wave, an apply batch built from layers |
 | `/terragucci apply` | rerun `tf-apply` on a merged pull request, or an open one with `apply.when: pull-request`; gated waves still need an approval of their digest | Atlantis `apply`, which applies its stored plan; here each wave plans again |
-| `/terragucci lock` | with `apply.when: pull-request`, lock the roots a pull request reaches without applying it | the lock Atlantis takes on every plan; a plan here locks nothing |
-| `/terragucci unlock` | with `apply.when: pull-request`, release the root locks a pull request took when it applied or locked | Atlantis `unlock`, which also discards plans; none are kept here |
+| `/terragucci lock` | with `apply.when: pull-request` or `locks: plan`, lock the roots a pull request reaches without applying it | the lock Atlantis takes on every plan; under the default `locks: apply` a plan locks nothing, and with `locks: plan` the first plan locks |
+| `/terragucci unlock` | with `apply.when: pull-request` or `locks: plan`, release the root locks a pull request took when it planned, applied or locked | Atlantis `unlock`, which also discards plans; none are kept here |
 | run | a forge pipeline run, with its jobs | an HCP Terraform run, which is one plan and apply in one workspace |
