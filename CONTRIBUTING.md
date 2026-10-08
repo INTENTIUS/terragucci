@@ -269,3 +269,11 @@ Scratch files go in `TERRAGUCCI_SANDBOX_DIR` (default `$TMPDIR/terragucci-sandbo
 GitHub shows a job's log only to a signed-in reader. A logged-out job page lists the job's steps, with the failed one marked, and "Sign in to view logs". So a job's log is saved as text, from `gh run view --log`, beside the picture: `logs/waiting.log`, `logs/refused.log` and `logs/applied.log`. A pull request's merge box is also hidden when logged out; the `checks` view is the pull request's Checks tab. The comment re-plan posts no reply of its own: it edits the plan note, so the `reply` view is the note above the `/terragucci plan` comment.
 
 The repo is public, so its Actions minutes on GitHub-hosted runners are free. A pull request costs two runs and a merge one run of seven jobs.
+
+## Design notes
+
+Designs waiting for review before any code live in `design/`, one file each. They are contributor material: the site does not describe them until the feature works.
+
+| File | Covers |
+|---|---|
+| [design/estate-carving.md](design/estate-carving.md) | splitting a large root into smaller ones: survey, propose, verify and a person-run migration |
