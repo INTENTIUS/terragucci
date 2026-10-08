@@ -13,7 +13,10 @@ import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { ConfigError } from "./config";
 
-export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu";
+export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost";
+
+/** The Infracost release a plan job installs for `cost:`. */
+export const INFRACOST_VERSION = "0.10.45";
 
 export interface Release {
   url: string;
@@ -21,6 +24,8 @@ export interface Release {
   /** The file name SHA256SUMS lists. */
   file: string;
   kind: "tar.gz" | "zip" | "binary";
+  /** The binary's name inside a tar.gz, when it is not the tool's. */
+  member?: string;
 }
 
 function arch(): string {
@@ -45,6 +50,12 @@ export function release(tool: Tool, version: string, a = arch()): Release {
     const base = `https://releases.hashicorp.com/terraform/${version}`;
     const file = `terraform_${version}_linux_${a}.zip`;
     return { url: `${base}/${file}`, sums: `${base}/terraform_${version}_SHA256SUMS`, file, kind: "zip" };
+  }
+  if (tool === "infracost") {
+    // Each file has its own checksum file, in SHA256SUMS form.
+    const base = `https://github.com/infracost/infracost/releases/download/v${version}`;
+    const file = `infracost-linux-${a}.tar.gz`;
+    return { url: `${base}/${file}`, sums: `${base}/${file}.sha256`, file, kind: "tar.gz", member: `infracost-linux-${a}` };
   }
   if (tool === "choudoufu") {
     const base = `https://github.com/INTENTIUS/choudoufu/releases/download/v${version}`;
@@ -128,8 +139,8 @@ export async function install(tool: Tool, version: string, dir = installDir(tool
   else {
     const staging = `${tmp}.d`;
     mkdirSync(staging, { recursive: true });
-    execFileSync("tar", ["-xz", "-C", staging, tool], { input: archive });
-    renameSync(join(staging, tool), tmp);
+    execFileSync("tar", ["-xz", "-C", staging, r.member ?? tool], { input: archive });
+    renameSync(join(staging, r.member ?? tool), tmp);
     rmSync(staging, { recursive: true, force: true });
   }
   chmodSync(tmp, 0o755);

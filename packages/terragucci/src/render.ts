@@ -70,7 +70,7 @@ import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
 import { applyWaves } from "./apply";
 import { CHECK_DIR } from "./check";
-import type { Tool } from "./install";
+import { INFRACOST_VERSION, type Tool } from "./install";
 import {
   cacheExports,
   credentialsScript,
@@ -114,6 +114,8 @@ export interface PipelineInput {
   synth?: string;
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, which the apply jobs post a waiting, refused or failed wave to. */
   notify?: { slack?: string; teams?: string };
+  /** `cost`: the secret holding the estimator's key, and whether the plan jobs install Infracost (no `cost.command`). */
+  cost?: { keySecret: string; install: boolean };
   env: Record<string, string>;
   /** Cloud identities the jobs take over OIDC (AWS roles, GCP service accounts, Azure clients): plan reads, apply writes. */
   oidc?: OidcSettings;
@@ -996,6 +998,8 @@ export interface PlanReportInput {
   prReview?: boolean;
   /** `synth`: the command that writes the roots, run on the checkout before the credentials. */
   synth?: string;
+  /** `cost` is set: the confirm job's plan leaves the estimate out, since it posts no note. */
+  cost?: boolean;
 }
 
 /**
@@ -1279,6 +1283,7 @@ export function confirmScript(binary: Binary, layers: string[][], forge: ForgeNa
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
     ...(report.terragrunt ? ["--terragrunt"] : []),
+    ...(report.cost ? ["--no-cost"] : []),
   ];
   const what = report.terragrunt ? "unit" : "root";
   return [
@@ -1337,6 +1342,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n") } } : {}),
     ...(prReview ? { prReview: true } : {}),
     ...(input.synth ? { synth: input.synth } : {}),
+    ...(input.cost ? { cost: true } : {}),
   };
   const drift = input.drift;
   const roots = layers.flat().sort();
@@ -1356,6 +1362,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const audience = oidc?.audience ?? AUDIENCE;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth);
   const synth = input.synth ? { synth: input.synth } : {};
+  // cost: the plan jobs get the estimator's key as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
+  const costEnv: Record<string, string> = input.cost ? { INFRACOST_API_KEY: forge === "gitlab" ? `$${input.cost.keySecret}` : `\${{ secrets.${input.cost.keySecret} }}` } : {};
+  // GitLab gives every job the project's variables by name, so a key already named INFRACOST_API_KEY needs no mapping.
+  const glCostEnv = input.cost && input.cost.keySecret !== "INFRACOST_API_KEY" ? costEnv : {};
+  const costInstall = input.cost?.install ? installScript("infracost", INFRACOST_VERSION, forge) : undefined;
   // notify: the apply jobs post a waiting, refused or failed wave to the webhooks, read from the secrets the key names.
   const notifyOn = input.notify ? { notify: true } : {};
   const notifyEnv = Object.fromEntries(
@@ -1460,11 +1471,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const plan = new GitLabJob({
       stage: "plan",
       image: jobImage,
-      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
+      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens,
       ...(tg ? forgeCache("gitlab") : {}),
-      script: script(bash("PLAN", protectedToken ? gitlabProtectedPlanScript(binary, layers, oidc, report, tokenEnv) : planScript(binary, layers, forge, oidc, report))),
+      script: [...(costInstall ? [costInstall] : []), ...script(bash("PLAN", protectedToken ? gitlabProtectedPlanScript(binary, layers, oidc, report, tokenEnv) : planScript(binary, layers, forge, oidc, report)))],
       // The report stays with the job; its counts feed the merge request's widget.
       artifacts: { name: REPORT_DIR, when: "always", paths: [`${REPORT_DIR}/`], reports: { terraform: `${REPORT_DIR}/gitlab-terraform.json` } },
     } as never);
@@ -1626,9 +1637,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
-  const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string): InstanceType<typeof Step>[] => [
+  const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string, estimator = false): InstanceType<typeof Step>[] => [
     new Step({ uses: "actions/checkout@v4", ...(history ? { with: { "fetch-depth": 0 } } : {}) }),
     ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
+    ...(estimator && costInstall ? [new Step({ name: `Install Infracost ${INFRACOST_VERSION}`, run: costInstall })] : []),
     ...(before ? [new Step({ name: `Install the AWS CLI ${AWS_CLI.version} unless the job has it`, shell: "bash", run: before })] : []),
     ...(cached && tg ? [new Step({ name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
     main,
@@ -1677,10 +1689,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_PR: "${{ github.event.pull_request.number }}",
       ...headersEnv,
       ...decideEnv,
+      ...costEnv,
       ...reportKeyEnv(forge, input.reports),
     },
     steps: [
-      ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true),
+      ...steps(new Step({ name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, report) }), true, true, undefined, true),
       // The report stays with the run. Forgejo's artifact store speaks the v3 protocol.
       new Step({
         name: "Keep the plan report",
@@ -1706,9 +1719,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...driftRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv, ...reportKeyEnv(forge, input.reports) },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) },
     steps: [
-      ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, { ...report, ...(input.agentComment ? { agentComment: true } : {}) }, true) }), true, true),
+      ...steps(new Step({ name: `Re-plan the pull request on request and write the plan report`, shell: "bash", run: planScript(binary, layers, forge, oidc, { ...report, ...(input.agentComment ? { agentComment: true } : {}) }, true) }), true, true, undefined, true),
       new Step({
         name: "Keep the plan report",
         if: "always()",

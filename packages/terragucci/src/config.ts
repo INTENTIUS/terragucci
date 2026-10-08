@@ -295,6 +295,12 @@ export interface ProjectSettings {
    */
   notify?: { slack?: string; teams?: string };
   /**
+   * Cost estimates per root in the plan note: Infracost on the customer's
+   * own key (`key_secret`, default INFRACOST_API_KEY), or a `command` that
+   * prints Infracost's JSON (report/cost.ts).
+   */
+  cost?: CostSettings;
+  /**
    * GitLab only: the cron of the comments schedule, or false. The pipeline
    * gets a `comments` job that reads new merge request notes on that
    * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
@@ -362,6 +368,12 @@ export function responseTo(settings: ProjectSettings, event: RespondEvent): stri
   return settings.respond?.[event] ?? RESPONSES[event][0];
 }
 
+/** `cost: true`, or the secret holding the estimator's key and the command to run instead of Infracost. */
+export type CostSettings = true | { key_secret?: string; command?: string };
+
+/** The secret Infracost's key is read from when `cost.key_secret` is unset; the job gets it as this variable too. */
+export const COST_KEY_SECRET = "INFRACOST_API_KEY";
+
 /** Settings with terragucci's defaults filled in. Detection fills `roots`, `binary` and `forge` later. */
 export interface ResolvedSettings extends ProjectSettings {
   gate: Gate;
@@ -408,7 +420,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -462,6 +474,14 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
         if (k !== "slack" && k !== "teams") problems.push(`${where}.notify.${k} is not a setting (settings: slack, teams)`);
         else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address itself`);
       }
+    }
+  }
+  if (s.cost !== undefined && s.cost !== true) {
+    if (!isObject(s.cost)) problems.push(`${where}.cost must be true or a map (settings: key_secret, command)`);
+    else {
+      for (const k of Object.keys(s.cost)) if (k !== "key_secret" && k !== "command") problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command)`);
+      if (s.cost.key_secret !== undefined && !(typeof s.cost.key_secret === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.cost.key_secret))) problems.push(`${where}.cost.key_secret must name the secret that holds the estimator's key, such as INFRACOST_API_KEY`);
+      if (s.cost.command !== undefined && !(typeof s.cost.command === "string" && s.cost.command.trim() !== "")) problems.push(`${where}.cost.command must be a command that prints Infracost's JSON`);
     }
   }
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {

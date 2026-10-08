@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 11;
+export const REPORT_MINOR = 12;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -438,6 +438,34 @@ export interface Report {
   intent?: ReportIntent;
   /** The run's policy check, when `policy` is on (minor 6). Each root's verdict is under the root. */
   policy?: ReportPolicy;
+  /** The cost estimate of a `tf-plan` run, when `cost` is on (minor 12). */
+  cost?: ReportCost;
+}
+
+/** One root's monthly cost, from the estimator's output (minor 12). Null where the estimator gave no figure. */
+export interface ReportRootCost {
+  root: string;
+  /** The change in monthly cost this plan makes. */
+  monthly_delta: number | null;
+  /** The monthly cost once the plan applies. */
+  monthly_total: number | null;
+  /** The monthly cost before it. */
+  past_monthly_total: number | null;
+  /** The estimator's output, kept beside the plan (`roots/<root>/cost.json`). Absent when it failed. */
+  output?: string;
+  /** Why there is no estimate. */
+  error?: string;
+}
+
+/** The run's cost estimate (minor 12): each root's, and the sums over the roots estimated. */
+export interface ReportCost {
+  /** The command's first word, such as `infracost`. */
+  estimator: string;
+  currency: string;
+  monthly_delta: number | null;
+  monthly_total: number | null;
+  past_monthly_total: number | null;
+  roots: ReportRootCost[];
 }
 
 /**

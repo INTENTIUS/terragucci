@@ -47,12 +47,17 @@ import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
+import { costCommand, estimateCosts, writeCostFiles, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
 export interface StageOptions {
+  /** Runs the cost estimator; tests pass one. */
+  costRunner?: CostRunner;
+  /** Leave the cost estimate out, with `cost` set: the confirm job's plan posts no note. */
+  noCost?: boolean;
   root?: string;
   project?: string;
   config?: string;
@@ -1079,6 +1084,24 @@ async function finish(
     }
     for (const line of describeTips(report.tips)) log(line);
   }
+  // cost: the estimator over each root's stored plan; a failed estimate is named and fails nothing.
+  let costOutputs: Map<string, string> | undefined;
+  if (!drift && settings.cost && !options.noCost) {
+    const stored = report.roots.flatMap((r) => {
+      const json = plans.get(r.path)?.json;
+      return json !== undefined ? [{ root: r.path, json }] : [];
+    });
+    if (stored.length > 0) {
+      const costWork = mkdtempSync(join(tmpdir(), "terragucci-cost-"));
+      try {
+        const estimate = await estimateCosts(stored, costCommand(settings.cost), env, costWork, repo, log, options.costRunner);
+        report.cost = estimate.cost;
+        costOutputs = estimate.outputs;
+      } finally {
+        rmSync(costWork, { recursive: true, force: true });
+      }
+    }
+  }
   observer.addTimings(report);
   const dir = resolve(repo, options.out ?? "terragucci-report");
   // The bucket's address comes from the config when the pipeline names the same bucket without it.
@@ -1110,6 +1133,7 @@ async function finish(
   // A waiting wave's command in the note asks for --sign when the repo seals its approvals.
   const sealed = (settings.approval ?? (declaredGates(existsSync(join(repo, "chant.workspace.json")) ? readFileSync(join(repo, "chant.workspace.json"), "utf-8") : undefined) > 0 ? "sealed" : "ledger")) === "sealed";
   writeReportDir(dir, report, plans, { ...noteLinks, limit, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
+  if (costOutputs) writeCostFiles(dir, costOutputs);
   let uploaded: Uploaded | undefined;
   if (reports?.bucket) {
     uploaded = await uploadReport(storeFromEnv(reports, env, options.fetch), dir, report, reports.prefix);
