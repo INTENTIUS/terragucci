@@ -6419,9 +6419,9 @@ claim_blob_azure() {
   cp "$certs/azurite.crt" "$work/stub/ca.crt"
   with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
     --profile blob up -d --force-recreate azurite >&2 || { drop_work "$work"; return 1; }
-  # What Entra ID would answer: Azurite checks the audience, the issuer and the lifetime, and keys the delegation on oid and tid.
+  # What Entra ID would answer: Azurite checks the audience, the issuer and the lifetime (iat, nbf and exp, all three present), and keys the delegation on oid and tid.
   now="$(date +%s)"
-  jwt="$(blob_jwt "{\"aud\":\"https://storage.azure.com\",\"iss\":\"https://sts.windows.net/$tenant/\",\"nbf\":$((now - 60)),\"exp\":$((now + 3600)),\"oid\":\"$client\",\"tid\":\"$tenant\",\"appid\":\"$client\"}")"
+  jwt="$(blob_jwt "{\"aud\":\"https://storage.azure.com\",\"iss\":\"https://sts.windows.net/$tenant/\",\"iat\":$((now - 60)),\"nbf\":$((now - 60)),\"exp\":$((now + 3600)),\"oid\":\"$client\",\"tid\":\"$tenant\",\"appid\":\"$client\"}")"
   azr() { curl -sS --cacert "$certs/azurite.crt" -H "Authorization: Bearer $jwt" -H 'x-ms-version: 2021-08-06' "$@"; }
   for i in $(seq 1 30); do
     [ "$(azr -o /dev/null -w '%{http_code}' "https://localhost:$port/devstoreaccount1?comp=list" 2>/dev/null)" = 200 ] && break
