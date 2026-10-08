@@ -24,8 +24,9 @@ packages/terragucci/src/agent-comment.ts  comment-agent
 packages/terragucci/src/apply.ts          boot waves apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit*
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check check-diagnostics tg-check tg-mock-lint description-check
-packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-synth
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-synth notify-chat cost-estimate
+packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat cost-estimate
+packages/terragucci/src/synth.ts          cdktn-*
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-*
 packages/terragucci/src/install.ts        pinned-install tf-terraform tg-terraform cdf-* cost-estimate
 packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
@@ -62,7 +63,7 @@ packages/terragucci/src/report/cost.ts   cost-estimate
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-synth audit*
+packages/terragucci/src/report            report highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit*
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close
@@ -80,6 +81,6 @@ stack/mounted.sh                          ALL
 stack/bootstrap.sh                        ALL
 stack/docker-compose.yml                  ALL
 stack/example.sh                          ALL
-stack/fixtures/cdktn                      cdktn-synth
+stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat cost-estimate
 example-terragrunt/                       tg-*

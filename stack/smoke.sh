@@ -275,14 +275,15 @@ blob-gcs-key|with a service_account key file the job writes the report and both 
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
-cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans every synthesized stack|
+cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
 audit|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
 notify-chat|with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
-approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|'
+approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
+cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -9001,7 +9002,7 @@ claim_cdktn_synth() {
   # is not committed. The push to main passes check and applies
   # both stacks; a pull request that changes the size of prod in main.js gets
   # a passing terragucci/plan whose job ran cdktn synth before tf-plan and
-  # planned both stacks.
+  # planned prod.
   # BREAK: synth is left out of terragucci.yml, so the pipeline runs no synth
   # step and its checkout holds no stacks to check, apply or plan.
   log() { echo "[smoke cdktn-synth] $*" >&2; }
@@ -9037,15 +9038,61 @@ claim_cdktn_synth() {
     [ "$(context_state "$repo" "$head" terragucci/plan)" = success ] || { log "terragucci/plan did not pass on pull request $pr"; rc=1; }
     id="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | select(.name == "plan") | .id')"
     plan_log="$(api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null || true)"
-    grep -E 'Generated Terraform code|every root: synth|cdktf.out/stacks/[a-z]+: ' <<<"$plan_log" >&2 || true
+    grep -E 'Generated Terraform code|synth at the base|affected: |cdktf.out/stacks/[a-z]+: ' <<<"$plan_log" >&2 || true
     grep -q 'Generated Terraform code for the stacks: dev, prod' <<<"$plan_log" || { log "the plan job did not run cdktn synth"; rc=1; }
-    [ "$(grep -n 'Generated Terraform code' <<<"$plan_log" | head -1 | cut -d: -f1)" -lt "$(grep -n 'every root: synth writes them' <<<"$plan_log" | tail -1 | cut -d: -f1)" ] 2>/dev/null || { log "synth did not run before tf-plan"; rc=1; }
-    for id in dev prod; do
-      grep -q "cdktf.out/stacks/$id: Plan:" <<<"$plan_log" || { log "tf-plan did not plan cdktf.out/stacks/$id"; rc=1; }
-    done
+    [ "$(grep -n 'Generated Terraform code' <<<"$plan_log" | head -1 | cut -d: -f1)" -lt "$(grep -n 'synth at the base: ' <<<"$plan_log" | head -1 | cut -d: -f1)" ] 2>/dev/null || { log "synth did not run before tf-plan"; rc=1; }
+    grep -q "cdktf.out/stacks/prod: Plan:" <<<"$plan_log" || { log "tf-plan did not plan cdktf.out/stacks/prod"; rc=1; }
   fi
   drop_work "$work"
-  [ $rc = 0 ] && log "synth ran before check, apply and tf-plan, which planned the synthesized stacks dev and prod"
+  [ $rc = 0 ] && log "synth ran before check, apply and tf-plan, which planned the synthesized stack prod"
+  return $rc
+}
+
+claim_cdktn_affected() {
+  # The CDK Terrain app of cdktn-synth (fixtures/cdktn, stacks dev and prod)
+  # on main, and a pull request that changes the size of prod in main.js.
+  # tf-plan runs the synth command on the base too and compares each stack's
+  # synthesized files: the plan job plans prod and not dev, and the plan note
+  # says one stack was unchanged and not planned.
+  # BREAK: main names an app file that does not exist in cdktf.json, and the
+  # pull request puts it back, so synth fails on the base. tf-plan then plans
+  # every stack, the unchanged dev with them.
+  log() { echo "[smoke cdktn-affected] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cdktn-affected" sha head pr id plan_log notes body rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo cdktn-affected || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/cdktn/." "$work/tree/"
+  (cd "$work/tree" && npm ci --no-audit --no-fund >/dev/null 2>&1 && npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host"; drop_work "$work"; return 1; }
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then sed -i.bak 's#"node main.js"#"node gone.js"#' "$work/tree/cdktf.json" && rm -f "$work/tree/cdktf.json.bak"; fi
+  sha="$(push_tree "$work/tree" "$repo" main "cdktn-affected: two stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then sed -i.bak 's#"node gone.js"#"node main.js"#' "$work/tree/cdktf.json" && rm -f "$work/tree/cdktf.json.bak"; fi
+  sed -i.bak 's/prod: 3/prod: 5/' "$work/tree/main.js" && rm -f "$work/tree/main.js.bak"
+  head="$(push_tree "$work/tree" "$repo" change "cdktn-affected: prod holds 5")" || rc=1
+  git -C "$work/tree" checkout -q main
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "cdktn-affected: prod holds 5")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(context_state "$repo" "$head" terragucci/plan)" = success ] || { log "terragucci/plan did not pass on pull request $pr"; rc=1; }
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | select(.name == "plan") | .id')"
+    plan_log="$(api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null || true)"
+    grep -E 'synth at the base|every root: |affected: |cdktf.out/stacks/[a-z]+: ' <<<"$plan_log" >&2 || true
+    grep -q "cdktf.out/stacks/prod: Plan:" <<<"$plan_log" || { log "tf-plan did not plan cdktf.out/stacks/prod, which changed"; rc=1; }
+    if grep -q "cdktf.out/stacks/dev: " <<<"$plan_log"; then log "tf-plan planned cdktf.out/stacks/dev, which the change leaves alone"; rc=1; fi
+    notes="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq '[.[] | select(.body | startswith("<!-- terragucci:plan"))]')"
+    body="$(jq -r '.[0].body // ""' <<<"$notes")"
+    grep -E 'synth command|synthesized root' <<<"$body" >&2 || true
+    grep -q '1 synthesized root planned, 1 unchanged and not planned' <<<"$body" || { log "the plan note does not say one stack was unchanged"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "synth ran on the base too: prod differed and planned, dev was unchanged, not planned, and the note says so"
   return $rc
 }
 
@@ -9734,6 +9781,7 @@ audit-control        weight=150
 notify-chat          runner self! weight=150
 cost-estimate        runner self! weight=150
 approval-used        runner self! weight=200
+cdktn-affected       runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

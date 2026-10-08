@@ -1,7 +1,7 @@
 ---
 title: Plan CDK Terrain stacks
-description: Run cdktn synth in the pipeline before tf-plan, so each pull request plans the stacks your CDK Terrain app writes.
-claims: [cdktn-synth]
+description: Run cdktn synth in the pipeline before tf-plan, so each pull request plans the CDK Terrain stacks its change affects.
+claims: [cdktn-synth, cdktn-affected]
 prompt: |
   Read https://intentius.io/terragucci/guides/plan-cdk-terrain-stacks/.
   Add `synth: npm ci && npx cdktn synth` to terragucci.yml, add cdktf.out/ and node_modules/ to .gitignore,
@@ -88,16 +88,21 @@ A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or appl
      </TabItem>
    </Tabs>
 
-5. Open a pull request that changes the app. The plan job's log shows the synth, then the plan of every stack:
+5. Open a pull request that changes one stack. The plan job's log shows the synth, the same synth on the base, and the plan of the stack that changed:
 
    ```text
    Generated Terraform code for the stacks: dev, prod
-   every root: synth writes them (npm ci && npx cdktn synth), so a change to the app can reach any of them
-   cdktf.out/stacks/dev: Plan: 1 to add, 0 to change, 0 to destroy.
-   cdktf.out/stacks/prod: Plan: 1 to add, 0 to change, 0 to destroy.
+   synth at the base: npm ci && npx cdktn synth, on 3f2a91c0 in a checkout of its own
+   affected: cdktf.out/stacks/prod differs from the base (cdk.tf.json differs)
+   affected: 1 of 2 synthesized roots differ from origin/main, 0 dependents after them, 1 unchanged and not planned
+   cdktf.out/stacks/prod: Plan: 0 to add, 1 to change, 0 to destroy.
    ```
 
-   The plan note groups the stacks as it groups roots.
+   The plan note says how many stacks were left out:
+
+   ```text
+   > The synth command ran on the base (3f2a91c0) too: 1 synthesized root planned, 1 unchanged and not planned.
+   ```
 
 </Steps>
 
@@ -106,7 +111,7 @@ A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or appl
 | Job | Runs the command | Then |
 |---|---|---|
 | check | yes | checks the format of the files git tracks, and validates each stack |
-| plan, and a `/terragucci plan` re-plan | yes, on the pull request's head | `tf-plan` plans every stack |
+| plan, and a `/terragucci plan` re-plan | yes, on the pull request's head; `tf-plan` runs it again on the base | `tf-plan` plans the stacks whose output differs |
 | each apply wave | yes | `tf-apply` plans the wave's stacks again and applies them behind the gate |
 | `/terragucci apply` | yes, after it checks out the commit to apply | the same waves |
 | drift | yes | `tf-drift` refreshes every stack |
@@ -115,9 +120,28 @@ A command that fails ends the job; the plan job also sets `terragucci/plan` to f
 
 | Behaviour | With `synth` |
 |---|---|
-| Which stacks a pull request plans | every one: the stacks are not in git, so no diff names them; a stack the change leaves alone plans no change |
+| Which stacks a pull request plans | the ones the change affects; see below |
 | Format check | the `.tf`, `.tofu` and `.tfvars` files git tracks, one directory at a time, so the packages `npm ci` installs are left out |
 | Terragrunt | not supported: `init` refuses `synth` in a Terragrunt repo |
+
+## Which stacks a pull request plans
+
+The stacks are not in git, so no diff names them. `tf-plan` compares what the app writes at the base with what it writes at the head:
+
+| Step | What happens |
+|---|---|
+| Base | `tf-plan` checks out the merge base of the target branch in a directory of its own and runs the synth command there |
+| Compare | each stack's directory (`cdk.tf.json`, its lock file, its assets) and every local module it calls outside it, file by file |
+| Plan | a stack whose files differ, a new stack, a removed stack, and any stack that reads one of their states |
+| Leave out | every other stack; the note counts them |
+
+| When | Then |
+|---|---|
+| The synth command fails on the base | every stack plans, and the note says the base could not be synthesized |
+| The merge base cannot be found | every stack plans, and the note says why |
+| No stack differs | nothing plans, and the note says the change reaches no root |
+
+`tf-plan` runs the base's synth after the plan job's credentials are set. That code is the target branch, which the apply jobs already run. A pull request runs the synth twice, so `npm ci` takes its time twice.
 
 ## Next
 
