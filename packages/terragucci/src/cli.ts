@@ -22,7 +22,7 @@
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo]   (read a `/terragucci agent <ask>` comment)
  *   terragucci comment --agent push --change <dir> [--policy-dir <dir>]   (push the agent's change to the pull request's head branch)
- *   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
+ *   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *
@@ -81,7 +81,7 @@ const USAGE = `usage:
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
   terragucci comment --agent push --change <dir> [--policy-dir <dir>]
-  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none]
+  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
@@ -114,7 +114,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -328,7 +328,7 @@ export async function main(argv: string[]): Promise<number> {
         const requiresFlag = str(flags, "requires");
         const requires = requiresFlag === undefined ? undefined : requiresFlag === "none" ? [] : requiresFlag.split(",");
         if (requires?.some((r) => !(APPLY_REQUIRES as readonly string[]).includes(r))) throw new ConfigError(`comment-apply's --requires is a comma-separated list of ${APPLY_REQUIRES.join(", ")}, or none`);
-        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(requires ? { requires: requires as ApplyRequire[] } : {}) });
+        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(requires ? { requires: requires as ApplyRequire[] } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
         writeDecision(resolve(cwd, out), decision);
         if (decision.fail) {
           console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
