@@ -8,7 +8,8 @@
       "says": "the example boots and deploys locally",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "check",
@@ -29,21 +30,24 @@
       "says": "one note groups many plans",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "report",
       "says": "the report is JSON and HTML, and links every root to its full plan",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "highlight",
       "says": "destroys and outliers are open, identical groups are folded",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "waves",
@@ -51,7 +55,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "8991c00"
     },
     {
       "claim": "refuse",
@@ -59,7 +63,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "8991c00"
     },
     {
       "claim": "sealed",
@@ -95,7 +99,8 @@
       "says": "tips are on by default and name their rule",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "zero-config",
@@ -109,7 +114,8 @@
       "says": "two pushes to main apply one after the other, and the commit carries one terragucci/apply status",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "reconcile",
@@ -144,7 +150,8 @@
       "says": "the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "tg-check",
@@ -194,7 +201,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "8991c00"
     },
     {
       "claim": "respond-triage",
@@ -327,14 +334,16 @@
       "says": "the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "policy-wave",
       "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "check-diagnostics",
@@ -383,7 +392,8 @@
       "says": "a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "comment-agent",
@@ -397,7 +407,8 @@
       "says": "the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "policy-delete-key",
@@ -411,7 +422,8 @@
       "says": "with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "tg-gate-wait",
@@ -440,28 +452,32 @@
       "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "pr-apply-lock",
       "says": "a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "pr-apply-stale",
       "says": "a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "tg-comment-apply",
       "says": "a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "provider-calls",
@@ -560,7 +576,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "8991c00"
     },
     {
       "claim": "pr-review-moved",
@@ -568,14 +584,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "8991c00"
     },
     {
       "claim": "pr-review-status",
       "says": "with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "cdf-concurrency",
@@ -611,14 +628,16 @@
       "says": "with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "tg-pr-apply-lock",
       "says": "in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "plan-lock",
@@ -639,56 +658,64 @@
       "says": "a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "policy-override-moved",
       "says": "an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "policy-override-unlisted",
       "says": "an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "blob-azure",
       "says": "with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "blob-gcs",
       "says": "with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "note-diff",
       "says": "the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "note-split",
       "says": "a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "note-report-link",
       "says": "with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "8991c00"
     },
     {
       "claim": "config-ts",
@@ -776,7 +803,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "8991c00"
     },
     {
       "claim": "pr-confirm",
@@ -840,7 +867,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "8991c00"
     },
     {
       "claim": "approval-revoke",
@@ -944,7 +971,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "8991c00"
     },
     {
       "claim": "tg-terraform",
@@ -952,7 +979,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "8991c00"
     },
     {
       "claim": "tfquery-import",
@@ -976,7 +1003,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "8991c00"
     },
     {
       "claim": "blob-azure-key",
@@ -984,7 +1011,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "8991c00"
     },
     {
       "claim": "index-writes",
@@ -992,7 +1019,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "8991c00"
     },
     {
       "claim": "cdf-shared-bucket",
@@ -1008,7 +1035,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0bde4ea"
+      "commit": "8991c00"
     },
     {
       "claim": "audit",
@@ -1016,7 +1043,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "8991c00"
     },
     {
       "claim": "audit-override",
@@ -1024,7 +1051,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "8991c00"
     },
     {
       "claim": "audit-refused",
@@ -1032,7 +1059,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "8991c00"
     },
     {
       "claim": "audit-control",
@@ -1040,15 +1067,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "8991c00"
     },
     {
       "claim": "notify-chat",
-      "says": "with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each",
+      "says": "with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "8991c00"
     },
     {
       "claim": "cost-estimate",
@@ -1064,7 +1091,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "66f2fcd"
+      "commit": "8991c00"
     },
     {
       "claim": "cdktn-affected",
@@ -1072,7 +1099,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0bde4ea"
+      "commit": "8991c00"
     }
   ]
 }
