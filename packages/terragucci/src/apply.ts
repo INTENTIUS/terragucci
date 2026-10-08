@@ -682,8 +682,12 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys }, facts, w);
   if (held !== undefined) return held;
 
-  // The roots of a wave do not read each other, so they apply together.
-  const ok = await Promise.all(planned.map((p) => applyRoot(repo, binary, p, w.observer)));
+  // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
+  // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
+  const ok: boolean[] = new Array(planned.length);
+  await eachLimited(planned, limit.value, async (p, i) => {
+    ok[i] = await applyRoot(repo, binary, p, w.observer);
+  });
   if (ok.includes(false)) {
     console.log(`${label}: an apply failed`);
     return EXIT.failed;
