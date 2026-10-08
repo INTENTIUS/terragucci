@@ -1,0 +1,89 @@
+---
+title: Coming from Atlantis or OpenTaco
+description: The Atlantis and OpenTaco comment commands and settings you use today, the terragucci command or key that does the same job, and what terragucci leaves out on purpose.
+claims: []
+prompt: |
+  Read https://intentius.io/terragucci/guides/coming-from-atlantis-or-opentaco/.
+  Read this repo's atlantis.yaml or digger.yml and list each setting it uses beside the terragucci key or command the page maps it to, marking the ones the page lists as absent.
+  Run `npx terragucci init --dry-run --json` and say which of those settings the defaults already cover.
+  Then write the smallest terragucci.yml for the rest, run `npx terragucci config check --json`, and open a pull request with it and the generated pipeline.
+  Do not delete atlantis.yaml or digger.yml, and do not create secrets or touch .chant/allowed_signers.
+  Never run apply, `chant approve` or `--mode apply`, and never merge.
+---
+
+## What you end up with
+
+The Atlantis or OpenTaco command and setting you know, beside what does the same in terragucci. Every row says what terragucci does today; [How terragucci compares](/terragucci/compare/) sets the products side by side.
+
+terragucci needs no server: `init` writes jobs into your forge's CI. Everything below is a comment on a pull request, a key in `terragucci.yml`, or a job the pipeline already has.
+
+## Comment commands
+
+Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note: push to the merge request or retry its job instead.
+
+| To do this | Atlantis | OpenTaco | terragucci |
+|---|---|---|---|
+| Plan what the change reaches | `atlantis plan` | `digger plan` | push to the pull request, or comment `/terragucci plan` |
+| Plan one project | `atlantis plan -d <dir>` or `-p <project>` | `digger plan -p <project>` | `/terragucci plan <root>`, the root's path from the repo root |
+| Plan one workspace | `atlantis plan -w <workspace>` | a project's `workspace` | no flag: each root is a directory with one state |
+| Pass flags to the binary | `atlantis plan -- <flags>` | a workflow step | none |
+| Apply | `atlantis apply`, before merge | `digger apply`, before merge by default | merge: the default branch's wave jobs apply ([before merge](#apply-before-or-after-merge) is a setting) |
+| Apply part of the change | `atlantis apply -d <dir>` or `-p <project>` | `digger apply -p <project>` | `/terragucci apply wave-<n>` applies the approved waves up to wave n; no single-root apply |
+| Re-run an approved apply | `atlantis apply` | `digger apply` | `/terragucci apply` on the merged pull request |
+| Lock | at plan time | `digger lock`, or at plan time | none at plan; with `apply.when: pull-request` an applying pull request locks the roots it reaches |
+| Unlock | `atlantis unlock` | `digger unlock` | `/terragucci unlock`, with `apply.when: pull-request` |
+| Import | `atlantis import <address> <id>` | none | refused; [an `import` block](#left-out-on-purpose) in the change |
+| Remove from state | `atlantis state rm <address>` | none | refused; [a `removed` block](#left-out-on-purpose) in the change |
+| Pass a failed policy | `atlantis approve_policies` | none | refused; [no override](/terragucci/reference/policy/#no-override) |
+| Approve | the forge's review | the forge's review | [`chant approve`](/terragucci/concepts/glossary/#chant) on your machine, for a wave its gate holds |
+
+A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply saying a comment never runs it. [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) lists what each command accepts.
+
+## Settings
+
+| Setting | Atlantis | OpenTaco (`digger.yml`) | terragucci (`terragucci.yml`) |
+|---|---|---|---|
+| Which directories | `projects[].dir` | `projects[].dir` | detected: every directory with a backend, `cloud` block or provider; `roots` globs to narrow |
+| What triggers a plan | `autoplan.when_modified` | `include_patterns`, `exclude_patterns` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state |
+| Binary version | `terraform_version` | the action's `terraform-version` or `opentofu-version` input | `binary` and `version`, or the pins the roots carry |
+| Order | `execution_order_group`, `depends_on` | `depends_on`, layering | waves from `terraform_remote_state` reads; `waves.canary` puts roots first; Terragrunt's dependency layers |
+| Concurrency | `parallel_plan`, `parallel_apply` | | `parallelism` |
+| Required approval | `apply_requirements: [approved]` | `apply_requirements: [approved]` | branch protection for a merge; with `apply.when: pull-request`, a reviewer other than the author approved the head |
+| Checks green | `mergeable` | `mergeable` | with `apply.when: pull-request`, no status failed or running and `terragucci/plan` passed |
+| Up to date | `undiverged` | `undiverged` | with `apply.when: pull-request`, the head contains the default branch |
+| Apply on merge | not offered | `on_commit_to_default: [digger apply]` | the default, `apply.when: merge` |
+| Merge after apply | `automerge` | `auto_merge` | `apply.merge: auto` with `apply.when: pull-request` |
+| Release locks on close | automatic | `on_pull_request_closed: [digger unlock]` | automatic: a lock whose pull request merged or closed counts as released |
+| Policy | conftest, set in the server's config | a conftest step you add | `policy`: conftest or OPA over each plan, with Rego in the repo; the base branch's key and directory decide |
+| Custom steps | `workflows` | `workflows` | none: the jobs are generated; `env` sets variables every job gets |
+| Cloud credentials | the server's environment | `aws-role-to-assume` in your workflow, over OIDC | `oidc`: a plan role and an apply role per cloud, from the forge's identity token |
+| Many repos | the server's repo config | | a control repo's `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
+| Terragrunt | a custom workflow, or terragrunt-atlantis-config | `generate_projects` with Terragrunt parsing | detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/)) |
+| Drift | drift webhooks, and an alpha API | drift detection | `drift`, a cron schedule |
+
+An empty cell means that product's docs name no such setting.
+
+## Apply before or after merge
+
+| | Atlantis | OpenTaco | terragucci |
+|---|---|---|---|
+| Default | before merge | before merge; `on_commit_to_default` applies after | after merge |
+| The other way | | `on_commit_to_default` | `apply.when: pull-request`, on GitHub and Forgejo with plain roots |
+
+[Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) sets it up. Under it, the open change's settings, gate and signers come from the default branch.
+
+## Left out on purpose
+
+| Not here | Why | Do this instead |
+|---|---|---|
+| `import` or `state rm` from a comment | a state edit from a comment skips review, and no plan or approval covers it | an `import` or `removed` block in the change: it plans, shows in the plan note and waits at the gate like any other change |
+| Passing a failed policy | a waiver from a comment lets the person asking decide | change the code, or change the policy in a reviewed pull request |
+| Approving from a comment | anyone with write access can comment | `chant approve` with your key; the approval names the wave's set digest |
+| Applying one root of a wave | an approval covers the wave's plans as one set | split the change, or `waves.canary` to send roots out first |
+| Flags at run time | a flag would change what an approval covers | the change itself, or a key in `terragucci.yml` |
+| A server or web UI | the jobs run in your CI and write to your repo and bucket | the plan note, the report artifact, and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+
+## Next
+
+- [Get your first plan note](/terragucci/getting-started/) to add terragucci next to what you run now.
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/) for the one step that differs most.
