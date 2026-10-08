@@ -50,7 +50,7 @@ describe.skipIf(!existsSync(DIST))("the bundle", () => {
     const r = runIn(control, isolated(), "reconcile", "--config", "terragucci.yml");
     expect(r.status).toBe(1);
     expect(r.stdout).toContain("github.com/acme/infra: would write new .github/workflows/terragucci.yml");
-    expect(r.stdout).toContain("gitlab.example.com/platform/network: would write new .gitlab-ci.yml");
+    expect(r.stdout).toContain("gitlab.example.com/platform/network: would write new .gitlab/terragucci.yml, new .gitlab-ci.yml");
     expect(r.stdout).toContain("codeberg.org/acme/edge: would write new .forgejo/workflows/terragucci.yml");
     expect(r.stdout).toMatch(/github\.com\/acme\/missing: FAILED/);
     expect(r.stdout).toContain("dry run: 3 of 4 would change; nothing was written");

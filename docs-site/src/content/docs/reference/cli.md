@@ -40,7 +40,7 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudou
 | `--binary` | the binary, when detection picks the wrong one: `tofu`, `terraform` or `choudoufu` |
 | `--approval` | `ledger` or `sealed`, when the config names no mode; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `--dry-run` | compute everything and write nothing |
-| `--force` | overwrite a pipeline file terragucci did not write |
+| `--force` | overwrite a pipeline file terragucci did not write; on GitLab that is `.gitlab/terragucci.yml`, never your `.gitlab-ci.yml` |
 
 A flag detection would not reach goes into a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
 

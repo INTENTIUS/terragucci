@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/add-to-a-repo/ and https://intentius.io/terragucci/getting-started/agents/.
   Set up terragucci in this repository for its forge.
   Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
-  Then run `npx terragucci init` and open a pull request with the pipeline file, chant.workspace.json, package.json and package-lock.json only.
+  Then run `npx terragucci init` and open a pull request with the pipeline files, chant.workspace.json, package.json and package-lock.json only.
   List the token, OIDC roles and required status I must set in the forge settings.
   Do not create secrets, variables or branch protection yourself.
   Never run apply, `chant approve` or `--mode apply`, and never merge.
@@ -25,7 +25,7 @@ A plan note and a `terragucci/plan` status on every pull request or merge reques
 
 | | GitHub | GitLab | Forgejo |
 |---|---|---|---|
-| Pipeline file | `.github/workflows/terragucci.yml` | `.gitlab-ci.yml` | `.forgejo/workflows/terragucci.yml` |
+| Pipeline file | `.github/workflows/terragucci.yml` | `.gitlab/terragucci.yml`, included from `.gitlab-ci.yml` | `.forgejo/workflows/terragucci.yml` |
 | Hosts `init` knows | github.com | gitlab.com, `gitlab.*` | codeberg.org, `forgejo.*`, `gitea.*` |
 | Runner | Actions enabled | one that runs Docker images | Actions enabled, a runner labelled `docker` |
 | Token | the run's `github.token` | `GITLAB_TOKEN` variable, `api` scope | the run's own token |
@@ -70,12 +70,23 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
    ```text
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
+   wrote .gitlab/terragucci.yml
    wrote .gitlab-ci.yml
    wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
-   `init` writes the whole `.gitlab-ci.yml`. If you have one, merge the generated jobs into it.
+   The jobs go in `.gitlab/terragucci.yml`. Your `.gitlab-ci.yml` stays yours:
+
+   | Your `.gitlab-ci.yml` | `init` |
+   |---|---|
+   | none | writes one that includes `.gitlab/terragucci.yml` |
+   | your own jobs | adds `- local: .gitlab/terragucci.yml` to its `include:` and keeps the rest (`updated .gitlab-ci.yml`) |
+   | an `include:` that is one value, not a list | stops and names the entry to add |
+   | its own `stages:` | stops unless the list has `.gitlab/terragucci.yml`'s stages (`check`, `plan`, `apply` and the rest) in that order, and names them |
+   | a job named like one of terragucci's (`check`, `plan`, `apply-wave-1`) | stops: GitLab would merge the two jobs |
+
+   With no `stages:` of your own, your jobs keep GitLab's defaults: `build` and `test` run before terragucci's stages, `deploy` after the apply. Top-level `variables:` and `default:` in your file reach terragucci's jobs too.
 
    </TabItem>
    <TabItem label="Forgejo">
@@ -159,7 +170,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
    ```bash
    git switch -c add-terragucci
-   git add .gitlab-ci.yml chant.workspace.json package.json package-lock.json
+   git add .gitlab .gitlab-ci.yml chant.workspace.json package.json package-lock.json
    git commit -m "Add terragucci"
    git push -u origin add-terragucci
    ```

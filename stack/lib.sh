@@ -84,7 +84,7 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     # same tag, so the pushed pipeline names the image by its tag alone and the
     # runner takes the local build. TG_KEEP_DIGESTS=1 pushes the pins as written.
     if [ -z "${TG_KEEP_DIGESTS:-}" ]; then
-      for f in .forgejo/workflows/*.yml .github/workflows/*.yml .gitlab-ci.yml; do
+      for f in .forgejo/workflows/*.yml .github/workflows/*.yml .gitlab/*.yml .gitlab-ci.yml; do
         if [ -f "$f" ]; then perl -pi -e 's#(ghcr\.io/intentius/terragucci-[a-z]+:[^@\s]+)\@sha256:[0-9a-f]{64}#$1#g' "$f"; fi
       done
     fi

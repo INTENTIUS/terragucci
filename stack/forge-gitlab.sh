@@ -6,7 +6,8 @@
 #
 # Defines the same interface as forge-github.sh.
 FORGE_TOKEN_ENV=TERRAGUCCI_GITLAB_TOKEN
-PIPELINE_FILE=.gitlab-ci.yml
+# The file holding terragucci's jobs; init adds an include of it to .gitlab-ci.yml.
+PIPELINE_FILE=.gitlab/terragucci.yml
 
 forge_load() {
   if [ -z "${TERRAGUCCI_GITLAB_TOKEN:-}" ]; then
