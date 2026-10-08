@@ -191,7 +191,7 @@ drift-overdue|the plan of a pull request says in its note that drift checks are 
 pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review|
 pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest|
 pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
-cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
+cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|418
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
@@ -5846,6 +5846,11 @@ claim_cdf_concurrency() {
   # through in turn. Both waves must apply, the records hold left-1 and
   # right-2, both writes carry If-Match, neither report lists a lock wait, and
   # nothing lock-shaped is in the bucket.
+  # Pending on #418: choudoufu 0.22.0 (and its main at fc94cceeee) rewrites
+  # the record of every instance of the estate on apply, those its plan left
+  # alone included, each under If-Match. So the wave that writes the other
+  # wave's unchanged resource second fails with a record store write
+  # conflict: nothing is overwritten, but both do not apply.
   # BREAK: the same two waves in stock OpenTofu, with the estate in one state
   # file under use_lockfile. The first wave holds the estate lock while its
   # state write is held, so the second waits for the lock and never reaches
@@ -5873,7 +5878,7 @@ claim_cdf_concurrency() {
   if [ "$bin" = tofu ]; then re="^/$CDF_RECORDS/cdf-concurrency/$estate/terraform\\.tfstate\$"; else re="^/$CDF_RECORDS/tofu-records/$estate/terraform_data/"; fi
   cdf_hold "$re" left-1,right-2 || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
   cdf_race "$work" "$bin" ""; held="$CDF_HELD"
-  log "writes held while both waves ran: $(curl -fsS "$CDF_CTL/held" | jq -c '[.[] | {seq, marker}]')"
+  log "writes held while both waves ran: $(curl -fsS "$CDF_CTL/held" | jq -c '[.[] | {seq, marker, record: (.path | split("?")[0] | split("/") | last | @base64d)}]')"
   if [ "$held" -lt 2 ]; then
     log "only $held of the two waves reached its write while the other was in flight: one waited for the other"
     for side in a b; do grep -iE 'lock' "$work/$side.log" | head -3 | sed "s/^/[$side] /" >&2 || true; done
@@ -5885,7 +5890,9 @@ claim_cdf_concurrency() {
     return $rc
   fi
   curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || { log "the proxy did not release the writes"; rc=1; }
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
   cdf_race_end "$work"
+  curl -fsS "$CDF_CTL/log" | grep "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/" | while read -r m p st c; do echo "[proxy] $m $(basename "$p" | base64 -d 2>/dev/null) $st $c"; done >&2 || true
   for side in a b; do
     [ "$(cat "$work/$side.rc")" = 0 ] || { log "the wave in checkout $side did not apply (exit $(cat "$work/$side.rc"))"; tail -20 "$work/$side.log" >&2; rc=1; }
   done
@@ -6009,7 +6016,8 @@ claim_cdf_write_race() {
   grep -qF "<Key>tofu-address</Key><Value>terraform_data.shared</Value>" <<<"$tags" || { log "the record is not tagged tofu-address=terraform_data.shared: $tags"; rc=1; }
   curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
   if [ $rc = 0 ]; then
-    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --binary choudoufu; then
+    # --layers names the root: it has no backend and no provider block, which is what tf-plan finds roots by.
+    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --layers estate --binary choudoufu; then
       log "tf-plan in checkout $loser failed"; tail -20 "$work/replan.log" >&2; rc=1
     else
       got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | select(.address == "terraform_data.shared") | .attributes[] | select(.path == "input") | "\(.before) \(.after)"][0] // "none"' "$work/$loser/terragucci-report/report.json" 2>/dev/null || echo none)"
