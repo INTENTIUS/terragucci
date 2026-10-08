@@ -58,6 +58,8 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
      </TabItem>
      <TabItem label="GitLab">
        Set the same cron under CI/CD, Schedules. `GITLAB_TOKEN` (or the `token_env` variable) needs the `api` scope.
+
+       Give the drift schedule no `TERRAGUCCI_SCHEDULE` variable. A schedule with `TERRAGUCCI_SCHEDULE` set to `comments` is the [comments schedule](/terragucci/guides/re-plan-from-a-comment/), and its pipelines run no drift job.
      </TabItem>
      <TabItem label="Forgejo">
        The same job and trigger as GitHub.

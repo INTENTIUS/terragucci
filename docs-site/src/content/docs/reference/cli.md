@@ -19,7 +19,7 @@ prompt: |
 | `publish` | publishes each changed module at a new version |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
-| `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, and pushes an agent's change; the generated pipeline runs it |
+| `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
 | `comment-apply` | reads a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; the generated pipeline runs it |
 | `pr-lock` | takes or releases a pull request's plan locks under `locks: plan`; the generated pipeline runs it |
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
@@ -159,6 +159,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
 terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
 terragucci comment --agent push --change <dir> [--policy-dir <dir>]
+terragucci comment --forge gitlab --poll --layers <a,b;c>
 ```
 
 Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`.
@@ -171,6 +172,8 @@ Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and write
 | `on` | `replan` | leaves agent comments to the agent jobs |
 | `run` | `agent` | decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`; a fork or default-branch pull request gets no agent |
 | `push` | `agent-push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them, and commits a passing patch to the pull request's head branch with the `TG_*` variables in [Environment variables](/terragucci/reference/environment/) |
+
+On GitLab, `--forge gitlab --poll` reads no event file. The generated `comments` job runs it on the comments schedule ([`comments`](/terragucci/reference/config/#keys)). It reads the notes of the merge requests updated in the last day and answers each `/terragucci` note once. Each reply carries a `<!-- terragucci:note=<id> -->` marker, and a note with one is never answered again. A note from anyone below Developer gets no reply. `plan` starts a merge request pipeline, and `apply` retries the merge commit's first apply job that did not succeed. The poll exits 1 when GitLab answers with an error.
 
 [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
 
@@ -283,7 +286,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `publish` | done | | OCI tag exists already; git tag exists with different content | | |
 | `rollout` | complete | stopped | | waiting | |
 | `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |
-| `comment`, `comment-apply` | decision written | forge error, unreadable event file | | | |
+| `comment`, `comment-apply` | decision written, or every note answered | forge error, unreadable event file | | | |
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | | |
 | `pr-merge` | merged | not merged | | | |
 | `config check` | `ok` | | problems found | | |

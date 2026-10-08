@@ -42,7 +42,10 @@ gitlab|cdf-apply|the generated pipeline for a choudoufu estate applies it on the
 gitlab|gate-wait|a wave that waits for its approval ends its job with exit code 3 and fails the terragucci/apply status with its approval command, so the pipeline ends
 gitlab|own-jobs|init adds an include to a repo with its own .gitlab-ci.yml, and the pipeline runs that repo job in its stage beside the generated check
 gitlab|pr-review|with approval: pr-review a merge request approval given before the latest push leaves the wave waiting, and one given after it applies the wave
-gitlab|approve|terragucci approve in a clone finds the waiting wave and approves its digest, and the next push applies it'
+gitlab|approve|terragucci approve in a clone finds the waiting wave and approves its digest, and the next push applies it
+gitlab|gl-comment-plan|a /terragucci plan note from a Developer starts a merge request pipeline on the next play of the comments schedule; a root that is not one is refused, a Reporter gets no reply, and a second play answers nothing again
+gitlab|gl-comment-apply|/terragucci apply on a merged merge request retries its waiting wave at the merge commit, which waits again with no approval and applies with one; an open merge request is refused
+gitlab|gl-comment-drift-schedule|a drift schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone, and the comments schedule the comments job alone'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }

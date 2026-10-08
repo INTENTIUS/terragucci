@@ -68,6 +68,8 @@ describe("validation", () => {
     [{ gate: "sometimes" }, /config\.gate/],
     [{ roots: "envs/*" }, /config\.roots must be a list of strings/],
     [{ drift: 5 }, /config\.drift must be a cron schedule or false/],
+    [{ comments: 5 }, /config\.comments must be a cron schedule or false/],
+    [{ forge: "github", comments: "*/5 * * * *" }, /config\.comments: comments is for GitLab/],
     [{ env: { A: 1 } }, /config\.env must map names to string values/],
     [{ projects: { "github.com/acme": {} } }, /must be <host>\/<owner>\/<name>/],
     [{ binary: "tofu", projects: { "github.com/a/b": {} } }, /keeps shared settings under defaults; move binary there/],
