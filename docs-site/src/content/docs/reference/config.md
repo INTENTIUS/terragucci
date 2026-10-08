@@ -16,12 +16,12 @@ With no `terragucci.yml`, `init` starts from these defaults:
 
 | Setting | Default |
 |---|---|
-| Roots | every directory whose `*.tf` or `*.tofu` files declare a backend or configure a provider |
+| Roots | every directory whose `*.tf` or `*.tofu` files declare a backend or configure a provider, or, in a Terragrunt repo, each unit `terragrunt find` lists |
 | Binary | `.opentofu-version` gives `tofu`, `.terraform-version` gives `terraform`, then `.tofu` files, then the path, then `tofu` |
 | Version | the one `required_version` pins exactly, or terragucci's default for the binary |
 | Forge | from a workflow directory already in the repo, or the host of its `origin` remote |
 | Order | a root that reads another's state through `terraform_remote_state` applies after it |
-| Gate | `on-destroy`, so a wave waits for an approval only when it destroys something |
+| Gate | `on-destroy`, so a wave waits for an approval only when it destroys or replaces something |
 | Drift | off |
 | Runtime | your forge's CI |
 | Reports | a CI artifact, linked from the pull-request note |
@@ -173,7 +173,17 @@ apply:
 | `undiverged` | its head to contain the default branch as it is now |
 | `checks` | every status and check on its head to have passed |
 
-Leaving an entry out drops that check, and `requires: []` drops all four. Three checks stay whatever `requires` lists: `terragucci/plan` passed on the head (a policy denial fails it), the change leaves the pipeline file alone, and no other open pull request holds a lock on a root it reaches. On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status that only the apply posts, such as `terragucci/apply`, blocks every apply; leave it out of branch protection.
+Leaving an entry out drops that check, and `requires: []` drops all four. These stay whatever `requires` lists:
+
+| Always checked | The open pull request needs |
+|---|---|
+| `terragucci/plan` | to have passed on its head; a policy denial fails it |
+| the pipeline file | to be left alone by the change |
+| locks | no other open pull request holding a lock on a root it reaches |
+
+:::caution
+On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status that only the apply posts, such as `terragucci/apply`, blocks every apply. Leave it out of branch protection.
+:::
 
 Gate, approval mode, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check an apply comment must pass.
 
