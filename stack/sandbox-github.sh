@@ -11,9 +11,9 @@
 #                                     the apply
 #   stack/sandbox-github.sh change <s>     open a pull request with a scenario
 #                                     (one-root, module-bump, destroy, replace,
-#                                     unformatted, orders-note, or oidc once
-#                                     prove has set main up) and wait for its
-#                                     plan
+#                                     unformatted, orders-note, refuse, or oidc
+#                                     and override once prove has set main up)
+#                                     and wait for its plan
 #   stack/sandbox-github.sh merge <s>      merge it, listing this run's signer
 #                                     key in .chant/allowed_signers first, and
 #                                     show which wave waits or refuses
@@ -30,16 +30,17 @@
 #   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
 #                                     the docs show, screenshotted into
 #                                     docs-site as step `github`, then reset
-#   stack/sandbox-github.sh prove [--record FILE]
-#                                     from a reset sandbox: turn on locks: plan,
-#                                     a policy and oidc on main, run the claims
-#                                     (affected, comment-plan, pr-lock, policy,
-#                                     oidc, gate-wait), print a verdict for
-#                                     each and reset; --record merges them into
-#                                     FILE (docs-site/src/data/validation.json)
+#   stack/sandbox-github.sh prove [merge|pull-request|modules] [--record FILE]
+#                                     from a reset sandbox, each phase (merge
+#                                     when none is named) sets main up
+#                                     for its claims and runs them, and the
+#                                     sandbox is reset after each; prints a
+#                                     verdict per claim; --record merges them
+#                                     into FILE (docs-site/src/data/validation.json)
 #   stack/sandbox-github.sh reset          close the pull requests and issues,
-#                                     delete every other branch and put main
-#                                     back to its first commit
+#                                     delete every other branch, every tag and
+#                                     every secret, and put main back to its
+#                                     first commit
 #   stack/sandbox-github.sh shot <view>|all|list
 #                                     screenshot a page a step recorded, logged
 #                                     out, light and dark
@@ -311,7 +312,9 @@ title_of() { # scenario
     unformatted) echo "Add an owner to dev orders, without running tofu fmt" ;;
     oidc) echo "Plan and apply the OIDC probe again" ;;
     orders-note) echo "Say who owns dev orders" ;;
-    *) fail "unknown scenario '$1' (one-root, module-bump, destroy, replace, unformatted, oidc, orders-note)" ;;
+    override) echo "Send the OIDC probe out under a policy override" ;;
+    refuse) echo "Stop keeping records for staging payments" ;;
+    *) fail "unknown scenario '$1' (one-root, module-bump, destroy, replace, unformatted, oidc, orders-note, override, refuse)" ;;
   esac
 }
 
@@ -383,7 +386,7 @@ pr_for() { # scenario, state -> prints the pull request number
 
 # The run's first failed job: the wave that stopped.
 stopped_job() { # run id -> "job-id<TAB>job-name"
-  gh run view "$1" -R "$REPO" --json jobs -q '[.jobs[] | select(.conclusion == "failure")][0] | "\(.databaseId)\t\(.name)"'
+  gh run view "$1" -R "$REPO" --json jobs -q '[.jobs[] | select(.conclusion == "failure" and .name != "explain-refusal")][0] | "\(.databaseId)\t\(.name)"'
 }
 
 # ── the signer ───────────────────────────────────────────────────────────────
@@ -401,7 +404,8 @@ new_key() {
 # commit skips CI: it changes no root.
 ensure_signer() {
   [ -f "$KEY" ] || new_key
-  local line tree="$WORK/signer" sha
+  local line tree sha
+  tree="$(mktemp -d "$WORK/signer.XXXXXX")"
   line="$SIGNER $(cut -d' ' -f1,2 "$KEY.pub")"
   clone_main "$tree"
   if grep -qxF "$line" "$tree/.chant/allowed_signers" 2>/dev/null; then return 0; fi
@@ -416,7 +420,8 @@ ensure_signer() {
 # After a green apply on main: the state the apply left, committed to main.
 # The commit skips CI; the next push plans against it.
 record_state() {
-  local tree="$WORK/state" sha
+  local tree sha
+  tree="$(mktemp -d "$WORK/state.XXXXXX")"
   clone_main "$tree"
   apply_state "$tree"
   if [ -z "$(git -C "$tree" status --porcelain)" ]; then log "the state on main is current"; return 0; fi
@@ -456,6 +461,14 @@ PROBE=envs/dev/oidc
 PLAN_ROLE=arn:aws:iam::000000000000:role/terragucci-sandbox-plan
 APPLY_ROLE=arn:aws:iam::000000000000:role/terragucci-sandbox-apply
 DENIAL="would be replaced, and a replaced table starts empty"
+# The probe input the second policy rule holds for an override, the principal
+# policy.override lists, and one it does not (the signers file lists both).
+HELD="held-for-an-override"
+STRANGER=sandbox-stranger
+HOLD="is held until someone policy.override lists lets it through"
+# The secret the agent comment's push job reads: this run's token, set by
+# prove and deleted by reset.
+AGENT_SECRET=SANDBOX_AGENT_TOKEN
 
 # forge|claim|what it shows, as the validation page lists them.
 PROVE_CLAIMS='github.com|affected|a pull request that changes one root plans that root alone, and its plan note covers it alone
@@ -463,7 +476,22 @@ github.com|comment-plan|/terragucci plan on a pull request re-plans it in a run 
 github.com|pr-lock|with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder
 github.com|policy|a pull request that replaces a table fails terragucci/plan under the Rego policy on main, and its plan note names the denial
 github.com|oidc|the plan job holds a GitHub-signed OIDC token for this repo and run, for the plan role, and the apply job on main one for the apply role; with no cloud account the token is checked, not traded with STS
-github.com|gate-wait|a merged destroy stops its wave with the approve command, and after a sealed chant approve the re-run applies it'
+github.com|gate-wait|a merged destroy stops its wave with the approve command, and after a sealed chant approve the re-run applies it
+github.com|note-footer|the plan note ends with the terragucci footer, and its taco image answers 200 with a PNG
+github.com|tips|the plan note counts the tips the run report holds, and each tip in the report names its rule and its page
+github.com|comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed
+github.com|comment-apply|/terragucci apply on a merged pull request applies it again from its merge commit, and while its wave waits it applies nothing and gives the approve command; on an open pull request it is refused
+github.com|policy-override|a wave the policy denies applies once the approver policy.override lists overrides its plan with terragucci override, and the report names the override; an override by someone it does not list counts for nothing
+github.com|apply-serial|two merges pushed back to back apply one at a time in the order they arrived, none is cancelled, and each commit ends with a terragucci/apply success
+github.com|explain-refusal|after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step
+github.com|approve-command|terragucci approve in a clone approves the waiting wave with no digest copied, and the re-run applies it; with --dry-run it records nothing
+github.com|pr-apply-lock|with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock
+github.com|pr-apply-stale|a comment on an approved pull request whose head is behind main is refused as not up to date, and nothing applies
+github.com|pr-apply|with apply.merge: auto a comment on an open, approved pull request applies its head in every wave, and pr-merge merges it with the job token
+github.com|pr-apply-token|with apply.merge: auto and merge_token_env the merge is made with that token, so the merge commit starts its own run on main
+github.com|publish|with modules.publish: git-tags a conventional commit to a module on main makes the publish job push the module tag
+github.com|rollout|once the roots pin that tag and the next version is published, terragucci rollout --mode apply opens one pull request for the canary wave that moves those pins alone
+github.com|drift-issue|the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it'
 
 OVERRIDE_LOCAL='# The sandbox keeps this root'"'"'s state in the repo, beside its code.
 terraform {
@@ -550,7 +578,8 @@ if (!subs.includes(c.sub)) found.problems.push(`sub is ${c.sub}, not ${subs.join
 const want = { iss: ISS, aud: "sts.amazonaws.com", repository: e.GITHUB_REPOSITORY, repository_id: e.GITHUB_REPOSITORY_ID, run_id: e.GITHUB_RUN_ID, sha: e.GITHUB_SHA, event_name: e.GITHUB_EVENT_NAME };
 for (const [k, v] of Object.entries(want)) if (String(c[k]) !== String(v)) found.problems.push(`${k} is ${c[k]}, not ${v}`);
 found.role = e.AWS_ROLE_ARN.split("/").pop();
-if (found.role !== "terragucci-sandbox-" + kind) found.problems.push(`a ${kind} job holds ${found.role}`);
+// The drift job plans, so it holds the plan role.
+if (found.role !== "terragucci-sandbox-" + (kind === "drift" ? "plan" : kind)) found.problems.push(`a ${kind} job holds ${found.role}`);
 Object.assign(found, { iss: c.iss, aud: c.aud, sub: c.sub, sha: c.sha });
 done(found.problems.length ? 1 : 0);
 JS
@@ -567,9 +596,16 @@ locks: plan
 policy:
   engine: conftest
   path: policy
+  override: [$SIGNER]
 oidc:
   plan_role: $PLAN_ROLE
   apply_role: $APPLY_ROLE
+agent:
+  via: forge
+  token_env: $AGENT_SECRET
+  comment:
+    command: sh .agent/stand-in.sh
+    timeout: 10
 YML
   mkdir -p "$tree/policy"
   cat > "$tree/policy/replace.rego" <<REGO
@@ -584,16 +620,75 @@ deny contains msg if {
 	"create" in rc.change.actions
 	msg := sprintf("%s $DENIAL", [rc.address])
 }
+
+# The OIDC probe's input, set to this value, waits for an override.
+deny contains msg if {
+	some rc in input.resource_changes
+	rc.type == "terraform_data"
+	"update" in rc.change.actions
+	rc.change.after.input == "$HELD"
+	msg := sprintf("%s $HOLD", [rc.address])
+}
 REGO
   probe_root "$tree"
+  # A stand-in agent for the /terragucci agent comment: no model, one edit.
+  mkdir -p "$tree/.agent"
+  cat > "$tree/.agent/stand-in.sh" <<'SH'
+#!/bin/sh
+# The sandbox's stand-in agent: the prompt comes on stdin, and it makes one
+# edit with no model. An ask that says "touch ci" also edits the pipeline,
+# which terragucci must refuse to push.
+ask="$(sed -n '/^<ask>$/,/^<\/ask>$/p')"
+echo "stand-in agent asked: $ask"
+printf '\n# The orders team is on call for this root.\n' >> envs/dev/orders/main.tf
+case "$ask" in
+  *"touch ci"*) echo "# the stand-in agent was here" >> .github/workflows/terragucci.yml ;;
+esac
+SH
+  # Both principals sign with this run's key; policy.override lists one.
+  mkdir -p "$tree/.chant"
+  printf '%s %s\n%s %s\n' "$SIGNER" "$(cut -d' ' -f1,2 "$KEY.pub")" "$STRANGER" "$(cut -d' ' -f1,2 "$KEY.pub")" > "$tree/.chant/allowed_signers"
   (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-init.log" 2>&1) \
     || { cat "$DIR/logs/prove-init.log" >&2; fail "terragucci init failed"; }
   grep -q '^  pr-lock:' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no pr-lock job"
   grep -q 'id-token: write' "$tree/.github/workflows/terragucci.yml" || fail "init asked for no OIDC token"
+  grep -q '^  agent-push:' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no agent-push job"
+  explain_job >> "$tree/.github/workflows/terragucci.yml"
+  gh secret set "$AGENT_SECRET" -R "$REPO" --body "$GH_TOKEN" >/dev/null || fail "could not set the $AGENT_SECRET secret"
   apply_state "$tree"
-  commit "$tree" "Turn on plan locks, a policy and OIDC roles, with a root that checks each job's token [skip ci]"
+  commit "$tree" "Turn on plan locks, a policy with overrides, OIDC roles and the agent comment, with a root that checks each job's token [skip ci]"
   sha="$(push "$tree" main)"
-  log "main at ${sha:0:8}: locks: plan, policy/replace.rego, oidc and $PROBE"
+  log "main at ${sha:0:8}: locks: plan, policy/replace.rego, oidc, agent, explain-refusal and $PROBE"
+}
+
+# The explain-refusal job of the agent-refused-wave guide's GitHub tab, for
+# wave 4, with the release pinned. Its last step there is
+# anthropics/claude-code-action, which needs a model key the sandbox does not
+# have, so a stand-in prints the summary the agent would read from.
+explain_job() {
+  cat <<YML
+  explain-refusal:
+    needs: apply-wave-4
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: terragucci-report-apply-wave-4, path: reports }
+      - run: >
+          npx -y @intentius/terragucci@$RELEASE respond wave-refused
+          --approved reports/approved --current reports/current --wave 4
+          --json > refusal.json
+      - name: Stand-in for the agent, which reads refusal.json
+        run: |
+          echo "refused-wave summary:"
+          jq -r .results.text refusal.json
+          jq -r '"roots that moved: " + ([.results.data.roots[].root] | join(", "))' refusal.json
+YML
 }
 
 head_of() { # pull request -> its head commit
@@ -636,6 +731,686 @@ replies_of() { # pull request -> terragucci's replies, one per line
   gh api "repos/$REPO/issues/$1/comments?per_page=100" -q '.[] | select(.body | startswith("terragucci: ")) | .body | gsub("\n"; " ")'
 }
 
+reply_count() { # pull request -> how many replies terragucci posted on it
+  gh api "repos/$REPO/issues/$1/comments?per_page=100" -q '[.[] | select(.body | startswith("terragucci: "))] | length'
+}
+
+# Comment on a pull request, wait for the run the comment starts and then for
+# terragucci's reply. Prints every reply posted since the comment, oldest
+# first, each on one line: another run (pr-lock's, after a push) may reply
+# too. The run's id goes to $DIR/last-run. Run it in a subshell: wait_run
+# fails the shell it is in.
+say() { # pull request, text
+  local before since i
+  before="$(reply_count "$1")"; since="$(now)"
+  gh pr comment "$1" -R "$REPO" --body "$2" >/dev/null || fail "could not comment on pull request $1"
+  log "commented '$2' on pull request $1"
+  wait_run issue_comment "$since" >&2
+  for i in $(seq 1 12); do
+    [ "$(reply_count "$1")" -gt "$before" ] && break
+    sleep 5
+  done
+  gh api "repos/$REPO/issues/$1/comments?per_page=100" \
+    -q '[.[] | select((.body | startswith("terragucci: ")) and .created_at >= "'"$since"'") | .body | gsub("\n"; " ")] | join(" || ")'
+}
+
+# Run a run's failed jobs again and wait for them. Prints its conclusion.
+rerun() { # run id
+  local i
+  gh run rerun "$1" -R "$REPO" --failed >/dev/null || { echo none; return 0; }
+  for i in $(seq 1 30); do
+    [ "$(gh run view "$1" -R "$REPO" --json status -q .status)" != completed ] && break
+    sleep 2
+  done
+  log "run $1 again…"
+  gh run watch "$1" -R "$REPO" --interval 10 >"$DIR/logs/watch-$1-rerun.log" 2>&1 || true
+  gh run view "$1" -R "$REPO" --json conclusion -q .conclusion
+}
+
+# A job of a run's latest attempt: its conclusion, or its log.
+job_conclusion() { # run id, job name
+  gh run view "$1" -R "$REPO" --json jobs -q "[.jobs[] | select(.name == \"$2\")][0].conclusion // \"none\"" 2>/dev/null || echo none
+}
+job_log() { # run id, job name -> the log file's path (empty file when there is none)
+  local id
+  id="$(gh run view "$1" -R "$REPO" --json jobs -q "[.jobs[] | select(.name == \"$2\")][0].databaseId // empty" 2>/dev/null || true)"
+  if [ -n "$id" ]; then save_job_log "$id" "$1-$2" 2>/dev/null; else : > "$DIR/logs/$1-$2.log"; fi
+  echo "$DIR/logs/$1-$2.log"
+}
+
+# One file from the newest artifact of that name a run kept: a re-run keeps
+# another beside the first.
+artifact_file() { # run id, artifact name, path inside it -> the local path, empty when there is none
+  local id d="$WORK/artifact-$1-$2"
+  id="$(gh api "repos/$REPO/actions/runs/$1/artifacts?per_page=100" -q "[.artifacts[] | select(.name == \"$2\")] | sort_by(.created_at) | last | .id // empty" 2>/dev/null || true)"
+  [ -n "$id" ] || return 0
+  mkdir -p "$d"
+  gh api "repos/$REPO/actions/artifacts/$id/zip" > "$d.zip" 2>/dev/null || return 0
+  (cd "$d" && unzip -o -q "$d.zip") 2>/dev/null || return 0
+  [ ! -f "$d/$3" ] || echo "$d/$3"
+}
+
+# terragucci of the release, in a fresh clone of the sandbox with chant on the
+# path, as an approver runs it. Prints what it printed.
+approver() { # clone dir, terragucci arguments...
+  local dir="$1"; shift
+  git clone -q --no-single-branch "$GIT_URL" "$dir" || fail "could not clone $REPO"
+  git -C "$dir" config user.name "$SIGNER"
+  git -C "$dir" config user.email "$SIGNER@terragucci.local"
+  git -C "$dir" config commit.gpgsign false
+  (cd "$dir" && PATH="$HERE/../node_modules/.bin:$PATH" npx -y "@intentius/terragucci@$RELEASE" "$@" 2>&1) || true
+}
+
+# Lines on a ledger file of chant/lifecycle, as origin has it now.
+ledger_lines() { # clone dir, path
+  git -C "$1" fetch -q origin chant/lifecycle 2>/dev/null || true
+  git -C "$1" show "origin/chant/lifecycle:$2" 2>/dev/null | wc -l | tr -d ' '
+}
+
+# ── the phases prove runs ────────────────────────────────────────────────────
+
+verdict() { # claim, pass|fail, what was seen
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$WORK/verdicts"
+  log "claim $1: $2 ($3)"
+}
+# Each step runs as its own command; a step that fails fails the claims that
+# need it, and the rest still run.
+step() { "$0" "$@" >"$DIR/logs/prove-$1-${2:-}.out"; }
+
+# The merge phase: main as prove_main sets it, applying after merge.
+prove_merge() {
+  prove_main
+
+  # affected: one-root changes dev orders alone.
+  if step change one-root; then
+    a="$(pr_for one-root open)"; head_a="$(head_of "$a")"
+    roots="$(note_of "$a" | head -1 | sed -n 's/^<!-- terragucci:plan roots=\(.*\) -->$/\1/p')"
+    plan="$(status_on "$head_a" terragucci/plan)"
+    if [ "$roots" = envs/dev/orders ] && [[ "$plan" == "success 1 roots,"* ]]; then
+      verdict affected pass "pull request $a: roots=$roots, terragucci/plan $plan"
+    else
+      verdict affected fail "pull request $a: roots=${roots:-none}, terragucci/plan ${plan:-none}"
+    fi
+  else
+    a="" head_a=""
+    verdict affected fail "change one-root failed"
+  fi
+
+  # note-footer: the one-root note's last line is the taco footer, and its
+  # image is a PNG. tips: the note counts the tips its run's report holds.
+  if [ -n "$a" ]; then
+    note="$(note_of "$a")"
+    footer="$(printf '%s\n' "$note" | sed '/^[[:space:]]*$/d' | tail -1)"
+    img="$(grep -o 'src="[^"]*"' <<<"$footer" | head -1 | sed 's/^src="//; s/"$//' || true)"
+    got="none" magic=""
+    if [ -n "$img" ]; then
+      got="$(curl -sS -o "$WORK/taco.png" -w '%{http_code} %{content_type}' "$img" 2>/dev/null || true)"
+      magic="$(head -c 8 "$WORK/taco.png" 2>/dev/null | od -An -tx1 | tr -d ' \n' || true)"
+    fi
+    if [[ "$footer" == "<sub><img "*"Posted by [terragucci]("*"</sub>" ]] && [[ "$got" == "200 image/png"* ]] && [ "$magic" = 89504e470d0a1a0a ]; then
+      verdict note-footer pass "pull request $a: the last line is the footer; $img answers $got with a PNG"
+    else
+      verdict note-footer fail "pull request $a: last line ${footer:-none}; ${img:-no image} answers ${got:-nothing}"
+    fi
+    run="$(gh run list -R "$REPO" --commit "$head_a" --event pull_request -L 1 --json databaseId -q '.[0].databaseId // empty' || true)"
+    report="$(artifact_file "${run:-0}" terragucci-report report.json)"
+    counted="$(sed -n 's/^\([0-9][0-9]*\) tips\{0,1\} on how the roots are set up.*/\1/p' <<<"$note" | head -1)"
+    tips="$( [ -z "$report" ] || jq '[.tips // [] | .[] | select(.rule and (.url | startswith("https://")))] | length' "$report" 2>/dev/null || true)"
+    rules="$( [ -z "$report" ] || jq -r '[.tips // [] | .[].rule] | unique | join(", ")' "$report" 2>/dev/null || true)"
+    if [ -n "$counted" ] && [ "${tips:-0}" -gt 0 ] && [ "$counted" = "$tips" ]; then
+      verdict tips pass "pull request $a: the note counts $counted tip(s); the report names $rules, each with its page"
+    else
+      verdict tips fail "pull request $a: the note counts ${counted:-no} tips; the report of run ${run:-none} holds ${tips:-no} with a rule and page"
+    fi
+  else
+    verdict note-footer fail "no one-root pull request"
+    verdict tips fail "no one-root pull request"
+  fi
+
+  # comment-plan: the comment's own run re-plans, and the note is edited after it.
+  if [ -n "$a" ]; then
+    since="$(now)"
+    if step plan-comment one-root; then
+      run="$(cat "$DIR/last-run")"
+      replan="$(gh run view "$run" -R "$REPO" --json jobs -q '[.jobs[] | select(.name == "replan")][0].conclusion // "none"')"
+      edited="$(gh api "repos/$REPO/issues/$a/comments?per_page=100" -q '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | first | .updated_at // empty')"
+      if [ "$replan" = success ] && [[ "$edited" > "$since" || "$edited" == "$since" ]]; then
+        verdict comment-plan pass "run $run: replan $replan, the note edited at $edited"
+      else
+        verdict comment-plan fail "run $run: replan $replan, the note edited at ${edited:-never} (comment at $since)"
+      fi
+    else
+      verdict comment-plan fail "plan-comment one-root failed"
+    fi
+  else
+    verdict comment-plan fail "no one-root pull request to comment on"
+  fi
+
+  # pr-lock: one-root holds dev orders; orders-note reaches it too. (The
+  # check job of unformatted pushes its format with the job's token, which
+  # starts no pr-lock run, so that pull request may never be answered.)
+  if [ -n "$a" ]; then
+    held="$(wait_status "$head_a" terragucci/lock success)"
+    if step change orders-note; then
+      b="$(pr_for orders-note open)"
+      locked="$(wait_status "$(head_of "$b")" terragucci/lock failure)"
+      reply="$(replies_of "$b" | grep -F "is locked by pull request $a" | head -1 || true)"
+      # shellcheck disable=SC2016 # the reply quotes the root in backticks
+      if [ "$held" = "success holds envs/dev/orders" ] && [ "${locked%% *}" = failure ] && grep -qF '`envs/dev/orders`' <<<"$reply"; then
+        verdict pr-lock pass "pull request $a: terragucci/lock $held; pull request $b: terragucci/lock $locked; $reply"
+      else
+        verdict pr-lock fail "pull request $a: terragucci/lock ${held:-none}; pull request $b: terragucci/lock ${locked:-none}; reply: ${reply:-none}"
+      fi
+    else
+      verdict pr-lock fail "change orders-note failed"
+    fi
+  else
+    verdict pr-lock fail "no one-root pull request to hold the lock"
+  fi
+
+  # comment-agent: on the orders-note pull request, the stand-in agent's
+  # edit is pushed as one commit on its head, which plans again; an ask that
+  # also edits the pipeline is refused and the branch stays where it is.
+  if [ -n "${b:-}" ]; then
+    before="$(head_of "$b")"
+    asked="$( (say "$b" "/terragucci agent say who is on call for dev orders") || true)"
+    pushed="$(head_of "$b")"
+    parent="$(gh api "repos/$REPO/commits/$pushed" -q '.parents[0].sha' 2>/dev/null || true)"
+    replanned="none"
+    [ "$pushed" = "$before" ] || replanned="$(wait_status "$pushed" terragucci/plan success)"
+    touched="$( (say "$b" "/terragucci agent touch ci and say who is on call") || true)"
+    after="$(head_of "$b")"
+    if [ "$parent" = "$before" ] && grep -qF "/commit/$pushed" <<<"$asked" && [ "${replanned%% *}" = success ] \
+      && [ "$after" = "$pushed" ] && grep -qF '.github/workflows/terragucci.yml' <<<"$touched"; then
+      verdict comment-agent pass "pull request $b: ${asked#terragucci: }; terragucci/plan on ${pushed:0:8}: $replanned; the ask that touches CI: ${touched#terragucci: }"
+    else
+      verdict comment-agent fail "pull request $b: head ${before:0:8} then ${pushed:0:8} (parent ${parent:0:8}) then ${after:0:8}; reply: ${asked:-none}; terragucci/plan: $replanned; the ask that touches CI: ${touched:-no reply}"
+    fi
+  else
+    verdict comment-agent fail "no orders-note pull request to ask on"
+  fi
+
+  # policy: replace plans a replaced table, which main's policy denies. The
+  # step's plan run fails, which is the point.
+  step change replace || true
+  p="$(pr_for replace open)"
+  if [ -n "$p" ]; then
+    plan="$(status_on "$(head_of "$p")" terragucci/plan)"
+    denied="$(note_of "$p" | grep -F "$DENIAL" | head -1 || true)"
+    if [ "${plan%% *}" = failure ] && [ -n "$denied" ]; then
+      verdict policy pass "pull request $p: terragucci/plan $plan; the note: $denied"
+    else
+      verdict policy fail "pull request $p: terragucci/plan ${plan:-none}; the note names no denial"
+    fi
+  else
+    verdict policy fail "change replace opened no pull request"
+  fi
+
+  # oidc: the probe root's plan on a pull request, then its apply on main.
+  if step change oidc; then
+    o="$(pr_for oidc open)"
+    run="$(gh run list -R "$REPO" --commit "$(head_of "$o")" --event pull_request -L 1 --json databaseId -q '.[0].databaseId // empty')"
+    planned="$(probe_found "$run" plan)"
+    applied=""
+    if step merge oidc; then applied="$(probe_found "$(cat "$DIR/last-run")" apply)"; fi
+    if jq -e '.verified and .problems == []' >/dev/null 2>&1 <<<"$planned" && jq -e '.verified and .problems == []' >/dev/null 2>&1 <<<"$applied"; then
+      verdict oidc pass "$(jq -r '"plan job: \(.role), \(.sub), \(.aud)"' <<<"$planned"); $(jq -r '"apply job: \(.role), \(.sub)"' <<<"$applied")"
+    else
+      verdict oidc fail "pull request $o, plan job: ${planned:-nothing found}; apply job: ${applied:-nothing found}"
+    fi
+  else
+    verdict oidc fail "change oidc failed"
+  fi
+
+  # comment-apply, first part: /terragucci apply on the merged oidc pull
+  # request runs its apply again from the merge commit; on the open one-root
+  # pull request it is refused. The third part waits with the destroy below.
+  ca_merged="" ca_open="" ca_seen=""
+  if [ -n "${o:-}" ] && [ "$(gh pr view "$o" -R "$REPO" --json state -q .state 2>/dev/null || true)" = MERGED ]; then
+    merged_at="$(gh pr view "$o" -R "$REPO" --json mergeCommit -q .mergeCommit.oid)"
+    r="$( (say "$o" "/terragucci apply") || true)"
+    run="$(cat "$DIR/last-run")"
+    job="$(job_conclusion "$run" apply-comment)"
+    if [ "$job" = success ] && grep -qF "applied wave 1, 2, 3, 4 of pull request $o at ${merged_at:0:8}" <<<"$r" && grep -qF "/actions/runs/$run" <<<"$r"; then
+      ca_merged="merged pull request $o: ${r#terragucci: }"
+    fi
+    ca_seen="merged pull request $o: apply-comment $job, reply ${r:-none}"
+  fi
+  if [ -n "$a" ]; then
+    r="$( (say "$a" "/terragucci apply") || true)"
+    grep -qF "pull request $a is not merged" <<<"$r" && ca_open="open pull request $a: ${r#terragucci: }"
+    ca_seen="$ca_seen; open pull request $a: reply ${r:-none}"
+  fi
+
+  # policy-override: the merged override scenario's wave 1 is denied; an
+  # override by a principal policy.override does not list counts for
+  # nothing; one by the listed principal lets the re-run apply it, and the
+  # report names the override.
+  reason="the sandbox proves the override"
+  if step change override; then
+    po="$(pr_for override open)"
+    step merge override || true
+    run="$(cat "$DIR/last-run")"
+    first="$(job_conclusion "$run" apply-wave-1)"
+    d="$WORK/override-rules"
+    git clone -q --no-single-branch "$GIT_URL" "$d" 2>/dev/null || true
+    rules="$(git -C "$d" show origin/chant/lifecycle:_gates/policy-override.jsonl 2>/dev/null \
+      | jq -rs --arg g "$PROBE" '[.[] | select(.kind == "pending" and .gate == $g)] | last | .rules // [] | join(",")' 2>/dev/null || true)"
+    stranger="" listed="" second="none" third="none" named=""
+    if [ "$first" = failure ] && [ -n "$rules" ]; then
+      stranger="$(approver "$WORK/override-stranger" override "$PROBE" --rule "$rules" --reason "$reason" --actor "$STRANGER" --sign "$KEY")"
+      printf '%s\n' "$stranger" > "$DIR/logs/override-stranger.log"
+      second="$(rerun "$run")"
+      grep -qF "$STRANGER is not listed under policy.override at base" "$(job_log "$run" apply-wave-1)" && refused=1 || refused=""
+      listed="$(approver "$WORK/override-listed" override "$PROBE" --rule "$rules" --reason "$reason" --actor "$SIGNER" --sign "$KEY")"
+      printf '%s\n' "$listed" > "$DIR/logs/override-listed.log"
+      third="$(rerun "$run")"
+      report="$(artifact_file "$run" terragucci-report-apply-wave-1 report.json)"
+      [ -z "$report" ] || named="$(jq -r --arg r "$PROBE" --arg s "$SIGNER" --arg why "$reason" '
+        (.roots[] | select(.path == $r) | .policy) as $p
+        | if $p.result == "denied" and $p.override.by == $s and $p.override.reason == $why and ($p.override.rules | length > 0)
+             and ($p.override.plan_digest | test("sha256:")) and (.policy.overridden == [$r])
+          then "\($p.override.by), rules \($p.override.rules | join(", ")), plan \($p.override.plan_digest[0:24])…" else empty end' "$report" 2>/dev/null || true)"
+      [ "$third" != success ] || ( record_state ) || log "could not record the state after the override"
+    fi
+    if [ "$first" = failure ] && [ "$second" = failure ] && [ -n "${refused:-}" ] && [ "$third" = success ] && [ -n "$named" ]; then
+      verdict policy-override pass "pull request $po: run $run denied wave 1 ($rules); after $STRANGER's override it was denied again as not listed; after $SIGNER's it applied, and the report names the override by $named"
+    else
+      verdict policy-override fail "pull request ${po:-none}: run $run wave 1 $first; rules ${rules:-none}; after $STRANGER: $second (not listed named: ${refused:-no}); after $SIGNER: $third; report: ${named:-no override named}"
+    fi
+  else
+    verdict policy-override fail "change override failed"
+  fi
+
+  # apply-serial: module-bump merges, and once its wave 1 is applying the
+  # orders-note pull request merges too. No apply of one run overlaps one of
+  # the other, none is cancelled, and each commit ends with one
+  # terragucci/apply success.
+  if [ -n "${b:-}" ] && step change module-bump; then
+    m="$(pr_for module-bump open)"
+    ( ensure_signer ) || true
+    since="$(now)"
+    gh pr merge "$m" -R "$REPO" --squash --admin >/dev/null 2>&1 || true
+    sha1="$(gh pr view "$m" -R "$REPO" --json mergeCommit -q '.mergeCommit.oid // empty' || true)"
+    run1="" run2="" sha2="" applying=""
+    # The second merge waits until the first run's wave 1 is applying.
+    for _ in $(seq 1 100); do
+      [ -n "$run1" ] || run1="$(gh run list -R "$REPO" --commit "$sha1" --event push -L 1 --json databaseId -q '.[0].databaseId // empty' 2>/dev/null || true)"
+      [ -z "$run1" ] || applying="$(gh api "repos/$REPO/actions/runs/$run1/jobs?per_page=100" \
+        -q '[.jobs[] | select(.name == "apply-wave-1") | .steps[]? | select(.name | startswith("Apply wave")) | .status] | first // ""' 2>/dev/null || true)"
+      case "$applying" in in_progress|completed) break ;; esac
+      sleep 3
+    done
+    log "run ${run1:-none} on ${sha1:0:8} is applying wave 1; merging pull request $b"
+    gh pr merge "$b" -R "$REPO" --squash --admin >/dev/null 2>&1 || true
+    sha2="$(gh pr view "$b" -R "$REPO" --json mergeCommit -q '.mergeCommit.oid // empty' || true)"
+    ( wait_run push "$since" "$sha2" ) >/dev/null 2>&1 || true
+    run2="$(gh run list -R "$REPO" --commit "$sha2" --event push -L 1 --json databaseId -q '.[0].databaseId // empty' 2>/dev/null || true)"
+    [ -z "$run1" ] || gh run watch "$run1" -R "$REPO" --interval 10 >/dev/null 2>&1 || true
+    spans="$(for r in $run1 $run2; do
+      gh api "repos/$REPO/actions/runs/$r/jobs?per_page=100" | jq -c --arg r "$r" '.jobs[] | select(.name | startswith("apply-wave-"))
+        | {run: $r, job: .name, conclusion, steps: [.steps[] | select(.name | startswith("Apply wave")) | select(.started_at != null and .completed_at != null)]}
+        | select(.steps | length > 0) | {run, job, conclusion, start: .steps[0].started_at, end: .steps[0].completed_at}'
+    done | jq -s . 2>/dev/null || echo '[]')"
+    overlaps="$(jq '[.[] as $x | .[] as $y | select($x.run < $y.run and $x.start < $y.end and $y.start < $x.end)] | length' <<<"$spans")"
+    cancelled="$(for r in $run1 $run2; do gh run view "$r" -R "$REPO" --json jobs -q '.jobs[] | select(.conclusion == "cancelled") | .name'; done | tr '\n' ' ')"
+    first_order="$(jq -r --arg a "$run1" --arg b "$run2" '([.[] | select(.run == $a and .job == "apply-wave-1")][0].start) < ([.[] | select(.run == $b and .job == "apply-wave-1")][0].start // "~")' <<<"$spans")"
+    c1="$(gh run view "$run1" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
+    c2="$(gh run view "$run2" -R "$REPO" --json conclusion -q .conclusion 2>/dev/null || echo none)"
+    s1="$(status_on "$sha1" terragucci/apply)"; s2="$(status_on "$sha2" terragucci/apply)"
+    ran="$(jq -r 'map("\(.run)/\(.job) \(.start[11:19])-\(.end[11:19])") | join(", ")' <<<"$spans")"
+    if [ "$overlaps" = 0 ] && [ -z "${cancelled// /}" ] && [ "$first_order" = true ] && [ "$c1" = success ] && [ "$c2" = success ] \
+      && [ "${s1%% *}" = success ] && [ "${s2%% *}" = success ]; then
+      verdict apply-serial pass "pull requests $m and $b merged back to back: $ran; no overlap, none cancelled; ${sha1:0:8} terragucci/apply $s1; ${sha2:0:8} terragucci/apply $s2"
+    else
+      verdict apply-serial fail "runs $run1 ($c1) and $run2 ($c2): $ran; overlaps $overlaps; cancelled: ${cancelled:-none}; first in order: $first_order; ${sha1:0:8} ${s1:-no status}; ${sha2:0:8} ${s2:-no status}"
+    fi
+    ( record_state ) || log "could not record the state after the two merges"
+  else
+    verdict apply-serial fail "no orders-note pull request, or change module-bump failed"
+  fi
+
+  # gate-wait: the destroy's wave waits, and applies once approved.
+  if step change destroy && step merge destroy && [ -f "$DIR/waiting" ]; then
+    IFS=$'\t' read -r run wave _ < "$DIR/waiting"
+    waited="$(grep -m1 'chant approve tf-apply' "$DIR/logs/waiting.log" | sed 's/^[[:space:]]*//' || true)"
+    # comment-apply, third part: while wave 4 waits, the comment on the
+    # merged destroy applies nothing and gives the approve command.
+    dp="$(gh pr list -R "$REPO" --head change/destroy --state merged --json number -q '.[0].number // empty' || true)"
+    if [ -n "$dp" ]; then
+      r="$( (say "$dp" "/terragucci apply") || true)"
+      if grep -Eq "wave 4 waits for an approval of its set digest (jcs1-)?sha256:[0-9a-f]+" <<<"$r" \
+        && grep -Eq 'chant approve tf-apply wave-4 --plan (jcs1-)?sha256:[0-9a-f]+ --sign' <<<"$r"; then
+        ca_wait="merged pull request $dp while wave 4 waits: ${r#terragucci: }"
+      fi
+      ca_seen="$ca_seen; merged pull request $dp while wave 4 waits: reply ${r:-none}"
+    fi
+    if step approve; then
+      verdict gate-wait pass "run $run stopped $wave with: $waited; approved and re-run, it applied"
+    else
+      verdict gate-wait fail "run $run stopped $wave; the re-run after the approval did not succeed"
+    fi
+  else
+    verdict gate-wait fail "the merged destroy left no wave waiting"
+  fi
+  if [ -n "$ca_merged" ] && [ -n "$ca_open" ] && [ -n "${ca_wait:-}" ]; then
+    verdict comment-apply pass "$ca_merged; $ca_open; $ca_wait"
+  else
+    verdict comment-apply fail "${ca_seen#; }"
+  fi
+
+  # explain-refusal: refuse destroys in wave 4 after its last approval, so
+  # the wave is refused, and the guide's job runs on the refusal and prints
+  # what moved.
+  refused_run=""
+  if step change refuse; then
+    step merge refuse || true
+    run="$(cat "$DIR/last-run")"
+    wave4="$(job_conclusion "$run" apply-wave-4)"
+    grep -qE 'changed after it was approved|planned differently since' "$(job_log "$run" apply-wave-4)" && refused_run="$run"
+    explained="$(job_conclusion "$run" explain-refusal)"
+    moved="$(grep -m1 '^roots that moved: ' "$(job_log "$run" explain-refusal)" | sed 's/^roots that moved: //' || true)"
+    if [ -n "$refused_run" ] && [ "$explained" = success ] && grep -qF envs/staging/payments <<<"$moved"; then
+      verdict explain-refusal pass "run $run: apply-wave-4 refused; explain-refusal ran the page's steps and printed the roots that moved: $moved"
+    else
+      verdict explain-refusal fail "run $run: apply-wave-4 $wave4 (refused: ${refused_run:+yes}); explain-refusal $explained; roots that moved: ${moved:-none}"
+    fi
+  else
+    verdict explain-refusal fail "change refuse failed"
+  fi
+
+  # approve-command: with the refused wave waiting for its new plan,
+  # terragucci approve --dry-run in a clone records nothing; terragucci
+  # approve, given no digest, approves the wave, and the re-run applies it.
+  if [ -n "$refused_run" ]; then
+    dry="$(approver "$WORK/approve-dry" approve --actor "$SIGNER" --sign "$KEY" --dry-run)"
+    printf '%s\n' "$dry" > "$DIR/logs/approve-dry-run.log"
+    before="$(ledger_lines "$WORK/approve-dry" _gates/tf-apply.jsonl)"
+    sleep 5
+    kept="$(ledger_lines "$WORK/approve-dry" _gates/tf-apply.jsonl)"
+    out="$(approver "$WORK/approve-real" approve --actor "$SIGNER" --sign "$KEY")"
+    printf '%s\n' "$out" > "$DIR/logs/approve-real.log"
+    ran="$(grep -m1 '^running: chant approve tf-apply wave-4 --plan ' <<<"$out" | sed 's/ --sign .*//' || true)"
+    again="$(rerun "$refused_run")"
+    if grep -q 'chant approve tf-apply wave-4 --plan ' <<<"$dry" && [ "$before" = "$kept" ] && [ -n "$ran" ] && [ "$again" = success ]; then
+      verdict approve-command pass "run $refused_run: --dry-run printed the command and the ledger kept $kept lines; terragucci approve ${ran#running: }; the re-run applied wave 4"
+      ( record_state ) || log "could not record the state after the approval"
+    else
+      verdict approve-command fail "run $refused_run: dry run: $(tr '\n' ' ' <<<"$dry" | cut -c1-200); ledger $before then $kept lines; approve: $(tr '\n' ' ' <<<"$out" | cut -c1-200); re-run $again"
+    fi
+  else
+    verdict approve-command fail "no refused wave to approve"
+  fi
+
+  # drift-issue: the drift job opens the drift issue, a second run updates
+  # that issue, and once the file is back a third closes it.
+  if step drift; then
+    issue="$(gh issue list -R "$REPO" --state open -L 1 --json number -q '.[0].number // empty' || true)"
+    first="$(gh issue view "$issue" -R "$REPO" --json updatedAt -q .updatedAt 2>/dev/null || true)"
+    since="$(now)"
+    gh workflow run terragucci.yml -R "$REPO" --ref main >/dev/null 2>&1 || true
+    ( wait_run workflow_dispatch "$since" ) >/dev/null 2>&1 || true
+    run2="$(cat "$DIR/last-run")"
+    open2="$(gh issue list -R "$REPO" --state open --json number -q 'map(.number) | join(",")' || true)"
+    second="$(gh issue view "$issue" -R "$REPO" --json updatedAt,body -q 'if (.body | contains("/actions/runs/'"$run2"'")) then .updatedAt else "" end' 2>/dev/null || true)"
+    ( tree="$WORK/drift-back"
+      clone_main "$tree"
+      printf 'shop-staging-orders-jobs\n' > "$tree/envs/staging/orders/jobs-queue.txt"
+      commit "$tree" "Put staging orders' jobs queue back [skip ci]"
+      push "$tree" main >/dev/null ) || log "could not put the jobs queue file back"
+    since="$(now)"
+    gh workflow run terragucci.yml -R "$REPO" --ref main >/dev/null 2>&1 || true
+    ( wait_run workflow_dispatch "$since" ) >/dev/null 2>&1 || true
+    run3="$(cat "$DIR/last-run")"
+    state3="$(gh issue view "$issue" -R "$REPO" --json state -q .state 2>/dev/null || true)"
+    closing="$(gh api "repos/$REPO/issues/$issue/comments?per_page=100" -q '[.[] | .body] | last // "" | split("\n")[0]' 2>/dev/null || true)"
+    if [ -n "$issue" ] && [ "$open2" = "$issue" ] && [ -n "$second" ] && [[ "$second" > "$first" ]] && [ "$state3" = CLOSED ] && [[ "$closing" == "No drift at "* ]]; then
+      verdict drift-issue pass "issue $issue: opened by the first run, the only open issue after run $run2, which updated it; closed by run $run3: $closing"
+    else
+      verdict drift-issue fail "issue ${issue:-none}: open after run $run2: ${open2:-none}; updated by it: ${second:-no}; after run $run3: ${state3:-unknown}, ${closing:-no comment}"
+    fi
+  else
+    verdict drift-issue fail "the drift run opened no issue"
+  fi
+}
+
+# The pull-request phase: apply.when: pull-request, first with merge: manual,
+# then merge: auto with the job's token, then with a merge token. Its pull
+# requests are opened by the sandbox-open workflow as github-actions[bot], so
+# the person running prove is not their author and may approve them.
+MERGE_SECRET=SANDBOX_MERGE_TOKEN
+pr_config() { # merge (manual|auto), [merge token secret]
+  local tree="$WORK/pr-config-$1${2:+-token}" sha
+  clone_main "$tree"
+  awk '/^# Set by stack\/sandbox-github.sh prove pull-request/ { exit } { print }' "$tree/terragucci.yml" > "$tree/terragucci.yml.new"
+  mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  {
+    echo "# Set by stack/sandbox-github.sh prove pull-request; reset takes it away."
+    echo "apply:"
+    echo "  when: pull-request"
+    echo "  merge: $1"
+    [ -z "${2:-}" ] || echo "  merge_token_env: $2"
+  } >> "$tree/terragucci.yml"
+  mkdir -p "$tree/.github/workflows"
+  cat > "$tree/.github/workflows/sandbox-open.yml" <<'YML'
+# stack/sandbox-github.sh prove pull-request opens its pull requests through
+# this workflow, so their author is github-actions[bot] and the person running
+# prove may approve them. reset takes it away.
+name: sandbox-open
+on:
+  workflow_dispatch:
+    inputs:
+      head: { required: true }
+      title: { required: true }
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  open:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh pr create -R "$GITHUB_REPOSITORY" --head "$HEAD" --base main --title "$TITLE" --body "Opened by the sandbox-open workflow, so the person running prove may approve it."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ inputs.head }}
+          TITLE: ${{ inputs.title }}
+YML
+  (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-pr-init.log" 2>&1) \
+    || { cat "$DIR/logs/prove-pr-init.log" >&2; fail "terragucci init failed"; }
+  grep -q '^  apply-comment:' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no apply-comment job"
+  commit "$tree" "Apply pull requests before merge, merge: $1${2:+ with $2} [skip ci]"
+  sha="$(push "$tree" main)"
+  log "main at ${sha:0:8}: apply.when: pull-request, merge: $1${2:+, merge_token_env: $2}"
+}
+
+# A pull request that sets one root's job retention, opened by sandbox-open,
+# planned and approved. Prints its number.
+bot_pr() { # branch, root, seconds, title
+  local tree="$WORK/bot-$1" f since sha n i
+  clone_main "$tree"
+  git -C "$tree" checkout -q -b "change/$1"
+  f="$tree/$2/main.tf"
+  awk -v s="$3" '{ print } /^  logs_bucket = / { print ""; print "  job_retention_seconds = " s }' "$f" > "$f.new" && mv "$f.new" "$f"
+  commit "$tree" "$4"
+  push "$tree" "change/$1" >/dev/null
+  since="$(now)"
+  gh workflow run sandbox-open.yml -R "$REPO" --ref main -f head="change/$1" -f title="$4" >/dev/null || fail "could not start sandbox-open"
+  wait_run workflow_dispatch "$since" >&2
+  n=""
+  for i in $(seq 1 20); do
+    n="$(pr_for "$1" open)"; [ -n "$n" ] && break; sleep 3
+  done
+  [ -n "$n" ] || fail "sandbox-open opened no pull request for change/$1"
+  # A pull request a workflow's token opens starts no run; this push does.
+  git -C "$tree" -c user.name=terragucci -c user.email=sandbox@terragucci.local -c commit.gpgsign=false commit -q --allow-empty -m "Plan it"
+  since="$(now)"
+  sha="$(push "$tree" "change/$1")"
+  wait_run pull_request "$since" "$sha" >&2
+  wait_run push "$since" "$sha" >&2
+  gh pr review "$n" -R "$REPO" --approve --body "Reviewed by the person running prove." >/dev/null || fail "could not approve pull request $n"
+  log "pull request $n (change/$1, by github-actions[bot]) planned at ${sha:0:8} and approved"
+  echo "$n"
+}
+
+prove_pull_request() {
+  local x y c d e r1 r2 r3 r4 held at moved n merged by pushed
+  ( pr_config manual ) || { for x in pr-apply-lock pr-apply-stale pr-apply pr-apply-token; do verdict "$x" fail "main could not be set up"; done; return 0; }
+
+  # pr-apply-lock: x and y both change dev orders. x applies from its head
+  # and holds the lock; y is refused, naming the root and x; once x is
+  # unlocked, y applies.
+  x="$( (bot_pr lock-a envs/dev/orders 600 "Keep dev orders' jobs ten minutes") || true)"
+  y="$( (bot_pr lock-b envs/dev/orders 900 "Keep dev orders' jobs fifteen minutes") || true)"
+  if [ -n "$x" ] && [ -n "$y" ]; then
+    r1="$( (say "$x" "/terragucci apply") || true)"
+    r2="$( (say "$y" "/terragucci apply") || true)"
+    r3="$( (say "$x" "/terragucci unlock") || true)"
+    r4="$( (say "$y" "/terragucci apply") || true)"
+    if grep -qF "applied wave 1, 2, 3, 4 of pull request $x" <<<"$r1" && grep -qF "Merge it when you are ready" <<<"$r1" \
+      && grep -qF "\`envs/dev/orders\` is locked by pull request $x" <<<"$r2" \
+      && grep -qE "released the locks pull request $x held on .*envs/dev/orders" <<<"$r3" \
+      && grep -qF "applied wave 1, 2, 3, 4 of pull request $y" <<<"$r4"; then
+      verdict pr-apply-lock pass "pull request $x: ${r1#terragucci: }; pull request $y: ${r2#terragucci: }; unlock on $x: ${r3#terragucci: }; then $y: ${r4#terragucci: }"
+    else
+      verdict pr-apply-lock fail "pull request $x: ${r1:-no reply}; $y: ${r2:-no reply}; unlock on $x: ${r3:-no reply}; then $y: ${r4:-no reply}"
+    fi
+  else
+    verdict pr-apply-lock fail "sandbox-open could not open and plan both pull requests"
+  fi
+
+  # pr-apply-stale: c is approved, then main moves; /terragucci apply on c is
+  # refused as not up to date, and nothing applies.
+  c="$( (bot_pr stale envs/dev/payments 600 "Keep dev payments' jobs ten minutes") || true)"
+  if [ -n "$c" ]; then
+    ( tree="$WORK/stale-main"; clone_main "$tree"; printf '\nmain moved under an open pull request.\n' >> "$tree/README.md"
+      commit "$tree" "Move main under an open pull request [skip ci]"; push "$tree" main >/dev/null ) || true
+    r1="$( (say "$c" "/terragucci apply") || true)"
+    run="$(cat "$DIR/last-run")"
+    applied="$(grep -c 'Apply complete' "$(job_log "$run" apply-comment)" || true)"
+    if grep -qF "pull request $c is not up to date with main" <<<"$r1" && [ "${applied:-0}" = 0 ]; then
+      verdict pr-apply-stale pass "pull request $c, after main moved: ${r1#terragucci: }; run $run applied nothing"
+    else
+      verdict pr-apply-stale fail "pull request $c: ${r1:-no reply}; run $run has ${applied:-0} applies"
+    fi
+  else
+    verdict pr-apply-stale fail "sandbox-open could not open and plan the pull request"
+  fi
+
+  # pr-apply: merge: auto with the job's token. d applies from its head and
+  # pr-merge merges it as github-actions[bot].
+  ( pr_config auto ) || true
+  d="$( (bot_pr auto envs/dev/search 600 "Keep dev search's jobs ten minutes") || true)"
+  if [ -n "$d" ]; then
+    at="$(head_of "$d")"
+    r1="$( (say "$d" "/terragucci apply") || true)"
+    merged="$(gh pr view "$d" -R "$REPO" --json state,mergedBy -q '"\(.state) \(.mergedBy.login // "nobody")"' || true)"
+    if grep -qF "applied wave 1, 2, 3, 4 of pull request $d at ${at:0:8}, and merged pull request $d" <<<"$r1" && [ "${merged%% *}" = MERGED ]; then
+      verdict pr-apply pass "pull request $d: ${r1#terragucci: }; $merged"
+    else
+      verdict pr-apply fail "pull request $d: ${r1:-no reply}; ${merged:-unknown}"
+    fi
+  else
+    verdict pr-apply fail "sandbox-open could not open and plan the pull request"
+  fi
+
+  # pr-apply-token: merge: auto with merge_token_env. e applies and is merged
+  # with the merge token, whose push starts the run on main.
+  gh secret set "$MERGE_SECRET" -R "$REPO" --body "$GH_TOKEN" >/dev/null || true
+  ( pr_config auto "$MERGE_SECRET" ) || true
+  e="$( (bot_pr token envs/dev/email 600 "Keep dev email's jobs ten minutes") || true)"
+  if [ -n "$e" ]; then
+    at="$(head_of "$e")"
+    r1="$( (say "$e" "/terragucci apply") || true)"
+    merged="$(gh pr view "$e" -R "$REPO" --json state,mergedBy,mergeCommit -q '"\(.state) \(.mergedBy.login // "nobody") \(.mergeCommit.oid // "")"' || true)"
+    by="$(cut -d' ' -f2 <<<"$merged")"; n="$(cut -d' ' -f3 <<<"$merged")"
+    pushed=""
+    for _ in $(seq 1 20); do
+      pushed="$(gh run list -R "$REPO" --commit "$n" --event push -L 1 --json databaseId -q '.[0].databaseId // empty' 2>/dev/null || true)"
+      [ -n "$pushed" ] && break; sleep 3
+    done
+    if grep -qF "applied wave 1, 2, 3, 4 of pull request $e at ${at:0:8}, and merged pull request $e" <<<"$r1" && [ "${merged%% *}" = MERGED ] \
+      && [ "$by" != "github-actions" ] && [ -n "$pushed" ]; then
+      verdict pr-apply-token pass "pull request $e: ${r1#terragucci: }; merged by $by with the merge token, and its push started run $pushed on main"
+    else
+      verdict pr-apply-token fail "pull request $e: ${r1:-no reply}; ${merged:-unknown}; run on the merge commit: ${pushed:-none}"
+    fi
+  else
+    verdict pr-apply-token fail "sandbox-open could not open and plan the pull request"
+  fi
+}
+
+# The modules phase: modules.publish: git-tags. A conventional commit to
+# modules/service on main publishes it as a git tag from the pipeline's
+# publish job; then every root pins that tag, a second commit publishes the
+# next version, and terragucci rollout opens the canary wave's pull request.
+module_tags() { # -> the module tags on the sandbox, comma-separated, oldest version first
+  git ls-remote --tags "$GIT_URL" 'refs/tags/modules/*' 2>/dev/null | sed -E 's#.*refs/tags/##; /\^\{\}$/d' | sort -V | paste -sd, -
+}
+
+module_commit() { # message, output name -> pushes a commit to main that adds an output to modules/service and waits for its run; prints the run id
+  local tree="$WORK/module-$2" since sha
+  clone_main "$tree"
+  printf '\noutput "%s" {\n  value = var.name\n}\n' "$2" >> "$tree/modules/service/main.tf"
+  commit "$tree" "$1"
+  since="$(now)"
+  sha="$(push "$tree" main)"
+  wait_run push "$since" "$sha" >&2
+  echo "$RUN_ID"
+}
+
+prove_modules() {
+  local tree run1 run2 t1 t2 out pr files moved others
+  ( tree="$WORK/modules-main"
+    clone_main "$tree"
+    printf '# Set by stack/sandbox-github.sh prove modules; reset takes it away.\nmodules:\n  path: "modules/*"\n  publish: git-tags\n' >> "$tree/terragucci.yml"
+    (cd "$tree" && npx -y "@intentius/terragucci@$RELEASE" init >"$DIR/logs/prove-modules-init.log" 2>&1) || fail "terragucci init failed"
+    grep -q '^  publish:' "$tree/.github/workflows/terragucci.yml" || fail "init wrote no publish job"
+    commit "$tree" "Publish the modules as git tags [skip ci]"
+    push "$tree" main >/dev/null ) || { verdict publish fail "main could not be set up"; verdict rollout fail "main could not be set up"; return 0; }
+
+  # publish: the first commit to modules/service publishes it.
+  run1="$( (module_commit "feat(service): name the service in an output" service_name) || true)"
+  t1="$(module_tags)"
+  if [ "$(job_conclusion "${run1:-0}" publish)" = success ] && [[ "$t1" == modules/service/v* ]] && [[ "$t1" != *,* ]]; then
+    verdict publish pass "run $run1: the publish job pushed $t1"
+  else
+    verdict publish fail "run ${run1:-none}: publish $(job_conclusion "${run1:-0}" publish); tags: ${t1:-none}"
+  fi
+
+  # rollout: the roots pin that tag, the next commit publishes another, and
+  # the rollout opens one pull request for the canary wave.
+  if [[ "$t1" == modules/service/v* ]] && [[ "$t1" != *,* ]]; then
+    ( tree="$WORK/modules-pin"
+      clone_main "$tree"
+      for f in "$tree"/envs/*/*/main.tf; do
+        sed "s#source = \"../../../modules/service\"#source = \"git::$GIT_URL//modules/service?ref=$t1\"#" "$f" > "$f.new" && mv "$f.new" "$f"
+      done
+      commit "$tree" "Pin every root to $t1 [skip ci]"
+      push "$tree" main >/dev/null ) || true
+    run2="$( (module_commit "feat(service): name the environment in an output" service_env) || true)"
+    t2="$(module_tags | tr ',' '\n' | grep -vxF "$t1" | tail -1)"
+    out=""
+    if [ -n "$t2" ]; then
+      tree="$WORK/modules-rollout"
+      git clone -q "$GIT_URL" "$tree" 2>/dev/null || true
+      out="$(cd "$tree" && GITHUB_TOKEN="$GH_TOKEN" npx -y -p "@intentius/terragucci@$RELEASE" -p @cdktn/hcl2json \
+        terragucci rollout modules/service "${t2##*/v}" --mode apply 2>&1 || true)"
+      printf '%s\n' "$out" > "$DIR/logs/rollout.log"
+    fi
+    pr="$(gh pr list -R "$REPO" --state open -L 1 --json number -q '.[0].number // empty' || true)"
+    files="$( [ -z "$pr" ] || gh pr view "$pr" -R "$REPO" --json files -q '[.files[].path] | join(" ")' 2>/dev/null || true)"
+    moved="$( [ -z "$pr" ] || gh pr diff "$pr" -R "$REPO" 2>/dev/null | grep -c "^+.*ref=$t2\"" || true)"
+    others="$(tr ' ' '\n' <<<"$files" | grep -vc '^envs/dev/' || true)"
+    if [ -n "$pr" ] && [ -n "$files" ] && [ "${others:-1}" = 0 ] && [ "${moved:-0}" -gt 0 ]; then
+      verdict rollout pass "after run $run2 published $t2, terragucci rollout opened pull request $pr for the canary wave: $files move to $t2"
+    else
+      verdict rollout fail "run ${run2:-none} published ${t2:-nothing}; rollout: $(tail -3 <<<"$out" | tr '\n' ' '); pull request ${pr:-none}: ${files:-no files}"
+    fi
+  else
+    verdict rollout fail "no first module version to pin"
+  fi
+}
+
 # ── commands ─────────────────────────────────────────────────────────────────
 
 close_and_prune() {
@@ -651,6 +1426,12 @@ close_and_prune() {
   done
   for b in $(gh api "repos/$REPO/branches?per_page=100" -q '.[].name' | grep -vx main || true); do
     gh api -X DELETE "repos/$REPO/git/refs/heads/$b" >/dev/null && log "deleted branch $b"
+  done
+  for b in $(gh api "repos/$REPO/tags?per_page=100" -q '.[].name' 2>/dev/null || true); do
+    gh api -X DELETE "repos/$REPO/git/refs/tags/$b" >/dev/null && log "deleted tag $b"
+  done
+  for b in $(gh secret list -R "$REPO" --json name -q '.[].name' 2>/dev/null || true); do
+    gh secret delete "$b" -R "$REPO" >/dev/null && log "deleted secret $b"
   done
 }
 
@@ -691,6 +1472,15 @@ case "$CMD" in
     elif [ "$name" = orders-note ]; then
       # A second change to dev orders, formatted, so no job pushes on top of it.
       printf '\n# The orders team owns this root.\n' >> "$WORK/tree/envs/dev/orders/main.tf"
+    elif [ "$name" = override ]; then
+      # The probe root's input takes the value main's policy denies.
+      [ -f "$WORK/tree/$PROBE/rev.txt" ] || fail "main has no $PROBE; run 'just sandbox prove', which adds it"
+      echo "$HELD" > "$WORK/tree/$PROBE/rev.txt"
+    elif [ "$name" = refuse ]; then
+      # A second destroy in wave 4, as the destroy scenario is in staging email.
+      f="$WORK/tree/envs/staging/payments/main.tf"
+      awk '{ print } /^  logs_bucket = / { print ""; print "  # Payments in staging no longer keeps records."; print "  records_table = false" }' "$f" > "$f.new" && mv "$f.new" "$f"
+      grep -q 'records_table = false' "$f" || fail "no module block to change in envs/staging/payments"
     else
       patch="$(scenario_patch "$name")"
       git -C "$WORK/tree" apply -p1 "$patch" || fail "$name does not apply to main; run 'just sandbox reset' first"
@@ -920,142 +1710,46 @@ EOF
     ;;
 
   prove)
-    record=""
+    record="" phases=""
     while [ $# -gt 0 ]; do
-      case "$1" in --record) record="${2:?--record needs a file}"; shift 2 ;; *) fail "unknown argument '$1' (--record FILE)" ;; esac
+      case "$1" in
+        --record) record="${2:?--record needs a file}"; shift 2 ;;
+        merge|pull-request|modules) phases="$phases $1"; shift ;;
+        *) fail "unknown argument '$1' (merge, pull-request, modules, --record FILE)" ;;
+      esac
     done
+    [ -n "$phases" ] || phases="merge"
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "prove needs Docker, for the roots' state"; fi
     started="$(date +%s)"
     : > "$WORK/verdicts"
-    verdict() { # claim, pass|fail, what was seen
-      printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$WORK/verdicts"
-      log "claim $1: $2 ($3)"
-    }
-    # Each step runs as its own command; a step that fails fails the claims
-    # that need it, and the rest still run.
-    step() { "$0" "$@" >"$DIR/logs/prove-$1-${2:-}.out"; }
-    "$0" reset
-    prove_main
-
-    # affected: one-root changes dev orders alone.
-    if step change one-root; then
-      a="$(pr_for one-root open)"; head_a="$(head_of "$a")"
-      roots="$(note_of "$a" | head -1 | sed -n 's/^<!-- terragucci:plan roots=\(.*\) -->$/\1/p')"
-      plan="$(status_on "$head_a" terragucci/plan)"
-      if [ "$roots" = envs/dev/orders ] && [[ "$plan" == "success 1 roots,"* ]]; then
-        verdict affected pass "pull request $a: roots=$roots, terragucci/plan $plan"
-      else
-        verdict affected fail "pull request $a: roots=${roots:-none}, terragucci/plan ${plan:-none}"
-      fi
-    else
-      a="" head_a=""
-      verdict affected fail "change one-root failed"
-    fi
-
-    # comment-plan: the comment's own run re-plans, and the note is edited after it.
-    if [ -n "$a" ]; then
-      since="$(now)"
-      if step plan-comment one-root; then
-        run="$(cat "$DIR/last-run")"
-        replan="$(gh run view "$run" -R "$REPO" --json jobs -q '[.jobs[] | select(.name == "replan")][0].conclusion // "none"')"
-        edited="$(gh api "repos/$REPO/issues/$a/comments?per_page=100" -q '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | first | .updated_at // empty')"
-        if [ "$replan" = success ] && [[ "$edited" > "$since" || "$edited" == "$since" ]]; then
-          verdict comment-plan pass "run $run: replan $replan, the note edited at $edited"
-        else
-          verdict comment-plan fail "run $run: replan $replan, the note edited at ${edited:-never} (comment at $since)"
-        fi
-      else
-        verdict comment-plan fail "plan-comment one-root failed"
-      fi
-    else
-      verdict comment-plan fail "no one-root pull request to comment on"
-    fi
-
-    # pr-lock: one-root holds dev orders; orders-note reaches it too. (The
-    # check job of unformatted pushes its format with the job's token, which
-    # starts no pr-lock run, so that pull request may never be answered.)
-    if [ -n "$a" ]; then
-      held="$(wait_status "$head_a" terragucci/lock success)"
-      if step change orders-note; then
-        b="$(pr_for orders-note open)"
-        locked="$(wait_status "$(head_of "$b")" terragucci/lock failure)"
-        reply="$(replies_of "$b" | grep -F "is locked by pull request $a" | head -1 || true)"
-        # shellcheck disable=SC2016 # the reply quotes the root in backticks
-        if [ "$held" = "success holds envs/dev/orders" ] && [ "${locked%% *}" = failure ] && grep -qF '`envs/dev/orders`' <<<"$reply"; then
-          verdict pr-lock pass "pull request $a: terragucci/lock $held; pull request $b: terragucci/lock $locked; $reply"
-        else
-          verdict pr-lock fail "pull request $a: terragucci/lock ${held:-none}; pull request $b: terragucci/lock ${locked:-none}; reply: ${reply:-none}"
-        fi
-      else
-        verdict pr-lock fail "change orders-note failed"
-      fi
-    else
-      verdict pr-lock fail "no one-root pull request to hold the lock"
-    fi
-
-    # policy: replace plans a replaced table, which main's policy denies. The
-    # step's plan run fails, which is the point.
-    step change replace || true
-    p="$(pr_for replace open)"
-    if [ -n "$p" ]; then
-      plan="$(status_on "$(head_of "$p")" terragucci/plan)"
-      denied="$(note_of "$p" | grep -F "$DENIAL" | head -1 || true)"
-      if [ "${plan%% *}" = failure ] && [ -n "$denied" ]; then
-        verdict policy pass "pull request $p: terragucci/plan $plan; the note: $denied"
-      else
-        verdict policy fail "pull request $p: terragucci/plan ${plan:-none}; the note names no denial"
-      fi
-    else
-      verdict policy fail "change replace opened no pull request"
-    fi
-
-    # oidc: the probe root's plan on a pull request, then its apply on main.
-    if step change oidc; then
-      o="$(pr_for oidc open)"
-      run="$(gh run list -R "$REPO" --commit "$(head_of "$o")" --event pull_request -L 1 --json databaseId -q '.[0].databaseId // empty')"
-      planned="$(probe_found "$run" plan)"
-      applied=""
-      if step merge oidc; then applied="$(probe_found "$(cat "$DIR/last-run")" apply)"; fi
-      if jq -e '.verified and .problems == []' >/dev/null 2>&1 <<<"$planned" && jq -e '.verified and .problems == []' >/dev/null 2>&1 <<<"$applied"; then
-        verdict oidc pass "$(jq -r '"plan job: \(.role), \(.sub), \(.aud)"' <<<"$planned"); $(jq -r '"apply job: \(.role), \(.sub)"' <<<"$applied")"
-      else
-        verdict oidc fail "pull request $o, plan job: ${planned:-nothing found}; apply job: ${applied:-nothing found}"
-      fi
-    else
-      verdict oidc fail "change oidc failed"
-    fi
-
-    # gate-wait: the destroy's wave waits, and applies once approved.
-    if step change destroy && step merge destroy && [ -f "$DIR/waiting" ]; then
-      IFS=$'\t' read -r run wave _ < "$DIR/waiting"
-      waited="$(grep -m1 'chant approve tf-apply' "$DIR/logs/waiting.log" | sed 's/^[[:space:]]*//' || true)"
-      if step approve; then
-        verdict gate-wait pass "run $run stopped $wave with: $waited; approved and re-run, it applied"
-      else
-        verdict gate-wait fail "run $run stopped $wave; the re-run after the approval did not succeed"
-      fi
-    else
-      verdict gate-wait fail "the merged destroy left no wave waiting"
-    fi
+    for phase in $phases; do
+      "$0" reset
+      log "phase $phase"
+      "prove_${phase//-/_}"
+    done
 
     "$0" reset
     printf '\n'
     rc=0
     while IFS=$'\t' read -r claim result seen; do
-      printf '  %-13s %-5s %s\n' "$claim" "$result" "$seen"
+      printf '  %-16s %-5s %s\n' "$claim" "$result" "$seen"
       [ "$result" = pass ] || rc=1
     done < "$WORK/verdicts"
-    printf '  Took          %s minutes\n' "$(( ($(date +%s) - started + 59) / 60 ))"
-    # The rows the validation page lists, beside the local stack's: the
-    # github.com rows replace the last ones and go after the GitHub rows.
+    printf '  Took             %s minutes\n' "$(( ($(date +%s) - started + 59) / 60 ))"
+    # The rows the validation page lists, beside the local stack's: each
+    # github.com row this run made replaces the one of its claim, new ones
+    # follow, and the github.com rows go after the GitHub rows.
     rows="$(while IFS=$'\t' read -r claim result _; do
       says="$(grep "^github.com|$claim|" <<<"$PROVE_CLAIMS" | cut -d'|' -f3)"
       jq -n --arg c "$claim" --arg s "$says" --arg v "$result" '{forge: "github.com", claim: $c, says: $s, verdict: $v, break: null}'
     done < "$WORK/verdicts" | jq -s .)"
     jq '{release: $release, claims: .}' --arg release "$RELEASE" <<<"$rows" > "$DIR/prove.json"
     if [ -n "$record" ]; then
-      jq --argjson rows "$rows" '.claims |= ([.[] | select(.forge != "github.com")]
-        | (map(.forge == "github") | rindex(true) // (length - 1)) as $i | .[:$i + 1] + $rows + .[$i + 1:])' "$record" > "$WORK/record"
+      jq --argjson rows "$rows" '.claims |= (
+        [.[] | select(.forge == "github.com")] as $old | ($old | map(.claim)) as $had
+        | ([$old[] | . as $r | ([$rows[] | select(.claim == $r.claim)] | first) // $r] + [$rows[] | select(.claim | IN($had[]) | not)]) as $gh
+        | [.[] | select(.forge != "github.com")]
+        | (map(.forge == "github") | rindex(true) // (length - 1)) as $i | .[:$i + 1] + $gh + .[$i + 1:])' "$record" > "$WORK/record"
       cp "$WORK/record" "$record"
       log "wrote the github.com rows into $record"
     fi

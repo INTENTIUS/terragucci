@@ -141,6 +141,62 @@
       "break": null
     },
     {
+      "forge": "github.com",
+      "claim": "note-footer",
+      "says": "the plan note ends with the terragucci footer, and its taco image answers 200 with a PNG",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "tips",
+      "says": "the plan note counts the tips the run report holds, and each tip in the report names its rule and its page",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "comment-agent",
+      "says": "a /terragucci agent comment pushes the commit of the stand-in agent onto the branch of the pull request, which plans again, and the reply links it; an ask whose change touches the pipeline is refused and nothing is pushed",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "policy-override",
+      "says": "a wave the policy denies applies once the approver policy.override lists overrides its plan with terragucci override, and the report names the override; an override by someone it does not list counts for nothing",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "apply-serial",
+      "says": "two merges pushed back to back apply one at a time in the order they arrived, none is cancelled, and each commit ends with a terragucci/apply success",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "comment-apply",
+      "says": "/terragucci apply on a merged pull request applies it again from its merge commit, and while its wave waits it applies nothing and gives the approve command; on an open pull request it is refused",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "approve-command",
+      "says": "terragucci approve in a clone approves the waiting wave with no digest copied, and the re-run applies it; with --dry-run it records nothing",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "drift-issue",
+      "says": "the drift job opens the drift issue, a second run updates that issue, and a run that finds no drift closes it",
+      "verdict": "pass",
+      "break": null
+    },
+    {
       "forge": "gitlab",
       "claim": "check",
       "says": "the generated pipeline fails an unformatted root and names the file",

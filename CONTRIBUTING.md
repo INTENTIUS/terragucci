@@ -292,24 +292,45 @@ just sandbox approve --hold        # approve only; then change and merge module-
 just sandbox drift                 # delete a file staging orders keeps, run the drift job, wait for its issue
 just sandbox shot list             # the pages the steps recorded
 just sandbox shot all              # each one logged out, light and dark
-just sandbox reset                 # close the pull requests and issues, delete the branches, main back to its first commit
+just sandbox reset                 # close the pull requests and issues, delete the branches, tags and secrets, main back to its first commit
 just sandbox minutes 2026-10-07T00:00:00Z   # Actions run time since then
 just sandbox capture               # all of the docs' GitHub views, from reset to reset
-just sandbox prove                 # the github.com claims, from reset to reset; --record FILE writes their rows
+just sandbox prove                 # the github.com claims, from reset to reset; a phase name runs one; --record FILE writes their rows
 ```
 
-`just sandbox prove` resets the sandbox and commits to main, with `[skip ci]`, what its claims need: `locks: plan`, a `policy` whose Rego denies a replacement, `oidc` with a plan and an apply role, and `envs/dev/oidc`, a root whose `data "external"` program checks the job's OIDC token and writes what it found to `terragucci-report/oidc-<plan|apply>.json`, which the job keeps in its report artifact. `init` of the release then rewrites the pipeline. Then it runs the claims and resets again. It takes about 15 minutes.
+`just sandbox prove` runs the `merge` phase; `just sandbox prove pull-request modules` runs the other two. Each phase starts from a reset sandbox whose main it sets up with `[skip ci]` commits, lets `init` of the release rewrite the pipeline, runs its claims, and resets the sandbox. The merge phase takes about 35 minutes.
+
+| Phase | main gets | Claims |
+|---|---|---|
+| `merge` | `locks: plan`; a `policy` whose Rego denies a replacement, and holds the OIDC probe's input when it is set to `held-for-an-override`, with `override: [sandbox-signer]`; `oidc` with a plan and an apply role; `agent.comment` running `.agent/stand-in.sh`, whose push token is the secret `SANDBOX_AGENT_TOKEN` (the run's token, deleted by reset); `.chant/allowed_signers` listing this run's key as `sandbox-signer` and `sandbox-stranger`; `envs/dev/oidc`, a root whose `data "external"` program checks the job's OIDC token and writes what it found to `terragucci-report/oidc-<kind>.json`; and the `explain-refusal` job of the refused-wave guide for wave 4, its model step swapped for a stand-in | every claim from `affected` to `drift-issue` below, except the `pr-apply` and module ones |
+| `pull-request` | `apply.when: pull-request`, first with `merge: manual`, then `merge: auto`, then `merge: auto` with `merge_token_env: SANDBOX_MERGE_TOKEN`; and `.github/workflows/sandbox-open.yml`, which opens the phase's pull requests as `github-actions[bot]`, so the account running prove may approve them | `pr-apply-lock`, `pr-apply-stale`, `pr-apply`, `pr-apply-token` |
+| `modules` | `modules.publish: git-tags` | `publish`, `rollout` |
 
 | Claim | Steps | Holds when |
 |---|---|---|
 | `affected` | `change one-root` | the plan note's first line covers `envs/dev/orders` alone and `terragucci/plan` counts 1 root |
+| `note-footer` | the same note | its last line is the taco footer, and the image answers 200 with a PNG |
+| `tips` | the same note | the note counts as many tips as the run's `report.json` holds, each with a rule and an https page |
 | `comment-plan` | `plan-comment one-root` | the comment's run finishes its `replan` job and the note was edited after the comment |
 | `pr-lock` | `change orders-note` | one-root's `terragucci/lock` holds `envs/dev/orders`; orders-note, a second change to that root, fails it, and its reply names the root and pull request one-root |
+| `comment-agent` | `/terragucci agent ...` twice on orders-note | the first pushes one commit on its head, which the reply links and `terragucci/plan` passes on; the second, which also edits the pipeline, is refused naming the file, and the branch stays |
 | `policy` | `change replace` | `terragucci/plan` fails and the note names the denial |
 | `oidc` | `change oidc`, `merge oidc` | in the pull request's plan job and main's apply job, the token verifies against GitHub's keys and names the repo, run, commit, event and `sts.amazonaws.com`; the plan job holds the plan role and the apply job the apply role |
+| `comment-apply` | `/terragucci apply` on the merged oidc pull request, on one-root, and on the merged destroy while wave 4 waits | the first applies waves 1 to 4 from the merge commit and links the run; one-root is refused as not merged; the destroy's reply says wave 4 waits and gives `chant approve ... --sign` |
+| `policy-override` | `change override`, `merge override`, `terragucci override` as `sandbox-stranger` then as `sandbox-signer`, each followed by a re-run | wave 1 is denied, still denied with "not listed" after the first override, and applies after the second; the wave's report names the override, its rules, reason and plan digest |
+| `apply-serial` | `change module-bump`; merge it, and merge orders-note once its wave 1 is applying | no apply step of one run overlaps one of the other, none is cancelled, both runs pass, and each merge commit's newest `terragucci/apply` is a success |
 | `gate-wait` | `change destroy`, `merge destroy`, `approve` | wave 4 stops with its approve command, and the re-run after a sealed `chant approve` succeeds |
+| `explain-refusal` | `change refuse`, `merge refuse` | wave 4 is refused, since its last approval was for the destroy's plan, and the `explain-refusal` job passes and prints `envs/staging/payments` among the roots that moved |
+| `approve-command` | `terragucci approve --dry-run`, then `terragucci approve`, in a clone; the re-run | the dry run prints the command and the ledger keeps its length; the approval names wave 4 with no digest given, and the re-run applies it |
+| `drift-issue` | `drift`, then two more drift runs, the file put back before the last | the issue the first opens is the only open one after the second, which updates it, and the third closes it with "No drift at" |
+| `pr-apply-lock` | two pull requests on `envs/dev/orders`; `/terragucci apply` on the first, then the second, `/terragucci unlock` on the first, apply on the second | the first applies, the second is refused naming the root and the first, the unlock releases it, and the second then applies |
+| `pr-apply-stale` | a pull request on `envs/dev/payments`, then a commit to main, then `/terragucci apply` | the reply says it is not up to date with main, and the job applied nothing |
+| `pr-apply` | `merge: auto`; a pull request on `envs/dev/search` and `/terragucci apply` | the reply says every wave applied from the head and the pull request merged, and it is merged |
+| `pr-apply-token` | `merge: auto` with the merge token; a pull request on `envs/dev/email` and `/terragucci apply` | as `pr-apply`, merged by the token's user, and the merge commit has a push run on main |
+| `publish` | a `feat(service):` commit to main | the run's `publish` job passes and the sandbox has one tag, `modules/service/v<version>` |
+| `rollout` | every root pinned to that tag with `[skip ci]`, a second `feat(service):` commit, then `terragucci rollout modules/service <version> --mode apply` in a clone | the pull request it opens changes files under `envs/dev/` alone, moving their pin to the new tag |
 
-No claim runs broken on purpose, and no token is traded with STS: the sandbox has no cloud account (the Forgejo claim `forgejo-oidc` does the trade). `--record docs-site/src/data/validation.json` writes the rows as forge `github.com`, after the `github` rows. The nightly workflow (`nightly/pipeline.ts`, job `sandbox`) runs `just sandbox prove` on the newest published release and `just sandbox reset` after it, and keeps `prove.json` and the logs as the `sandbox-prove` artifact. It needs the repo secret `TERRAGUCCI_SANDBOX_TOKEN`: a token from an admin of the sandbox, fine-grained on INTENTIUS/terragucci-sandbox with Administration, Contents, Workflows, Pull requests, Issues and Actions read and write and Commit statuses read, or classic with `repo` and `workflow`. Without it the job stops at its first step and says so.
+No claim runs broken on purpose, and no token is traded with STS: the sandbox has no cloud account (the Forgejo claim `forgejo-oidc` does the trade). One account drives the sandbox, so no claim comments as a non-writer or from a fork; those refusals are Forgejo claims. `--record docs-site/src/data/validation.json` writes each claim the run made as a `github.com` row, in place of that claim's last row, after the `github` rows. The nightly workflow (`nightly/pipeline.ts`, job `sandbox`) runs `just sandbox prove` on the newest published release and `just sandbox reset` after it, and keeps `prove.json` and the logs as the `sandbox-prove` artifact. It needs the repo secret `TERRAGUCCI_SANDBOX_TOKEN`: a token from an admin of the sandbox, fine-grained on INTENTIUS/terragucci-sandbox with Administration, Contents, Workflows, Pull requests, Issues and Actions read and write and Commit statuses read, or classic with `repo` and `workflow`. Without it the job stops at its first step and says so.
 
 `just sandbox capture` resets the sandbox, runs `change one-root`, `plan-comment one-root`, `change unformatted`, `change destroy`, `merge destroy` and `drift`, shoots each view right after its step, writes them as the step `github`, and resets the sandbox again. It takes about 15 minutes. A page uses them as it uses a Forgejo step's: `<Shot step="github" view="note" alt="..." />`, and `<Captured step="github" />` for the commands and the lines of the two job logs a logged-out reader cannot open.
 
