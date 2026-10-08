@@ -25,7 +25,7 @@ The github.com claims run the newest published release against real GitHub: its 
 |---|---|
 | no cloud role | `oidc` checks each job's token against GitHub's published keys, its repo, run, audience and role, and trades it with nothing; the trade with STS is proven on Forgejo |
 | no bucket | report upload credentials are proven on Forgejo, against the AWS emulator; the estate page's scheduled job does not run here |
-| one GitHub account | the refusals of a commenter with no write access and of a pull request from a fork are proven on Forgejo |
+| one GitHub account | the refusals of a commenter with no write access and of a pull request from a fork are proven on Forgejo; the apply-before-merge pull requests are opened by a workflow, so the account that runs the claims may approve them |
 | no model key | the agent comment and the refused-wave job run a stand-in agent that makes one edit or prints the summary input |
 | no broken run | these claims are not broken on purpose, so they read "passes" |
 

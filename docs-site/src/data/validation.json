@@ -197,6 +197,55 @@
       "break": null
     },
     {
+      "forge": "github.com",
+      "claim": "pr-apply-lock",
+      "says": "with apply.when: pull-request a second pull request that reaches a root an open one applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "pr-apply-stale",
+      "says": "a comment on an approved pull request whose head is behind main is refused as not up to date, and nothing applies",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "pr-apply",
+      "says": "with apply.merge: auto a comment on an open, approved pull request applies its head in every wave, and pr-merge merges it with the job token",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "pr-apply-token",
+      "says": "with apply.merge: auto and merge_token_env the merge is made with that token, so the merge commit starts its own run on main",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "publish",
+      "says": "with modules.publish: git-tags a conventional commit to a module on main makes the publish job push the module tag",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "rollout",
+      "says": "once the roots pin that tag and the next version is published, terragucci rollout --mode apply opens one pull request for the canary wave that moves those pins alone",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "explain-refusal",
+      "says": "after a refused wave the explain-refusal job of the refused-wave guide runs, and its respond wave-refused step names the root that moved; a stand-in takes the place of the model step",
+      "verdict": "pass",
+      "break": null
+    },
+    {
       "forge": "gitlab",
       "claim": "check",
       "says": "the generated pipeline fails an unformatted root and names the file",
