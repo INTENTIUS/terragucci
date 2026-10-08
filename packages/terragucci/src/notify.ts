@@ -3,7 +3,9 @@
  * a Slack or Microsoft Teams incoming webhook, and an apply job whose wave
  * waits for an approval (exit 3), is refused (exit 4) or fails posts one
  * message to each: the project, the wave, its roots, the command that
- * approves it and the run's link.
+ * approves it and the run's link. Under `approval: pr-review`, a waiting
+ * wave that a review of its pull request would approve links that pull
+ * request's review page.
  *
  * It only tells people. Nothing here approves, applies or merges, and a chat
  * message carries no button that does: approvals stay records on
@@ -28,6 +30,10 @@ export interface WaveNotice {
   roots: string[];
   /** What to run to approve the wave, or why there is nothing to approve. */
   approve: string;
+  /** The set digest a waiting wave asks an approval of. */
+  digest?: string;
+  /** Under `approval: pr-review`: the pull request whose approving review of its head approves the waiting wave, and its review page. */
+  review?: { pr: number; url: string };
   /** The stage's one-line outcome, when it wrote one. */
   outcome?: string;
   run?: string;
@@ -39,13 +45,16 @@ export function waveNotice(event: NotifyEvent, wave: number, opts: { outcome?: s
   const env = opts.env ?? process.env;
   const outcome = opts.outcome?.trim() || undefined;
   const report = readReport(opts.reportDir);
-  const fromReport = report?.waves?.find((w) => w.number === wave)?.roots ?? report?.roots?.map((r) => r.path) ?? [];
+  const row = report?.waves?.find((w) => w.number === wave);
+  const fromReport = row?.roots ?? report?.roots?.map((r) => r.path) ?? [];
   // A refused wave names the roots that moved; the report holds every root of the wave.
   const named = outcome?.match(/: (.+)$/)?.[1];
   const roots = fromReport.length > 0 ? fromReport : event === "refused" && named && !named.startsWith("chant ") ? named.split(", ") : [];
   const project = report?.run?.project ?? env.GITHUB_REPOSITORY ?? env.CI_PROJECT_PATH ?? "this project";
+  const digest = event === "waiting" ? outcome?.match(/ --plan (\S+)/)?.[1] : undefined;
+  const review = event === "waiting" && row?.review && typeof row.review.url === "string" && Number.isInteger(row.review.pull_request) ? { pr: row.review.pull_request, url: row.review.url } : undefined;
   // A waiting wave's outcome is its approve command, said once.
-  return { event, wave, project, roots, approve: approveText(event, wave, outcome), ...(outcome && event !== "waiting" ? { outcome } : {}), ...(runUrl(env) ? { run: runUrl(env) } : {}), ...(report?.run?.report_url ? { report: report.run.report_url } : {}) };
+  return { event, wave, project, roots, approve: approveText(event, wave, outcome), ...(digest ? { digest } : {}), ...(review ? { review } : {}), ...(outcome && event !== "waiting" ? { outcome } : {}), ...(runUrl(env) ? { run: runUrl(env) } : {}), ...(report?.run?.report_url ? { report: report.run.report_url } : {}) };
 }
 
 /** The approval a person gives: the stage's own command for a waiting wave, `terragucci approve` for a refused one (it finds the new digest). */
@@ -68,7 +77,7 @@ export function runUrl(env: NodeJS.ProcessEnv): string | undefined {
 
 interface ReportShape {
   run?: { project?: string; report_url?: string };
-  waves?: { number: number; roots: string[] }[];
+  waves?: { number: number; roots: string[]; review?: { pull_request: number; url: string } }[];
   roots?: { path: string }[];
 }
 
@@ -100,8 +109,10 @@ export function slackMessage(n: WaveNotice): { text: string } {
   return {
     text: [
       `*${headline(n)}*`,
+      ...(n.review ? [`Review and approve: <${n.review.url}|pull request ${n.review.pr}>, then run the wave again`] : []),
       `Roots: ${rootsText(n)}`,
-      `Approve: \`${n.approve}\``,
+      ...(n.digest ? [`Digest: \`${n.digest}\``] : []),
+      `${n.review ? "Or approve" : "Approve"}: \`${n.approve}\``,
       ...(n.outcome ? [`Outcome: ${n.outcome}`] : []),
       ...(n.run ? [`Run: <${n.run}>`] : []),
       ...(n.report ? [`Report: <${n.report}>`] : []),
@@ -109,12 +120,14 @@ export function slackMessage(n: WaveNotice): { text: string } {
   };
 }
 
-/** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card. Its only action opens the run. */
+/** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card. Its actions open the pull request's review page, under pr-review, and the run. */
 export function teamsMessage(n: WaveNotice): Record<string, unknown> {
   const facts = [
     { title: "Wave", value: String(n.wave) },
+    ...(n.review ? [{ title: "Review and approve", value: `pull request ${n.review.pr}, then run the wave again: ${n.review.url}` }] : []),
     { title: "Roots", value: rootsText(n) },
-    { title: "Approve", value: n.approve },
+    ...(n.digest ? [{ title: "Digest", value: n.digest }] : []),
+    { title: n.review ? "Or approve" : "Approve", value: n.approve },
     ...(n.outcome ? [{ title: "Outcome", value: n.outcome }] : []),
     ...(n.run ? [{ title: "Run", value: n.run }] : []),
   ];
@@ -132,7 +145,7 @@ export function teamsMessage(n: WaveNotice): Record<string, unknown> {
             { type: "TextBlock", text: headline(n), weight: "Bolder", wrap: true },
             { type: "FactSet", facts },
           ],
-          ...(n.run ? { actions: [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] } : {}),
+          ...(n.review || n.run ? { actions: [...(n.review ? [{ type: "Action.OpenUrl", title: "Review and approve", url: n.review.url }] : []), ...(n.run ? [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] : [])] } : {}),
         },
       },
     ],

@@ -125,7 +125,7 @@ dashboards: true
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge) |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
-| `notify` | none (off) | `slack` and `teams`: the names of the secrets that hold a Slack or Microsoft Teams incoming webhook address; an apply job whose wave waits, is refused or fails posts the project, the wave, its roots, the approve command and the run's link to each. A message approves nothing |
+| `notify` | none (off) | `slack` and `teams`: the names of the secrets that hold a Slack or Microsoft Teams incoming webhook address; an apply job whose wave waits, is refused or fails posts the project, the wave, its roots, the approve command and the run's link to each, and under `approval: pr-review` a link to review the pull request when that review would approve a waiting wave. A message approves nothing |
 | `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `comments` | `false` (off) | GitLab only: the cron of the comments schedule, whose pipelines answer `/terragucci` merge request notes; see [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |

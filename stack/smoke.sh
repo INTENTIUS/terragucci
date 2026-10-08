@@ -280,7 +280,7 @@ audit|terragucci audit writes one record to the bucket: every approval on the le
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
-notify-chat|with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each|
+notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
 cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|'
@@ -9401,27 +9401,30 @@ YAML
 }
 
 claim_notify_chat() {
-  # The gated fixture (gate: always) with notify naming two secrets, which
-  # hold the addresses of a webhook stand-in: one path for Slack, one for
-  # Teams. The push to main stops at wave 1, waiting for its approval, and
-  # its job posts once to each: the Slack text and the Teams card both name
-  # the wave, its root canary/one, the chant approve command for its digest
-  # and the run.
-  # BREAK: terragucci.yml has no notify, so the pipeline maps no webhook and
-  # nothing is posted.
+  # The gated fixture (gate: always) with approval: pr-review and notify
+  # naming two secrets, which hold the addresses of a webhook stand-in: one
+  # path for Slack, one for Teams. A pull request changes canary/one and
+  # merges with no review, so wave 1 of the merge commit waits, and its job
+  # posts once to each: the Slack text and the Teams card both name the wave,
+  # its root canary/one, the plan digest, the chant approve command for it,
+  # the run, and a "Review and approve" link to the pull request's Files
+  # changed page. A reviewer with write access then approves the merged pull
+  # request's head on that page's API, `/terragucci apply` on the pull request
+  # runs the wave again, and canary/one applies.
+  # BREAK: approval is ledger, so the waiting wave's message links no review.
   log() { echo "[smoke notify-chat] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/notify-chat" name="tgs-chat-$STAMP" wf sha reqs slack teams s rc=0
+  local work repo="$USER/notify-chat" name="tgs-chat-$STAMP" approval wf sha reqs slack teams s want link applied reply rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo notify-chat || { drop_work "$work"; return 1; }
-  if [ -z "${BREAK:-}" ]; then
-    printf 'notify:\n  slack: CHAT_SLACK\n  teams: CHAT_TEAMS\n' >> "$work/tree/terragucci.yml"
-    (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
-    wf="$work/tree/.forgejo/workflows/terragucci.yml"
-    # shellcheck disable=SC2016 # the expression the forge expands
-    grep -qF 'TERRAGUCCI_SLACK_WEBHOOK: '"'"'${{ secrets.CHAT_SLACK }}'"'" "$wf" || { log "the apply jobs do not map CHAT_SLACK"; drop_work "$work"; return 1; }
-  fi
+  approval=pr-review
+  [ -z "${BREAK:-}" ] || approval=ledger
+  gated_repo notify-chat gated-waves "$approval" || { drop_work "$work"; return 1; }
+  printf 'notify:\n  slack: CHAT_SLACK\n  teams: CHAT_TEAMS\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  # shellcheck disable=SC2016 # the expression the forge expands
+  grep -qF 'TERRAGUCCI_SLACK_WEBHOOK: '"'"'${{ secrets.CHAT_SLACK }}'"'" "$wf" || { log "the apply jobs do not map CHAT_SLACK"; drop_work "$work"; return 1; }
   for s in CHAT_SLACK:"http://$name:8790/slack" CHAT_TEAMS:"http://$name:8790/teams"; do
     api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "${s#*:}" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/${s%%:*}" \
       || { log "could not set the ${s%%:*} secret"; drop_work "$work"; return 1; }
@@ -9429,22 +9432,42 @@ claim_notify_chat() {
   stand_in_up "$work" "$name" 8790 MODE=webhook || { stand_in_down; drop_work "$work"; return 1; }
   sha="$(push_tree "$work/tree" "$repo" main "notify-chat: two waves")" || rc=1
   [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  # The pull request, planned, then merged with no review.
+  [ $rc = 0 ] && { pr_reviewer "$repo" reviewer-notify-chat || rc=1; }
   if [ $rc = 0 ]; then
-    run_logs "$repo" "$RUN_ID" | grep -E 'chant approve tf-apply wave-1|terragucci notify' >&2 || { log "wave 1 did not wait for its approval"; rc=1; }
+    echo 2 > "$work/tree/canary/one/rev.txt"
+    REVIEW_HEAD="$(push_tree "$work/tree" "$repo" change "notify-chat: change canary/one")" || rc=1
+  fi
+  [ $rc = 0 ] && { REVIEW_PR="$(pr_open "$repo" change "notify-chat: change canary/one")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$REVIEW_HEAD" pull_request || rc=1; }
+  [ $rc = 0 ] && { review_merge notify-chat || rc=1; }
+  if [ $rc = 0 ]; then
+    run_logs "$repo" "$RUN_ID" | grep -E 'chant approve tf-apply wave-1|terragucci notify|approving review' >&2 || { log "wave 1 did not wait for its approval"; rc=1; }
     reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
     slack="$(jq -r '[.[] | select(.method == "POST" and .path == "/slack")] | last | .body.text // empty' <<<"$reqs")"
     teams="$(jq -c '[.[] | select(.method == "POST" and .path == "/teams")] | last | .body // empty' <<<"$reqs")"
     log "Slack got: ${slack:-nothing}"
     log "Teams got: ${teams:-nothing}"
-    for want in "wave 1 of" "canary/one" "chant approve tf-apply wave-1 --plan" "/actions/runs/"; do
+    link="/pulls/$REVIEW_PR/files"
+    for want in "wave 1 of" "canary/one" "Digest" "chant approve tf-apply wave-1 --plan" "/actions/runs/" "Review and approve" "$link"; do
       grep -qF -- "$want" <<<"$slack" || { log "the Slack message does not say $want"; rc=1; }
       grep -qF -- "$want" <<<"$teams" || { log "the Teams card does not say $want"; rc=1; }
     done
     [ "$(jq -r '.attachments[0].contentType // empty' <<<"$teams")" = application/vnd.microsoft.card.adaptive ] || { log "the Teams body is not an Adaptive Card"; rc=1; }
+    jq -e --arg l "$link" '.attachments[0].content.actions[0] | .title == "Review and approve" and (.url | endswith($l))' <<<"$teams" >/dev/null || { log "the Teams card's first button does not open the review"; rc=1; }
   fi
+  # The review lands after the merge; the next run of the wave applies it.
+  [ $rc = 0 ] && { review_approve notify-chat "$REVIEW_HEAD" || rc=1; }
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$REVIEW_PR" "/terragucci apply")"
+    applied="$(gated_applied notify-chat)"
+    log "after the review: state for: ${applied:-nothing}; reply: ${reply:-none}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply on the review, wave 2 waiting at its own gate"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/reviewer-notify-chat?purge=true" 2>/dev/null || true
   stand_in_down
   drop_work "$work"
-  [ $rc = 0 ] && log "wave 1 waited, and Slack and Teams each got the wave, its root, the approve command and the run"
+  [ $rc = 0 ] && log "wave 1 waited; Slack and Teams each got the wave, its root, the digest, the approve command, the run and the review link; the review then applied it"
   return $rc
 }
 
@@ -9778,7 +9801,7 @@ audit                weight=150
 audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150
-notify-chat          runner self! weight=150
+notify-chat          runner self! weight=250
 cost-estimate        runner self! weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200

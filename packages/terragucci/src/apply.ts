@@ -560,6 +560,8 @@ interface WaveRun {
   refused?: ReportWave["refused"];
   /** When a waiting wave began waiting for an approval of its digest. */
   waitingSince?: string;
+  /** Under `approval: pr-review`, the pull request whose review would approve the waiting wave. */
+  review?: ReportWave["review"];
 }
 
 /**
@@ -587,7 +589,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
       return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -901,6 +903,10 @@ async function gateWave(
         moved = r;
       } else {
         console.log(`${label}: no review approves this wave: ${r.why}`);
+        if (r.review) {
+          w.review = { pull_request: r.review.pr, url: r.review.url };
+          console.log(`${label}: an approving review of pull request ${r.review.pr} on its head approves it: ${r.review.url}`);
+        }
       }
     }
     if (decision.status === "approved") {

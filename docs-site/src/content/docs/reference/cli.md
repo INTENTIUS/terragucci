@@ -266,8 +266,8 @@ Posts one wave's outcome to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEB
 
 | Read from | For |
 |---|---|
-| `--outcome`, the stage's `TG_OUTCOME` line | the approve command of a waiting wave, and the roots of a refused one |
-| `--report` (default `terragucci-report`) | the project and the wave's roots |
+| `--outcome`, the stage's `TG_OUTCOME` line | the approve command and digest of a waiting wave, and the roots of a refused one |
+| `--report` (default `terragucci-report`) | the project, the wave's roots, and the wave's `review`: under `approval: pr-review`, the pull request whose review would approve a waiting wave |
 | `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`, or `CI_JOB_URL` | the run's link |
 
 A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.
