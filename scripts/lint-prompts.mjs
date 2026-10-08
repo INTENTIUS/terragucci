@@ -1,4 +1,4 @@
-// The "Hand this to your agent" prompts, held to the PROMPTS rule: each names
+// The "Optional: hand this page to your coding agent" prompts, held to the PROMPTS rule: each names
 // its own page's URL and carries the never-line in docs-site/src/prompts.ts
 // word for word, so none can drop the review approval, `--mode apply`, the
 // signers file or chant/lifecycle. Every tutorial, guide and getting-started

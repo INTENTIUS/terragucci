@@ -1,6 +1,6 @@
 # terragucci
 
-CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. CI does this: every job runs in your forge's CI and lands in your git and your bucket. No account, no sign-in, no platform.
+CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. CI does this: every job runs in your forge's CI and lands in your git and your bucket. No account, no sign-in, no platform. Every stage run is one OpenTelemetry trace, a span per root with the binary's own spans inside, sent over OTLP to your collector.
 
 | You get | How |
 |---|---|
@@ -12,6 +12,8 @@ CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift ch
 | [Gated waves](https://intentius.io/terragucci/concepts/waves-and-approvals/) | a wave that destroys or replaces waits for an approval bound to its plans |
 | [Aggregated plan output](https://intentius.io/terragucci/concepts/why-plans-are-grouped/) | one note groups the roots taking the same change and names every destroy |
 | [Module publishing and pinned rollouts](https://intentius.io/terragucci/guides/publish-modules/) | version modules on merge, then move each pin one wave of pull requests at a time |
+
+[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the two opt-in agent features run a coding agent.
 
 It runs whichever binary you already use; [Choose Terraform, OpenTofu, Terragrunt or choudoufu](https://intentius.io/terragucci/guides/use-a-binary/) compares them.
 
