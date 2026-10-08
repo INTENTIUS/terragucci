@@ -56,7 +56,6 @@ export default defineConfig({
 			favicon: '/favicon.svg',
 			head: [
 				{ tag: 'link', attrs: { rel: 'icon', href: '/terragucci/favicon.ico', sizes: '32x32' } },
-				{ tag: 'link', attrs: { rel: 'icon', href: '/terragucci/favicon-32.png', type: 'image/png', sizes: '32x32' } },
 				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/terragucci/apple-touch-icon.png' } },
 				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://intentius.io/terragucci/taco-share.png' } },
 				{ tag: 'meta', attrs: { property: 'og:image:width', content: '400' } },
