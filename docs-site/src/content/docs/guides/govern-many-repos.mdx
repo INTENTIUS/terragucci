@@ -10,6 +10,7 @@ prompt: |
 ---
 
 import { Steps } from '@astrojs/starlight/components';
+import Shot from '../../../components/Shot.astro';
 
 ## What you end up with
 
@@ -82,6 +83,10 @@ A control repo whose `terragucci.yml` lists every project. One command previews 
    ```
 
    Each project gets a pull request, never a push to its main branch; `--mode apply` runs no `terraform apply`. Current projects are left alone. The exit code is 1 when any project failed.
+
+   <Shot step="reconcile" view="pull" alt="The pull request reconcile opened in a Forgejo project with no pipeline, terragucci: update the pipeline: its body says the control repo's config changed what the pipeline should be and that it adds .forgejo/workflows/terragucci.yml, the project's own plan note below it, and the merge" />
+
+   <Shot step="reconcile" view="files" alt="That pull request's one file, .forgejo/workflows/terragucci.yml, added in full: the generated pipeline, its triggers and its check job pinned by digest" />
 
 5. Merge in each project.
 

@@ -186,9 +186,15 @@ Nine dashboards are written: the six below, and one for each of the three SLOs.
 
 <Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
 
+<Shot step="see-runs" view="changes" alt="The Change review dashboard for the example: the module bump's pull request changed 12 roots in 3 groups, and changes by action over the last hour, mostly no-ops and updates" />
+
+<Shot step="see-runs" view="estate" alt="The Estate dashboard for the example: 15 roots in the project, run with tofu and the terragucci version that sent them, no module pins, and one tip by rule, terragucci-shared-module" />
+
 ### SLOs and alerts
 
 There are three SLOs over 28 days: plans finish within ten minutes 95% of the time, wave applies succeed 99%, drift is corrected within a day 90%.
+
+<Shot step="see-runs" view="slos" alt="The plan time SLO dashboard for the example: the SLI over 28 days at 100% against a 95% objective, all of the error budget left, no burn-rate alert firing, and the burn rate by alert window" />
 
 | Alert | Fires when |
 |---|---|

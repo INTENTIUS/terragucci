@@ -14,6 +14,7 @@ prompt: |
 import { Badge, CardGrid, LinkCard, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import PlanNote from '../../../components/PlanNote.astro';
 import Shot from '../../../components/Shot.astro';
+import Captured from '../../../components/Captured.astro';
 
 <Badge text="About 10 minutes" variant="note" size="medium" />
 
@@ -101,6 +102,10 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
    | layers | dependency order, the [waves](/terragucci/concepts/glossary/#wave) | |
    | [binary](/terragucci/guides/use-a-binary/) | `tofu` or `terraform` and its version; Terragrunt runs it underneath | `--binary` |
    | forge | the `origin` remote | `--forge` |
+
+   With a `terragucci.yml`, `npx terragucci config check` reads it first and names the mode approvals run under. A key it does not know is named, with the keys it accepts. On the example:
+
+   <Captured step="config" />
 
 3. Write the pipeline.
 
