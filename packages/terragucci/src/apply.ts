@@ -21,13 +21,22 @@
  * that moved. With no approval the wave records a pending fact for its digest,
  * so `chant approve tf-apply wave-<k>` has the plan to approve, and stops.
  *
+ * Before a wave applies under an approval it records that the approval was
+ * used: one line in `_gates/tf-apply/applied.jsonl` naming the gate, the
+ * digest and the approval's time. An approval of another digest that a wave
+ * has applied is spent: it does not refuse the next plans of that wave, which
+ * wait for their own approval. Only an approval of plans no wave applied
+ * refuses (decideGate).
+ *
  * Which approvals count is the `approval:` mode at base (./approval.ts):
  * under `ledger`, the default, any approval of the digest; under `sealed`,
  * only one made with `chant approve --sign` whose seal verifies against the
  * signers file at base (./seal.ts). Base is the commit before the one being
  * applied.
  *
- * Nothing here records an approval. A person does, with `chant approve`.
+ * Nothing here records an approval, except that under `approval: pr-review`
+ * the wave records the review it counted. A person approves with `chant
+ * approve`.
  *
  * A root the policy denies applies only under a recorded override of exactly
  * its plan and rules, by someone `policy.override` at base lists
@@ -154,9 +163,45 @@ export interface ResolutionRecord {
   reviewers?: string[];
 }
 
+/**
+ * What a wave writes before it applies under an approval, in
+ * `_gates/<op>/applied.jsonl` beside the ledger: the approval of
+ * `planDigest`, made at `approvedAt`, was used. chant reads only the
+ * `.jsonl` files directly under `_gates/`, so it never sees these lines.
+ */
+export interface AppliedRecord {
+  version: 1;
+  kind: "applied";
+  op: string;
+  gate: string;
+  planDigest: string;
+  /** The approval's own timestamp, as the ledger holds it: every approval of this digest at or before it is spent. */
+  approvedAt: string;
+  approvedBy: string;
+  timestamp: string;
+  runId?: string;
+  commit?: string;
+}
+
 export interface GateLedger {
   pending: PendingRecord[];
   resolutions: ResolutionRecord[];
+  /** The approvals a wave applied under; absent reads as none. */
+  applied?: AppliedRecord[];
+}
+
+/** The lines of an `applied.jsonl` file. Malformed lines are skipped. */
+export function parseApplied(text: string): AppliedRecord[] {
+  const out: AppliedRecord[] = [];
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    try {
+      const r = JSON.parse(line) as Record<string, unknown>;
+      if (r.version === 1 && r.kind === "applied" && typeof r.gate === "string" && typeof r.planDigest === "string" && typeof r.approvedAt === "string") out.push(r as unknown as AppliedRecord);
+    } catch {
+      continue;
+    }
+  }
+  return out;
 }
 
 /** The lines of a `_gates/<op>.jsonl` file, as chant's `parseGateLedger` reads them. Malformed lines are skipped. */
@@ -183,9 +228,14 @@ export function parseLedger(text: string): GateLedger {
 const at = (iso: string): number => new Date(iso).getTime();
 
 export type GateDecision =
-  | { status: "approved"; by: string }
-  /** `standing` is set when a pending fact for this digest already stands, so nothing new is recorded. */
-  | { status: "waiting"; standing?: PendingRecord }
+  /** `at` is the approval's timestamp, which the applied record names. */
+  | { status: "approved"; by: string; at: string }
+  /**
+   * `standing` is set when a pending fact for this digest already stands, so
+   * nothing new is recorded. `spent` names the newest approval of another
+   * digest that a wave applied under, which therefore does not refuse.
+   */
+  | { status: "waiting"; standing?: PendingRecord; spent?: { approved: string; by: string } }
   /** An approval stands for another digest. `standing` as for waiting. */
   | { status: "refused"; approved: string | undefined; by: string; standing?: PendingRecord };
 
@@ -193,26 +243,34 @@ export type GateDecision =
  * Decide one wave's gate against the ledger, the rule chant's `evaluateGate`
  * applies to a plan-bound gate: an approval counts only when it is newer than
  * the newest pending fact for the gate and names this digest. The newest
- * approval for another digest is the changed-set refusal.
+ * approval for another digest is the changed-set refusal, unless it is spent:
+ * a wave applied under an approval of that digest made at or after it (the
+ * ledger's `applied` records). A spent approval approves nothing new and
+ * refuses nothing; the wave waits for an approval of its own digest.
  */
 export function decideGate(ledger: GateLedger, gate: string, digest: string, now: string): GateDecision {
   let latest: PendingRecord | undefined;
   for (const p of ledger.pending) if (p.gate === gate && (!latest || at(p.timestamp) >= at(latest.timestamp))) latest = p;
   const since = latest ? at(latest.timestamp) : 0;
+  const spent = (r: ResolutionRecord): boolean =>
+    r.planDigest !== undefined && (ledger.applied ?? []).some((a) => a.gate === gate && samePlanDigest(a.planDigest, r.planDigest) && at(a.approvedAt) >= at(r.timestamp));
   let matched: ResolutionRecord | undefined;
   let mismatched: ResolutionRecord | undefined;
+  let used: ResolutionRecord | undefined;
   for (const r of ledger.resolutions) {
     if (r.gate !== gate || at(r.timestamp) < since) continue;
     if (samePlanDigest(r.planDigest, digest)) {
       if (!matched || at(r.timestamp) >= at(matched.timestamp)) matched = r;
+    } else if (spent(r)) {
+      if (!used || at(r.timestamp) >= at(used.timestamp)) used = r;
     } else if (!mismatched || at(r.timestamp) >= at(mismatched.timestamp)) {
       mismatched = r;
     }
   }
-  if (matched) return { status: "approved", by: matched.resolvedBy };
+  if (matched) return { status: "approved", by: matched.resolvedBy, at: matched.timestamp };
   const standing = latest && at(latest.expiresAt) > at(now) && samePlanDigest(latest.planDigest, digest) ? latest : undefined;
   if (mismatched) return { status: "refused", approved: mismatched.planDigest, by: mismatched.resolvedBy, ...(standing ? { standing } : {}) };
-  return { status: "waiting", ...(standing ? { standing } : {}) };
+  return { status: "waiting", ...(standing ? { standing } : {}), ...(used ? { spent: { approved: used.planDigest!, by: used.resolvedBy } } : {}) };
 }
 
 /** The roots whose plan digest differs between the approved members and the ones planned now. */
@@ -226,6 +284,8 @@ export function movedMembers(approved: readonly WaveMember[], now: readonly Wave
 const LIFECYCLE = "chant/lifecycle";
 const REMOTE_REF = `refs/remotes/origin/${LIFECYCLE}`;
 const LEDGER_PATH = `_gates/${APPLY_OP}.jsonl`;
+/** Where the waves record each approval they applied under: beside the reports, out of chant's sight. */
+export const APPLIED_PATH = `_gates/${APPLY_OP}/applied.jsonl`;
 const GIT_ID = { GIT_AUTHOR_NAME: "terragucci", GIT_AUTHOR_EMAIL: "terragucci@localhost", GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" };
 
 function git(repo: string, args: string[], input?: string, env: NodeJS.ProcessEnv = process.env) {
@@ -246,7 +306,10 @@ function fetchLifecycle(repo: string): boolean {
 export function readLedger(repo: string, path: string = LEDGER_PATH): GateLedger {
   if (!fetchLifecycle(repo)) return { pending: [], resolutions: [] };
   const show = git(repo, ["show", `${REMOTE_REF}:${path}`]);
-  return parseLedger(show.status === 0 ? show.stdout : "");
+  const ledger = parseLedger(show.status === 0 ? show.stdout : "");
+  if (path !== LEDGER_PATH) return ledger;
+  const applied = git(repo, ["show", `${REMOTE_REF}:${APPLIED_PATH}`]);
+  return { ...ledger, applied: parseApplied(applied.status === 0 ? applied.stdout : "") };
 }
 
 /**
@@ -269,7 +332,7 @@ export function appendPending(repo: string, record: PendingRecord, files: Record
 }
 
 /** Append one line to the ledger (`path`, the waves' file by default) and push it, as appendPending does. */
-function appendRecord(repo: string, record: PendingRecord | ResolutionRecord, files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
+function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord, files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
   const line = JSON.stringify(record);
   for (let attempt = 0; attempt < 5; attempt++) {
     const exists = fetchLifecycle(repo);
@@ -812,7 +875,7 @@ async function gateWave(
       if (r.kind === "approved") {
         appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
         console.log(`${label}: pull request ${r.pr} was approved on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")}, and the plans are the ones it reviewed (${changesDigest})`);
-        decision = { status: "approved", by: r.by.join(", ") };
+        decision = { status: "approved", by: r.by.join(", "), at: now };
       } else if (r.kind === "moved") {
         moved = r;
       } else {
@@ -822,7 +885,26 @@ async function gateWave(
     if (decision.status === "approved") {
       console.log(`${label}: approved by ${decision.by} for this digest`);
       w.approval = "approved";
+      // Recorded before anything applies, so no approval is ever used without the ledger saying so; a record that cannot be pushed stops the wave.
+      const env = options.env ?? process.env;
+      const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
+      const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+      appendRecord(repo, {
+        version: 1,
+        kind: "applied",
+        op: APPLY_OP,
+        gate: name,
+        planDigest: digest,
+        approvedAt: decision.at,
+        approvedBy: decision.by,
+        timestamp: now,
+        ...(runId ? { runId } : {}),
+        ...(commit ? { commit } : {}),
+      }, {}, `Applied under approval: ${APPLY_OP} ${name}`, APPLIED_PATH);
     } else {
+      if (decision.status === "waiting" && decision.spent) {
+        console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);
+      }
       const env = options.env ?? process.env;
       facts.waitingSince = decision.standing?.timestamp ?? now;
       w.waitingSince = facts.waitingSince;

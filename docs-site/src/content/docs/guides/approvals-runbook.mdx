@@ -16,7 +16,7 @@ import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 The commands an approver and an on-call engineer use, in one place. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) walks through a first sign-off.
 
-The ledger is `_gates/tf-apply.jsonl` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch: a `"kind":"pending"` line is a wave asking, any other line an approval. Each waiting wave's report is at `_gates/tf-apply/wave-<k>/<digest>.json`.
+The ledger is `_gates/tf-apply.jsonl` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch: a `"kind":"pending"` line is a wave asking, any other line an approval. Each waiting wave's report is at `_gates/tf-apply/wave-<k>/<digest>.json`. A wave that applies under an approval first marks it used in `_gates/tf-apply/applied.jsonl`; a used approval refuses no later plan.
 
 ## Choose a mode
 
@@ -176,7 +176,7 @@ The wave waits again; the old line stays in history.
 
 ## Recover from a refusal
 
-A wave whose plans changed after approval applies nothing and exits with code 4. The job names the moved roots; `terragucci respond wave-refused` prints what changed. Approve the new digest or revert.
+When a wave's plans moved after an approval no run applied, it applies nothing and exits with code 4. The job names the moved roots; `terragucci respond wave-refused` prints what changed. Approve the new digest or revert. New plans after an applied approval wait for their own instead.
 
 A revert does not revive the old approval: the refused run recorded a newer pending fact, so the wave needs a fresh [`chant approve`](/terragucci/concepts/glossary/#chant). See [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/).
 
@@ -187,7 +187,7 @@ A revert does not revive the old approval: the refused run recorded a newer pend
 | Record | Expires | Stops counting when |
 |---|---|---|
 | Pending fact | 48 hours after the first run recorded it; the next run after that records a fresh one. | It is replaced by a newer pending fact for the gate. |
-| Approval | Never. | It is older than the gate's newest pending fact, or names a digest the wave no longer plans ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)); or, under `sealed`, its approver leaves `.chant/allowed_signers`, for merges made after that. |
+| Approval | Never. | It is older than the gate's newest pending fact, or names a digest the wave no longer plans ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)); or, under `sealed`, its approver leaves `.chant/allowed_signers`, for merges made after that. Once a run applied under it, it refuses nothing. |
 | Policy override | Never. | It is older than the root's newest recorded denial, or names another plan or other rules; or its author leaves `policy.override`, or under `sealed` the signers file, for merges made after that. |
 
 ## Next
