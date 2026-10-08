@@ -13,7 +13,7 @@ prompt: |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
-| `estate` | writes one page for every project, `estate.html` and `estate.json`, to the reports bucket, and prints a presigned link to it |
+| `estate` | writes one page for every project, `estate.html` and `estate.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
@@ -70,15 +70,15 @@ terragucci reconcile [--config <file>] [--mode dry-run|apply] [--project <host/p
 
 ```bash
 terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
-    [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+    [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--config` | the config file; default the one in the working directory |
 | `--out` | where the page is written locally; default `terragucci-estate` |
-| `--link-hours` | how long the presigned link lives; default 24, at most 168 |
-| `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write, in place of `reports` in a repo's config |
+| `--link-hours` | how long the link lives; default 24, at most 168 |
+| `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), in place of `reports` in a repo's config |
 
 It reads each project's `index.json` and nothing else, then writes `estate.html` and `estate.json` at the top of the prefix. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. Exit code 1 when a project's index could not be read; the page names it.
 
@@ -87,7 +87,7 @@ It reads each project's `index.json` and nothing else, then writes `estate.html`
 ```bash
 terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
 terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>]
-    [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--canary <globs>] [--bucket s3://<b>]
+    [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--canary <globs>] [--bucket <url>]
     [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
@@ -167,7 +167,7 @@ terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout
 terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
 terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
 terragucci comment --agent push --change <dir> [--policy-dir <dir>]
-terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none]
+terragucci comment --forge gitlab --poll --layers <a,b;c>
 ```
 
 Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`.
@@ -188,9 +188,7 @@ On GitLab, `--forge gitlab --poll` reads no event file. The generated `comments`
 | any | the author is a Developer or above; anyone else gets no reply | |
 | `/terragucci plan [root]` | the merge request is open and from this project; a named root is a root of the pipeline | starts a merge request pipeline, which plans the whole merge request |
 | `/terragucci apply` | the merge request merged into the default branch from this project; no later commit there has an apply of its own; no `wave-<n>` | retries the merge commit's first apply job that did not succeed; its gate decides again |
-| `/terragucci apply [wave-<n>]`, with `--when pull-request` | the merge request is open, from this project, into the default branch; `--requires` (all four by default), `terragucci/plan` and the pipeline files, as `comment-apply` checks them | starts a pipeline on the default branch with `TG_MERGE_TOKEN` and the variables `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE` and `TERRAGUCCI_HEAD` |
-| `/terragucci lock`, `unlock`, with `--when pull-request` | the merge request is open | starts the same pipeline |
-| `/terragucci lock`, `unlock` without it, `agent` | | replies that the verb does not run here |
+| `/terragucci lock`, `unlock`, `agent` | | replies that the verb does not run on GitLab |
 
 [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
 
@@ -205,7 +203,7 @@ Reads a `pull_request_target` event, or a `/terragucci plan`, `/terragucci lock`
 ## comment-apply
 
 ```text
-terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab]
+terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo]
     [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
 ```
 
@@ -218,12 +216,10 @@ Reads a `/terragucci apply [wave-<n>]` comment, checks the commenter's permissio
 
 `--requires` is a comma-separated list of `approved`, `mergeable`, `undiverged` and `checks`, or `none`; without it all four apply. `init` writes it from [`apply.requires`](/terragucci/reference/config/#apply-before-merge) when that leaves one out. `--terragrunt` (written in a Terragrunt repo under `apply.when: pull-request`) puts the locks on the units the pull request reaches, as [Locks](/terragucci/guides/apply-before-merge/#locks) describes. `--again` marks the second decision on Forgejo, which does not repeat a reply the first one posted.
 
-`--forge gitlab --when pull-request` is the `mr-apply` job's. It reads no event file: `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE` and `TERRAGUCCI_HEAD` point at the merge request, the note and the head, and it reads each from GitLab. The note must be a Developer's `apply`, `lock` or `unlock`, and the head must be the merge request's head now, else nothing runs.
-
 ## pr-merge
 
 ```text
-terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
+terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]
 ```
 
 Merges the pull request while its head is still `--sha`, then releases its root locks. The generated `pr-merge` job runs it after the last wave applied before merge, with `apply.merge: auto`. The sha comes from a job that ran the pull request's code, so the command first checks with `TG_TOKEN` that:
@@ -233,8 +229,6 @@ Merges the pull request while its head is still `--sha`, then releases its root 
 - a reviewer other than the author approved that head.
 
 It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
-
-With `--forge gitlab` it first looks for the `mr-apply` reply, from `TG_TOKEN`'s user, that says every wave of `--sha` applied in this pipeline (`CI_PIPELINE_ID`). Without one it prints `nothing to merge` and exits 0. The approval it checks is one given after the merge request's latest push.
 
 ## config check
 

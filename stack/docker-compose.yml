@@ -29,6 +29,7 @@
 #   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
 #   observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana   used by the traces, metrics and dashboard smoke claims
+#   blob      Azurite and fake-gcs-server, the Azure Blob and GCS emulators   used by the blob-azure and blob-gcs smoke claims
 #   decide    terragucci-decide, Laya on CPU behind the Jev shape   opt-in; stack/decide.sh starts it
 name: terragucci
 
@@ -162,6 +163,44 @@ services:
     networks:
       default:
         aliases: [registry]
+
+  # ── blob ─────────────────────────────────────────────────────────────────
+  # The reports bucket on the other two clouds. Azurite serves Blob Storage
+  # over TLS with OAuth on (`--oauth basic` checks a bearer token's audience,
+  # issuer and lifetime, not its signature, and needs https), so a job writes
+  # with an Azure OIDC identity and a link is a user delegation SAS, which
+  # Azurite checks. The blob-azure claim makes a throwaway certificate for
+  # localhost and azurite and points TERRAGUCCI_AZURITE_CERTS at it
+  # (azurite.crt, azurite.key). Pinned by the index digest of 3.37.0 as
+  # resolved on 2026-10-07 (amd64 and arm64).
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
+    container_name: terragucci-azurite
+    profiles: [blob]
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--oauth", "basic", "--cert", "/certs/azurite.crt", "--key", "/certs/azurite.key", "--inMemoryPersistence"]
+    volumes:
+      - ${TERRAGUCCI_AZURITE_CERTS:-./azurite-certs}:/certs:ro
+    ports:
+      - "${TERRAGUCCI_AZURITE_PORT:-10010}:10000"
+    networks:
+      default:
+        aliases: [azurite]
+
+  # The JSON API of Google Cloud Storage, in memory. It takes any bearer token
+  # and checks no signed URL's signature; the blob-gcs claim checks the link's
+  # signature itself. A link names gcs:4443, the public host, and is served at
+  # /<bucket>/<object> for that Host. Pinned by the index digest of 1.56.1 as
+  # resolved on 2026-10-07 (amd64 and arm64).
+  gcs:
+    image: fsouza/fake-gcs-server:1.56.1@sha256:797ce226d62f947c009dc40246b30cfb456b8473d8241407f9d6f2c04e4d69ef
+    container_name: terragucci-gcs
+    profiles: [blob]
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "gcs:4443", "-external-url", "http://gcs:4443", "-backend", "memory"]
+    ports:
+      - "${TERRAGUCCI_GCS_PORT:-4453}:4443"
+    networks:
+      default:
+        aliases: [gcs]
 
   # ── observability ────────────────────────────────────────────────────────
   # Where a stage's traces and metrics go: jobs on this network send OTLP over

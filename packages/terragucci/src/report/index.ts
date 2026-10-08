@@ -6,4 +6,8 @@ export { renderHtml, readInlineReport, inlineJson } from "./html";
 export { renderNote, renderText, renderGitLabTerraform, planSummaryOf } from "./views";
 export { writeReportDir, uploadReport, addToIndex, indexEntry, renderIndexHtml, runPath, INDEX_SCHEMA } from "./store";
 export { S3Client, sign, signRequest, s3FromEnv, parseBucket } from "./s3";
+export { AzureBlobClient, azureFromEnv } from "./azure-blob";
+export { GcsClient, gcsFromEnv } from "./gcs";
+export { storeFromEnv } from "./bucket";
+export { parseReportsBucket, StoreError, type ObjectStore } from "./object-store";
 export { runStage, STAGES, preventDestroyIn, projectFromRemote, runFacts } from "./stage";

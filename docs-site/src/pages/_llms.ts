@@ -20,7 +20,7 @@ const ORDER = [
 	'guides/roll-out-a-module-version',
 	'guides/publish-modules',
 	'guides/turn-on-drift-checks',
-	'guides/keep-reports-in-s3',
+	'guides/keep-reports-in-a-bucket',
 	'guides/send-traces-and-metrics',
 	'guides/govern-many-repos',
 	'guides/use-a-binary',

@@ -24,8 +24,7 @@
  * root it reaches (locks.ts). The decision then takes those locks. In a
  * Terragrunt repo the locks are on units (reachedUnits). `/terragucci lock`
  * takes them without applying, and `/terragucci unlock` releases them. GitLab
- * applies before merge from a pipeline of the default branch instead
- * (comment-apply-gitlab.ts): its merge request pipelines come from the merge
+ * has no apply before merge: its merge request pipelines come from the merge
  * request itself.
  *
  * The comment is untrusted input, read from the event file and parsed by the

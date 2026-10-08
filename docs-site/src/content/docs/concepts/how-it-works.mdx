@@ -16,7 +16,7 @@ The pipeline is made of [chant](/terragucci/concepts/glossary/#chant) stages. ch
 |---|---|---|---|
 | 1 The pull request | `tf-check`, `tf-plan` | plan, read-only | all |
 | 2 The plan note | `tf-plan` | plan | all; `/terragucci plan` too, on GitLab with the [`comments`](/terragucci/reference/config/#keys) schedule |
-| 3 The merge | `tf-apply` | apply | all, applying before merge too; on GitLab through the `comments` schedule |
+| 3 The merge | `tf-apply` | apply | all; applying before merge on GitHub and Forgejo |
 | 4 The waves | `tf-apply` | apply | all |
 | 5 The approval | none; a person runs `chant approve` | the approver's push access to `chant/lifecycle`, or under `approval: pr-review` a review of the head; under `approval: sealed`, also their signing key | all |
 | 6 The apply | `tf-apply` | apply | all; `/terragucci apply` too, on GitLab with the `comments` schedule |

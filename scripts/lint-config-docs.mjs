@@ -24,10 +24,10 @@ for (const k of rows) if (!keys.has(k)) problems.push(`the Keys table of config.
 // ── environment variables ────────────────────────────────────────────────────
 // Constants in the source whose names look like variables and are not.
 const NOT_VARIABLES = new Set([
-  "AWS_CLI", "GITHUB_CACHE_KEY", "GITHUB_COMMENT_LIMIT", "GITLAB_STATE", "GITLAB_GCP_TOKEN", "GITLAB_AZURE_TOKEN",
+  "AWS_CLI", "AZURE_AUDIENCE", "AZURE_AUTHORITY", "AZURE_KEY_SECRET", "AZURE_VERSION", "GITHUB_CACHE_KEY", "GITHUB_COMMENT_LIMIT", "GITLAB_STATE", "GITLAB_GCP_TOKEN", "GITLAB_AZURE_TOKEN",
   "RUNNER_TOKEN_VARS", "TG_CACHE_DIR",
 ]);
-const NAME = /\b(?:(?:TG|TERRAGUCCI|TOFU|TF|OTEL|AWS|ARM|GOOGLE|GITHUB|GITLAB|FORGEJO|GITEA|CI|RUNNER|ACTIONS|ANTHROPIC)_[A-Z0-9_]*[A-Z0-9]|TRACEPARENT)\b/g;
+const NAME = /\b(?:(?:TG|TERRAGUCCI|TOFU|TF|OTEL|AWS|ARM|AZURE|GOOGLE|GITHUB|GITLAB|FORGEJO|GITEA|CI|RUNNER|ACTIONS|ANTHROPIC)_[A-Z0-9_]*[A-Z0-9]|TRACEPARENT)\b/g;
 
 function collect(path) {
   if (!statSync(path).isDirectory()) return [path];

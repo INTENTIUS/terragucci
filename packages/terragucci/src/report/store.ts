@@ -2,7 +2,7 @@
  * Where a report is kept. Locally (the CI artifact), a run's directory holds
  * `report.json`, `report.html`, `note.md`, `summary.txt`,
  * `gitlab-terraform.json` and `roots/<root>/plan.{txt,json}`. With
- * `reports.bucket`, the same files are copied to
+ * `reports.bucket` (S3, GCS or Azure Blob: bucket.ts), the same files are copied to
  * `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-N]/`, and the
  * index at the project's path and at the top of the prefix gains a row.
  * Links inside a report are relative, so they resolve in both layouts.
@@ -18,7 +18,7 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { esc, renderHtml } from "./html";
-import { S3Conflict, S3Error, type S3Client } from "./s3";
+import { StoreConflict, StoreError, type ObjectStore } from "./object-store";
 import type { Report } from "./schema";
 import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
 
@@ -272,7 +272,7 @@ export type Wait = (attempt: number) => Promise<void>;
  * index is read and the row added again, up to INDEX_TRIES times. A store
  * that sends no ETag gets an unconditional write, the last one winning.
  */
-export async function updateIndex(s3: S3Client, key: string, entry: IndexEntry, wait: Wait = backoff): Promise<{ index: ReportIndex; etag?: string }> {
+export async function updateIndex(s3: ObjectStore, key: string, entry: IndexEntry, wait: Wait = backoff): Promise<{ index: ReportIndex; etag?: string }> {
   for (let attempt = 1; ; attempt++) {
     const read = await s3.read(key);
     const index = addToIndex(read.body, entry);
@@ -281,8 +281,8 @@ export async function updateIndex(s3: S3Client, key: string, entry: IndexEntry, 
       const put = await s3.put(key, JSON.stringify(index, null, 2) + "\n", TYPES.json, when);
       return { index, ...(put.etag ? { etag: put.etag } : {}) };
     } catch (e) {
-      if (!(e instanceof S3Conflict)) throw e;
-      if (attempt >= INDEX_TRIES) throw new S3Error(`${key} changed under this run ${INDEX_TRIES} times in a row; its row was not added`);
+      if (!(e instanceof StoreConflict)) throw e;
+      if (attempt >= INDEX_TRIES) throw new StoreError(`${key} changed under this run ${INDEX_TRIES} times in a row; its row was not added`);
       await wait(attempt);
     }
   }
@@ -294,7 +294,7 @@ export async function updateIndex(s3: S3Client, key: string, entry: IndexEntry, 
  * have gone up before this one, so the page is written again from the newer
  * index. Without ETags the page is written once.
  */
-async function writeIndexHtml(s3: S3Client, at: string, title: string, index: ReportIndex, etag: string | undefined): Promise<void> {
+async function writeIndexHtml(s3: ObjectStore, at: string, title: string, index: ReportIndex, etag: string | undefined): Promise<void> {
   const join2 = (...p: string[]) => p.filter(Boolean).join("/");
   for (let attempt = 1; ; attempt++) {
     await s3.put(join2(at, "index.html"), renderIndexHtml(index, title), TYPES.html);
@@ -311,7 +311,7 @@ async function writeIndexHtml(s3: S3Client, at: string, title: string, index: Re
  * at the project's path and at the top of the prefix. Runs that finish at
  * the same moment each keep their row: see updateIndex.
  */
-export async function uploadReport(s3: S3Client, dir: string, report: Report, prefix = "", wait: Wait = backoff): Promise<Uploaded> {
+export async function uploadReport(s3: ObjectStore, dir: string, report: Report, prefix = "", wait: Wait = backoff): Promise<Uploaded> {
   const top = trim(prefix);
   const join2 = (...p: string[]) => p.filter(Boolean).join("/");
   const project = report.run.project;
@@ -338,7 +338,7 @@ export async function uploadReport(s3: S3Client, dir: string, report: Report, pr
  * description's flag in note.md and report.html, its intent.json) over the
  * bucket's copy, so the bucket holds what the job's artifact holds.
  */
-export async function copyToRun(s3: S3Client, dir: string, report: Report, files: string[], prefix = ""): Promise<string[]> {
+export async function copyToRun(s3: ObjectStore, dir: string, report: Report, files: string[], prefix = ""): Promise<string[]> {
   const key = runKey(report, prefix);
   const put: string[] = [];
   for (const f of files) {

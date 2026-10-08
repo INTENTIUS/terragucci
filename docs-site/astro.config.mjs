@@ -44,6 +44,7 @@ export default defineConfig({
 		'/guides/agent-explain-a-plan': '/terragucci/reference/responses/',
 		'/guides/agent-drift-fixes': '/terragucci/guides/turn-on-drift-checks/',
 		'/guides/add-to-github': '/terragucci/guides/add-to-a-repo/',
+		'/guides/keep-reports-in-s3': '/terragucci/guides/keep-reports-in-a-bucket/',
 		'/guides/add-to-gitlab': '/terragucci/guides/add-to-a-repo/',
 		'/guides/add-to-forgejo': '/terragucci/guides/add-to-a-repo/',
 	},
@@ -96,7 +97,7 @@ export default defineConfig({
 							label: 'Watch and keep',
 							items: [
 								{ label: 'Turn on drift checks', slug: 'guides/turn-on-drift-checks' },
-								{ label: 'Keep reports in S3', slug: 'guides/keep-reports-in-s3' },
+								{ label: 'Keep reports in a bucket', slug: 'guides/keep-reports-in-a-bucket' },
 								{ label: 'See every project in one page', slug: 'guides/see-every-project' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
 							],

@@ -13,7 +13,8 @@ import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
 import type { Report } from "../report/schema";
-import { S3Client, s3FromEnv, type S3Fetch } from "../report/s3";
+import { storeFromEnv } from "../report/bucket";
+import type { S3Fetch } from "../report/s3";
 import { copyToRun } from "../report/store";
 import { forgeOf, git, propose, worktree, type Proposed } from "./change";
 import { IDENTITY } from "../reconcile";
@@ -222,7 +223,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     if (c.files.length > 0 && settings.reports?.bucket) {
       try {
         const report = JSON.parse(readFileSync(join(dir, "report.json"), "utf-8")) as Report;
-        const put = await copyToRun(new S3Client(s3FromEnv(settings.reports, env), o.s3Fetch), dir, report, c.files, settings.reports.prefix);
+        const put = await copyToRun(storeFromEnv(settings.reports, env, o.s3Fetch), dir, report, c.files, settings.reports.prefix);
         copied = `\ncopied ${c.files.join(", ")} to the bucket under ${put[0].slice(0, put[0].lastIndexOf("/"))}`;
       } catch (e) {
         copied = `\nthe bucket's copy was not updated: ${(e as Error).message}`;

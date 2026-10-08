@@ -110,10 +110,9 @@ describe("validation", () => {
     [{ apply: { when: "pull-request", lock: true } }, /config\.apply\.lock is not a setting/],
     [{ apply: { when: "pull-request", merge: "auto", merge_token_env: "merge-token" } }, /config\.apply\.merge_token_env must name the secret holding the token the merge is made with/],
     [{ apply: { when: "pull-request", merge_token_env: "MERGE_TOKEN" } }, /config\.apply\.merge_token_env is set, and only apply\.merge: auto merges/],
-    [{ forge: "gitlab", apply: { when: "pull-request", merge_token_env: "MERGE_TOKEN" } }, /config\.apply\.when: pull-request on GitLab needs comments: <cron>/],
-    [{ forge: "gitlab", comments: "*/5 * * * *", apply: { when: "pull-request" } }, /config\.apply\.when: pull-request on GitLab needs apply\.merge_token_env/],
+    [{ forge: "gitlab", apply: { when: "pull-request" } }, /config\.apply\.when: pull-request is not supported on GitLab/],
     [{ locks: "always" }, /config\.locks is "always"; use one of apply, plan/],
-    [{ forge: "gitlab", locks: "plan" }, /config\.locks: plan is not supported on GitLab, where no merge request event runs a job from the default branch/],
+    [{ forge: "gitlab", locks: "plan" }, /config\.locks: plan is not supported on GitLab, where every apply runs after merge/],
   ])("%j is refused", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(message);
   });
@@ -126,8 +125,6 @@ describe("validation", () => {
     [{ apply: { when: "merge" } }],
     [{ apply: { when: "pull-request" } }],
     [{ apply: { when: "pull-request", merge: "auto" } }],
-    [{ forge: "gitlab", comments: "*/5 * * * *", apply: { when: "pull-request", merge_token_env: "MERGE_TOKEN" } }],
-    [{ forge: "gitlab", comments: "*/5 * * * *", apply: { when: "pull-request", merge: "auto", merge_token_env: "MERGE_TOKEN" } }],
     [{ apply: { when: "pull-request", merge: "auto", merge_token_env: "MERGE_TOKEN" } }],
     [{ locks: "plan" }],
     [{ policy: { path: "policy", override: ["github:alice", "bob"] } }],

@@ -70,7 +70,7 @@ import { globMatch } from "./detect";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
-import { S3Client, s3FromEnv } from "./report/s3";
+import { storeFromEnv } from "./report/bucket";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
 import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
 import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts, unitTimes } from "./report/stage";
@@ -522,7 +522,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   if (slowest) console.log(`wave ${wave}: report in terragucci-report/, slowest root ${slowest.root} (${slowest.seconds}s)`);
   if (settings.reports?.bucket) {
     try {
-      const up = await uploadReport(new S3Client(s3FromEnv(settings.reports, env)), dir, report, settings.reports.prefix);
+      const up = await uploadReport(storeFromEnv(settings.reports, env), dir, report, settings.reports.prefix);
       console.log(`wave ${wave}: report copied to ${up.prefix}${report.run.report_url ? `, at ${report.run.report_url}` : ""}`);
     } catch (e) {
       console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
