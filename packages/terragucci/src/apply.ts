@@ -446,6 +446,8 @@ interface WaveRun {
   /** The wave's gate state and the ledger that holds its record, as the report's wave row shows them. */
   approval?: ReportWave["approval"];
   gate?: ReportWave["gate"];
+  /** When a waiting wave began waiting for an approval of its digest. */
+  waitingSince?: string;
 }
 
 /**
@@ -473,7 +475,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
       return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -684,6 +686,7 @@ async function gateWave(
     } else {
       const env = options.env ?? process.env;
       facts.waitingSince = decision.standing?.timestamp ?? now;
+      w.waitingSince = facts.waitingSince;
       // The report of this wave's plans, as respond wave-refused reads it.
       const report = (): string =>
         JSON.stringify(buildReport({
