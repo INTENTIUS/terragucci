@@ -190,7 +190,10 @@ estate|terragucci estate writes one page to the reports bucket from the index of
 drift-overdue|the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run|
 pr-review|with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review|
 pr-review-moved|with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest|
-pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|'
+pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
+cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
+cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
+cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -5399,6 +5402,491 @@ claim_pr_review_status() {
   return $rc
 }
 
+# ── choudoufu estates: applies at once, settled by the record store ───────
+# A choudoufu estate keeps no state file and takes no lock. Each resource has
+# its own record in the estate's record store, and every record write is one
+# conditional PutObject: If-None-Match: * to create, If-Match: <version> to
+# update. cdf-concurrency and cdf-write-race run two tf-apply waves of
+# one estate at once, from two checkouts, in the choudoufu CI image, against a
+# record store bucket on floci. Their S3 traffic goes through
+# stack/fixtures/cdf-race/s3-hold.mjs, which holds the record writes until
+# both waves have reached theirs: two waves started together rarely overlap
+# otherwise, since one writes before the other has read.
+
+CDF_RECORDS=terragucci-smoke-records
+
+# The record store bucket, with the three settings choudoufu asserts before an
+# apply writes a record: versioning, a lifecycle rule that expires noncurrent
+# versions, and all four public access blocks.
+cdf_bucket() {
+  local b="$CDF_RECORDS" ns='xmlns="http://s3.amazonaws.com/doc/2006-03-01/"' xml md5
+  curl -s -o /dev/null -X PUT "$FLOCI/$b" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$b?versioning" -H 'content-type: application/xml' \
+    --data-binary "<VersioningConfiguration $ns><Status>Enabled</Status></VersioningConfiguration>" || return 1
+  xml="<LifecycleConfiguration $ns><Rule><ID>expire-noncurrent</ID><Filter><Prefix></Prefix></Filter><Status>Enabled</Status><NoncurrentVersionExpiration><NoncurrentDays>30</NoncurrentDays></NoncurrentVersionExpiration></Rule></LifecycleConfiguration>"
+  md5="$(printf '%s' "$xml" | openssl md5 -binary | base64)"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$b?lifecycle" -H 'content-type: application/xml' -H "Content-MD5: $md5" --data-binary "$xml" || return 1
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$b?publicAccessBlock" -H 'content-type: application/xml' \
+    --data-binary "<PublicAccessBlockConfiguration $ns><BlockPublicAcls>true</BlockPublicAcls><IgnorePublicAcls>true</IgnorePublicAcls><BlockPublicPolicy>true</BlockPublicPolicy><RestrictPublicBuckets>true</RestrictPublicBuckets></PublicAccessBlockConfiguration>" || return 1
+}
+
+# Start the proxy in a container of the choudoufu image (it has node), on the
+# stack's network under a name of its own and <bucket>.<name>, the host
+# choudoufu's record store sends the bucket's requests to. Sets CDF_PROXY
+# (the container), CDF_ALIAS (its name) and CDF_CTL (its control URL on
+# the host).
+cdf_proxy_up() { # work
+  local work="$1" port i
+  CDF_ALIAS="tgs-records-$$-$RANDOM"
+  mkdir -p "$work/proxy" && cp "$HERE/fixtures/cdf-race/s3-hold.mjs" "$work/proxy/" || return 1
+  CDF_PROXY="$(run_copied -d --name "$CDF_ALIAS" --network terragucci "--network-alias=$CDF_RECORDS.$CDF_ALIAS" \
+    -p 127.0.0.1::8080 -e "ALIAS=$CDF_ALIAS" -e UPSTREAM=floci:4566 -v "$work/proxy:/proxy:ro" \
+    "$(image_tag choudoufu)" node /proxy/s3-hold.mjs)" || return 1
+  port="$(docker port "$CDF_PROXY" 8080/tcp | head -1 | sed 's/.*://')"
+  CDF_CTL="http://127.0.0.1:$port"
+  for i in $(seq 1 30); do
+    curl -fsS -o /dev/null "$CDF_CTL/held" 2>/dev/null && return 0
+    sleep 1
+  done
+  echo "the record store proxy never answered on $CDF_CTL" >&2
+  return 1
+}
+
+# A checkout of one estate: the root estate/ with one terraform_data per
+# name=value, committed. CDF_BACKEND=tofu puts the same resources in one
+# state file with use_lockfile instead, the way stock OpenTofu keeps an estate.
+cdf_checkout() { # dir estate name=value...
+  local dir="$1" estate="$2" kv
+  shift 2
+  mkdir -p "$dir/estate"
+  {
+    if [ "${CDF_BACKEND:-}" = tofu ]; then
+      cat <<HCL
+terraform {
+  backend "s3" {
+    bucket         = "$CDF_RECORDS"
+    key            = "cdf-concurrency/$estate/terraform.tfstate"
+    region         = "us-east-1"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+HCL
+    else
+      cat <<HCL
+terraform {
+  live {
+    estate = "$estate"
+
+    record_store "s3" {
+      bucket = "$CDF_RECORDS"
+    }
+
+    retry {
+      max_attempts = 1
+    }
+  }
+}
+HCL
+    fi
+    for kv in "$@"; do
+      printf '\nresource "terraform_data" "%s" {\n  input = "%s"\n}\n' "${kv%%=*}" "${kv#*=}"
+    done
+  } >"$dir/estate/main.tf"
+  printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$dir/.gitignore"
+  [ -d "$dir/.git" ] || git -C "$dir" init -q -b main
+  git -C "$dir" add -A && git -C "$dir" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke estate $(date +%s%N)"
+}
+
+# One stage run in a checkout, in the CI image of BIN (choudoufu or tofu),
+# with its S3 calls sent to the proxy, as the container NAME. OVERRIDE, when
+# not empty, is a Linux build mounted over the image's binary. The run's
+# output goes to LOG.
+cdf_run() { # dir log name bin override stage-args...
+  local dir="$1" logf="$2" name="$3" bin="$4" over="$5" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0
+  local -a mount=()
+  shift 5
+  [ -n "$over" ] && mount=(-v "$over:/usr/local/bin/$bin:ro")
+  run_copied --rm --name "$name" --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" ${mount[@]+"${mount[@]}"} \
+    -e "AWS_ENDPOINT_URL=http://$CDF_ALIAS:4566" -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$(image_tag "$bin")" terragucci stage "$@" >"$logf" 2>&1 || rc=$?
+  clean_mounted "$dir"
+  return $rc
+}
+
+# The values an estate holds now, as the store keeps them: the tokens
+# (left-N, right-N, seed, from-a, from-b) found in its records, or in its
+# state file for CDF_BACKEND=tofu, sorted and joined by spaces.
+cdf_values() { # estate
+  local estate="$1" k
+  {
+    for k in $(curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=tofu-records/$estate/terraform_data/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+      curl -fsS "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$k" '$k | split("/") | map(@uri) | join("/")')" || true
+    done
+    curl -fsS "$FLOCI/$CDF_RECORDS/cdf-concurrency/$estate/terraform.tfstate" 2>/dev/null || true
+  } | grep -oE '(left|right)-[0-9]|seed|from-[ab]' | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
+# The record keys an estate has, one per line.
+cdf_keys() { # estate
+  curl -fsS "$FLOCI/$CDF_RECORDS?list-type=2&prefix=tofu-records/$1/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'
+}
+
+# Start a tf-apply wave in each of the checkouts $work/a and $work/b at once,
+# in the background, their exit codes landing in $work/a.rc and $work/b.rc,
+# and wait up to three minutes for the proxy to hold two writes (or for both
+# waves to end). Sets CDF_HELD to how many writes it holds.
+CDF_HELD=0
+CDF_PIDS=()
+cdf_race() { # work bin override
+  local work="$1" bin="$2" over="$3" side i n=0
+  CDF_PIDS=()
+  for side in a b; do
+    ( cdf_run "$work/$side" "$work/$side.log" "$CDF_ALIAS-$side" "$bin" "$over" tf-apply --wave 1 --layers estate --binary "$bin" --gate never \
+        && echo 0 >"$work/$side.rc" || echo $? >"$work/$side.rc" ) >/dev/null 2>&1 &
+    CDF_PIDS+=($!)
+  done
+  for i in $(seq 1 180); do
+    n="$(curl -fsS "$CDF_CTL/held" 2>/dev/null | jq length 2>/dev/null || true)"
+    n="${n:-0}"
+    [ "$n" -ge 2 ] && break
+    [ -s "$work/a.rc" ] && [ -s "$work/b.rc" ] && break
+    sleep 1
+  done
+  CDF_HELD="$n"
+}
+
+# Wait up to five minutes for both waves of cdf_race to end; stop any that is still running.
+cdf_race_end() { # work
+  local work="$1" i side
+  for i in $(seq 1 300); do
+    [ -s "$work/a.rc" ] && [ -s "$work/b.rc" ] && break
+    sleep 1
+  done
+  for side in a b; do
+    [ -s "$work/$side.rc" ] || { docker rm -f "$CDF_ALIAS-$side" >/dev/null 2>&1 || true; echo 124 >"$work/$side.rc"; }
+  done
+  for i in ${CDF_PIDS[@]+"${CDF_PIDS[@]}"}; do wait "$i" 2>/dev/null || true; done
+  CDF_PIDS=()
+}
+
+cdf_down() { # work
+  [ -n "${CDF_PROXY:-}" ] && { docker rm -f "$CDF_PROXY" >/dev/null 2>&1 || true; }
+  CDF_PROXY=""
+  drop_work "$1"
+}
+
+# Hold the PUTs whose path matches the regex, naming each by the first of the
+# comma-separated markers its body carries.
+cdf_hold() { # regex markers
+  curl -fsS -o /dev/null -X POST -G "$CDF_CTL/hold" --data-urlencode "re=$1" --data-urlencode "markers=$2"
+}
+
+flat_log() { tr '\n' ' ' <"$1" | sed 's/│/ /g' | tr -s ' '; }
+
+claim_cdf_concurrency() {
+  # Two tf-apply waves of one choudoufu estate run at once from two checkouts
+  # that differ from the estate in one resource each: a changes
+  # terraform_data.left to left-1, b changes terraform_data.right to right-2.
+  # The proxy holds each record write until both waves have reached theirs, so
+  # each wave planned and applied while the other was in flight, then lets them
+  # through in turn. Both waves must apply, the records hold left-1 and
+  # right-2, both writes carry If-Match, neither report lists a lock wait, and
+  # nothing lock-shaped is in the bucket.
+  # BREAK: the same two waves in stock OpenTofu, with the estate in one state
+  # file under use_lockfile. The first wave holds the estate lock while its
+  # state write is held, so the second waits for the lock and never reaches
+  # its write: only one write is in flight.
+  log() { echo "[smoke cdf-concurrency] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate bin=choudoufu backend="" re held rc=0 values got side n
+  [ -n "${BREAK:-}" ] && { bin=tofu; backend=tofu; }
+  docker image inspect "$(image_tag "$bin")" >/dev/null 2>&1 || { log "no CI image $(image_tag "$bin"); run 'just images' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  estate="smoke-concurrency-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  CDF_BACKEND="$backend" cdf_checkout "$work/a" "$estate" left=left-0 right=right-0
+  CDF_BACKEND="$backend" cdf_checkout "$work/b" "$estate" left=left-0 right=right-0
+  if ! cdf_run "$work/a" "$work/seed.log" "$CDF_ALIAS-seed" "$bin" "" tf-apply --wave 1 --layers estate --binary "$bin" --gate never; then
+    log "the first apply of the estate failed"; tail -20 "$work/seed.log" >&2; cdf_down "$work"; return 1
+  fi
+  values="$(cdf_values "$estate")"
+  [ "$values" = "left-0 right-0" ] || { log "after the first apply the estate holds '$values', not left-0 and right-0"; cdf_down "$work"; return 1; }
+  CDF_BACKEND="$backend" cdf_checkout "$work/a" "$estate" left=left-1 right=right-0
+  CDF_BACKEND="$backend" cdf_checkout "$work/b" "$estate" left=left-0 right=right-2
+  if [ "$bin" = tofu ]; then re="^/$CDF_RECORDS/cdf-concurrency/$estate/terraform\\.tfstate\$"; else re="^/$CDF_RECORDS/tofu-records/$estate/terraform_data/"; fi
+  cdf_hold "$re" left-1,right-2 || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
+  cdf_race "$work" "$bin" ""; held="$CDF_HELD"
+  log "writes held while both waves ran: $(curl -fsS "$CDF_CTL/held" | jq -c '[.[] | {seq, marker}]')"
+  if [ "$held" -lt 2 ]; then
+    log "only $held of the two waves reached its write while the other was in flight: one waited for the other"
+    for side in a b; do grep -iE 'lock' "$work/$side.log" | head -3 | sed "s/^/[$side] /" >&2 || true; done
+    rc=1
+    curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+    for side in a b; do docker rm -f "$CDF_ALIAS-$side" >/dev/null 2>&1 || true; done
+    cdf_race_end "$work"
+    cdf_down "$work"
+    return $rc
+  fi
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || { log "the proxy did not release the writes"; rc=1; }
+  cdf_race_end "$work"
+  for side in a b; do
+    [ "$(cat "$work/$side.rc")" = 0 ] || { log "the wave in checkout $side did not apply (exit $(cat "$work/$side.rc"))"; tail -20 "$work/$side.log" >&2; rc=1; }
+  done
+  values="$(cdf_values "$estate")"
+  [ "$values" = "left-1 right-2" ] || { log "the estate holds '$values', not left-1 and right-2"; rc=1; }
+  curl -fsS "$CDF_CTL/log" >"$work/proxy.log" || true
+  n="$(grep -cE "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/[^ ]* 200 if-match:" "$work/proxy.log" || true)"
+  [ "$n" -ge 2 ] || { log "$n record update(s) landed with If-Match, not 2"; rc=1; }
+  ! grep -qE "^PUT /$CDF_RECORDS/tofu-records/$estate/[^ ]* [0-9]+ no-precondition" "$work/proxy.log" || { log "a record write carried no condition"; rc=1; }
+  for side in a b; do
+    got="$(jq '[.roots[]?.timings.lock_waits[]?] | length' "$work/$side/terragucci-report/report.json" 2>/dev/null || echo missing)"
+    [ "$got" = 0 ] || { log "the report of checkout $side lists lock waits: $got"; rc=1; }
+  done
+  got="$(cdf_keys "$estate" | grep -iE 'lock' || true)"
+  [ -z "$got" ] || { log "a lock-shaped object is in the bucket: $got"; rc=1; }
+  cdf_down "$work"
+  [ $rc = 0 ] && log "both waves held their record writes at once and both applied: the estate holds $values, each write carried If-Match, and neither wave waited on a lock"
+  return $rc
+}
+
+# A choudoufu whose record update carries no If-Match, for cdf-write-race's
+# BREAK: the source of CHOUDOUFU_BREAK_REF (default v0.22.0, the release the
+# choudoufu image runs) in the checkout at CHOUDOUFU_DIR, with the line of
+# S3Store.PutIfVersion that sets the condition replaced. Built for Linux the
+# way choudoufu_linux builds, and kept under .state/choudoufu.
+choudoufu_no_if_match() {
+  local dir="${CHOUDOUFU_DIR:-$HOME/Documents/checkouts/intentius/choudoufu}" ref="${CHOUDOUFU_BREAK_REF:-v0.22.0}" sha arch out src go
+  local file=internal/live/staterecord/s3.go cut='s/input\.IfMatch = aws\.String(expectedVersion)/_ = expectedVersion \/\/ smoke BREAK: an update with no precondition/'
+  sha="$(git -C "$dir" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || { echo "no choudoufu checkout at $dir with $ref; set CHOUDOUFU_DIR" >&2; return 1; }
+  [ "$(git -C "$dir" show "$sha:$file" | grep -c 'input\.IfMatch = aws\.String(expectedVersion)')" = 1 ] \
+    || { echo "$file at ${sha:0:10} does not set input.IfMatch on one line, so the BREAK build would not change it" >&2; return 1; }
+  arch="$(docker version -f '{{.Server.Arch}}' 2>/dev/null)"; [ -n "$arch" ] || arch=amd64
+  out="$HERE/.state/choudoufu/$sha-$arch-no-if-match/choudoufu"
+  [ -x "$out" ] && { echo "$out"; return 0; }
+  mkdir -p "$(dirname "$out")"
+  echo "building choudoufu ${sha:0:10} for linux/$arch with no If-Match on a record update" >&2
+  if command -v go >/dev/null 2>&1; then
+    src="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-choudoufu.XXXXXX")"
+    git -C "$dir" archive "$sha" | tar -x -C "$src" || { rm -rf "$src"; return 1; }
+    sed -e "$cut" "$src/$file" >"$src/$file.new" && mv "$src/$file.new" "$src/$file"
+    ! grep -q 'input\.IfMatch' "$src/$file" || { rm -rf "$src"; echo "the If-Match line is still in $file" >&2; return 1; }
+    (cd "$src" && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -o "$out" ./cmd/choudoufu) >&2 || { rm -rf "$src"; return 1; }
+    rm -rf "$src"
+  else
+    go="$(git -C "$dir" show "$sha:go.mod" | sed -n 's/^go \([0-9.]*\)$/\1/p')"
+    git -C "$dir" archive "$sha" | docker run -i --rm -v "$(dirname "$out"):/out" -v terragucci-go-cache:/root/go \
+      -e GOOS=linux -e GOARCH="$arch" -e CGO_ENABLED=0 -e "CUT=$cut" -e "FILE=$file" "golang:${go:-1}" \
+      sh -c 'mkdir -p /src && tar -x -C /src && cd /src && sed -i -e "$CUT" "$FILE" && ! grep -q "input\.IfMatch" "$FILE" && go build -o /out/choudoufu ./cmd/choudoufu' >&2 || return 1
+  fi
+  echo "$out"
+}
+
+claim_cdf_write_race() {
+  # Two tf-apply waves of one choudoufu estate change terraform_data.shared at
+  # once, from two checkouts: a to from-a, b to from-b. The proxy holds both
+  # record writes until both are in flight, then lets the first to arrive
+  # through and the second after it. The first must land. The second must fail
+  # its If-Match: its wave fails, naming a record store write conflict for
+  # terraform_data.shared and saying nothing was overwritten. Nothing is half
+  # written: the estate holds one record, with the value that landed, tagged
+  # with the estate and terraform_data.shared. tf-plan in the losing checkout
+  # then shows input changing from the value that landed to its own.
+  # BREAK: both waves run a choudoufu built with no If-Match on a record
+  # update (choudoufu_no_if_match), so both writes land and both waves apply.
+  log() { echo "[smoke cdf-write-race] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work estate over="" first winner loser held rc=0 values keys key tags text side got
+  docker image inspect "$(image_tag choudoufu)" >/dev/null 2>&1 || { log "no CI image $(image_tag choudoufu); run 'just images' first"; return 1; }
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then over="$(choudoufu_no_if_match)" || { log "no choudoufu built without If-Match"; return 1; }; fi
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  estate="smoke-race-$(date +%s)-$$"
+  cdf_bucket || { log "could not set up the record store bucket $CDF_RECORDS"; drop_work "$work"; return 1; }
+  cdf_proxy_up "$work" || { log "the record store proxy did not start"; cdf_down "$work"; return 1; }
+  cdf_checkout "$work/a" "$estate" shared=seed
+  cdf_checkout "$work/b" "$estate" shared=seed
+  if ! cdf_run "$work/a" "$work/seed.log" "$CDF_ALIAS-seed" choudoufu "$over" tf-apply --wave 1 --layers estate --binary choudoufu --gate never; then
+    log "the first apply of the estate failed"; tail -20 "$work/seed.log" >&2; cdf_down "$work"; return 1
+  fi
+  values="$(cdf_values "$estate")"
+  [ "$values" = seed ] || { log "after the first apply the estate holds '$values', not seed"; cdf_down "$work"; return 1; }
+  cdf_checkout "$work/a" "$estate" shared=from-a
+  cdf_checkout "$work/b" "$estate" shared=from-b
+  cdf_hold "^/$CDF_RECORDS/tofu-records/$estate/terraform_data/" from-a,from-b || { log "the proxy did not take the hold"; cdf_down "$work"; return 1; }
+  cdf_race "$work" choudoufu "$over"; held="$CDF_HELD"
+  if [ "$held" -lt 2 ]; then
+    log "only $held of the two writes reached the store while the other was in flight, so there was no race to judge"
+    for side in a b; do tail -5 "$work/$side.log" | sed "s/^/[$side] /" >&2; done
+    curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+    cdf_race_end "$work"; cdf_down "$work"
+    return 1
+  fi
+  first="$(curl -fsS "$CDF_CTL/held" | jq -r '.[] | select(.seq == 1) | .marker')"
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/release?order=1,2" || { log "the proxy did not release the writes"; rc=1; }
+  cdf_race_end "$work"
+  curl -fsS "$CDF_CTL/log" >"$work/proxy.log" || true
+  grep -E "^PUT /$CDF_RECORDS/tofu-records/$estate/terraform_data/" "$work/proxy.log" | tail -2 | sed 's/^/[proxy] /' >&2 || true
+  if [ "$(cat "$work/a.rc")" = 0 ] && [ "$(cat "$work/b.rc")" = 0 ]; then
+    log "both waves applied over one record: the second write replaced the first, and the estate holds '$(cdf_values "$estate")'"
+    cdf_down "$work"; return 1
+  fi
+  if [ "$(cat "$work/a.rc")" != 0 ] && [ "$(cat "$work/b.rc")" != 0 ]; then
+    log "both waves failed; one write should have landed"
+    for side in a b; do tail -10 "$work/$side.log" | sed "s/^/[$side] /" >&2; done
+    cdf_down "$work"; return 1
+  fi
+  if [ "$(cat "$work/a.rc")" = 0 ]; then winner=a; loser=b; else winner=b; loser=a; fi
+  [ "from-$winner" = "$first" ] || { log "the write released first carried $first, but the wave in checkout $winner applied"; rc=1; }
+  text="$(flat_log "$work/$loser.log")"
+  grep -q 'Record store write conflict' <<<"$text" || { log "the wave in checkout $loser failed without naming a record store write conflict"; tail -20 "$work/$loser.log" >&2; rc=1; }
+  grep -q 'persisted record for terraform_data.shared' <<<"$text" || { log "the conflict does not name terraform_data.shared"; rc=1; }
+  grep -q 'Nothing was overwritten' <<<"$text" || { log "the conflict does not say nothing was overwritten"; rc=1; }
+  values="$(cdf_values "$estate")"
+  [ "$values" = "from-$winner" ] || { log "the estate holds '$values', not from-$winner"; rc=1; }
+  keys="$(cdf_keys "$estate" | grep '/terraform_data/' || true)"
+  [ "$(grep -c . <<<"$keys")" = 1 ] || { log "the estate has $(grep -c . <<<"$keys") terraform_data records, not one: $keys"; rc=1; }
+  key="$(head -1 <<<"$keys")"
+  tags="$(curl -fsS "$FLOCI/$CDF_RECORDS/$(jq -rn --arg k "$key" '$k | split("/") | map(@uri) | join("/")')?tagging" | tr -d '\n\t ' || true)"
+  grep -qF "<Key>tofu-estate</Key><Value>$estate</Value>" <<<"$tags" || { log "the record is not tagged tofu-estate=$estate: $tags"; rc=1; }
+  grep -qF "<Key>tofu-address</Key><Value>terraform_data.shared</Value>" <<<"$tags" || { log "the record is not tagged tofu-address=terraform_data.shared: $tags"; rc=1; }
+  curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
+  if [ $rc = 0 ]; then
+    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --binary choudoufu; then
+      log "tf-plan in checkout $loser failed"; tail -20 "$work/replan.log" >&2; rc=1
+    else
+      got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | select(.address == "terraform_data.shared") | .attributes[] | select(.path == "input") | "\(.before) \(.after)"][0] // "none"' "$work/$loser/terragucci-report/report.json" 2>/dev/null || echo none)"
+      [ "$got" = "from-$winner from-$loser" ] || { log "the re-plan in checkout $loser shows input as '$got', not from-$winner to from-$loser"; rc=1; }
+    fi
+  fi
+  cdf_down "$work"
+  [ $rc = 0 ] && log "from-$winner landed; the wave in checkout $loser failed its If-Match on terraform_data.shared and overwrote nothing, the one record holds from-$winner under the estate and address tags, and the re-plan shows from-$winner to from-$loser"
+  return $rc
+}
+
+claim_cdf_iam() {
+  # Two choudoufu estates, terragucci-smoke-iam-a and -b, of one EC2 instance
+  # each (stack/fixtures/cdf-iam), on a floci of the claim's own with IAM
+  # enforcement on; the stack's floci runs with it off, and floci lets the
+  # test key through either way. Both are applied with the test key. A role
+  # is then granted estate a by its ownership tag, the grant choudoufu's
+  # live/MARKERS.md publishes: reads, and CreateTags, DeleteTags and
+  # TerminateInstances only where aws:ResourceTag/tofu-estate names estate a.
+  # Each Name tag changes, and tf-apply runs as the role: estate a must apply
+  # and its tag change; estate b must fail its apply on a CreateTags floci
+  # refuses, with its tag unchanged.
+  # EC2 and not S3: floci evaluates aws:ResourceTag on EC2 tag writes, while
+  # the AWS provider reads and writes an S3 bucket tags through S3 Control,
+  # which floci authorizes with no tag condition.
+  # BREAK: the role gets the same reach with no condition, so estate b applies.
+  log() { echo "[smoke cdf-iam] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image fimg name="terragucci-smoke-floci-iam" url port i rc=0 role=terragucci-smoke-estate-a creds ak sk st policy trust f text
+  local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
+  image="$(image_tag choudoufu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
+  build_cli || return 1
+  fimg="$(awk '/^  floci:/ { f = 1 } f && /image:/ { print $2; exit }' "$HERE/docker-compose.yml")"
+  [ -n "$fimg" ] || { log "no floci image in docker-compose.yml"; return 1; }
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  docker run -d --name "$name" --label "terragucci.run-copied=$$" --network terragucci -p 127.0.0.1::4566 \
+    -e FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED=true "$fimg" >/dev/null || { log "could not start floci with IAM enforcement"; return 1; }
+  port="$(docker port "$name" 4566/tcp | head -1 | sed 's/.*://')"
+  url="http://127.0.0.1:$port"
+  for i in $(seq 1 60); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$url/" 2>/dev/null)" != 000 ] && break
+    sleep 1
+  done
+  aws_query() { # service version action [curl args...]: a signed query call as the test key
+    local svc="$1" ver="$2" act="$3"
+    shift 3
+    curl -sS --aws-sigv4 "aws:amz:us-east-1:$svc" --user test:test -X POST "$url/" -H 'content-type: application/x-www-form-urlencoded' \
+      --data-urlencode "Action=$act" --data-urlencode "Version=$ver" "$@"
+  }
+  # The Name tag of the instance whose tofu-estate tag names the estate, read with the test key.
+  name_of() { # estate
+    aws_query ec2 2016-11-15 DescribeInstances --data-urlencode "Filter.1.Name=tag:tofu-estate" --data-urlencode "Filter.1.Value.1=$1" \
+      | tr -d '\n\t ' | grep -o '<key>Name</key><value>[^<]*</value>' | head -1 | sed -e 's#.*<value>##' -e 's#</value>##'
+  }
+  iam_wave() { # log layers [docker run args...]: tf-apply wave 1 of those roots of $work/repo on this floci
+    local logf="$1" layers="$2" r=0
+    shift 2
+    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -e "AWS_ENDPOINT_URL=http://$name:4566" -e AWS_REGION=us-east-1 "$@" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage tf-apply --wave 1 --layers "$layers" --binary choudoufu --gate never >"$logf" 2>&1 || r=$?
+    clean_mounted "$work/repo"
+    return $r
+  }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/repo"
+  cp -R "$HERE/fixtures/cdf-iam/." "$work/repo/"
+  printf '.terraform/\n.terraform.lock.hcl\n.tofu-records/\nterragucci-report/\n' >"$work/repo/.gitignore"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke cdf-iam $(date +%s%N)"
+  if ! iam_wave "$work/setup.log" a,b -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test; then
+    log "the test key could not apply the two estates"; tail -20 "$work/setup.log" >&2; rc=1
+  elif [ "$(name_of terragucci-smoke-iam-a)" != a-1 ] || [ "$(name_of terragucci-smoke-iam-b)" != b-1 ]; then
+    log "after the first apply the instances are named '$(name_of terragucci-smoke-iam-a)' and '$(name_of terragucci-smoke-iam-b)', not a-1 and b-1 under their estate tags"; rc=1
+  fi
+  if [ $rc = 0 ]; then
+    trust='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::000000000000:root"},"Action":"sts:AssumeRole"}]}'
+    policy='{"Version":"2012-10-17","Statement":[
+ {"Sid":"ReadTheAccount","Effect":"Allow","Action":["ec2:Describe*","ec2:Get*","tag:GetResources","sts:GetCallerIdentity"],"Resource":"*"},
+ {"Sid":"ActOnMyEstate","Effect":"Allow","Action":["ec2:CreateTags","ec2:DeleteTags","ec2:TerminateInstances"],"Resource":"*",
+  "Condition":{"StringEquals":{"aws:ResourceTag/tofu-estate":"terragucci-smoke-iam-a"}}},
+ {"Sid":"CreateIntoMyEstate","Effect":"Allow","Action":["ec2:RunInstances","ec2:CreateTags"],"Resource":"*",
+  "Condition":{"StringEquals":{"aws:RequestTag/tofu-estate":"terragucci-smoke-iam-a"}}}]}'
+    [ -n "${BREAK:-}" ] && policy='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ec2:*","tag:*","sts:GetCallerIdentity"],"Resource":"*"}]}'
+    aws_query iam 2010-05-08 CreateRole --data-urlencode "RoleName=$role" --data-urlencode "AssumeRolePolicyDocument=$trust" >/dev/null || true
+    aws_query iam 2010-05-08 PutRolePolicy -f --data-urlencode "RoleName=$role" --data-urlencode PolicyName=estate --data-urlencode "PolicyDocument=$policy" >/dev/null \
+      || { log "could not grant $role"; rc=1; }
+    creds="$(aws_query sts 2011-06-15 AssumeRole --data-urlencode "RoleArn=arn:aws:iam::000000000000:role/$role" --data-urlencode RoleSessionName=estate-a | tr -d '\n\t ')"
+    ak="$(sed -n 's#.*<AccessKeyId>\([^<]*\)</AccessKeyId>.*#\1#p' <<<"$creds")"
+    sk="$(sed -n 's#.*<SecretAccessKey>\([^<]*\)</SecretAccessKey>.*#\1#p' <<<"$creds")"
+    st="$(sed -n 's#.*<SessionToken>\([^<]*\)</SessionToken>.*#\1#p' <<<"$creds")"
+    [ -n "$ak" ] && [ -n "$sk" ] || { log "could not assume $role: $creds"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    for f in a b; do
+      sed "s/Name = \"$f-1\"/Name = \"$f-2\"/" "$work/repo/$f/main.tf" >"$work/main.tf" && mv "$work/main.tf" "$work/repo/$f/main.tf"
+    done
+    git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke cdf-iam rename $(date +%s%N)"
+    if ! iam_wave "$work/a.log" a -e "AWS_ACCESS_KEY_ID=$ak" -e "AWS_SECRET_ACCESS_KEY=$sk" -e "AWS_SESSION_TOKEN=$st"; then
+      log "the role scoped to estate a could not apply estate a"; tail -20 "$work/a.log" >&2; rc=1
+    elif [ "$(name_of terragucci-smoke-iam-a)" != a-2 ]; then
+      log "estate a applied but its instance is named '$(name_of terragucci-smoke-iam-a)', not a-2"; rc=1
+    else
+      log "the role scoped to estate a applied estate a: its instance is named a-2"
+    fi
+  fi
+  if [ $rc = 0 ]; then
+    if iam_wave "$work/b.log" b -e "AWS_ACCESS_KEY_ID=$ak" -e "AWS_SECRET_ACCESS_KEY=$sk" -e "AWS_SESSION_TOKEN=$st"; then
+      log "the role scoped to estate a applied estate b: its instance is named '$(name_of terragucci-smoke-iam-b)'"; rc=1
+    else
+      text="$(sed -n '/^FAILED b$/,$p' "$work/b.log" | tr '\n' ' ' | tr -s ' ')"
+      if ! grep -qE 'CreateTags.{0,200}(StatusCode: 403|UnauthorizedOperation|AccessDenied|not authorized)' <<<"$text"; then
+        log "estate b failed, but not on a CreateTags that floci refused"; tail -20 "$work/b.log" >&2; rc=1
+      elif [ "$(name_of terragucci-smoke-iam-b)" != b-1 ]; then
+        log "estate b was refused but its instance is named '$(name_of terragucci-smoke-iam-b)', not b-1"; rc=1
+      else
+        log "refused on estate b: $(grep -oE 'CreateTags.{0,160}' <<<"$text" | head -1)"
+      fi
+    fi
+  fi
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "a role granted estate a by its tofu-estate tag applied estate a, and floci refused its CreateTags on the instance of estate b, which kept its name"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -5537,6 +6025,9 @@ drift-overdue        self! weight=60
 pr-review            runner self! weight=300
 pr-review-moved      runner self! weight=300
 pr-review-status     runner self! weight=250
+cdf-concurrency      weight=150
+cdf-write-race       weight=150
+cdf-iam              self! weight=250
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
