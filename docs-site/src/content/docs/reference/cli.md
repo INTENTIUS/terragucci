@@ -21,6 +21,7 @@ prompt: |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, and pushes an agent's change; the generated pipeline runs it |
 | `comment-apply` | reads a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; the generated pipeline runs it |
+| `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
@@ -32,7 +33,7 @@ prompt: |
 ## init
 
 ```bash
-terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--force] [--dry-run]
+terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
 ```
 
 | Flag | Meaning |
@@ -40,6 +41,7 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudou
 | `--forge` | the forge, when the remote cannot tell |
 | `--binary` | the binary, when detection picks the wrong one: `tofu`, `terraform` or `choudoufu` |
 | `--approval` | `ledger`, `pr-review` or `sealed`, when the config names no mode; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
+| `--signer` | under `approval: sealed`, write the first line of `.chant/allowed_signers` for this principal from `git config user.signingkey`, when the file does not exist |
 | `--dry-run` | compute everything and write nothing |
 | `--force` | overwrite a pipeline file terragucci did not write; on GitLab that is `.gitlab/terragucci.yml`, never your `.gitlab-ci.yml` |
 
@@ -205,6 +207,29 @@ Lists every problem. [The config keys](/terragucci/reference/config/) names the 
 
 ```text
 terragucci.yml: ok
+approval: ledger (the default)
+```
+
+## approve
+
+```bash
+terragucci approve [wave-<k>] [--actor <name>] [--sign [<key>]] [--dry-run]
+```
+
+| Flag | Meaning |
+|---|---|
+| `wave-<k>` | the wave to approve; needed only when several wait |
+| `--actor` | the name the approval records; under `approval: sealed`, your principal in the signers file |
+| `--sign` | seal the approval with this key, or with git's `user.signingkey` when no key is given; the default under `approval: sealed` |
+| `--dry-run` | print the `chant approve` command and run nothing |
+
+Run it in a checkout whose `origin` you can push to. It finds chant in `node_modules/.bin`, then on the path.
+
+```text
+wave-2 waits for an approval of jcs1-sha256:2e7a63f3... (wave 2 of 2: app), since 2026-10-07T18:04:11.000Z
+  roots: app
+  destroys app: aws_s3_bucket.logs
+running: chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
 ```
 
 ## check-root and check-policy

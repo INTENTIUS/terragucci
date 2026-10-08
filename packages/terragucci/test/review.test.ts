@@ -61,7 +61,10 @@ describe("the plan note's marker", () => {
     expect(report.waves[1]).toMatchObject({ number: 2, review_digest: null, waits: false });
     const marker = parseMarker(renderNote(report));
     expect(marker).toEqual({ head: HEAD, waves: [{ number: 1, digest: report.waves[0]!.review_digest, waits: true }, { number: 2, digest: null, waits: false }] });
-    expect(renderNote(report)).toContain(`| 1 | 1 | \`${report.waves[0]!.review_digest}\` | waits for an approval |`);
+    const d = report.waves[0]!.review_digest;
+    expect(renderNote(report)).toContain(`| 1 | 1 | \`${d}\` | waits for an approval: \`chant approve tf-apply wave-1 --plan ${d}\` |`);
+    expect(renderNote(report, { sealed: true })).toContain(`\`chant approve tf-apply wave-1 --plan ${d} --sign\``);
+    expect(renderNote(report)).toContain("| 2 | 1 | no change | applies |");
     // Under on-destroy a create waits for nothing.
     expect(buildReport({ run, roots, waves: [{ number: 1, roots: ["a"] }], gate: "on-destroy" } as never).waves[0]!.waits).toBe(false);
   });

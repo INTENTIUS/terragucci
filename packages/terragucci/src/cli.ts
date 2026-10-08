@@ -1,7 +1,7 @@
 /**
  * The terragucci command.
  *
- *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--force] [--dry-run]
+ *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
@@ -16,6 +16,8 @@
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
+  terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]
+ *   terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a waiting wave's digest with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo]   (read a `/terragucci agent <ask>` comment)
@@ -38,6 +40,7 @@ import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, fi
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { approvalStatus } from "./review";
+import { approve } from "./approve";
 import { decideApplyComment, mergePullRequest } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
@@ -60,7 +63,7 @@ import { respond } from "./respond";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
-  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--force] [--dry-run]
+  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
@@ -154,7 +157,8 @@ export async function main(argv: string[]): Promise<number> {
         if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
         if (binary && !BINARIES.includes(binary as Binary)) throw new ConfigError(`--binary must be one of ${BINARIES.join(", ")}`);
         const approval = approvalFlag(str(flags, "approval"));
-        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, ...(approval ? { approval } : {}), force: flags.force === true, dryRun: flags["dry-run"] === true });
+        const signer = str(flags, "signer");
+        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, ...(approval ? { approval } : {}), ...(signer ? { signer } : {}), force: flags.force === true, dryRun: flags["dry-run"] === true });
         if (json) return emit(envelope("init", 0, initJson(cwd, result, flags["dry-run"] === true)));
         console.log(describeInit(cwd, result, flags["dry-run"] === true));
         if (flags["dry-run"] === true) console.log("dry run: nothing was written");
@@ -347,6 +351,11 @@ export async function main(argv: string[]): Promise<number> {
           console.error(`terragucci pr-merge: not merged: ${(e as Error).message}`);
           return 1;
         }
+      }
+      case "approve": {
+        const sign = flags.sign === true ? true : str(flags, "sign");
+        const done = await approve(cwd, { ...(args[0] ? { wave: args[0] } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
+        return done.code;
       }
       case "approval-status": {
         const forge = str(flags, "forge") ?? "github";

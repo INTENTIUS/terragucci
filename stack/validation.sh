@@ -41,7 +41,8 @@ gitlab|cdf-check|the generated pipeline for a choudoufu estate fails a resource 
 gitlab|cdf-apply|the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
 gitlab|gate-wait|a wave that waits for its approval ends its job with exit code 3 and fails the terragucci/apply status with its approval command, so the pipeline ends
 gitlab|own-jobs|init adds an include to a repo with its own .gitlab-ci.yml, and the pipeline runs that repo job in its stage beside the generated check
-gitlab|pr-review|with approval: pr-review a merge request approval given before the latest push leaves the wave waiting, and one given after it applies the wave'
+gitlab|pr-review|with approval: pr-review a merge request approval given before the latest push leaves the wave waiting, and one given after it applies the wave
+gitlab|approve|terragucci approve in a clone finds the waiting wave and approves its digest, and the next push applies it'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }
