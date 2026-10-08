@@ -4,7 +4,7 @@ description: The fields of report.json, which every plan, apply and drift run wr
 prompt: |
   Read https://intentius.io/terragucci/reference/report-schema/.
   Write a jq script that reads terragucci-report/report.json and prints every destroy and replacement by address, with its root and the wave that applies it.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `report.json` sits beside every `report.html`, which also carries it inline:

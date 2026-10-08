@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/approvals-runbook/.
   Run the "List the waves waiting" command with a read-only clone and tell me
   each wave, digest and expiry. Do not revoke an approval, and do not run `terragucci override`.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Shot from '../../../components/Shot.astro';

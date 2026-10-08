@@ -4,7 +4,7 @@ description: Every variable terragucci reads, which job gets it, and how cloud r
 prompt: |
   Read https://intentius.io/terragucci/reference/environment/.
   List every variable and secret this repo's pipeline needs and which job gets each. Print names only.
-  Do not write secret values anywhere. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Do not write secret values anywhere. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';

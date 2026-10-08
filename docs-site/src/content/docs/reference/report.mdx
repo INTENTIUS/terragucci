@@ -4,7 +4,7 @@ description: One JSON document per run, rendered as the pull-request note, a sel
 prompt: |
   Read https://intentius.io/terragucci/reference/report/.
   Run `npx terragucci stage tf-plan` in this repo, open terragucci-report/report.html and tell me which roots destroy or replace something, and which sensitive values were redacted.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';

@@ -7,7 +7,7 @@ prompt: |
   Check that the default branch's pipeline has the comment trigger (on GitLab, the `comments` job and a pipeline schedule with TERRAGUCCI_SCHEDULE set to comments); if it does not, run `npx terragucci init` and open a pull request with the result.
   You may comment `/terragucci plan` on a pull request and report what the note says.
   Never comment `/terragucci apply`, `/terragucci lock` or `/terragucci unlock`.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';

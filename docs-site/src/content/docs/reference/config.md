@@ -5,7 +5,7 @@ prompt: |
   Read https://intentius.io/terragucci/reference/config/.
   Run `npx terragucci config check --json` on this repo's terragucci.yml and list each problem it finds.
   Propose the smallest file that keeps current behaviour, run config check again, and open a pull request with it.
-  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root; two is an error. `terragucci config check` lists every problem.
