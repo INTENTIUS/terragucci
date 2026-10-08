@@ -89,6 +89,8 @@ def run_record(a):
             "choudoufu_ref": a.choudoufu,
         },
         "passed": runs_ok and not failed,
+        # Times the bench restarted its runner because Forgejo left a job waiting with the runner idle.
+        "runner_restarts": int(a.restarts or 0),
         "failures": failed,
         "wall_seconds": {**{p: round(wall[p]) for p in PHASES if p in wall}, "total": round(sum(wall.values()))},
         "runner_minutes": {**{p: round(minutes.get(p, 0), 1) for p in PHASES}, "total": round(sum(minutes.values()), 1)},
@@ -131,7 +133,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--merge")
     ap.add_argument("--out")
-    for k in ["manifest", "runs", "jobs", "notes", "reports", "phases", "created", "held", "release", "choudoufu", "capacity", "per-repo", "parallelism"]:
+    for k in ["manifest", "runs", "jobs", "notes", "reports", "phases", "created", "held", "release", "choudoufu", "capacity", "per-repo", "parallelism", "restarts"]:
         ap.add_argument("--" + k)
     a = ap.parse_args()
     merge(a) if a.merge else run_record(a)

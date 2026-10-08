@@ -378,7 +378,7 @@ The repo is public, so its Actions minutes on GitHub-hosted runners are free. A 
 
 ## The scale bench
 
-`stack/scale/` runs the generated pipeline over a terralith carved into many roots across several repos, one control repo over them, and writes what the [Scale page](https://intentius.io/terragucci/reference/scale/) states into `docs-site/src/data/scale.json`. It has its own compose project (`tgscale`): its own Forgejo on port 3410, floci on 4690, runner and job cache, so it runs beside the validation stack and touches nothing named `terragucci-*`. It calls no cloud. It needs Docker, Python 3, Go and `jq`.
+`stack/scale/` runs the generated pipeline over a terralith carved into many roots across several repos, one control repo over them, and writes each run's record into `docs-site/src/data/scale.json`. It has its own compose project (`tgscale`): its own Forgejo on port 3410, floci on 4690, runner and job cache, so it runs beside the validation stack and touches nothing named `terragucci-*`. It calls no cloud. It needs Docker, Python 3, Go and `jq`.
 
 ```bash
 just scale up                 # Forgejo, one runner, floci

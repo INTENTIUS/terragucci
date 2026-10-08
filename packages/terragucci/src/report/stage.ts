@@ -322,7 +322,7 @@ export function spawnAsync(file: string, args: string[], env: NodeJS.ProcessEnv)
 }
 
 /** Runs a piece of work after the one before it finished. */
-type Turn = <T>(fn: () => Promise<T>) => Promise<T>;
+export type Turn = <T>(fn: () => Promise<T>) => Promise<T>;
 
 export function oneAtATime(): Turn {
   let last: Promise<unknown> = Promise.resolve();
@@ -689,8 +689,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
-  // Terraform's plugin cache is not safe for inits that run together, so with a shared one they take turns. Plans still run at once.
-  const initTurn = env.TF_PLUGIN_CACHE_DIR ? oneAtATime() : <T>(fn: () => Promise<T>) => fn();
+  // The roots share one provider cache, the job's or one of the stage's own, so a provider downloads once per job rather
+  // than once per root (some 700 MB for the AWS provider). The cache is not safe for inits that run together, so they
+  // take turns. Plans still run at once.
+  const binEnv = { ...env, TF_PLUGIN_CACHE_DIR: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "plugins-")) };
+  const initTurn = oneAtATime();
 
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
@@ -718,7 +721,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const planFile = join(work, `${index}.tfplan`);
     const timing = observer.root(root);
     const run = (...args: string[]) =>
-      observer.commandAsync(timing, binary, args, env, (e) => spawnAsync(binary, [`-chdir=${dir}`, ...args], e));
+      observer.commandAsync(timing, binary, args, binEnv, (e) => spawnAsync(binary, [`-chdir=${dir}`, ...args], e));
     const failed = (error: string, line: string): RootOutcome => {
       lines.push(line);
       return { root, lines, input: { path: root, planner, error, preventDestroy: new Set() } };
@@ -782,7 +785,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       // The upstreams this layer reads, each read once, before any root of the layer plans.
       const ups = [...new Set(layer.flatMap((r) => [...(readsOf.get(r) ?? [])]))].filter((up) => !upstreamState.has(up)).sort();
       await eachLimited(ups, limit.value, async (up) => {
-        upstreamState.set(up, await stateIsEmptyAsync(binary, join(repo, up), env, initTurn));
+        upstreamState.set(up, await stateIsEmptyAsync(binary, join(repo, up), binEnv, initTurn));
       });
       const first = index;
       index += layer.length;

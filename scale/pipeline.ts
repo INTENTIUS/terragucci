@@ -48,6 +48,8 @@ export const scale = new Job({
   env: {
     TGSCALE_RELEASE: "${{ github.event.release.tag_name && github.event.release.tag_name || inputs.release }}",
     SCALE: "${{ inputs.scale || '136' }}",
+    // A hosted runner has four CPUs and 16 GB: two jobs of four roots each keep eight AWS providers in memory at once.
+    TGSCALE_CAPACITY: "2",
   },
   steps: [
     Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,

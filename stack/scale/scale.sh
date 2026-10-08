@@ -205,7 +205,7 @@ head_of() { git ls-remote "$(remote "$1")" "refs/heads/$2" | awk '{print $1}'; }
 # per finished run: repo<TAB>run json.
 wait_runs() { # events, deadline, then repo=sha pairs
   local events="$1" deadline="$2"; shift 2
-  local pending=("$@") next pair repo sha runs done_ last=0
+  local pending=("$@") next pair repo sha runs done_ last=0 idle=0
   while [ "${#pending[@]}" -gt 0 ]; do
     next=()
     for pair in "${pending[@]}"; do
@@ -224,6 +224,21 @@ wait_runs() { # events, deadline, then repo=sha pairs
     if [ "$(date +%s)" -ge "$deadline" ]; then
       log "still running past the deadline: ${pending[*]%%=*}"
       return 1
+    fi
+    # Forgejo 16 can leave a job waiting after the run ahead of it in its
+    # concurrency group ends, with the runner idle: the runner fetches it
+    # only once it polls afresh. A minute of that restarts the runner, and the
+    # record counts each restart.
+    if api "$URL/api/v1/admin/actions/runners" | jq -e 'map(select(.name == "tgscale-docker" and .status == "idle")) | length > 0' >/dev/null 2>&1; then
+      idle=$((idle + 1))
+    else
+      idle=0
+    fi
+    if [ "$idle" -ge 12 ]; then
+      log "$events: the runner sat idle for a minute with runs waiting; restarting it"
+      "${COMPOSE[@]}" restart forgejo-runner >/dev/null 2>&1
+      echo restart >> "$NUDGES"
+      idle=0
     fi
     if [ $(( $(date +%s) - last )) -ge 120 ]; then
       log "$events: waiting on ${#pending[@]} repo(s): $(printf '%s ' "${pending[@]%%=*}" | head -c 300)"
@@ -359,6 +374,8 @@ run_scale() { # scale
   # ── reconcile ──
   local t0 out pairs=() prs=() pr sha phase_json="{}" runs_file="$work/runs.tsv"
   : > "$runs_file"
+  NUDGES="$work/nudges"
+  : > "$NUDGES"
   t0=$(date +%s)
   out="$(cd "$work/control" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "${tg[@]}" reconcile --config terragucci.yml --mode apply 2>&1)" || { echo "$out" >&2; die "reconcile failed"; }
   echo "$out" | tail -3 >&2
@@ -437,7 +454,7 @@ run_scale() { # scale
   local out_file="$STATE/runs/scale-$resources.json"
   python3 "$HERE/summarize.py" --manifest "$manifest" --runs "$runs_file" --jobs "$jobs" --notes "$notes" --reports "$work/reports.tsv" \
     --phases "$phase_json" --created "$created" --held "$held" --release "$release" --choudoufu "$CHOUDOUFU_REF" \
-    --capacity "$CAPACITY" --per-repo "$PER_REPO" --parallelism "$PARALLELISM" > "$out_file"
+    --capacity "$CAPACITY" --per-repo "$PER_REPO" --parallelism "$PARALLELISM" --restarts "$(wc -l < "$NUDGES" | tr -d ' ')" > "$out_file"
   log "scale $scale: record in $out_file"
   jq -c '{resources: .estate.resources, roots: .estate.roots, repos: .estate.repos, passed, wall_seconds, runner_minutes, note_bytes_max: .note.bytes_max, report_bytes_max: .reports.report_json_bytes_max}' "$out_file" >&2
   jq -e .passed "$out_file" >/dev/null || return 1

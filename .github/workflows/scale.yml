@@ -34,6 +34,7 @@ jobs:
     env:
       TGSCALE_RELEASE: '${{ github.event.release.tag_name && github.event.release.tag_name || inputs.release }}'
       SCALE: '${{ inputs.scale || ''136'' }}'
+      TGSCALE_CAPACITY: '2'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

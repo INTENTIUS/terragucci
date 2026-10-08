@@ -1034,21 +1034,39 @@ function fakeBin(script: string, scripts: Record<string, string> = {}): { dir: s
 const STAGE_OK = { terragucci: "#!/usr/bin/env bash\nexit 0\n" };
 
 describe("the plugin cache", () => {
-  it("roots applied together never share a cache directory, even when the env names one", async () => {
-    const { dir, env } = fakeBin(
-      `#!/usr/bin/env bash\ncase "$2" in init) echo "$(basename "\${1#-chdir=}") $TF_PLUGIN_CACHE_DIR" >> "\${LOG}"; sleep 0.3 ;; plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done ;; show) echo '{"resource_changes":[]}' ;; esac\nexit 0\n`,
-    );
+  // Each init logs its root, its cache and how many inits are running with it.
+  const INIT_LOG = `#!/usr/bin/env bash\ncase "$2" in init) r="$(basename "\${1#-chdir=}")"; touch "\${LOG}.running.$r"; echo "$r $TF_PLUGIN_CACHE_DIR $(ls "\${LOG}".running.* | wc -l | tr -d ' ')" >> "\${LOG}"; sleep 0.3; mv "\${LOG}.running.$r" "\${LOG}.done.$r" ;; plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done ;; show) echo '{"resource_changes":[]}' ;; esac\nexit 0\n`;
+
+  async function inits(cache: string | undefined): Promise<string[][]> {
+    const { dir, env } = fakeBin(INIT_LOG);
     await terragucciBin(join(dir, "bin"));
     const log = join(dir, "cache.log");
     const script = join(dir, "apply.sh");
     writeFileSync(script, applyScript("tofu", [["a", "b", "c"]], "github"));
-    const r = spawnSync("bash", [script], { cwd: dir, env: { ...process.env, ...env, LOG: log, TF_PLUGIN_CACHE_DIR: "/shared/cache" }, encoding: "utf-8" });
+    const jobEnv: NodeJS.ProcessEnv = { ...process.env, ...env, LOG: log };
+    delete jobEnv.TF_PLUGIN_CACHE_DIR;
+    if (cache) jobEnv.TF_PLUGIN_CACHE_DIR = cache;
+    const r = spawnSync("bash", [script], { cwd: dir, env: jobEnv, encoding: "utf-8" });
     expect(r.status, r.stdout + r.stderr).toBe(0);
-    const dirs = readFileSync(log, "utf-8").trim().split("\n").map((l) => l.split(" ")[1]);
-    expect(dirs).toHaveLength(3);
-    expect(new Set(dirs).size).toBe(3);
-    expect(dirs).not.toContain("/shared/cache");
-    for (const d of dirs) expect(existsSync(d)).toBe(false);
+    return readFileSync(log, "utf-8").trim().split("\n").map((l) => l.split(" "));
+  }
+
+  it("roots applied together share the job's cache directory, one init at a time", async () => {
+    const lines = await inits("/shared/cache");
+    expect(lines).toHaveLength(3);
+    expect(lines.map((l) => l[1])).toEqual(["/shared/cache", "/shared/cache", "/shared/cache"]);
+    expect(lines.map((l) => l[2])).toEqual(["1", "1", "1"]);
+  });
+
+  it("without one, they share a cache of the wave's own, which goes when the wave ends", async () => {
+    const lines = await inits(undefined);
+    expect(lines).toHaveLength(3);
+    const dirs = new Set(lines.map((l) => l[1]));
+    expect(dirs.size).toBe(1);
+    const [only] = [...dirs];
+    expect(only).not.toBe("");
+    expect(existsSync(only)).toBe(false);
+    expect(lines.map((l) => l[2])).toEqual(["1", "1", "1"]);
   });
 });
 
