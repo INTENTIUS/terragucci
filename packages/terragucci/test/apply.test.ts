@@ -3,7 +3,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave, applyWaves, approvedPath, decideGate, lockTimeoutArgs, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
+import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
+import { noteMarker } from "../src/review";
 import { refusedDiff } from "../src/respond/refused";
 import { gateSealPayload } from "../src/seal";
 import { git, tmp, write } from "./helpers";
@@ -395,6 +397,38 @@ describe("a wave behind its gate", () => {
       git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "the next merge");
       expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(0);
       expect(existsSync(log)).toBe(true);
+    });
+
+    it("under pr-review, the merged pull request's approval of its head applies the wave when it reviewed these plans, and is refused when they moved", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, bin, log } = setup({ "terragucci.yml": "approval: pr-review\n" });
+      const head = "a".repeat(40);
+      const merge = "b".repeat(40);
+      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t", TG_SHA: merge };
+      const forge = (reviews: unknown[], digest: string | null): Fetch => async (url) => {
+        const path = url.replace("https://api.test/", "").split("?")[0];
+        const body: Record<string, unknown> = {
+          [`repos/acme/infra/commits/${merge}/pulls`]: [{ number: 7, head: { sha: head }, user: { login: "author" }, merge_commit_sha: merge, merged_at: "x" }],
+          "repos/acme/infra/pulls/7/reviews": reviews,
+          "repos/acme/infra/collaborators/alice/permission": { permission: "write" },
+          "repos/acme/infra/issues/7/comments": [{ body: noteMarker({ head, waves: [{ number: 1, digest, waits: true }] }) }],
+        };
+        return (path! in body ? { ok: true, status: 200, json: async () => body[path!] } : { ok: false, status: 404, json: async () => ({}) }) as never;
+      };
+      const review = { user: { login: "alice" }, state: "APPROVED", commit_id: head };
+      expect(await applyWave(work, { ...opts(bin), env, fetch: forge([], null), now: T(1) })).toBe(3);
+      const digest = digestOf(origin);
+      expect(lines.join("\n")).toMatch(/no review approves this wave: no reviewer other than its author approved head aaaaaaaa of pull request 7/);
+      // The review saw other plans: nothing applies.
+      expect(await applyWave(work, { ...opts(bin), env, fetch: forge([review], "jcs1-sha256:other"), now: T(2) })).toBe(4);
+      expect(existsSync(log)).toBe(false);
+      expect(lines.join("\n")).toContain("but the plans changed since that review");
+      // The wave plans what the review saw: in this fixture every root of the wave changes, so the review digest is the wave's digest.
+      expect(await applyWave(work, { ...opts(bin), env, fetch: forge([review], digest), now: T(3) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+      const recorded = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).resolutions;
+      expect(recorded.at(-1)).toMatchObject({ gate: "wave-1", planDigest: digest, resolvedBy: "alice", via: "pr-review", pr: 7, head, reviewers: ["alice"] });
     });
 
     it("the pipeline's --approval sealed holds when the config names no mode", async () => {

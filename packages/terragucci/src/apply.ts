@@ -72,6 +72,8 @@ import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule } from "./approval";
+import type { Fetch } from "./forge";
+import { reviewDigest, reviewWave, type ReviewOutcome } from "./review";
 import { sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
@@ -136,6 +138,11 @@ export interface ResolutionRecord {
   environment?: string;
   relayedBy?: string;
   seal?: { signer?: unknown; key?: unknown; signature?: unknown } | null;
+  /** Set when the apply job recorded the approval from a pull request's review (`approval: pr-review`). */
+  via?: "pr-review";
+  pr?: number;
+  head?: string;
+  reviewers?: string[];
 }
 
 export interface GateLedger {
@@ -243,6 +250,11 @@ export const approvedPath = (wave: number, digest: string): string => `_gates/${
 
 /** Append a pending fact to the ledger and push it, with any `files` beside it, retrying when another writer moved the branch. */
 export function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}): void {
+  appendRecord(repo, record, files, `Pending gate record: ${record.op} ${record.gate}`);
+}
+
+/** Append one line to the ledger and push it, as appendPending does. */
+function appendRecord(repo: string, record: PendingRecord | ResolutionRecord, files: Record<string, string>, message: string): void {
   const line = JSON.stringify(record);
   for (let attempt = 0; attempt < 5; attempt++) {
     const exists = fetchLifecycle(repo);
@@ -258,13 +270,13 @@ export function appendPending(repo: string, record: PendingRecord, files: Record
     for (const [path, b] of [[LEDGER_PATH, blob], ...Object.entries(files).map(([f, t]) => [f, git(repo, ["hash-object", "-w", "--stdin"], t).stdout.trim()])])
       git(repo, ["update-index", "--add", "--cacheinfo", `100644,${b},${path}`], undefined, env);
     const tree = git(repo, ["write-tree"], undefined, env).stdout.trim();
-    const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", `Pending gate record: ${record.op} ${record.gate}`], undefined, env).stdout.trim();
+    const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", message], undefined, env).stdout.trim();
     rmSync(scratch, { recursive: true, force: true });
-    if (!commit) throw new ConfigError("could not write the pending gate record");
+    if (!commit) throw new ConfigError(`could not write the gate record (${message})`);
     const push = git(repo, ["push", "-q", "origin", `${commit}:refs/heads/${LIFECYCLE}`]);
     if (push.status === 0) return;
   }
-  throw new ConfigError(`could not push the pending gate record to ${LIFECYCLE}; check that the job may push to it`);
+  throw new ConfigError(`could not push the gate record (${message}) to ${LIFECYCLE}; check that the job may push to it`);
 }
 
 // ── planning and applying ────────────────────────────────────────────────
@@ -400,6 +412,8 @@ export interface ApplyWaveOptions {
   /** The `terragrunt` executable. Default: `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
   terragruntPath?: string;
   terragruntExec?: TerragruntExec;
+  /** The forge API calls of `approval: pr-review`. Default: fetch. */
+  fetch?: Fetch;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
@@ -679,7 +693,25 @@ async function gateWave(
         return why === null;
       });
     }
-    const decision = decideGate(ledger, name, digest, now);
+    let decision = decideGate(ledger, name, digest, now);
+    // Under pr-review the merged pull request's approving review of its head counts, when it reviewed these plans.
+    let moved: Extract<ReviewOutcome, { kind: "moved" }> | undefined;
+    if (decision.status === "waiting" && mode === "pr-review") {
+      const env = options.env ?? process.env;
+      const forge = env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
+      const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+      const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })));
+      const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest });
+      if (r.kind === "approved") {
+        appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
+        console.log(`${label}: pull request ${r.pr} was approved on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")}, and the plans are the ones it reviewed (${changesDigest})`);
+        decision = { status: "approved", by: r.by.join(", ") };
+      } else if (r.kind === "moved") {
+        moved = r;
+      } else {
+        console.log(`${label}: no review approves this wave: ${r.why}`);
+      }
+    }
     if (decision.status === "approved") {
       console.log(`${label}: approved by ${decision.by} for this digest`);
       w.approval = "approved";
@@ -709,6 +741,15 @@ async function gateWave(
           members,
           neverOverMcp: true,
         }, { [approvedPath(wave, digest)]: report() });
+      }
+      if (moved) {
+        console.log(`${label}: pull request ${moved.pr} was approved on its head ${moved.head.slice(0, 8)} by ${moved.by.join(", ")}, but the plans changed since that review, so nothing in it was applied`);
+        console.log(`${label}: the review saw digest ${moved.reviewed}; the changes planned now have another. Read the plans above, then approve them with:`);
+        console.log(`  ${approveLine(wave, digest, mode)}`);
+        mkdirSync(join(repo, "terragucci-report", "current"), { recursive: true });
+        writeFileSync(join(repo, "terragucci-report", "current", "report.json"), report());
+        writeOutcome(options.env, `wave ${wave} changed since its review in pull request ${moved.pr}`);
+        return EXIT.refused;
       }
       if (decision.status === "refused") {
         const approvedFact = [...ledger.pending].reverse().find((p) => p.gate === name && p.members && samePlanDigest(p.planDigest, decision.approved));

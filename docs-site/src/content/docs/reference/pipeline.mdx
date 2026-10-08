@@ -112,6 +112,14 @@ Each stage posts one commit status per run. `terragucci/plan` carries the counts
 
 GitLab refuses to move a running status back to pending, and a status left running keeps the pipeline running. The next status a retried wave posts replaces the failed one.
 
+With `approval: pr-review` (GitHub and Forgejo) the pipeline also posts `terragucci/approval` on a pull request's head, from the plan job after its note and from an `approval` job that runs on each review of the pull request (`pull_request_review`). Require it in branch protection so a change that a gated wave will wait on merges only once reviewed.
+
+| `terragucci/approval` when | State |
+|---|---|
+| no wave of the plan waits for an approval | success |
+| a wave waits, and a writer other than the author approved the head with nobody asking for changes | success, naming the reviewers |
+| a wave waits, with no such approval of the head | pending |
+
 <Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" optional />
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale. Pushing to the pull request plans it again.
