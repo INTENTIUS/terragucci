@@ -1,6 +1,6 @@
 {
-  "recorded": "2026-10-07",
-  "commit": "cd6dbe1",
+  "recorded": "2026-10-08",
+  "commit": "c51e358",
   "forge": "forgejo",
   "claims": [
     {
@@ -61,7 +61,7 @@
     },
     {
       "claim": "sealed",
-      "says": "a wave counts only an approval sealed by a key the signers file lists",
+      "says": "under approval: sealed a wave counts only an approval sealed by a key the signers file lists",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
@@ -138,7 +138,7 @@
     },
     {
       "claim": "tg-waves",
-      "says": "the Terragrunt example boots, applying the canary wave before the rest with one run --all each",
+      "says": "the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
@@ -376,7 +376,7 @@
     },
     {
       "claim": "comment-apply",
-      "says": "a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access",
+      "says": "a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
@@ -425,14 +425,14 @@
     },
     {
       "claim": "tg-sealed",
-      "says": "a Terragrunt wave counts only an approval sealed by a key the signers file lists",
+      "says": "under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
     },
     {
       "claim": "pr-apply",
-      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto, and with apply.when: merge it applies nothing",
+      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
@@ -453,7 +453,7 @@
     },
     {
       "claim": "tg-comment-apply",
-      "says": "a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request",
+      "says": "a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
@@ -480,8 +480,183 @@
       "break": "caught"
     },
     {
+      "claim": "tg-layers",
+      "says": "a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "policy-source",
+      "says": "a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "pr-requires",
+      "says": "with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "pr-lock",
+      "says": "/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "front-door",
+      "says": "the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "ledger-default",
+      "says": "with no approval key a wave counts an unsigned approval of its set digest, init declares no gate, and the waiting wave prints the approval command without --sign",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "approval-at-base",
+      "says": "a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "sealed-migrate",
+      "says": "a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
       "claim": "estate",
       "says": "terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "drift-overdue",
+      "says": "the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "pr-review",
+      "says": "with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "pr-review-moved",
+      "says": "with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "pr-review-status",
+      "says": "with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "cdf-concurrency",
+      "says": "with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object",
+      "needs": "418",
+      "verdict": "pending",
+      "break": null
+    },
+    {
+      "claim": "cdf-write-race",
+      "says": "with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "cdf-iam",
+      "says": "with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "approve-command",
+      "says": "the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-pr-apply",
+      "says": "with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "tg-pr-apply-lock",
+      "says": "in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "plan-lock",
+      "says": "with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "plan-lock-release",
+      "says": "with locks: plan the merge of a pull request releases the lock its first plan took",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "policy-override",
+      "says": "a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "policy-override-moved",
+      "says": "an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "policy-override-unlisted",
+      "says": "an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "blob-azure",
+      "says": "with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "blob-gcs",
+      "says": "with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed",
       "needs": null,
       "verdict": "pass",
       "break": "caught"
