@@ -50,6 +50,7 @@ import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Upl
 import { costCommand, estimateCosts, writeCostFiles, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
+import { synthAffected } from "../synth";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
@@ -667,9 +668,16 @@ export async function runStage(stage: string, repo: string, options: StageOption
   }
   // A pull request plans only the roots its change reaches, and their dependents. Drift reads every root.
   const base = drift ? undefined : (options.base ?? baseRef(env));
-  // Roots a synth command writes are not in git, so no diff names them: every one plans, and a stack the change leaves alone plans no change.
-  if (base && settings.synth) log(`every root: synth writes them (${settings.synth}), so a change to the app can reach any of them`);
-  const selected = base && !settings.synth ? affectedRoots(repo, base, all, layers.flat(), log) : undefined;
+  // Roots a synth command writes are not in git, so no diff names them: the command runs on the base too, and the roots whose output differs plan.
+  const notices: string[] = [];
+  let selected: Set<string> | undefined;
+  if (base && settings.synth) {
+    const synthed = await synthAffected(repo, base, settings.synth, layers.flat(), rootDependencies(repo, all), env, log);
+    selected = synthed.selected;
+    notices.push(synthed.notice);
+  } else if (base) {
+    selected = affectedRoots(repo, base, all, layers.flat(), log);
+  }
   const planLayers = selected ? layers.map((l) => l.filter((r) => selected.has(r))).filter((l) => l.length > 0) : layers;
   const roots = planLayers.flat();
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
@@ -798,7 +806,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
         .filter((w) => w.roots.length > 0);
 
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}) });
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}) });
 }
 
 interface Planned {
@@ -822,6 +830,8 @@ interface Planned {
   names?: Map<string, Map<string, string>>;
   /** tf-drift with `respond.drift: attribute`: who changed what, per root. */
   attributions?: Map<string, Attributed>;
+  /** Lines for the note about how the roots were selected (`synth`: how many were unchanged). */
+  notices?: string[];
 }
 
 /**
@@ -1046,7 +1056,7 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [] }: Planned,
 ): Promise<StageResult> {
   let inputs = planned;
   let policy: ReportPolicy | undefined;
@@ -1124,7 +1134,7 @@ async function finish(
   }
   const limit = noteLimit(options.forge ?? settings.forge ?? forgeOfEnv(env), report);
   // A drift schedule that stopped cannot say so itself; the plan job, which runs on every pull request, does.
-  const notices: string[] = [];
+  const notices: string[] = [...selection];
   if (!drift && typeof settings.drift === "string") {
     const reader = targetFromEnv(options.forge ?? settings.forge, env, options.token ?? env.TG_TOKEN, true);
     const late = reader ? await checkDriftSchedule(repo, settings.drift, reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), options.now ?? new Date(), log) : undefined;
