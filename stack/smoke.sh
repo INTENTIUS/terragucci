@@ -215,7 +215,20 @@ otlp-headers|telemetry.headers_secret maps the collector key into the jobs, span
 pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
-estate-override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|'
+estate-override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|
+comment-refused|a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies|
+note-stale|a push to the default branch that changes a root an open pull request planned marks its plan note stale|
+pr-confirm|with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing|
+pr-base-config|with apply.when: pull-request a pull request that sets gate: never still waits at the gate of the default branch|
+pr-guard|with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing|
+pr-close-release|with apply.when: pull-request closing a pull request releases the roots it locked|
+tg-lock-fanout|in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none|
+token-scrub|the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set|
+fork-no-plan|a pull request from a fork runs check and no plan job|
+highlight-sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
+approval-revoke|removing an approval line from chant/lifecycle makes its wave wait again|
+pending-expiry|a pending fact past its 48 hours is recorded afresh by the next run of its wave|
+signer-trust|init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -7248,6 +7261,653 @@ claim_estate_override() {
   return $rc
 }
 
+# ── comments, notes and the edge rules of apply before merge ──────────────
+
+# A scratch repo with two roots, app and net, each a terraform_data with local
+# state, gate never, and the pipeline init writes, pushed to main and green.
+# Leaves the tree in $work/tree on main and MAIN_SHA.
+two_root_repo() { # name
+  local name="$1" repo="$USER/$1" root
+  fresh_repo "$name" || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for root in app net; do
+    mkdir -p "$work/tree/$root"
+    echo 1 > "$work/tree/$root/rev.txt"
+    # shellcheck disable=SC2016 # HCL interpolation
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "rev" {\n  input = file("${path.module}/rev.txt")\n}\n' > "$work/tree/$root/main.tf"
+  done
+  printf 'forge: forgejo\nbinary: tofu\ngate: never\n' > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  MAIN_SHA="$(push_tree "$work/tree" "$repo" main "$name: first")" || return 1
+  wait_run "$repo" "$MAIN_SHA" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the push to main ended '$RUN_STATUS'"; print_logs "$repo" "$RUN_ID" | tail -40 >&2; return 1; }
+}
+
+statuses_of() { # repo, sha, context -> how many statuses carry it
+  api "$URL/api/v1/repos/$1/commits/$2/statuses?limit=100" | jq --arg c "$3" '[.[] | select(.context == $c)] | length'
+}
+
+claim_comment_refused() {
+  # A scratch repo with two roots and a pull request that changes app. Once
+  # its own plan finished, the admin comments /terragucci approve, merge,
+  # destroy, import, state and force-unlock on it. Each is answered that a
+  # comment never runs it, none plans, and main gains no apply.
+  # BREAK: the issue_comment trigger is cut from the pushed pipeline, so no
+  # comment is answered.
+  log() { echo "[smoke comment-refused] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/comment-refused" head pr i before after replies verb applied rc=0 wf
+  local verbs=(approve merge destroy import state force-unlock)
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo comment-refused || return 1
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then
+    awk '/^  issue_comment:/ { skip = 2; next } skip > 0 { skip--; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  echo 2 > "$work/tree/app/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" refused-change "comment-refused: change app")" || return 1
+  pr="$(pr_open "$repo" refused-change "comment-refused: change app")" || return 1
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(statuses_of "$repo" "$head" terragucci/plan)" -ge 2 ] && break
+    sleep 3
+  done
+  before="$(statuses_of "$repo" "$head" terragucci/plan)"
+  applied="$(statuses_of "$repo" "$MAIN_SHA" terragucci/apply)"
+  for verb in "${verbs[@]}"; do
+    api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "/terragucci $verb" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$pr/comments"
+  done
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: ")) | .body] | join("\n")')"
+    [ "$(grep -c 'a comment never runs' <<<"$replies")" -ge ${#verbs[@]} ] && break
+    sleep 3
+  done
+  for verb in "${verbs[@]}"; do
+    grep -qF "a comment never runs \`$verb\`" <<<"$replies" || { log "/terragucci $verb got no refusal"; rc=1; }
+  done
+  after="$(statuses_of "$repo" "$head" terragucci/plan)"
+  [ "$after" = "$before" ] || { log "a refused comment planned ($before plan statuses before, $after after)"; rc=1; }
+  [ "$(statuses_of "$repo" "$MAIN_SHA" terragucci/apply)" = "$applied" ] || { log "main gained an apply status from a comment"; rc=1; }
+  [ "$(remote_head "$repo" main)" = "$MAIN_SHA" ] || { log "main moved"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "approve, merge, destroy, import, state and force-unlock were each refused by name, and nothing planned or applied"
+  return $rc
+}
+
+claim_note_stale() {
+  # A scratch repo with two roots. A pull request changes app, and its plan
+  # note covers app. Then a push to main changes app too: its first apply
+  # wave marks the note stale, naming main and app.
+  # BREAK: the push to main changes net only, which the note does not
+  # cover, so the note stays as it was.
+  log() { echo "[smoke note-stale] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/note-stale" head pr i note moved=app sha rc=0
+  [ -n "${BREAK:-}" ] && moved=net
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo note-stale || return 1
+  plan_note() { api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))][0].body // empty'; }
+  echo 2 > "$work/tree/app/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" stale-change "note-stale: change app")" || return 1
+  pr="$(pr_open "$repo" stale-change "note-stale: change app")" || return 1
+  wait_run "$repo" "$head" pull_request || return 1
+  for i in $(seq 1 20); do note="$(plan_note)"; [ -n "$note" ] && break; sleep 3; done
+  head -1 <<<"$note" | grep -q 'roots=app -->' || { log "the plan note does not cover app: $(head -1 <<<"$note")"; return 1; }
+  git -C "$work/tree" checkout -q main
+  echo 3 > "$work/tree/$moved/rev.txt"
+  sha="$(push_tree "$work/tree" "$repo" main "note-stale: main changes $moved")" || return 1
+  wait_run "$repo" "$sha" push || return 1
+  note="$(plan_note)"
+  log "the note after main moved under $moved: $(sed -n 2p <<<"$note")"
+  grep -qF '> This plan is stale: main moved under app. Push to this pull request to plan again. <!-- terragucci:stale -->' <<<"$note" \
+    || { log "the plan note of pull request $pr is not marked stale"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the push to main that changed app marked the plan note of pull request $pr stale"
+  return $rc
+}
+
+pr_serial() { # name, root -> the serial of the root's state, empty when it has none
+  curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null | jq -r '.serial // empty' 2>/dev/null || true
+}
+
+claim_pr_confirm() {
+  # A repo with apply.when: pull-request and apply.merge: auto. A pull request
+  # changes canary/one, is approved, applies on /terragucci apply and merges.
+  # The push of the merge commit runs confirm, which plans every root and
+  # posts terragucci/apply success, and no apply wave: the state of
+  # canary/one keeps the serial the pull request left.
+  # BREAK: the pipeline is written to apply after merge, and the pull request
+  # is merged by hand, so the merge commit runs the apply waves and no confirm.
+  log() { echo "[smoke pr-confirm] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-confirm" head pr reply merge serial jobs status rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  pr_repo pr-confirm auto ${BREAK:+merge} || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-confirm: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-pr-confirm || { drop_work "$work"; return 1; }
+  echo confirmed > "$work/tree/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" change "pr-confirm: change canary/one")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" change "pr-confirm: change canary/one")" || { drop_work "$work"; return 1; }
+  pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
+    log "reply: ${reply:-none}"
+    serial="$(pr_serial pr-confirm canary/one)"
+  else
+    serial="$(pr_serial pr-confirm canary/one)"
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || rc=1
+  fi
+  merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+  [ -n "$merge" ] && [ "$merge" != null ] || { log "pull request $pr did not merge"; rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$merge" push || rc=1; }
+  if [ $rc = 0 ]; then
+    jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs")"
+    log "the merge commit ran: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
+    [ "$(jq -r '.[] | select(.name == "confirm") | .status' <<<"$jobs")" = success ] || { log "the merge commit ran no successful confirm job"; rc=1; }
+    [ -z "$(jq -r '.[] | select((.name | startswith("apply-wave")) and .status != "skipped") | .name' <<<"$jobs")" ] || { log "the merge commit ran an apply wave"; rc=1; }
+    status="$(api "$URL/api/v1/repos/$repo/commits/$merge/statuses?limit=100" | jq -r '[.[] | select(.context == "terragucci/apply")] | sort_by(.id) | last | if . == null then "none" else "\(.status // .state) \(.description)" end')"
+    log "terragucci/apply on the merge commit: $status"
+    case "$status" in "success applied before merge; every root plans no change"*) ;; *) log "terragucci/apply does not say every root plans no change"; rc=1 ;; esac
+    [ "$(pr_serial pr-confirm canary/one)" = "$serial" ] || { log "the state of canary/one moved after the merge (serial $serial, now $(pr_serial pr-confirm canary/one))"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-confirm?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the merge commit ran confirm, which planned no change and applied nothing"
+  return $rc
+}
+
+claim_pr_base_config() {
+  # A repo with apply.when: pull-request and gate: always on main. A pull
+  # request changes canary/one and sets gate: never in its own terragucci.yml.
+  # /terragucci apply runs the default branch's pipeline and its gate: wave 1
+  # waits for an approval, and nothing applies.
+  # BREAK: main itself has gate: never, so the wave applies.
+  log() { echo "[smoke pr-base-config] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-base-config" head pr reply applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo pr-base-config || { drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && { sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"; }
+  printf 'apply:\n  when: pull-request\n  merge: manual\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-base-config: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-pr-base-config || { drop_work "$work"; return 1; }
+  echo relaxed > "$work/tree/canary/one/rev.txt"
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+  head="$(push_tree "$work/tree" "$repo" change "pr-base-config: gate never in the pull request")" || { drop_work "$work"; return 1; }
+  pr="$(pr_open "$repo" change "pr-base-config: gate never in the pull request")" || { drop_work "$work"; return 1; }
+  pr_ready "$repo" "$pr" "$head" || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
+  applied="$(gated_applied pr-base-config)"
+  log "reply: ${reply:-none}; state for: ${applied:-nothing}"
+  grep -q "wave 1 waits for an approval of its set digest" <<<"$reply" || { log "wave 1 did not wait under the gate of main"; rc=1; }
+  [ -z "$applied" ] || { log "the gate: never of the pull request let $applied apply"; rc=1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-base-config?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "a pull request that sets gate: never still waited at the gate main sets, and applied nothing"
+  return $rc
+}
+
+claim_pr_guard() {
+  # A repo with apply.when: pull-request. Pull request A changes canary/one
+  # and the pipeline file; pull request B changes fleet/two and carries a
+  # failed status (smoke/ci) on its head. Both are approved. /terragucci
+  # apply on A is refused for the pipeline file, on B for its checks, and no
+  # root has state.
+  # BREAK: A leaves the pipeline file alone and B has no failed status, so
+  # both apply.
+  log() { echo "[smoke pr-guard] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-guard" head_a head_b pr_a pr_b reply applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  pr_repo pr-guard manual || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-guard: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-pr-guard || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  [ -n "${BREAK:-}" ] || echo '# a change to the pipeline file' >> "$work/tree/.forgejo/workflows/terragucci.yml"
+  head_a="$(push_tree "$work/tree" "$repo" change-a "pr-guard: a")" || { drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q main
+  echo b > "$work/tree/fleet/two/rev.txt"
+  head_b="$(push_tree "$work/tree" "$repo" change-b "pr-guard: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "pr-guard: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" change-b "pr-guard: b")" || { drop_work "$work"; return 1; }
+  { pr_ready "$repo" "$pr_a" "$head_a" && pr_ready "$repo" "$pr_b" "$head_b"; } || { drop_work "$work"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"context":"smoke/ci","state":"failure","description":"a check outside terragucci failed"}' \
+      "$URL/api/v1/repos/$repo/statuses/$head_b" || { log "could not post the failed status"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_a" "/terragucci apply")"
+    log "A ($pr_a): ${reply:-no reply}"
+    grep -q "pull request $pr_a changes .forgejo/workflows/terragucci.yml, and the apply runs the pipeline of main" <<<"$reply" || { log "A was not refused for the pipeline file"; rc=1; }
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
+    log "B ($pr_b): ${reply:-no reply}"
+    grep -q "the checks of pull request $pr_b are not green: smoke/ci failed" <<<"$reply" || { log "B was not refused for its failed check"; rc=1; }
+  fi
+  applied="$(gated_applied pr-guard)"
+  [ -z "$applied" ] || { log "a refused pull request applied: $applied"; rc=1; }
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-guard?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the change to the pipeline file and the failed check were each refused, and nothing applied"
+  return $rc
+}
+
+claim_pr_close_release() {
+  # A repo with apply.when: pull-request. Pull requests A and B each change
+  # canary/one. /terragucci lock on A locks it; A is closed unmerged; then
+  # /terragucci lock on B takes canary/one, which the closed A no longer holds.
+  # BREAK: A stays open, so B is refused for the lock A holds.
+  log() { echo "[smoke pr-close-release] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-close-release" pr_a pr_b reply rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  pr_repo pr-close-release manual || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-close-release: first" >/dev/null || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  push_tree "$work/tree" "$repo" change-a "pr-close-release: a" >/dev/null || { drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q main
+  echo b > "$work/tree/canary/one/rev.txt"
+  push_tree "$work/tree" "$repo" change-b "pr-close-release: b" >/dev/null || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "pr-close-release: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" change-b "pr-close-release: b")" || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr_a" "/terragucci lock")"
+  log "lock on A ($pr_a): ${reply:-no reply}"
+  grep -q "locked \`canary/one\` for pull request $pr_a" <<<"$reply" || { log "the lock on A did not lock canary/one"; rc=1; }
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/pulls/$pr_a" || { log "could not close pull request $pr_a"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci lock")"
+    log "lock on B ($pr_b): ${reply:-no reply}; locks: $(lock_file "$repo" | jq -c '.locks | map_values(.pr)' 2>/dev/null)"
+    grep -q "locked \`canary/one\` for pull request $pr_b" <<<"$reply" || { log "B did not take canary/one"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "closing A released canary/one, and B locked it"
+  return $rc
+}
+
+claim_tg_lock_fanout() {
+  # A Terragrunt repo with apply.when: pull-request. Pull request A changes
+  # root.hcl, in no unit's directory: /terragucci lock on it says it locks
+  # every unit because of root.hcl, and locks all three. Pull request B
+  # changes Markdown only: /terragucci lock on it locks nothing.
+  # BREAK: A changes live/fleet/three/rev.txt instead, so it locks that unit
+  # alone.
+  log() { echo "[smoke tg-lock-fanout] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-lock-fanout" pr_a pr_b reply held rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_pr_repo tg-lock-fanout manual || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "tg-lock-fanout: first" >/dev/null || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    echo a > "$work/tree/live/fleet/three/rev.txt"
+  else
+    printf '\n# a change outside every unit\n' >> "$work/tree/root.hcl"
+  fi
+  push_tree "$work/tree" "$repo" change-a "tg-lock-fanout: a" >/dev/null || { drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q main
+  printf '# Notes\n\nNothing here reaches a unit.\n' > "$work/tree/NOTES.md"
+  push_tree "$work/tree" "$repo" change-b "tg-lock-fanout: notes" >/dev/null || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "tg-lock-fanout: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" change-b "tg-lock-fanout: notes")" || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr_a" "/terragucci lock")"
+  log "lock on A ($pr_a): ${reply:-no reply}"
+  grep -qF "pull request $pr_a locks every unit: it changes \`root.hcl\`, which is in no unit's directory" <<<"$reply" || { log "A does not say root.hcl locks every unit"; rc=1; }
+  grep -qF "locked \`live/canary/one\`, \`live/fleet/three\`, \`live/fleet/two\` for pull request $pr_a" <<<"$reply" || { log "A did not lock all three units"; rc=1; }
+  reply="$(pr_say "$repo" "$pr_b" "/terragucci lock")"
+  log "lock on B ($pr_b): ${reply:-no reply}"
+  grep -qF "pull request $pr_b reaches no unit, so nothing is locked" <<<"$reply" || { log "the Markdown change was not answered as reaching no unit"; rc=1; }
+  held="$(lock_file "$repo" | jq -r '[.locks // {} | to_entries[] | select(.value.pr == '"${pr_b:-0}"') | .key] | join(",")' 2>/dev/null)"
+  [ -z "$held" ] || { log "B holds $held"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "a root.hcl change locked every unit and said why; a Markdown change locked none"
+  return $rc
+}
+
+claim_token_scrub() {
+  # A root whose external data source writes the environment it runs in to
+  # a file. tf-plan runs it with TG_TOKEN, GITHUB_TOKEN and FORGEJO_TOKEN
+  # set, SMOKE_COPY holding the value of TG_TOKEN, and TF_VAR_token holding
+  # it too. The binary sees none of the three tokens and not SMOKE_COPY,
+  # and TF_VAR_token passes as set.
+  # BREAK: the root is planned by tofu itself in the same environment, not
+  # by terragucci, so every token reaches the data source.
+  log() { echo "[smoke token-scrub] $*" >&2; }
+  local work rc=0 secret="tg-secret-$STAMP" seen
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/repo/app"
+  cat > "$work/repo/app/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+  backend "local" {}
+}
+
+variable "token" {
+  type    = string
+  default = ""
+}
+
+# What a pull request's code can read: the environment the binary gives it.
+data "external" "env" {
+  program = ["sh", "-c", "env > \"$0/seen.env\"; echo '{}'", path.module]
+}
+
+resource "terraform_data" "probe" {
+  input = data.external.env.result
+}
+TF
+  printf 'binary: tofu\nroots: ["app"]\n' > "$work/repo/terragucci.yml"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke token scrub"
+  local -a envs=(-e "TG_TOKEN=$secret" -e "GITHUB_TOKEN=$secret-gh" -e "FORGEJO_TOKEN=$secret-fj" -e "SMOKE_COPY=$secret" -e "TF_VAR_token=$secret")
+  if [ -n "${BREAK:-}" ]; then
+    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo/app -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 "${envs[@]}" \
+      "$(image_tag tofu)" sh -c 'tofu init -input=false -no-color >/dev/null && tofu plan -input=false -no-color' >&2 || true
+  else
+    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' "${envs[@]}" \
+      "$(image_tag tofu)" terragucci stage tf-plan --layers app >&2 || true
+  fi
+  clean_mounted "$work/repo"
+  seen="$work/repo/app/seen.env"
+  [ -s "$seen" ] || { log "the data source wrote no environment"; drop_work "$work"; return 1; }
+  grep -E '^(TG_TOKEN|GITHUB_TOKEN|FORGEJO_TOKEN|SMOKE_COPY)=' "$seen" | cut -d= -f1 | sed 's/^/[smoke token-scrub]   the binary saw /' >&2 || true
+  grep -Eq '^(TG_TOKEN|GITHUB_TOKEN|FORGEJO_TOKEN)=' "$seen" && { log "a forge token reached the data source by name"; rc=1; }
+  grep -q '^SMOKE_COPY=' "$seen" && { log "the value of TG_TOKEN reached the data source under another name"; rc=1; }
+  grep -qx "TF_VAR_token=$secret" "$seen" || { log "TF_VAR_token did not pass as set"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the data source saw no forge token by name or by value, and TF_VAR_token as set"
+  return $rc
+}
+
+claim_fork_no_plan() {
+  # A scratch repo with two roots. A second user forks it and opens a pull
+  # request from the fork that changes app. Its pull_request run on the base
+  # repo runs check and skips plan: no terragucci/plan status on its head.
+  # BREAK: the pushed pipeline drops the same-repo condition from the plan
+  # job, so the fork pull request runs plan.
+  log() { echo "[smoke fork-no-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/fork-no-plan" who=tg-fork-user pass="tg-fork-user-$$-Aa1" ftoken fork="tg-fork-user/fork-no-plan" sha fpr i run="" jobs rc=0 wf
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo fork-no-plan || return 1
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak "s/github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository\$/github.event_name == 'pull_request'/" "$wf" && rm -f "$wf.bak"
+    grep -q "head.repo.full_name == github.repository" "$wf" && { log "the same-repo condition is still on the plan job"; return 1; }
+    MAIN_SHA="$(push_tree "$work/tree" "$repo" main "fork-no-plan: plan for every pull request")" || return 1
+    wait_run "$repo" "$MAIN_SHA" || return 1
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$who?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg u "$who" --arg p "$pass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" || return 1
+  ftoken="$(curl -fsS -u "$who:$pass" -H 'content-type: application/json' -X POST -d '{"name":"smoke","scopes":["write:repository","write:issue"]}' "$URL/api/v1/users/$who/tokens" | jq -r '.sha1 // empty')"
+  [ -n "$ftoken" ] || { log "no token for $who"; return 1; }
+  curl -fsS -o /dev/null -H "Authorization: token $ftoken" -H 'content-type: application/json' -X POST -d '{}' "$URL/api/v1/repos/$repo/forks" || { log "$who could not fork $repo"; return 1; }
+  for i in $(seq 1 30); do api -o /dev/null "$URL/api/v1/repos/$fork" 2>/dev/null && break; sleep 1; done
+  echo 2 > "$work/tree/app/rev.txt"
+  git -C "$work/tree" checkout -q -B fork-change
+  git -C "$work/tree" add -A
+  git -C "$work/tree" -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "fork-no-plan: fork change"
+  git -C "$work/tree" push -q --force "${URL/#http:\/\//http://${who}:${ftoken}@}/${fork}.git" HEAD:refs/heads/fork-change 2>/dev/null || { log "could not push to the fork"; return 1; }
+  sha="$(git -C "$work/tree" rev-parse HEAD)"
+  fpr="$(curl -fsS -H "Authorization: token $ftoken" -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg h "$who:fork-change" '{head: $h, base: "main", title: "fork-no-plan: from a fork"}')" "$URL/api/v1/repos/$repo/pulls" | jq -r '.number // empty')"
+  [ -n "$fpr" ] || { log "could not open a pull request from the fork"; return 1; }
+  wait_run "$repo" "$sha" pull_request || { log "the pull request from the fork started no run in $repo"; rc=1; }
+  if [ $rc = 0 ]; then
+    jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs")"
+    log "the run of pull request $fpr from the fork: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
+    [ "$(jq -r '.[] | select(.name == "check") | .status' <<<"$jobs")" = success ] || { log "check did not run for the fork"; rc=1; }
+    [ "$(jq -r '[.[] | select(.name == "plan")][0].status // "none"' <<<"$jobs")" = skipped ] || { log "plan was not skipped for the fork"; rc=1; }
+    [ "$(statuses_of "$repo" "$sha" terragucci/plan)" = 0 ] || { log "the head of the fork got a terragucci/plan status"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$who?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the pull request from the fork ran check and no plan"
+  return $rc
+}
+
+claim_highlight_sensitive() {
+  # One root that creates an IAM role, a security group, a KMS key and a
+  # Route 53 zone, imports a queue made in floci by hand, and forgets a
+  # terraform_data its state holds with a removed block. In the report each
+  # of the four is open with the reason for its type, the import and the
+  # forget are named, the forget is not counted as a destroy, and the note
+  # names both.
+  # BREAK: the root creates four SQS queues in place of the four sensitive
+  # resources and has no import or removed block.
+  log() { echo "[smoke highlight-sensitive] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work rc=0 queue="tg-import-$STAMP" url r t why
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/repo/sens"
+  local head='terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+  }
+  backend "local" {}
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+'
+  printf '%s\nresource "terraform_data" "old" {\n  input = "old"\n}\n' "$head" > "$work/repo/sens/main.tf"
+  cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$work/repo/sens/"
+  printf 'binary: tofu\nroots: ["sens"]\n' > "$work/repo/terragucci.yml"
+  in_image "$work/repo" sh -c 'cd sens && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; drop_work "$work"; return 1; }
+  clean_mounted "$work/repo"
+  url="$(sqs CreateQueue "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+  [ -n "$url" ] || { log "could not make $queue in floci"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    printf '%s\nresource "terraform_data" "old" {\n  input = "old"\n}\n' "$head" > "$work/repo/sens/main.tf"
+    for t in a b c d; do printf '\nresource "aws_sqs_queue" "%s" {\n  name = "tg-plain-%s-%s"\n}\n' "$t" "$t" "$STAMP" >> "$work/repo/sens/main.tf"; done
+  else
+    cat > "$work/repo/sens/main.tf" <<HCL
+$head
+resource "aws_iam_role" "deploy" {
+  name = "tg-deploy-$STAMP"
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = "sts:AssumeRole", Principal = { Service = "ec2.amazonaws.com" } }]
+  })
+}
+
+resource "aws_security_group" "web" {
+  name = "tg-web-$STAMP"
+}
+
+resource "aws_kms_key" "data" {
+  description = "tg-data-$STAMP"
+}
+
+resource "aws_route53_zone" "internal" {
+  name = "tg-$STAMP.internal"
+}
+
+import {
+  to = aws_sqs_queue.imported
+  id = "$url"
+}
+
+resource "aws_sqs_queue" "imported" {
+  name = "$queue"
+}
+
+removed {
+  from = terraform_data.old
+}
+HCL
+  fi
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke highlight-sensitive"
+  in_image "$work/repo" terragucci stage tf-plan --layers sens >&2 || log "the plan run exited non-zero"
+  clean_mounted "$work/repo"
+  r="$work/repo/terragucci-report/report.json"
+  if [ ! -f "$r" ]; then
+    log "no report"; rc=1
+  else
+    for t in "aws_iam_role|IAM:" "aws_security_group|security group:" "aws_kms_key|KMS key:" "aws_route53_zone|DNS:"; do
+      why="$(jq -r --arg t "${t%%|*}" '[.roots[].changes[] | select(.type == $t)][0] | "\(.fold) \(.why // "")"' "$r")"
+      case "$why" in "open ${t#*|}"*) ;; *) log "${t%%|*} is not open for its type: $why"; rc=1 ;; esac
+    done
+    jq -e '.named[] | select(.action == "import" and .address == "aws_sqs_queue.imported")' "$r" >/dev/null || { log "the import of aws_sqs_queue.imported is not named"; rc=1; }
+    jq -e '.named[] | select(.action == "forget" and .address == "terraform_data.old")' "$r" >/dev/null || { log "the forget of terraform_data.old is not named"; rc=1; }
+    jq -e '[.named[] | select(.action == "delete")] | length == 0' "$r" >/dev/null || { log "the forget is counted as a destroy"; rc=1; }
+    grep -q 'aws_sqs_queue.imported' "$work/repo/terragucci-report/note.md" || { log "the note does not name the import"; rc=1; }
+    grep -q 'terraform_data.old' "$work/repo/terragucci-report/note.md" || { log "the note does not name the forget"; rc=1; }
+  fi
+  sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "IAM, security group, KMS and DNS changes are open with their reasons; the import and the forget are named, and the forget is no destroy"
+  return $rc
+}
+
+# ── approval upkeep ───────────────────────────────────────────────────────
+
+claim_approval_revoke() {
+  # The gated fixture: wave 1 waits and is approved. The approval line is
+  # then removed from _gates/tf-apply.jsonl on chant/lifecycle in a normal
+  # commit, as the runbook says. The next push waits at wave 1 again, and no
+  # root has state.
+  # BREAK: the approval stays, so the next push applies canary/one.
+  log() { echo "[smoke approval-revoke] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/approval-revoke" sha applied clone rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo approval-revoke || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "approval-revoke: first")"
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  [ -z "$(gated_applied approval-revoke)" ] || { log "a root applied before any approval"; rc=1; }
+  [ $rc = 0 ] && { gated_approve approval-revoke 1 || rc=1; }
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    clone="$work/lifecycle"
+    { git clone -q --branch chant/lifecycle --single-branch "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" \
+      && jq -c 'select(.kind == "pending")' "$clone/_gates/tf-apply.jsonl" > "$clone/kept.jsonl" \
+      && mv "$clone/kept.jsonl" "$clone/_gates/tf-apply.jsonl" \
+      && git -C "$clone" -c user.name=smoke-approver -c user.email=smoke-approver@terragucci.local -c commit.gpgsign=false commit -qam "revoke the approval of wave-1" \
+      && git -C "$clone" push -q origin chant/lifecycle; } || { log "could not revoke the approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "approval-revoke: after the revoke")"
+    wait_run "$repo" "$sha" || rc=1
+    applied="$(gated_applied approval-revoke)"
+    log "after the revoke: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "the revoked approval let $applied apply"; rc=1; }
+    print_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for an approval again"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "with its approval line removed, wave 1 waited again and nothing applied"
+  return $rc
+}
+
+claim_pending_expiry() {
+  # The gated fixture: wave 1 waits and records one pending fact. That fact is
+  # then aged past its 48 hours on chant/lifecycle. The next push records a
+  # fresh pending fact for wave 1 that expires in the future.
+  # BREAK: the fact is not aged, so the next push records none.
+  log() { echo "[smoke pending-expiry] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pending-expiry" sha clone count now old expired rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo pending-expiry || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "pending-expiry: first")"
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  pending() { file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl | jq -c 'select(.kind == "pending" and .gate == "wave-1")'; }
+  count="$(pending | wc -l | tr -d ' ')"
+  [ "$count" = 1 ] || { log "wave 1 recorded $count pending facts, not 1"; rc=1; }
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    old="$(date -u -v-50H +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d '50 hours ago' +%Y-%m-%dT%H:%M:%S.000Z)"
+    expired="$(date -u -v-2H +%Y-%m-%dT%H:%M:%S.000Z 2>/dev/null || date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%S.000Z)"
+    clone="$work/lifecycle"
+    { git clone -q --branch chant/lifecycle --single-branch "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$clone" \
+      && jq -c --arg t "$old" --arg x "$expired" 'if .kind == "pending" and .gate == "wave-1" then .timestamp = $t | .expiresAt = $x else . end' "$clone/_gates/tf-apply.jsonl" > "$clone/aged.jsonl" \
+      && mv "$clone/aged.jsonl" "$clone/_gates/tf-apply.jsonl" \
+      && git -C "$clone" -c user.name=smoke -c user.email=smoke@terragucci.local -c commit.gpgsign=false commit -qam "age the pending fact of wave-1 past 48 hours" \
+      && git -C "$clone" push -q origin chant/lifecycle; } || { log "could not age the pending fact"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "pending-expiry: the next run")"
+    wait_run "$repo" "$sha" || rc=1
+    now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+    count="$(pending | jq -s --arg n "$now" '"\(length) \([.[] | select(.expiresAt > $n)] | length)"' -r)"
+    log "after the next run: wave-1 has ${count% *} pending facts, ${count#* } of them unexpired"
+    [ "$count" = "2 1" ] || { log "the next run did not record a fresh pending fact beside the expired one"; rc=1; }
+    [ -z "$(gated_applied pending-expiry)" ] || { log "a root applied"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "a pending fact past its 48 hours was recorded afresh by the next run"
+  return $rc
+}
+
+claim_signer_trust() {
+  # The gated fixture under approval: sealed with no signers file. In the
+  # checkout, git config user.signingkey names the approver key, and
+  # terragucci init --signer smoke-approver writes .chant/allowed_signers from
+  # it. The file moves to security/allowed_signers, and .chant/trust.json
+  # names that path. wave 1 waits; an approval sealed with the key lets
+  # canary/one apply.
+  # BREAK: trust.json names a path with no file, so the sealed approval
+  # verifies against nothing and the wave keeps waiting.
+  log() { echo "[smoke signer-trust] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/signer-trust" sha applied path=security/allowed_signers rc=0
+  [ -n "${BREAK:-}" ] && path=security/nobody
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo signer-trust gated-waves sealed || { drop_work "$work"; return 1; }
+  rm -f "$work/tree/.chant/allowed_signers"
+  git -C "$work/tree" init -q -b main
+  git -C "$work/tree" config user.signingkey "$work/approver.pub"
+  (cd "$work/tree" && "$TERRAGUCCI" init --signer smoke-approver >&2) || { log "init --signer failed"; drop_work "$work"; return 1; }
+  grep -q "^smoke-approver $(cut -d' ' -f1,2 "$work/approver.pub")" "$work/tree/.chant/allowed_signers" 2>/dev/null \
+    || { log "init --signer did not write the approver key"; rc=1; }
+  mkdir -p "$work/tree/security"
+  mv "$work/tree/.chant/allowed_signers" "$work/tree/security/allowed_signers"
+  printf '{"signers": "%s"}\n' "$path" > "$work/tree/.chant/trust.json"
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "signer-trust: first")"
+    wait_run "$repo" "$sha" || rc=1
+    [ -z "$(gated_applied signer-trust)" ] || { log "a root applied before any approval"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve signer-trust 1 sign || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "signer-trust: after the sealed approval")"
+    wait_run "$repo" "$sha" || rc=1
+    applied="$(gated_applied signer-trust)"
+    log "after the sealed approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "the approval sealed with the key init wrote, read through trust.json, did not let canary/one apply"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "init --signer wrote the key, trust.json moved the file, and the sealed approval let canary/one apply"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -7411,6 +8071,19 @@ pinned-install       weight=60
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150
+comment-refused      runner self! weight=200
+note-stale           runner self! weight=200
+pr-confirm           runner self! weight=300
+pr-base-config       runner self! weight=250
+pr-guard             runner self! weight=300
+pr-close-release     runner self! weight=200
+tg-lock-fanout       runner self! weight=200
+token-scrub          weight=60
+fork-no-plan         runner self! weight=250
+highlight-sensitive  weight=90
+approval-revoke      runner self! weight=250
+pending-expiry       runner self! weight=250
+signer-trust         runner self! weight=250
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
