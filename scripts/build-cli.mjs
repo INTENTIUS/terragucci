@@ -77,8 +77,11 @@ mkdirSync(metaDir, { recursive: true });
 writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
 
-// The report's JSON Schema, published so a reader can validate terragucci.report/v1.
-copyFileSync(join(pkg, "src/report/report.schema.json"), join(stage, "report.schema.json"));
+// The JSON Schemas of what terragucci writes, published so a reader can validate
+// terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1 and terragucci.audit/v1.
+for (const f of ["report.schema.json", "report-index.schema.json", "estate.schema.json", "audit.schema.json"]) {
+  copyFileSync(join(pkg, "src/report", f), join(stage, f));
+}
 
 // The config types, for `import type { TerragucciConfig } from "@intentius/terragucci"`.
 execFileSync(

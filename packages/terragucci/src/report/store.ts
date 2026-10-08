@@ -14,6 +14,8 @@
  * issue, the stage span and the dashboards link. Each trace also gets a page
  * at `<prefix>/traces/<trace id>.html` that sends the reader on to its
  * run's report, so a dashboard that lists traces can link the report.
+ *
+ * `<prefix>/views/` is a viewer's: no upload writes under it (VIEWS_DIR).
  */
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -67,6 +69,15 @@ const joinKey = (...p: string[]): string => p.map(trim).filter(Boolean).join("/"
 
 /** The run's directory under the bucket: `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-N]`. */
 export const runKey = (report: Report, prefix = ""): string => joinKey(prefix, report.run.project, runPath(report));
+
+/** Kept for a viewer's own files under `<prefix>/`: terragucci never writes there. */
+export const VIEWS_DIR = "views";
+
+/** The run's key, refused when the project's name would put it under `<prefix>/views/` (a repo with no remote is named after its directory). */
+function writableRunKey(report: Report, prefix: string): string {
+  if (trim(report.run.project).split("/")[0] === VIEWS_DIR) throw new StoreError(`project ${report.run.project} would write under ${joinKey(prefix, VIEWS_DIR)}/, which is kept for viewers; give the repo a git remote, which names the project <host>/<path>`);
+  return runKey(report, prefix);
+}
 
 /** The address of the bucket's `<prefix>`, or undefined when `reports.url` is not set. Never guessed from the bucket's name. */
 export function reportsBase(reports: ReportsAddress | undefined): string | undefined {
@@ -343,7 +354,7 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
   const join2 = (...p: string[]) => p.filter(Boolean).join("/");
   const project = report.run.project;
   const run = runPath(report);
-  const key = runKey(report, top);
+  const key = writableRunKey(report, top);
   const files = walk(dir);
   for (const f of files) await s3.put(join2(key, relative(dir, f).split("\\").join("/")), readFileSync(f), typeOf(f));
   if (report.run.trace_id) await s3.put(traceKey(report.run.trace_id, top), renderTracePage(report), TYPES.html);
@@ -366,7 +377,7 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
  * bucket's copy, so the bucket holds what the job's artifact holds.
  */
 export async function copyToRun(s3: ObjectStore, dir: string, report: Report, files: string[], prefix = ""): Promise<string[]> {
-  const key = runKey(report, prefix);
+  const key = writableRunKey(report, prefix);
   const put: string[] = [];
   for (const f of files) {
     const k = `${key}/${f.split("\\").join("/")}`;
