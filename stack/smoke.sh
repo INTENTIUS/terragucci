@@ -179,7 +179,9 @@ provider-calls|with binary: choudoufu the report lists the slowest provider call
 summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
 foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
 tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for a sealed approval of its own set digest before it applies|
-policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|'
+policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
+pr-requires|with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable|
+pr-lock|/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -4077,6 +4079,136 @@ claim_pr_apply_stale() {
   return $rc
 }
 
+pr_mergeable() { # repo, number -> waits until the forge has finished checking the pull request, then prints its mergeable
+  local i m=""
+  for i in $(seq 1 20); do
+    m="$(api "$URL/api/v1/repos/$1/pulls/$2" | jq -r .mergeable)"
+    [ "$m" = true ] && break
+    sleep 3
+  done
+  echo "$m"
+}
+
+claim_pr_requires() {
+  # Two repos with apply.when: pull-request and apply.merge: manual. In
+  # pr-requires, apply.requires is [approved]: a pull request changes
+  # canary/one and is approved, then main moves (fleet/two changes on it).
+  # /terragucci apply must apply its head anyway: canary/one holds behind.
+  # In pr-requires-all, with no requires (so all four), the same steps must be
+  # refused as not up to date with main, and a second approved pull request
+  # that writes fleet/two/rev.txt as main does not must be refused as not
+  # mergeable, with no root given state.
+  # BREAK: pr-requires is written with no requires, so the behind head is
+  # refused and canary/one never holds behind.
+  log() { echo "[smoke pr-requires] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local base work repo name head pr head_c pr_c reply applied rc=0
+  base="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$base"
+  for name in pr-requires pr-requires-all; do
+    [ $rc = 0 ] || break
+    repo="$USER/$name"
+    # Each repo gets a work dir of its own under base, so the second tree starts with no history.
+    work="$base/$name"; mkdir -p "$work"
+    gated_repo "$name" || { rc=1; break; }
+    sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"
+    printf 'apply:\n  when: pull-request\n  merge: manual\n' >> "$work/tree/terragucci.yml"
+    [ "$name" = pr-requires ] && [ -z "${BREAK:-}" ] && printf '  requires: [approved]\n' >> "$work/tree/terragucci.yml"
+    (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed in $name"; rc=1; break; }
+    push_tree "$work/tree" "$repo" main "$name: first" >/dev/null || { rc=1; break; }
+    pr_reviewer "$repo" "smoke-rev-$name" || { rc=1; break; }
+    echo behind > "$work/tree/canary/one/rev.txt"
+    head="$(push_tree "$work/tree" "$repo" change "$name: change canary/one")" || { rc=1; break; }
+    pr="$(pr_open "$repo" change "$name: change canary/one")" || { rc=1; break; }
+    pr_ready "$repo" "$pr" "$head" || { rc=1; break; }
+    head_c=""; pr_c=""
+    if [ "$name" = pr-requires-all ]; then
+      git -C "$work/tree" checkout -q main
+      echo conflict > "$work/tree/fleet/two/rev.txt"
+      head_c="$(push_tree "$work/tree" "$repo" conflict "$name: fleet/two as main will not have it")" || { rc=1; break; }
+      pr_c="$(pr_open "$repo" conflict "$name: fleet/two as main will not have it")" || { rc=1; break; }
+      pr_ready "$repo" "$pr_c" "$head_c" || { rc=1; break; }
+    fi
+    # main moves on under the pull requests.
+    git -C "$work/tree" checkout -q main
+    echo moved > "$work/tree/fleet/two/rev.txt"
+    push_tree "$work/tree" "$repo" main "$name: main moves" >/dev/null || { rc=1; break; }
+    if [ "$name" = pr-requires ]; then
+      reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
+      log "$name: behind and approved: ${reply:-no reply}; canary/one holds $(pr_state_input "$name" canary/one)"
+      grep -q "Merge it when you are ready" <<<"$reply" || { log "the approved head behind main did not apply with requires: [approved]"; rc=1; }
+      [ "$(pr_state_input "$name" canary/one)" = behind ] || { log "canary/one does not hold the value of the pull request"; rc=1; }
+    else
+      log "$name: the forge says pull request $pr merges: $(pr_mergeable "$repo" "$pr")"
+      reply="$(pr_say "$repo" "$pr_c" "/terragucci apply")"
+      log "$name: conflicting ($pr_c): ${reply:-no reply}"
+      grep -q "pull request $pr_c is not mergeable: the forge reports conflicts with main" <<<"$reply" || { log "the conflicting pull request was not refused as not mergeable"; rc=1; }
+      reply="$(pr_say "$repo" "$pr" "/terragucci apply")"
+      applied="$(gated_applied "$name")"
+      log "$name: behind and approved ($pr): ${reply:-no reply}; state for: ${applied:-nothing}"
+      grep -q "pull request $pr is not up to date with main" <<<"$reply" || { log "the default requirements did not refuse the head behind main"; rc=1; }
+      [ -z "$applied" ] || { log "a refused comment applied: $applied"; rc=1; }
+    fi
+  done
+  for name in pr-requires pr-requires-all; do
+    api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-$name?purge=true" 2>/dev/null || true
+  done
+  drop_work "$base"
+  [ $rc = 0 ] && log "requires: [approved] applied the head behind main; the defaults refused it as not up to date and the conflicting one as not mergeable"
+  return $rc
+}
+
+claim_pr_lock() {
+  # A repo with apply.when: pull-request and apply.merge: manual. Pull requests
+  # A and B each change canary/one. /terragucci lock on A must say it locked
+  # canary/one and apply nothing. /terragucci apply on B, approved and green,
+  # must be refused naming canary/one, pull request A and the lock, and
+  # /terragucci lock on B must be refused the same way; no root has state.
+  # BREAK: A is unlocked with /terragucci unlock right after the lock, so
+  # nothing holds canary/one and the apply on B applies it.
+  log() { echo "[smoke pr-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/pr-lock" head_a head_b pr_a pr_b reply applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  pr_repo pr-lock manual || { drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "pr-lock: first" >/dev/null || { drop_work "$work"; return 1; }
+  pr_reviewer "$repo" smoke-rev-pr-lock || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" change-a "pr-lock: a")" || { drop_work "$work"; return 1; }
+  git -C "$work/tree" checkout -q main
+  echo b > "$work/tree/canary/one/rev.txt"
+  head_b="$(push_tree "$work/tree" "$repo" change-b "pr-lock: b")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "pr-lock: a")" || { drop_work "$work"; return 1; }
+  pr_b="$(pr_open "$repo" change-b "pr-lock: b")" || { drop_work "$work"; return 1; }
+  pr_ready "$repo" "$pr_b" "$head_b" || { drop_work "$work"; return 1; }
+  reply="$(pr_say "$repo" "$pr_a" "/terragucci lock")"
+  applied="$(gated_applied pr-lock)"
+  log "lock on A ($pr_a at ${head_a:0:8}): ${reply:-no reply}; state for: ${applied:-nothing}"
+  grep -q "locked \`canary/one\` for pull request $pr_a" <<<"$reply" || { log "the lock on A did not lock canary/one"; rc=1; }
+  grep -q "nothing was applied" <<<"$reply" || { log "the lock reply does not say nothing was applied"; rc=1; }
+  [ -z "$applied" ] || { log "the lock applied: $applied"; rc=1; }
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    reply="$(pr_say "$repo" "$pr_a" "/terragucci unlock")"
+    log "unlock on A: ${reply:-no reply}"
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci apply")"
+    log "apply on B ($pr_b) while A holds the lock: ${reply:-no reply}; canary/one holds $(pr_state_input pr-lock canary/one)"
+    grep -q "\`canary/one\` is locked by pull request $pr_a (locked with \`/terragucci lock\` by $USER)" <<<"$reply" || { log "the apply on B was not refused for the lock A holds"; rc=1; }
+    [ -z "$(pr_state_input pr-lock canary/one)" ] || { log "canary/one was applied while A held it"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    reply="$(pr_say "$repo" "$pr_b" "/terragucci lock")"
+    log "lock on B: ${reply:-no reply}"
+    grep -q "\`canary/one\` is locked by pull request $pr_a .*so pull request $pr_b is not locked" <<<"$reply" || { log "the lock on B was not refused for the lock A holds"; rc=1; }
+  fi
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/smoke-rev-pr-lock?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "A locked canary/one without applying, and B was refused naming A"
+  return $rc
+}
+
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
   row="$(grep "^$name|" <<<"$CLAIMS")" || { echo "unknown claim '$name'" >&2; return 2; }
@@ -4846,6 +4978,8 @@ summed-timings       weight=90
 foreign-checkout     ex after=boot weight=150
 tg-layers            runner self! weight=300
 policy-source        self! weight=150
+pr-requires          runner self! weight=300
+pr-lock              runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

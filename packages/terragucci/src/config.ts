@@ -28,6 +28,15 @@ export const POLICY_INPUTS = ["plan", "hcp"] as const;
 export const APPLY_WHEN = ["merge", "pull-request"] as const;
 /** With `apply.when: pull-request`, who merges once every wave applied: a person (default), or terragucci. */
 export const APPLY_MERGE = ["manual", "auto"] as const;
+/**
+ * With `apply.when: pull-request`, what an open pull request needs before a
+ * comment applies it: a reviewer's approval of its head (`approved`), a
+ * forge that says it can merge (`mergeable`: no conflicts, and on GitHub no
+ * branch protection blocking it), a head that contains the default branch
+ * (`undiverged`), and every status and check on the head passed (`checks`).
+ * All four by default.
+ */
+export const APPLY_REQUIRES = ["approved", "mergeable", "undiverged", "checks"] as const;
 
 export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
@@ -38,6 +47,7 @@ export type PolicyEngine = (typeof POLICY_ENGINES)[number];
 export type PolicyInput = (typeof POLICY_INPUTS)[number];
 export type ApplyWhen = (typeof APPLY_WHEN)[number];
 export type ApplyMerge = (typeof APPLY_MERGE)[number];
+export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
 
 /**
  * `apply:`: when a change applies. `when: merge` (the default) applies the
@@ -47,12 +57,15 @@ export type ApplyMerge = (typeof APPLY_MERGE)[number];
  * `merge: auto` merges the pull request once every wave applied, in a job of
  * its own, with the token in the secret `merge_token_env` names when it is
  * set (required on Forgejo, whose job token cannot push to the default
- * branch). Plain roots on GitHub and Forgejo only (NO_GITLAB_PR_APPLY).
+ * branch). `requires` lists what an open pull request needs before it
+ * applies (APPLY_REQUIRES, all by default). Plain roots on GitHub and
+ * Forgejo only (NO_GITLAB_PR_APPLY).
  */
 export interface ApplySettings {
   when?: ApplyWhen;
   merge?: ApplyMerge;
   merge_token_env?: string;
+  requires?: ApplyRequire[];
 }
 
 /**
@@ -469,10 +482,10 @@ export const NO_GITLAB_PR_APPLY = "pull-request is not supported on GitLab, wher
 
 function checkApply(a: unknown, where: string, problems: string[]): void {
   if (!isObject(a)) {
-    problems.push(`${where} must be a map (settings: when, merge, merge_token_env)`);
+    problems.push(`${where} must be a map (settings: ${APPLY_KEYS.join(", ")})`);
     return;
   }
-  for (const k of Object.keys(a)) if (k !== "when" && k !== "merge" && k !== "merge_token_env") problems.push(`${where}.${k} is not a setting (settings: when, merge, merge_token_env)`);
+  for (const k of Object.keys(a)) if (!APPLY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${APPLY_KEYS.join(", ")})`);
   oneOf(a.when, APPLY_WHEN, `${where}.when`, problems);
   oneOf(a.merge, APPLY_MERGE, `${where}.merge`, problems);
   if (a.merge !== undefined && a.when !== "pull-request") problems.push(`${where}.merge is set, and only a pull request applied before it merges is merged by terragucci; set ${where}.when to pull-request or drop merge`);
@@ -480,7 +493,16 @@ function checkApply(a: unknown, where: string, problems: string[]): void {
     if (!(typeof a.merge_token_env === "string" && SECRET_NAME.test(a.merge_token_env))) problems.push(`${where}.merge_token_env must name the secret holding the token the merge is made with, such as MERGE_TOKEN`);
     else if (a.merge !== "auto") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env`);
   }
+  if (a.requires !== undefined) {
+    if (!Array.isArray(a.requires) || a.requires.some((r) => !(APPLY_REQUIRES as readonly unknown[]).includes(r))) problems.push(`${where}.requires must be a list of ${APPLY_REQUIRES.join(", ")}`);
+    else if (new Set(a.requires).size !== a.requires.length) problems.push(`${where}.requires names a requirement twice`);
+    else if (a.when !== "pull-request") problems.push(`${where}.requires is set, and only a pull request applied before it merges is checked against it; set ${where}.when to pull-request or drop requires`);
+    // pr-merge merges only a head a reviewer approved, so an auto merge without the approval would never merge.
+    else if (a.merge === "auto" && !a.requires.includes("approved")) problems.push(`${where}.requires leaves out approved, and apply.merge: auto merges only an approved head; add approved or set ${where}.merge to manual`);
+  }
 }
+
+const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires"];
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {

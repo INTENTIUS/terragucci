@@ -47,7 +47,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyWhen, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -114,6 +114,8 @@ export interface PipelineInput {
   applyMerge?: ApplyMerge;
   /** `apply.merge_token_env`: the secret whose token the `pr-merge` job merges with, in place of the job's own. Only that job gets it. */
   applyMergeTokenEnv?: string;
+  /** `apply.requires`: what an open pull request needs before it applies. Every requirement when unset. */
+  applyRequires?: ApplyRequire[];
 }
 
 export interface RenderedPipeline {
@@ -595,6 +597,8 @@ export interface CommentApplyInput {
   when?: ApplyWhen;
   /** `apply.merge`. With `auto` a pull request whose every wave applied from its head is merged. */
   merge?: ApplyMerge;
+  /** `apply.requires`. Unset, or every requirement, writes no `--requires`. */
+  requires?: ApplyRequire[];
   /** A Terragrunt repo: the layers are its waves of units, and each wave runs Terragrunt after this shell (credentials, caches). */
   terragrunt?: { prelude: string };
 }
@@ -725,7 +729,9 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
   const prMode = input.when === "pull-request";
   const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
   const canaryArg = input.canary?.length ? ` --canary ${sh(input.canary.join(","))}` : "";
-  const decide = `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""}${prMode ? " --when pull-request" : ""} --out terragucci-comment.json || exit 1`;
+  // Fewer requirements than every one are written out; `none` for an empty list.
+  const requires = prMode && input.requires && !APPLY_REQUIRES.every((r) => input.requires!.includes(r)) ? ` --requires ${input.requires.length ? input.requires.join(",") : "none"}` : "";
+  const decide = `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""}${prMode ? " --when pull-request" : ""}${requires} --out terragucci-comment.json || exit 1`;
   const decisionJs = prMode ? PR_DECISION_JS : APPLY_DECISION_JS;
   return [
     READS_EXIT,
@@ -1078,7 +1084,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch.
   const writesLedger = gate !== "never";
   const what = tg ? "unit" : "root";
@@ -1298,9 +1304,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       }),
     ],
   } as never);
-  // With apply.when: pull-request, `/terragucci unlock` is the apply-comment job's too: it holds the locks.
+  // With apply.when: pull-request, `/terragucci lock` and `/terragucci unlock` are the apply-comment job's too: it holds the locks.
   const APPLY_COMMENT = prApply
-    ? "(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci unlock'))"
+    ? "(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))"
     : "startsWith(github.event.comment.body, '/terragucci apply')";
   // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
   // never an expression in the script: the command reads it from the event file (comment.ts).
