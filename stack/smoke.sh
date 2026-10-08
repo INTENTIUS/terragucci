@@ -178,7 +178,8 @@ tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs
 provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
 summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
 foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
-tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for a sealed approval of its own set digest before it applies|'
+tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for a sealed approval of its own set digest before it applies|
+policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -4358,6 +4359,79 @@ awk '/^policy:/ { exit } { print }' terragucci.yml > terragucci.yml.new && mv te
   return $rc
 }
 
+claim_policy_source() {
+  # A shared policy repo on Forgejo holds policy/plan.rego twice: the tag v0
+  # denies nothing, the tag v1 denies terraform_data. A control repo whose
+  # defaults set policy.source to that repo at v1 is reconciled in a dry run
+  # over one project: the policy-wave fixture root, with no policy directory
+  # and no terragucci.yml. The terragucci.yml reconcile would write is
+  # committed to the project, and a tf-apply wave runs there in the tofu CI
+  # image. It must fetch the source at v1 and refuse the wave: exit 1, no
+  # state, the report names the shared denial, and the log names the source.
+  # BREAK: the control repo pins v0, so nothing denies the plan.
+  log() { echo "[smoke policy-source] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" repo="$USER/shared-policy" ref=v1 remote code=0 rc=0 r file
+  [ -n "${BREAK:-}" ] && ref=v0
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  fresh_repo shared-policy || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/shared/policy" "$work/project/app"
+  git -C "$work/shared" init -q -b main
+  printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  input.nothing_ever_matches\n  msg := "unreachable"\n}\n' > "$work/shared/policy/plan.rego"
+  git -C "$work/shared" add -A && git -C "$work/shared" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm v0 && git -C "$work/shared" tag v0
+  printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  some rc in input.resource_changes\n  rc.type == "terraform_data"\n  msg := sprintf("%%s: the shared policy denies terraform_data", [rc.address])\n}\n' > "$work/shared/policy/plan.rego"
+  git -C "$work/shared" add -A && git -C "$work/shared" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm v1 && git -C "$work/shared" tag v1
+  remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  git -C "$work/shared" push -q --force "$remote" main v0 v1 >/dev/null 2>&1 || { log "could not push the shared policy to $repo"; drop_work "$work"; return 1; }
+  cp "$HERE/fixtures/policy-wave/app/main.tf" "$work/project/app/"
+  git -C "$work/project" init -q -b main
+  git -C "$work/project" add -A && git -C "$work/project" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "one root, no policy"
+  cat > "$work/control.yml" <<YML
+defaults:
+  forge: forgejo
+  binary: tofu
+  policy:
+    source: git+http://$USER:$TOKEN@forgejo:3000/$repo.git@$ref
+projects:
+  localhost/$USER/policy-project:
+    url: /repo/project
+YML
+  in_image "$work" sh -c 'terragucci reconcile --config control.yml --json > reconcile.json' >&2 || { log "reconcile failed: $(head -c 2000 "$work/reconcile.json" 2>/dev/null)"; drop_work "$work"; return 1; }
+  file="$(jq -r '.results.projects[0].changes[] | select(.path == "terragucci.yml") | .content' "$work/reconcile.json")"
+  [ -n "$file" ] || { log "reconcile would write no terragucci.yml into the project"; drop_work "$work"; return 1; }
+  grep -q "source: git+http://.*/$repo.git@$ref" <<<"$file" || { log "the project terragucci.yml does not name the source at $ref"; rc=1; }
+  printf '%s\n' "$file" > "$work/project/terragucci.yml"
+  [ ! -e "$work/project/policy" ] || { log "the project has a policy directory of its own"; rc=1; }
+  git -C "$work/project" add -A && git -C "$work/project" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "terragucci.yml from the control repo"
+  run_copied --rm --network terragucci -v "$work/project:/repo" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never > "$work/wave.log" 2>&1 || code=$?
+  clean_mounted "$work/project" "$image"
+  sed "s#$TOKEN#***#g" "$work/wave.log" >&2
+  r="$work/project/terragucci-report/report.json"
+  [ "$code" = 1 ] || { log "the wave exited $code, not 1: the shared policy did not refuse it"; rc=1; }
+  if [ -f "$work/project/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$work/project/app/terraform.tfstate" >/dev/null 2>&1; then
+    log "app has state: the wave applied it"; rc=1
+  fi
+  grep -q "policy: read from git+http://forgejo:3000/$repo.git@$ref at commit" "$work/wave.log" || { log "the wave log does not name the shared source at $ref"; rc=1; }
+  if grep -q "$TOKEN" "$work/wave.log"; then log "the wave log shows the token in the source URL"; rc=1; fi
+  if [ ! -f "$r" ]; then
+    log "the wave wrote no report"; rc=1
+  else
+    jq -e '.roots[] | select(.path == "app" and .status == "failed" and .policy.result == "denied") | .policy.denials | any(test("terraform_data.probe: the shared policy denies terraform_data"))' "$r" >/dev/null \
+      || { log "the report does not fail app with the shared denial"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the project has no policy directory, reconcile wrote the control repo source into its terragucci.yml, and the wave fetched $repo at $ref and refused app with its denial"
+  return $rc
+}
+
 # ── gated waves on Terragrunt units ───────────────────────────────────────
 # stack/fixtures/tg-gated-waves: three Terragrunt units, live/canary/one in
 # the canary wave and live/fleet/* after it, gate: always. Each claim gets its
@@ -4759,6 +4833,7 @@ provider-calls       weight=90
 summed-timings       weight=90
 foreign-checkout     ex after=boot weight=150
 tg-layers            runner self! weight=300
+policy-source        self! weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

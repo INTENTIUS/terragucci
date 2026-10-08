@@ -8,7 +8,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { findConfig, loadConfig, resolveRepo } from "./config";
-import { defaultPolicyExec, engineBinary, governingPolicy, policyPathExists, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
+import { defaultPolicyExec, engineBinary, governingPolicy, policyPathExists, shownUrl, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
 
 /** Where the check report is written, relative to the checkout. */
 export const CHECK_DIR = "terragucci-check";
@@ -244,7 +244,9 @@ export async function checkPolicyTests(repo: string, options: PolicyCheckOptions
     if (trusted.error) return fail(trusted.error);
     if (!policyPathExists(trusted.policy, repo)) return fail(`the policy directory ${policy.path ?? "policy"} does not exist`);
     const dir = resolve(repo, trusted.policy.path ?? "policy");
-    const from = trusted.from === "base" ? ` (read from ${base}, not from this checkout)` : "";
+    const from = trusted.sourceCommit && trusted.policy.source
+      ? ` (read from ${shownUrl(trusted.policy.source)} at commit ${trusted.sourceCommit.slice(0, 12)})`
+      : trusted.from === "base" ? ` (read from ${base}, not from this checkout)` : "";
     if (!hasPolicyTests(dir)) {
       const note = `policy tests skipped: ${policy.path ?? "policy"} has no *_test.rego files${from}`;
       return { ok: true, log: [note], report: ["### Policy tests", "", `- ${note}`, ""] };

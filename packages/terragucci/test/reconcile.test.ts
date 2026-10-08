@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
+import { PROJECT_CONFIG_HEADER } from "../src/init";
 import { BRANCH, reconcile } from "../src/reconcile";
-import { bareFrom, git, tmp, twoRootRepo } from "./helpers";
+import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
 
 interface Call {
   method: string;
@@ -122,6 +123,32 @@ describe("reconcile", () => {
     const { fetch } = recordingFetch();
     const out = await reconcile(config, { mode: "apply", fetch, env: { GITHUB_TOKEN: "gh" } });
     expect(out[1]).toMatchObject({ status: "failed", error: expect.stringMatching(/GITLAB_TOKEN is not set/) });
+  });
+
+  it("writes the control repo's policy key into each project's terragucci.yml, where its jobs read it at the base", async () => {
+    const source = "git+https://git.example.com/acme/policy.git@v1";
+    const own = twoRootRepo();
+    write(own, { "terragucci.yml": "binary: tofu\n" });
+    const config = validateConfig(
+      {
+        defaults: { binary: "tofu", policy: { source, engine: "opa" } },
+        projects: { "github.com/acme/infra": { url: bareFrom(twoRootRepo()) }, "github.com/acme/own": { url: bareFrom(own) } },
+      },
+      "t",
+    );
+    const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
+    const file = out[0].changes.find((c) => c.path === "terragucci.yml");
+    expect(file?.status).toBe("created");
+    expect(file?.content).toBe(`${PROJECT_CONFIG_HEADER}\npolicy:\n  source: ${source}\n  engine: opa\n`);
+    expect(validateConfig((await import("@intentius/chant/yaml")).parseYAML(file!.content), "t").policy).toEqual({ source, engine: "opa" });
+    // A terragucci.yml the project wrote itself is never overwritten: the project fails and says what to set.
+    expect(out[1]).toMatchObject({ status: "failed", error: expect.stringMatching(/terragucci.yml exists and terragucci did not write it.*policy/) });
+  });
+
+  it("writes no terragucci.yml into a project when the control repo sets no policy", async () => {
+    const { config } = controlRepo();
+    const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
+    expect(out.flatMap((o) => o.changes.map((c) => c.path))).not.toContain("terragucci.yml");
   });
 
   it("refuses a config with no projects", async () => {

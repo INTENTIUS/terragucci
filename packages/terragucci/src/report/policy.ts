@@ -20,13 +20,18 @@
  * plan does. With `input: hcp`, a `policies.hcl` in the policy directory is
  * read as HCP Terraform reads it: each policy's query, and its enforcement
  * level (advisory policies warn, mandatory ones deny).
+ *
+ * With `source:` the Rego comes from a shared repo at a pinned ref, fetched
+ * into a temporary directory for each run (`fetchPolicySource`), and `path`
+ * is the directory inside that repo. The key itself is still read at the
+ * base, so a pull request cannot point it at another repo or ref.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { CONFIG_NAMES, loadConfig, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
+import { CONFIG_NAMES, loadConfig, parsePolicySource, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
 import { redactPlan } from "./redact";
 import { REDACTED, type ReportPolicy, type ReportRootPolicy } from "./schema";
 
@@ -487,9 +492,53 @@ export interface TrustedPolicy {
   policy: PolicySettings;
   /** Set when the policy could not be read from the base; every root fails with it. */
   error?: string;
-  /** Where the policy came from, for the log. */
+  /** Where the policy key came from, for the log. */
   from: "checkout" | "base";
+  /** With `source:`, the commit of the shared repo the Rego was read at. */
+  sourceCommit?: string;
   cleanup: () => void;
+}
+
+/** A URL with any user name and password taken out, for a log line or an error. */
+export function shownUrl(url: string): string {
+  return url.replace(/^([a-z+]+:\/\/)[^/@]*@/, "$1");
+}
+
+/**
+ * Fetch `policy.source` at its ref into a temporary directory: the settings
+ * with `path` pointing at the policy directory inside it, and the commit
+ * read. A tag or branch is fetched alone; a commit the server does not hand
+ * out by itself is found after fetching every branch and tag. The job's own
+ * git credentials, if any, reach the repo. A source that cannot be fetched,
+ * or has no such directory at that ref, is an error that fails every root.
+ */
+export function fetchPolicySource(policy: PolicySettings, from: TrustedPolicy["from"]): TrustedPolicy {
+  const source = parsePolicySource(policy.source ?? "");
+  const own: TrustedPolicy = { policy, from, cleanup: () => {} };
+  if (!source) return { ...own, error: `policy.source ${policy.source} is not git+https://<host>/<path>@<ref>` };
+  const shown = `${shownUrl(source.url)}@${source.ref}`;
+  const dest = mkdtempSync(join(tmpdir(), "terragucci-policysource-"));
+  const cleanup = () => rmSync(dest, { recursive: true, force: true });
+  const fail = (why: string): TrustedPolicy => {
+    cleanup();
+    return { ...own, error: `could not read the policy from ${shown}: ${why.split(source.url).join(shownUrl(source.url))}` };
+  };
+  const quiet = ["-c", "advice.detachedHead=false", "-c", "init.defaultBranch=main"];
+  const g = (...args: string[]) => gitOut(dest, [...quiet, ...args]);
+  if (g("init", "-q").status !== 0) return fail("git init failed");
+  let fetched = g("fetch", "-q", "--depth", "1", source.url, source.ref);
+  let commit = fetched.status === 0 ? g("rev-parse", "--verify", "FETCH_HEAD^{commit}").stdout.trim() : "";
+  if (!commit) {
+    fetched = g("fetch", "-q", source.url, "+refs/heads/*:refs/remotes/source/*", "+refs/tags/*:refs/tags/*");
+    if (fetched.status !== 0) return fail(fetched.stderr.trim().split("\n").pop() ?? `git fetch exited ${fetched.status}`);
+    commit = g("rev-parse", "--verify", "--quiet", `${source.ref}^{commit}`).stdout.trim();
+    if (!commit) return fail(`${source.ref} is not a tag, branch or commit there`);
+  }
+  if (g("checkout", "-q", "--detach", commit).status !== 0) return fail(`could not check out ${commit}`);
+  const path = (policy.path ?? "policy").replace(/^\.\//, "");
+  const dir = join(dest, path);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return fail(`the policy directory ${policy.path ?? "policy"} does not exist at ${source.ref}`);
+  return { policy: { ...policy, path: dir }, from, sourceCommit: commit, cleanup };
 }
 
 function gitOut(repo: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
@@ -658,17 +707,20 @@ export async function governingPolicy(repo: string, checkout: PolicySettings | u
  * read fails closed.
  */
 export async function trustedPolicy(repo: string, checkout: PolicySettings, base: string | undefined, options: TrustedOptions = {}): Promise<TrustedPolicy> {
+  // A shared source is fetched whichever side the key came from; the key, and so the repo and ref, is the trusted one.
   const own: TrustedPolicy = { policy: checkout, from: "checkout", cleanup: () => {} };
-  if (!base) return own;
+  const ownOrSource = (): TrustedPolicy => (checkout.source ? fetchPolicySource(checkout, "checkout") : own);
+  if (!base) return ownOrSource();
   let atBase: PolicySettings | undefined = checkout;
   if (options.config) {
     const read = await readBaseConfig(repo, base, options);
-    if (read.kind === "none" && !read.missing) return own;
+    if (read.kind === "none" && !read.missing) return ownOrSource();
     if (read.kind === "none") return { ...own, error: `could not read the policy at ${base}: ${read.missing}` };
     if (read.kind === "error") return { ...own, error: read.error };
     atBase = read.policy;
   }
-  if (!atBase) return own;
+  if (!atBase) return ownOrSource();
+  if (atBase.source) return fetchPolicySource(atBase, "base");
   const path = atBase.path ?? "policy";
   const dest = mkdtempSync(join(tmpdir(), "terragucci-basepolicy-"));
   const cleanup = () => rmSync(dest, { recursive: true, force: true });
@@ -696,6 +748,8 @@ export interface ResolvedPolicy {
   /** The settings as read, `path` pointing at `dir`, for `engineBinary` and `checkPlan`. */
   settings: PolicySettings;
   from: "checkout" | "base";
+  /** With `source:`, the commit of the shared repo the Rego was read at. */
+  sourceCommit?: string;
   /** Set when the policy could not be read from the base, or its directory is missing; a check fails closed on it. */
   error?: string;
   cleanup: () => void;
@@ -715,6 +769,7 @@ export async function resolvePolicySettings(repo: string, checkout: PolicySettin
     input: settings.input ?? "plan",
     settings,
     from: trusted.from,
+    ...(trusted.sourceCommit ? { sourceCommit: trusted.sourceCommit } : {}),
     ...(error !== undefined ? { error } : {}),
     cleanup: trusted.cleanup,
   };
@@ -763,7 +818,8 @@ export async function checkPlans(
   if (items.length === 0) return { policy: summary("checkout", policy), roots, failed };
   const resolved = await resolvePolicySettings(repo, policy, base, trust);
   try {
-    if (resolved.from === "base") log(`policy: read from ${base}, not from this checkout`);
+    if (resolved.settings.source && resolved.sourceCommit) log(`policy: read from ${shownUrl(resolved.settings.source)} at commit ${resolved.sourceCommit.slice(0, 12)}${resolved.from === "base" ? `, as the policy key at ${base} names it` : ""}`);
+    else if (resolved.from === "base") log(`policy: read from ${base}, not from this checkout`);
     let binary: string | undefined;
     let setup: string | undefined = resolved.error ?? namespaceProblem(resolved.settings, resolved.dir, policy.path ?? "policy");
     if (setup === undefined && resolved.engine === "conftest" && resolved.input === "hcp" && existsSync(join(resolved.dir, HCP_POLICY_FILE))) {

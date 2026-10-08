@@ -41,7 +41,7 @@ drift: "17 4 * * *"
 
 ## A file for many repos
 
-In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/).
+In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). A project's jobs read `policy` from the project's own `terragucci.yml`, so `reconcile` writes the key there.
 
 ```yaml
 defaults:
@@ -132,7 +132,7 @@ dashboards: true
 | `oidc` | none | plan and apply identities per cloud; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
 | `parallelism` | 3 for GitLab-managed state, else 16 | roots planned at once; Terragrunt uses `terragrunt.parallelism` |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
-| `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |
+| `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`), [`source`](/terragucci/reference/policy/#a-shared-policy-source) (`git+https://<host>/<path>@<ref>`); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |

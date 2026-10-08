@@ -1,11 +1,12 @@
 // The opt-in `policy:` key: conftest or OPA over each root's plan JSON, with a
 // fake engine so no binary is needed.
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { validateConfig } from "../src/config";
+import { parsePolicySource, validateConfig } from "../src/config";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkPlan, checkPlans, governingPolicy, hcpPolicySet, namespaceProblem, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, redactVerdict, resolvePolicySettings, sensitiveTexts, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
+import { checkPlan, checkPlans, fetchPolicySource, governingPolicy, shownUrl, hcpPolicySet, namespaceProblem, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, redactVerdict, resolvePolicySettings, sensitiveTexts, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
 import { REDACTED } from "../src/report/schema";
 import { buildReport } from "../src/report/build";
 import { renderNote } from "../src/report/views";
@@ -501,5 +502,93 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan with policy", () => {
     const result = await runStage("tf-plan", repo, {}, () => {});
     expect(result.failed).toBe(true);
     expect(JSON.stringify(result.report)).toContain("policy directory policy does not exist");
+  });
+});
+
+/** A shared policy repo: `policy/p.rego` committed twice, tagged v0 then v1. Returns the repo and the first commit. */
+function sourceRepo(): { dir: string; first: string } {
+  const dir = tmp();
+  git(dir, "init", "-q", "-b", "main");
+  const commit = (text: string, tag: string) => {
+    write(dir, { "policy/p.rego": text });
+    git(dir, "add", "-A");
+    git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", tag);
+    git(dir, "tag", tag);
+  };
+  commit("package main\n# v0\n", "v0");
+  const first = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
+  commit("package main\n# v1\n", "v1");
+  return { dir, first };
+}
+
+describe("policy.source", () => {
+  it("is a git URL and a ref, and the config refuses anything else", () => {
+    expect(parsePolicySource("git+https://github.com/acme/policy.git@v1")).toEqual({ url: "https://github.com/acme/policy.git", ref: "v1" });
+    expect(parsePolicySource("git+https://ci@git.example.com/acme/policy@release/2")).toEqual({ url: "https://ci@git.example.com/acme/policy", ref: "release/2" });
+    expect(parsePolicySource("git+file:///srv/policy.git@abc123")).toEqual({ url: "file:///srv/policy.git", ref: "abc123" });
+    for (const bad of ["https://github.com/acme/policy@v1", "git+https://github.com/acme/policy", "git+https://github.com@v1", "git+ssh://git@github.com/acme/policy@v1", "git+https://h/p@-v1", "git+https://h/p@a..b"]) {
+      expect(parsePolicySource(bad)).toBeUndefined();
+    }
+    expect(validateConfig({ policy: { source: "git+https://github.com/acme/policy.git@v1", path: "rego" } }, "t").policy).toEqual({ source: "git+https://github.com/acme/policy.git@v1", path: "rego" });
+    expect(() => validateConfig({ policy: { source: "https://github.com/acme/policy" } }, "t")).toThrow(/policy.source must be a git repo and a ref/);
+    expect(validateConfig({ defaults: { policy: { source: "git+https://github.com/acme/policy.git@v1" } }, projects: { "github.com/acme/infra": {} } }, "t").defaults?.policy?.source).toBe("git+https://github.com/acme/policy.git@v1");
+  });
+
+  it("takes the user name out of a URL it shows", () => {
+    expect(shownUrl("git+https://ci:secret@github.com/acme/policy@v1")).toBe("git+https://github.com/acme/policy@v1");
+    expect(shownUrl("https://github.com/acme/policy")).toBe("https://github.com/acme/policy");
+  });
+
+  it("fetches the directory at a tag, a branch or a commit", () => {
+    const { dir, first } = sourceRepo();
+    for (const [ref, want] of [["v1", "# v1"], ["v0", "# v0"], [first, "# v0"], ["main", "# v1"]] as const) {
+      const t = fetchPolicySource({ source: `git+file://${dir}@${ref}` }, "checkout");
+      try {
+        expect(t.error).toBeUndefined();
+        expect(readTree(t.policy.path!)["p.rego"]).toContain(want);
+        expect(t.sourceCommit).toMatch(/^[0-9a-f]{40}$/);
+      } finally {
+        t.cleanup();
+      }
+    }
+  });
+
+  it("fails closed on a ref the repo lacks, a directory it lacks, and a repo that is not there", () => {
+    const { dir } = sourceRepo();
+    expect(fetchPolicySource({ source: `git+file://${dir}@v9` }, "checkout").error).toMatch(/v9 is not a tag, branch or commit there/);
+    expect(fetchPolicySource({ source: `git+file://${dir}@v1`, path: "rego" }, "checkout").error).toMatch(/the policy directory rego does not exist at v1/);
+    expect(fetchPolicySource({ source: `git+file://${dir}-gone@v1` }, "checkout").error).toMatch(/could not read the policy from file:\/\/.*-gone@v1/);
+  });
+
+  it("checks a repo with no policy directory against the shared source", async () => {
+    const { dir } = sourceRepo();
+    const repo = write(tmp(), { "a/main.tf": "\n" });
+    const seen: string[] = [];
+    const exec: PolicyExec = async (_f, args) => {
+      if (args[0] === "--version") return { status: 0, stdout: "", stderr: "" };
+      seen.push(readFileSync(join(args[args.indexOf("--policy") + 1], "p.rego"), "utf-8"));
+      return { status: 1, stdout: deny("shared says no"), stderr: "" };
+    };
+    const log: string[] = [];
+    const found = await checkPlans(repo, { source: `git+file://${dir}@v1` }, [{ path: "a", plan: {} }], undefined, {}, { exec }, (l) => log.push(l));
+    expect(found.roots.get("a")?.result).toBe("denied");
+    expect(found.failed.get("a")).toMatch(/shared says no/);
+    expect(seen).toEqual(["package main\n# v1\n"]);
+    expect(log.join("\n")).toMatch(/policy: read from git\+file:\/\/.* at commit [0-9a-f]{12}/);
+  });
+
+  it("reads the source from the base's key, so a pull request cannot move it to another ref", async () => {
+    const { dir } = sourceRepo();
+    const repo = prRepo({ "terragucci.yml": `policy:\n  source: git+file://${dir}@v1\n` }, { "terragucci.yml": `policy:\n  source: git+file://${dir}@v0\n` });
+    const g = await governingPolicy(repo, { source: `git+file://${dir}@v0` }, "main", { config: join(repo, "terragucci.yml") });
+    expect(g).toMatchObject({ policy: { source: `git+file://${dir}@v1` }, from: "base" });
+    const t = await trustedPolicy(repo, g.policy!, "main", g.trust);
+    try {
+      expect(t.error).toBeUndefined();
+      expect(t.from).toBe("base");
+      expect(readTree(t.policy.path!)["p.rego"]).toContain("# v1");
+    } finally {
+      t.cleanup();
+    }
   });
 });

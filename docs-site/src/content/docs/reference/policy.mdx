@@ -24,6 +24,46 @@ policy:
 | `path` | `policy` | the directory of Rego files, inside the repo |
 | `namespace` | every namespace for conftest; for opa, `main`, or every package under `terraform.policies` with `input: hcp` | the Rego package whose rules count |
 | `input` | `plan` | what `input` holds: `plan`, the bare plan JSON; `hcp`, `{plan, run}` as HCP Terraform's OPA policies read it |
+| `source` | none: the repo's own `path` | a shared policy repo at a pinned ref, `git+https://<host>/<path>@<ref>`; see [below](#a-shared-policy-source) |
+
+## A shared policy source
+
+One policy repo can serve many repos. Set `source`, and `path` becomes the directory inside that repo:
+
+```yaml
+policy:
+  source: git+https://github.com/acme/policy.git@v3
+  path: policy
+```
+
+| Part | Meaning |
+|---|---|
+| `git+https://<host>/<path>` | the policy repo; `git+http://` for a forge on a private network, `git+file://` for a repo on the job's disk |
+| `@<ref>` | required: a tag, a branch, or a commit, which pins it exactly |
+| `path` | the Rego directory inside the policy repo, default `policy` |
+
+The repo that sets `source` needs no policy directory of its own. `tf-plan`, `tf-check` and `tf-apply` fetch the source at the ref in each job, with the job's git credentials, and the log names the commit read. A private policy repo needs a credential the job's git can use, such as a credential helper.
+
+| Case | Result |
+|---|---|
+| the source cannot be fetched, or the ref is not there | every planned root fails |
+| the ref has no `path` directory | every planned root fails |
+| a pull request changes `source` | checked against the base's `source`, as for any `policy` key |
+
+### From a control repo
+
+Set `policy` under `defaults` in the control repo, or under one project:
+
+```yaml
+defaults:
+  policy:
+    source: git+https://github.com/acme/policy.git@v3
+projects:
+  github.com/acme/infra: {}
+  github.com/acme/network: {}
+```
+
+A project's jobs read `policy` from the project's own `terragucci.yml`, so `reconcile` writes the key there, in a file that starts with a line saying the control repo writes it. A project whose own `terragucci.yml` sets a different `policy` fails in `reconcile`, with the key to set.
 
 ## Writing a policy
 
