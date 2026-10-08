@@ -12,17 +12,21 @@
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust, installAct } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust, installAct, installTofu } from "../workflows/shared";
+import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 export const workflow = new Workflow({
   name: "terragucci",
   on: {
     push: { branches: ["main"] },
     pull_request: { branches: ["main"] },
+    workflow_dispatch: {},
   },
   permissions: { contents: "read" },
-  // A new push to a pull request cancels the run it supersedes.
-  concurrency: { group: "ci-${{ github.ref }}", "cancel-in-progress": true },
+  // A new push to a pull request cancels the run it supersedes; main's runs
+  // all finish. GitHub keeps one run going and one waiting per group, so a
+  // burst of merges to main runs the first and the newest.
+  concurrency: { group: "ci-${{ github.ref }}", "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}" },
 });
 
 export const check = new Job({
@@ -32,6 +36,7 @@ export const check = new Job({
     Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     installJust(),
+    installTofu(TOOL_VERSIONS.tofu),
     new Step({ name: "Install", run: "npm ci" }),
     new Step({ name: "Check", run: "just check" }),
     new Step({ name: "Workflows match their declarations", run: "just ci-check" }),
