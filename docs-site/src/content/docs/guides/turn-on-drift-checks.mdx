@@ -1,7 +1,7 @@
 ---
 title: Turn on drift checks
 description: Plan every root on a schedule and get a grouped report of what changed outside Terraform.
-claims: [drift, drift-overdue, drift-close]
+claims: [drift, drift-overdue, drift-close, respond-drift, comment-plan, waves]
 prompt: |
   Read https://intentius.io/terragucci/guides/turn-on-drift-checks/.
   Add a `drift:` cron to terragucci.yml, run `npx terragucci config check --json`
@@ -85,9 +85,18 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
    <Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
 
-6. Correct the drift.
+6. Remediate the drift.
 
-   Apply the code to put the object back, or read and merge the pull request that writes the live value into a literal attribute. [Responses](/terragucci/reference/responses/#drift) lists what is only reported.
+   With `respond.drift` left at its default, the drift job also opens a pull request from the branch `terragucci/drift`. It writes the live value where the root's own resource block sets a literal, and adds an import block for a resource the state does not hold. [Responses](/terragucci/reference/responses/#drift) lists what is only reported.
+
+   | To | Do | Then |
+   |---|---|---|
+   | keep the live value | read the pull request, comment `/terragucci plan` on it for its plan note ([Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/)), and merge it | the apply job applies it in waves, behind the gate like any change |
+   | put the object back | close the pull request and apply the root again | the apply makes the object match the code |
+
+   The next drift run that finds every root clean closes the issue.
+
+   Nothing in the drift job applies or merges. The approval of the wave and the report of each run stay as the [audit trail](/terragucci/reference/audit-trail/).
 
    With `respond.drift: attribute`, the issue also says who changed each attribute, read from the audit log ([Drift attribution](/terragucci/reference/responses/#drift-attribution)):
 

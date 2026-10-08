@@ -29,3 +29,4 @@ These files come from the applied commit's first parent, so a change cannot judg
 
 - [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [The audit trail](/terragucci/reference/audit-trail/): reading who approved which digest, and when
