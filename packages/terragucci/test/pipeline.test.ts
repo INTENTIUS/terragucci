@@ -911,6 +911,14 @@ describe("publish job", () => {
     for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("REGISTRY");
   });
 
+  it.each(["github", "forgejo"] as const)("%s: with attest, the publish job alone gets the signing key's secrets", (forge) => {
+    expect(JSON.stringify(body(withPublish(forge)).jobs)).not.toContain("COSIGN");
+    const jobs = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, attest: true }).content).jobs;
+    expect(jobs.publish.env.COSIGN_PRIVATE_KEY).toBe("${{ secrets.COSIGN_PRIVATE_KEY }}");
+    expect(jobs.publish.env.COSIGN_PASSWORD).toBe("${{ secrets.COSIGN_PASSWORD }}");
+    for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("COSIGN");
+  });
+
   it("gitlab: a publish job after apply, on the default branch, with full history", () => {
     const doc = body(withPublish("gitlab"));
     expect(doc.publish.needs).toEqual(["apply-wave-2"]);

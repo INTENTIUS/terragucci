@@ -88,8 +88,10 @@ Only `publish` gets these: secrets, or protected masked variables on GitLab.
 | `TERRAGUCCI_REGISTRY_USER` | the registry user |
 | `TERRAGUCCI_REGISTRY_PASSWORD` | its password or token |
 | `TERRAGUCCI_REGISTRY_INSECURE` | `1` for a registry without TLS |
+| `COSIGN_PRIVATE_KEY` | with `modules.attest`, the private key of the cosign key pair, as `cosign generate-key-pair` writes it |
+| `COSIGN_PASSWORD` | with `modules.attest`, that key's password |
 
-Git tags are pushed to `origin` with the job's checkout, so they need no variable.
+Git tags and the release ledger are pushed to `origin` with the job's checkout, so they need no variable.
 
 ## Cloud roles over OIDC
 

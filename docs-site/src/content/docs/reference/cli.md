@@ -18,6 +18,7 @@ prompt: |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
+| `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
@@ -147,6 +148,14 @@ terragucci publish [--dry-run] [--config <file>]
 ```
 
 `--dry-run` lists what would be published and pushes nothing. A git tag that exists with the same content is unchanged and exits 0.
+
+## verify-release
+
+```bash
+terragucci verify-release <module> <version> [--config <file>]
+```
+
+Run in the repo that publishes, with `modules.attest` set. For each target in `modules.publish` it reads the tag as it stands now and checks that the release ledger on `origin` records those bytes from the tag's commit, and that the signature, provenance and SBOM verify against the public key. It prints one line per target and exits 1 when any is refused.
 
 ## rollout
 

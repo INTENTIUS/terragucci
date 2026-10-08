@@ -1,12 +1,14 @@
 ---
 title: Publish your modules
 description: Version the modules beside your roots automatically, as OCI artifacts or git tags, on every merge.
-claims: [publish, version-bump-job]
+claims: [publish, version-bump-job, publish-attest]
 prompt: |
   Read https://intentius.io/terragucci/guides/publish-modules/.
   Add the `modules:` block, run `npx terragucci publish --dry-run`, show me what
   would be published, run `npx terragucci init`, and open a pull request. List the
-  registry credentials I must add; do not add them.
+  registry credentials I must add; do not add them. If I ask for attested
+  releases, add `attest: true` and tell me to run `cosign generate-key-pair`
+  myself; never create, read or commit a private key.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -16,6 +18,13 @@ import Shot from '../../../components/Shot.astro';
 ## What you end up with
 
 Every module that changed on the default branch released under a new number, each with a digest your roots can pin.
+
+Publishing is opt-in, and so is attesting on top of it:
+
+| Level | Config | What it adds |
+|---|---|---|
+| Publish | `modules.publish` | a git tag or OCI tag per release, pinned rollouts by pull request, and version bump jobs |
+| Attest | `modules.attest: true` as well | a signature, SLSA provenance and an SBOM for each release, and a record of it in the release ledger |
 
 ## Before you start
 
@@ -91,6 +100,67 @@ Every module that changed on the default branch released under a new number, eac
    A published version never changes, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first. Unchanged content publishes nothing; different content under an existing tag stops the run and names the tag.
 
 </Steps>
+
+## Attest each release
+
+With `modules.attest`, the publish job also signs each new release with a key you hold. It records the version in [chant](/terragucci/concepts/glossary/#chant)'s release ledger, so a root's pin can be checked against all of it.
+
+<Steps>
+
+1. Make a cosign key pair, and commit the public half.
+
+   ```bash
+   cosign generate-key-pair
+   git add cosign.pub
+   ```
+
+   Keep `cosign.key` out of the repo. Signing never writes to Sigstore's public transparency log.
+
+2. Add two more secrets, the same way as the registry credentials in step 4.
+
+   | Variable | Holds |
+   |---|---|
+   | `COSIGN_PRIVATE_KEY` | the contents of `cosign.key` |
+   | `COSIGN_PASSWORD` | its password |
+
+3. Turn it on, and write the pipeline again.
+
+   ```yaml
+   modules:
+     path: modules/*
+     publish: git-tags
+     attest: true          # or attest: { key: keys/modules.pub }
+   ```
+
+   ```bash
+   npx terragucci init
+   ```
+
+4. Merge a change to a module, then check what was released.
+
+   ```bash
+   npx terragucci verify-release modules/service 0.2.0
+   ```
+
+   It reads the tag as it stands now and prints `verified` for each target, or `refused` and why.
+
+</Steps>
+
+Each version runs as a chant component that terragucci writes from this config, so you write no component file:
+
+| Phase | Does |
+|---|---|
+| Archive | takes the bytes the tag names: the module archive for a git tag, the manifest for an OCI tag |
+| Sbom | writes SPDX 2.3 JSON from the module's HCL: each provider in `required_providers`, at its lock file's version when there is one, and each module it calls from another source |
+| Sign | signs the bytes with cosign |
+| Provenance | attests SLSA v1 provenance naming the commit and the run |
+| SbomAttestation | attests the SBOM |
+| Verify | checks all three against `cosign.pub`; a job given the wrong key stops here, before it writes anything |
+| Record | makes the release record: the module's path, the digest of those bytes, the commit, the run and the actor |
+
+The record is a line of `modules/releases.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which `chant components status modules` lists. Beside it, `modules/attest/<digest>/` holds the bundles and the SBOM. An OCI tag also gets the signature and both attestations attached to its manifest.
+
+The publish job pushes a git tag and its record in one atomic push, and pushes an OCI tag only after its record. A tag pushed by hand has no record that matches it, and neither does one moved after its release; `verify-release` refuses both. To go back to an earlier version, [roll out](/terragucci/guides/roll-out-a-module-version/) that version again.
 
 ## Next
 

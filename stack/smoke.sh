@@ -152,6 +152,7 @@ sealed|under approval: sealed a wave counts only an approval sealed by a key the
 drift|drift is reported by root|
 rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
+publish-attest|with modules.attest each release is signed, attested and recorded in the release ledger with its tag|
 tips|tips are on by default and name their rule|
 zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
@@ -1335,6 +1336,30 @@ claim_tips() {
   log "terragucci-floating-range names envs/dev/search; tips: false removes it; the digests match"
 }
 
+# The TLS registry the publish claims push to, on a certificate made for this
+# run. It bind-mounts its certificates and outlives the claim. They live in a
+# directory no run removes and are rewritten in place (same inode), so Docker
+# Desktop's VM never holds a deleted file open. The claims that call it hold
+# the registry lock, since a recreate drops what another run pushed.
+registry_up() { # work, port
+  local work="$1" port="$2" certs="$HERE/.state/registry-certs" i
+  mkdir -p "$certs" "$work/newcerts"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:registry,IP:127.0.0.1" \
+    -keyout "$work/newcerts/registry.key" -out "$work/newcerts/registry.crt" >/dev/null 2>&1 \
+    || { echo "openssl could not make a certificate" >&2; return 1; }
+  cat "$work/newcerts/registry.key" > "$certs/registry.key"
+  cat "$work/newcerts/registry.crt" > "$certs/registry.crt"
+  chmod 644 "$certs/registry.key"
+  with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+    --profile registry up -d --force-recreate registry >&2 || return 1
+  for i in $(seq 1 30); do
+    curl -fsS --cacert "$certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
 claim_publish() {
   # The pipeline's publish job, on a Forgejo repo: a merge to the default branch
   # publishes each changed module to a TLS registry and as a git tag, a push
@@ -1352,27 +1377,9 @@ claim_publish() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
-  # The registry bind-mounts its certificates and outlives the claim. They live in a
-  # directory no run removes and are rewritten in place (same inode), so Docker
-  # Desktop's VM never holds a deleted file open.
   local certs="$HERE/.state/registry-certs"
-  mkdir -p "$certs" "$work/newcerts" "$work/tree/modules/service" "$work/tree/modules/queue" "$work/tree/envs/dev"
-  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
-    -addext "subjectAltName=DNS:localhost,DNS:registry,IP:127.0.0.1" \
-    -keyout "$work/newcerts/registry.key" -out "$work/newcerts/registry.crt" >/dev/null 2>&1 \
-    || { log "openssl could not make a certificate"; drop_work "$work"; return 1; }
-  cat "$work/newcerts/registry.key" > "$certs/registry.key"
-  cat "$work/newcerts/registry.crt" > "$certs/registry.crt"
-  chmod 644 "$certs/registry.key"
-  with_lock compose env TERRAGUCCI_REGISTRY_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
-    --profile registry up -d --force-recreate registry >&2 || { drop_work "$work"; return 1; }
-  local i
-  for i in $(seq 1 30); do
-    curl -fsS --cacert "$certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 && break
-    sleep 1
-  done
-  curl -fsS --cacert "$certs/registry.crt" "https://localhost:$port/v2/" >/dev/null 2>&1 \
-    || { log "the registry did not come up"; drop_work "$work"; return 1; }
+  mkdir -p "$work/tree/modules/service" "$work/tree/modules/queue" "$work/tree/envs/dev"
+  registry_up "$work" "$port" || { log "the registry did not come up"; drop_work "$work"; return 1; }
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo" 2>/dev/null || true
   settle "repos/$repo" 404 || { drop_work "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X POST \
@@ -1422,6 +1429,75 @@ claim_publish() {
   run "feat(service): an id output" || { drop_work "$work"; return 1; }
   [ "$(tags service)" = "0.1.0,0.2.0" ] && [ "$(tags queue)" = "0.1.0" ] || { print_logs "$repo" "$RUN_ID" >&2; log "after a change: service has '$(tags service)', queue '$(tags queue)'"; drop_work "$work"; return 1; }
   log "the pipeline published both modules on merge, a rerun published nothing, and a change to service alone moved it to 0.2.0"
+  drop_work "$work"
+}
+
+claim_publish_attest() {
+  # modules.attest on a Forgejo repo: the pipeline's publish job signs
+  # modules/service with the repo's cosign key, attests its provenance and
+  # SBOM, and records the release on chant/lifecycle with the tag, on a TLS
+  # registry and as a git tag. verify-release, in the CI image, then verifies
+  # both targets from a fresh clone, the ledger holds one record per target
+  # whose digest is the one verified, and cosign verifies the signature
+  # attached to the OCI manifest with the committed public key. BREAK: the git
+  # tag is replaced by one pushed by hand on a changed commit, so no ledger
+  # record matches it, and verify-release must refuse it.
+  log() { echo "[smoke publish-attest] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work port="${TERRAGUCCI_REGISTRY_PORT:-5050}" name="attest-$(date +%s)" sha out rc=0 t image digest records
+  local repo="$USER/$name"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; drop_work "$work"; return 1; }
+  local certs="$HERE/.state/registry-certs" tree="$work/tree"
+  mkdir -p "$tree/modules/service" "$tree/envs/dev" "$work/keys"
+  registry_up "$work" "$port" || { log "the registry did not come up"; drop_work "$work"; return 1; }
+  # The key pair, made by the image's cosign; the private half goes to the repo's secrets only.
+  docker run --rm -v "$work/keys:/k" -w /k -e COSIGN_PASSWORD=smoke-attest "$image" cosign generate-key-pair >/dev/null 2>&1 \
+    && [ -s "$work/keys/cosign.key" ] && [ -s "$work/keys/cosign.pub" ] || { log "cosign in $image could not make a key pair"; drop_work "$work"; return 1; }
+  fresh_repo "$name" || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  secret() { jq -n --arg d "$2" '{data: $d}' | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/secrets/$1" || { log "could not set the $1 secret"; return 1; }; }
+  for t in TERRAGUCCI_REGISTRY_USER TERRAGUCCI_REGISTRY_PASSWORD; do secret "$t" smoke || { drop_work "$work"; return 1; }; done
+  secret COSIGN_PRIVATE_KEY "$(cat "$work/keys/cosign.key")" && secret COSIGN_PASSWORD smoke-attest || { drop_work "$work"; return 1; }
+  cp "$certs/registry.crt" "$tree/registry.crt"
+  cp "$work/keys/cosign.pub" "$tree/cosign.pub"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  printf 'terraform {\n  required_providers {\n    random = { source = "hashicorp/random", version = "~> 3.6" }\n  }\n}\n\nresource "terraform_data" "service" {}\n' > "$tree/modules/service/main.tf"
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "%s/dev.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "dev" {}\n' "$name" > "$tree/envs/dev/main.tf"
+  printf 'binary: tofu\nforge: forgejo\nenv:\n  NODE_EXTRA_CA_CERTS: registry.crt\nmodules:\n  path: modules/*\n  publish:\n    - oci://registry:5000/%s\n    - git-tags\n  attest: true\n' "$repo" > "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { drop_work "$work"; return 1; }
+  grep -q "secrets.COSIGN_PRIVATE_KEY" "$tree/.forgejo/workflows/terragucci.yml" || { log "init gave the publish job no signing key"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$tree" "$repo" main "feat: service")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run ended $RUN_STATUS"; drop_work "$work"; return 1; }
+  local remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  git ls-remote --exit-code "$remote" refs/tags/modules/service/v0.1.0 refs/heads/chant/lifecycle >/dev/null \
+    || { print_logs "$repo" "$RUN_ID" >&2; log "the run left no release tag or no chant/lifecycle"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    # A tag pushed by hand in place of the release: no attested publish wrote it, so the ledger has no record of it.
+    git clone -q "$remote" "$work/hand" && printf 'output "id" { value = terraform_data.service.id }\n' > "$work/hand/modules/service/outputs.tf" \
+      && git -C "$work/hand" add -A && git -C "$work/hand" -c user.email=hand@smoke -c user.name=hand -c commit.gpgsign=false commit -q -m "fix: by hand" \
+      && git -C "$work/hand" -c user.email=hand@smoke -c user.name=hand tag -f -a modules/service/v0.1.0 -m "by hand" >/dev/null \
+      && git -C "$work/hand" push -q -f "$remote" refs/tags/modules/service/v0.1.0 \
+      || { log "could not push the hand-made tag"; drop_work "$work"; return 1; }
+  fi
+  # A fresh clone in the CI image, on the stack network, as a root's job would see the release.
+  out="$(in_image "$work" sh -c "git clone -q http://$USER:$TOKEN@forgejo:3000/$repo.git c && cd c && TERRAGUCCI_REGISTRY_USER=smoke TERRAGUCCI_REGISTRY_PASSWORD=smoke NODE_EXTRA_CA_CERTS=registry.crt terragucci verify-release modules/service 0.1.0" 2>&1)" || rc=$?
+  echo "${out//$TOKEN/***}" >&2
+  [ "$rc" = 0 ] || { log "verify-release refused the release (exit $rc)"; drop_work "$work"; return 1; }
+  grep -q "^modules/service/v0.1.0: verified (ledger, signature, provenance, sbom)" <<<"$out" \
+    && grep -q "^registry:5000/$repo/service:0.1.0: verified (ledger, signature, provenance, sbom)" <<<"$out" \
+    || { log "verify-release did not verify both targets"; drop_work "$work"; return 1; }
+  digest="$(grep "^registry:5000/" <<<"$out" | grep -o 'sha256:[0-9a-f]\{64\}' | head -1)"
+  records="$(in_image "$work" sh -c "cd c && git fetch -q origin chant/lifecycle && git show FETCH_HEAD:modules/releases.jsonl" 2>/dev/null)"
+  [ "$(jq -s --arg d "$digest" '[.[] | select(.component == "modules/service" and .env == "modules")] | length' <<<"$records")" = 2 ] \
+    && [ "$(jq -s --arg d "$digest" '[.[] | select(.digest == $d)] | length' <<<"$records")" = 1 ] \
+    || { echo "$records" >&2; log "the ledger does not hold one record per target with the verified digest"; drop_work "$work"; return 1; }
+  in_image "$work" sh -c "cd c && cosign verify --key cosign.pub --insecure-ignore-tlog --registry-cacert registry.crt registry:5000/$repo/service@$digest" >/dev/null 2>&1 \
+    || { log "cosign did not verify the signature attached to registry:5000/$repo/service@$digest"; drop_work "$work"; return 1; }
+  log "the publish job signed, attested and recorded modules/service 0.1.0 on both targets, and verify-release and cosign verified it from a fresh clone"
   drop_work "$work"
 }
 
@@ -9727,7 +9803,8 @@ fresh-plan      ex after=boot weight=250
 waves           runner self! weight=200
 refuse          runner self! weight=200
 sealed          runner self! weight=200
-publish         runner self! weight=200
+publish         runner self! registry! weight=200
+publish-attest  runner self! registry! weight=200
 forgejo-oidc    runner self! weight=200
 grouped         ex runner self! after=boot weight=200
 check           ex runner self! after=boot weight=200

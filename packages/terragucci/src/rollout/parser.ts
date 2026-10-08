@@ -8,10 +8,10 @@ import { ConfigError } from "../config";
 
 export const HCL_INSTALL = "npm i -D @cdktn/hcl2json";
 
-export async function loadHclParser(): Promise<Hcl2Json> {
+export async function loadHclParser(purpose = "terragucci rollout reads module pins"): Promise<Hcl2Json> {
   try {
     return (await import("@cdktn/hcl2json")) as unknown as Hcl2Json;
   } catch {
-    throw new ConfigError(`terragucci rollout reads module pins with the HCL parser, which is not installed: ${HCL_INSTALL}`);
+    throw new ConfigError(`${purpose} with the HCL parser, which is not installed: ${HCL_INSTALL}`);
   }
 }
