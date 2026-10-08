@@ -80,6 +80,7 @@ export default defineConfig({
 			// The sections follow what the reader is doing. The validation page is the
 			// one people link to, so it has a fixed place.
 			sidebar: [
+				{ label: 'The launch party', slug: 'launch-party' },
 				{
 					label: 'Getting started',
 					items: [

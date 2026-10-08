@@ -10,7 +10,7 @@
  * `just site`, the command a person runs to preview it.
  */
 
-import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+import { Workflow, Job, Step, SetupNode } from "@intentius/chant-lexicon-github";
 import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust } from "../workflows/shared";
 
 /** These three run with Pages and OIDC scopes, so they are pinned by SHA too. */
@@ -35,7 +35,8 @@ export const build = new Job({
   timeoutMinutes: 10,
   permissions: { contents: "read", pages: "read" },
   steps: [
-    Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,
+    // The site's videos are in Git LFS; the build needs the files, not their pointers.
+    new Step({ name: "Checkout", uses: CHECKOUT, with: { lfs: true } }),
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     new Step({ name: "Configure Pages", uses: CONFIGURE_PAGES }),
     installJust(),
