@@ -1,0 +1,109 @@
+---
+title: Tell a chat channel when a wave stops
+description: Post a Slack or Microsoft Teams message when a wave waits for approval, is refused, or fails, with its roots, the approve command and the run.
+claims: [notify-chat]
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/notify-a-chat-channel/.
+  Add a `notify:` block to terragucci.yml naming the secret SLACK_WEBHOOK_URL (or TEAMS_WEBHOOK_URL), run
+  `npx terragucci config check` and `npx terragucci init`, and open a pull request. Tell me which secret I must create.
+  Do not create the webhook or the secret, and never write a webhook address into any file.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A message in your channel each time an apply job stops at a wave. A message approves nothing; a person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+
+| The wave | Exit | The message says |
+|---|---|---|
+| waits for an approval | 3 | the wave, its roots, the [`chant approve`](/terragucci/concepts/glossary/#chant) command for its digest, and the run |
+| is refused: its plans changed after approval | 4 | the wave, its roots, the outcome line, `npx terragucci approve wave-<k>` for the new digest, and the run |
+| fails, or the policy denies it | 1 | the wave, its roots, the outcome line, that there is nothing to approve, and the run |
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| The [pipeline](/terragucci/getting-started/) | `init` maps the secret into the apply jobs |
+| An incoming webhook for the channel | the apply job posts to it |
+| A secret in your forge's store holding the webhook's address | the address is a credential: anyone holding it can post |
+
+## Steps
+
+<Steps>
+
+1. Make a webhook for the channel.
+
+   <Tabs syncKey="chat">
+     <TabItem label="Slack">
+       In a Slack app with Incoming Webhooks turned on, add a webhook to the channel. Copy its `https://hooks.slack.com/services/...` address.
+     </TabItem>
+     <TabItem label="Teams">
+       In the channel, add the Workflows template "Post to a channel when a webhook request is received", and copy the address it gives. terragucci posts an Adaptive Card, the body that template reads.
+     </TabItem>
+   </Tabs>
+
+2. Store the address as a secret.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       A repository secret under Settings, Secrets and variables, Actions.
+     </TabItem>
+     <TabItem label="GitLab">
+       A masked CI/CD variable. Mark it Protected so only default-branch pipelines, where the apply jobs run, see it.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The same as GitHub; Forgejo keeps them under Settings, Actions, Secrets.
+     </TabItem>
+   </Tabs>
+
+3. Name the secret in `terragucci.yml`. Use either key, or both:
+
+   ```yaml
+   notify:
+     slack: SLACK_WEBHOOK_URL
+     teams: TEAMS_WEBHOOK_URL
+   ```
+
+   The value is the secret's name. `config check` refuses an address.
+
+4. Write the pipeline again and merge it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   Each apply job gets the secret as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK`, and runs `terragucci notify` when its wave stops. No plan job gets it.
+
+5. Read the next message.
+
+   <Tabs syncKey="chat">
+     <TabItem label="Slack">
+   ```text
+   terragucci: wave 2 of github.com/acme/infra waits for an approval
+   Roots: envs/prod/app, envs/prod/db
+   Approve: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c... (or npx terragucci approve wave-2)
+   Run: https://github.com/acme/infra/actions/runs/42
+   ```
+     </TabItem>
+     <TabItem label="Teams">
+       An Adaptive Card titled with the same first line. Its facts are Wave, Roots, Approve and Run, and its one button opens the run.
+     </TabItem>
+   </Tabs>
+
+</Steps>
+
+| If the webhook | The job |
+|---|---|
+| answers 2xx | logs `terragucci notify: posted to Slack` (or Teams) |
+| answers an error, or not within 10 seconds | logs the status and goes on; the wave's own exit code stands |
+
+A comment that applies (`/terragucci apply`) posts the same messages from its job.
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)
