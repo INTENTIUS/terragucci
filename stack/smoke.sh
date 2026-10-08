@@ -586,8 +586,8 @@ claim_waves() {
   log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
   [ -z "$applied" ] || { log "a root applied before any wave was approved"; rc=1; }
   if [ $rc = 0 ]; then
-    print_logs "$repo" "$RUN_ID" | grep "chant approve tf-apply wave-1" >/dev/null || { log "wave 1 did not print its approval command"; rc=1; }
-    print_logs "$repo" "$RUN_ID" | grep -E "chant approve tf-apply wave-1 .*--sign" >/dev/null && { log "under approval: ledger the command asks for --sign"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep "chant approve tf-apply wave-1" >/dev/null || { log "wave 1 did not print its approval command"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -E "chant approve tf-apply wave-1 .*--sign" >/dev/null && { log "under approval: ledger the command asks for --sign"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     gated_approve waves 1 || rc=1
@@ -6260,7 +6260,7 @@ claim_approve_command() {
     [ $rc = 0 ] && { wait_run "$repo" "$merge" push || rc=1; }
   fi
   if [ $rc = 0 ]; then
-    waited="$(print_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1)"
+    waited="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1)"
     log "the merge waits for: ${waited:-nothing}"
     [ "$waited" = "$noted" ] || { log "the merge's wave 1 asks for another digest than the note gave"; rc=1; }
   fi
@@ -7346,8 +7346,8 @@ claim_comment_refused() {
   # its own plan finished, the admin comments /terragucci approve, merge,
   # destroy, import, state and force-unlock on it. Each is answered that a
   # comment never runs it, none plans, and main gains no apply.
-  # BREAK: the issue_comment trigger is cut from the pushed pipeline, so no
-  # comment is answered.
+  # BREAK: the issue_comment trigger is cut from the pipeline on main, the
+  # one a comment runs, so no comment is answered.
   log() { echo "[smoke comment-refused] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -7358,6 +7358,9 @@ claim_comment_refused() {
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
   if [ -n "${BREAK:-}" ]; then
     awk '/^  issue_comment:/ { skip = 2; next } skip > 0 { skip--; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    # A comment runs the workflow of the default branch, not the pull request's.
+    MAIN_SHA="$(push_tree "$work/tree" "$repo" main "comment-refused: no issue_comment trigger")" || return 1
+    wait_run "$repo" "$MAIN_SHA" || return 1
   fi
   echo 2 > "$work/tree/app/rev.txt"
   head="$(push_tree "$work/tree" "$repo" refused-change "comment-refused: change app")" || return 1
@@ -7371,9 +7374,12 @@ claim_comment_refused() {
   for verb in "${verbs[@]}"; do
     api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "/terragucci $verb" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$pr/comments"
   done
-  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+  # Each comment is answered within a minute; five minutes is the wait, with
+  # a line each minute so the runner sees the claim is alive.
+  for i in $(seq 1 100); do
     replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | startswith("terragucci: ")) | .body] | join("\n")')"
     [ "$(grep -c 'a comment never runs' <<<"$replies")" -ge ${#verbs[@]} ] && break
+    [ $(( i % 20 )) = 0 ] && log "$(grep -c 'a comment never runs' <<<"$replies") of ${#verbs[@]} comments answered after $(( i * 3 ))s"
     sleep 3
   done
   for verb in "${verbs[@]}"; do
@@ -7689,10 +7695,37 @@ TF
   return $rc
 }
 
+# Forgejo has no API to approve the held run of a fork pull request; a
+# maintainer does it on the pull request page, which posts trust=once to
+# /<repo>/pulls/<n>/action-user-trust. This signs in as the admin, with the
+# password stack/bootstrap.sh gives it, and does that.
+fork_trust_once() { # repo, pull request number
+  local jar="$work/admin-cookies" csrf
+  csrf_of() { awk '$6 == "_csrf" { print $7 }' "$jar" | tail -1; }
+  curl -fsS -o /dev/null -c "$jar" -b "$jar" "$URL/user/login" || return 1
+  curl -fsS -o /dev/null -c "$jar" -b "$jar" -X POST --data-urlencode "_csrf=$(csrf_of)" --data-urlencode "user_name=$USER" \
+    --data-urlencode "password=Terragucci-local-pw-1234" "$URL/user/login" || return 1
+  curl -fsS -o /dev/null -c "$jar" -b "$jar" "$URL/$1/pulls/$2" || return 1
+  csrf="$(csrf_of)"
+  case "$(curl -s -o /dev/null -w '%{http_code}' -c "$jar" -b "$jar" -X POST --data-urlencode "_csrf=$csrf" -d trust=once "$URL/$1/pulls/$2/action-user-trust")" in
+    2??|3??) ;;
+    *) return 1 ;;
+  esac
+  # The run leaves the hold: its jobs are no longer blocked.
+  local i
+  for i in $(seq 1 30); do
+    api "$URL/api/v1/repos/$1/actions/runs?event=pull_request" | jq -e '[.workflow_runs[]? | select(.need_approval == true)] | length == 0' >/dev/null && return 0
+    sleep 1
+  done
+  return 1
+}
+
 claim_fork_no_plan() {
   # A scratch repo with two roots. A second user forks it and opens a pull
-  # request from the fork that changes app. Its pull_request run on the base
-  # repo runs check and skips plan: no terragucci/plan status on its head.
+  # request from the fork that changes app. Forgejo holds the run of a fork
+  # pull request until a maintainer trusts it; the admin approves it once,
+  # as the pull request page's trust panel does. The run on the base repo
+  # then runs check and skips plan: no terragucci/plan status on its head.
   # BREAK: the pushed pipeline drops the same-repo condition from the plan
   # job, so the fork pull request runs plan.
   log() { echo "[smoke fork-no-plan] $*" >&2; }
@@ -7724,7 +7757,10 @@ claim_fork_no_plan() {
   fpr="$(curl -fsS -H "Authorization: token $ftoken" -H 'content-type: application/json' -X POST \
     -d "$(jq -cn --arg h "$who:fork-change" '{head: $h, base: "main", title: "fork-no-plan: from a fork"}')" "$URL/api/v1/repos/$repo/pulls" | jq -r '.number // empty')"
   [ -n "$fpr" ] || { log "could not open a pull request from the fork"; return 1; }
-  wait_run "$repo" "$sha" pull_request || { log "the pull request from the fork started no run in $repo"; rc=1; }
+  fork_trust_once "$repo" "$fpr" || { log "the admin could not approve the run of pull request $fpr"; rc=1; }
+  if [ $rc = 0 ]; then
+    wait_run "$repo" "$sha" pull_request || { log "the pull request from the fork started no run in $repo"; rc=1; }
+  fi
   if [ $rc = 0 ]; then
     jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs")"
     log "the run of pull request $fpr from the fork: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
@@ -7872,7 +7908,7 @@ claim_approval_revoke() {
     applied="$(gated_applied approval-revoke)"
     log "after the revoke: run $RUN_STATUS, state for: ${applied:-nothing}"
     [ -z "$applied" ] || { log "the revoked approval let $applied apply"; rc=1; }
-    print_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for an approval again"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for an approval again"; rc=1; }
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "with its approval line removed, wave 1 waited again and nothing applied"
@@ -8134,7 +8170,7 @@ claim_rollout_pins() {
   log() { echo "[smoke rollout-pins] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/rollout-pins" tree mode=apply out want pr branch sha rc=0
+  local work repo="$USER/rollout-pins" tree mode=apply out want pr name branch file line sha rc=0
   [ -n "${BREAK:-}" ] && mode=dry-run
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   rollout_repo rollout-pins || return 1
@@ -8407,7 +8443,7 @@ claim_tf_terraform() {
   log "the first push ran: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
   [ "$(jq -r '.[] | select(.name == "check") | .status' <<<"$jobs")" = success ] || { log "check did not pass with terraform"; rc=1; }
   [ -z "$(gated_applied tf-terraform)" ] || { log "a root applied before wave 1 was approved"; rc=1; }
-  print_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for its approval"; rc=1; }
+  run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait for its approval"; rc=1; }
   if [ $rc = 0 ]; then
     echo 2 > "$work/tree/fleet/two/rev.txt"
     head="$(push_tree "$work/tree" "$repo" change "tf-terraform: change fleet/two")" || rc=1
@@ -9344,7 +9380,7 @@ claim_notify_chat() {
   sha="$(push_tree "$work/tree" "$repo" main "notify-chat: two waves")" || rc=1
   [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
   if [ $rc = 0 ]; then
-    print_logs "$repo" "$RUN_ID" | grep -E 'chant approve tf-apply wave-1|terragucci notify' >&2 || { log "wave 1 did not wait for its approval"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -E 'chant approve tf-apply wave-1|terragucci notify' >&2 || { log "wave 1 did not wait for its approval"; rc=1; }
     reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
     slack="$(jq -r '[.[] | select(.method == "POST" and .path == "/slack")] | last | .body.text // empty' <<<"$reqs")"
     teams="$(jq -c '[.[] | select(.method == "POST" and .path == "/teams")] | last | .body // empty' <<<"$reqs")"

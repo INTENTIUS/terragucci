@@ -50,7 +50,8 @@
       "says": "each wave goes out only once approved",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "76d6e29"
     },
     {
       "claim": "refuse",
@@ -596,7 +597,8 @@
       "says": "the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "76d6e29"
     },
     {
       "claim": "tg-pr-apply",
@@ -755,6 +757,14 @@
       "commit": "6a8d796"
     },
     {
+      "claim": "comment-refused",
+      "says": "a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "76d6e29"
+    },
+    {
       "claim": "note-stale",
       "says": "a push to the default branch that changes a root an open pull request planned marks its plan note stale",
       "needs": null,
@@ -811,12 +821,28 @@
       "commit": "6a8d796"
     },
     {
+      "claim": "fork-no-plan",
+      "says": "a pull request from a fork runs check and no plan job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6d5427"
+    },
+    {
       "claim": "highlight-sensitive",
       "says": "IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "commit": "f9098c3"
+    },
+    {
+      "claim": "approval-revoke",
+      "says": "removing an approval line from chant/lifecycle makes its wave wait again",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "76d6e29"
     },
     {
       "claim": "pending-expiry",
@@ -843,12 +869,20 @@
       "commit": "6a8d796"
     },
     {
+      "claim": "rollout-provider",
+      "says": "rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6d5427"
+    },
+    {
       "claim": "rollout-pins",
       "says": "rollout moves an oci:// tag and a registry version pin, each in the shape it had",
       "needs": null,
-      "verdict": "fail",
-      "break": "fail",
-      "commit": "6a8d796"
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6d5427"
     },
     {
       "claim": "policy-opa",
@@ -947,6 +981,14 @@
       "commit": "f9098c3"
     },
     {
+      "claim": "cdktn-synth",
+      "says": "with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans every synthesized stack",
+      "needs": null,
+      "verdict": "fail",
+      "break": "caught",
+      "commit": "76d6e29"
+    },
+    {
       "claim": "audit",
       "says": "terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time, the request, and the apply that names its approval; --check passes and the estate page links the audit page",
       "needs": null,
@@ -977,6 +1019,22 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "4c27247"
+    },
+    {
+      "claim": "notify-chat",
+      "says": "with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each",
+      "needs": null,
+      "verdict": "fail",
+      "break": "caught",
+      "commit": "76d6e29"
+    },
+    {
+      "claim": "cost-estimate",
+      "says": "with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret",
+      "needs": null,
+      "verdict": "fail",
+      "break": "caught",
+      "commit": "76d6e29"
     }
   ]
 }

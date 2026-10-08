@@ -115,6 +115,16 @@ print_logs() { # repo, run id
   done
 }
 
+# Every job's whole log, for a claim that looks for a line in it. print_logs
+# keeps the last 60 lines of each, which a job's artifact upload and checkout
+# cleanup can fill after the line was printed.
+run_logs() { # repo, run id
+  local id
+  api "$URL/api/v1/repos/$1/actions/runs/$2/jobs" | jq -r '.[].id' | while read -r id; do
+    api "$URL/api/v1/repos/$1/actions/jobs/$id/logs" 2>/dev/null || true
+  done
+}
+
 wait_run() { # repo, sha, [event]
   local repo="$1" sha="$2" event="${3:-}" deadline=$(( $(date +%s) + TIMEOUT )) run="" status=""
   while :; do

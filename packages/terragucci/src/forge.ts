@@ -29,7 +29,11 @@ export interface PullRequest {
   existing: boolean;
 }
 
-export class ForgeError extends Error {}
+export class ForgeError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
 
 function apiBase(t: ForgeTarget): string {
   if (t.api) return t.api.replace(/\/+$/, "");
@@ -53,7 +57,7 @@ function headers(t: ForgeTarget): Record<string, string> {
 /** One API call; a status other than 2xx throws a ForgeError naming it. */
 export async function call(fetch: Fetch, t: ForgeTarget, method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(`${apiBase(t)}${path}`, { method, headers: headers(t), body: body === undefined ? undefined : JSON.stringify(body) });
-  if (!res.ok) throw new ForgeError(`${method} ${path} on ${t.origin} answered ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new ForgeError(`${method} ${path} on ${t.origin} answered ${res.status}: ${(await res.text()).slice(0, 300)}`, res.status);
   return res.json();
 }
 

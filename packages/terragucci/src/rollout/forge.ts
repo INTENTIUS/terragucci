@@ -4,7 +4,7 @@
  * merge made. GitHub, GitLab and Forgejo answer through their own APIs, with
  * the same `fetch` the rest of terragucci uses.
  */
-import { call, openPullRequest, type Fetch, type ForgeTarget } from "../forge";
+import { call, ForgeError, openPullRequest, type Fetch, type ForgeTarget } from "../forge";
 
 export interface WavePullRequest {
   url: string;
@@ -93,7 +93,15 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
       } else {
         // Forgejo has no head filter on the list; read pages until one comes back short.
         for (let page = 1; page <= 20; page++) {
-          const list = (await get(`/repos/${t.path}/pulls?state=all&limit=50&page=${page}`)) as Pull[];
+          let list: Pull[];
+          try {
+            list = (await get(`/repos/${t.path}/pulls?state=all&limit=50&page=${page}`)) as Pull[];
+          } catch (e) {
+            // Forgejo answers 404 for the pull requests of an empty repo, and
+            // for a moment after its first push; that repo has none.
+            if (!(e instanceof ForgeError && e.status === 404 && ((await get(`/repos/${t.path}`)) as { empty?: boolean }).empty === true)) throw e;
+            list = [];
+          }
           found.push(...list.filter((p) => p.head?.ref === branch));
           if (list.length < 50) break;
         }
