@@ -80,3 +80,26 @@ export function bareFrom(dir: string): string {
   git(dir, "push", "-q", bare, "main");
   return bare;
 }
+
+/** Enough of JSON Schema for this one: type, const, enum, required, properties, items, additionalProperties and local $ref. */
+export function validate(schema: Json, value: unknown, at = "$", root: Json = schema): string[] {
+  if (typeof schema.$ref === "string") return validate(root.$defs[(schema.$ref as string).split("/").pop()!], value, at, root);
+  const errs: string[] = [];
+  const types = schema.type === undefined ? [] : Array.isArray(schema.type) ? schema.type : [schema.type];
+  const typeOf = (v: unknown) => (v === null ? "null" : Array.isArray(v) ? "array" : Number.isInteger(v) ? "integer" : typeof v);
+  if (types.length && !types.some((t: string) => t === typeOf(value) || (t === "number" && typeof value === "number"))) return [`${at}: ${typeOf(value)} is not ${types.join("|")}`];
+  if ("const" in schema && JSON.stringify(schema.const) !== JSON.stringify(value)) errs.push(`${at}: not ${JSON.stringify(schema.const)}`);
+  if (schema.enum && !schema.enum.includes(value)) errs.push(`${at}: ${JSON.stringify(value)} not in enum`);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const k of schema.required ?? []) if (!(k in (value as Json))) errs.push(`${at}: missing ${k}`);
+    for (const [k, v] of Object.entries(value as Json)) {
+      const sub = schema.properties?.[k] ?? schema.additionalProperties;
+      if (sub && typeof sub === "object") errs.push(...validate(sub, v, `${at}.${k}`, root));
+      else if (schema.properties && !schema.additionalProperties) errs.push(`${at}: ${k} is not in the schema`);
+    }
+  }
+  if (Array.isArray(value) && schema.items) value.forEach((v, i) => errs.push(...validate(schema.items, v, `${at}[${i}]`, root)));
+  return errs;
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Json = Record<string, any>;

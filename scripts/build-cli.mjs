@@ -79,6 +79,8 @@ chmodSync(join(stage, "terragucci.mjs"), 0o755);
 
 // The report's JSON Schema, published so a reader can validate terragucci.report/v1.
 copyFileSync(join(pkg, "src/report/report.schema.json"), join(stage, "report.schema.json"));
+// The generic webhook's event, terragucci.notify/v1, for a receiver to validate.
+copyFileSync(join(pkg, "src/notify.schema.json"), join(stage, "notify.schema.json"));
 
 // The config types, for `import type { TerragucciConfig } from "@intentius/terragucci"`.
 execFileSync(

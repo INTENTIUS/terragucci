@@ -112,8 +112,8 @@ export interface PipelineInput {
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
-  /** `notify`: the secrets holding a Slack or Teams incoming webhook, which the apply jobs post a waiting, refused or failed wave to. */
-  notify?: { slack?: string; teams?: string };
+  /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
   /** `cost`: the secret holding the estimator's key, and whether the plan jobs install Infracost (no `cost.command`). */
   cost?: { keySecret: string; install: boolean };
   env: Record<string, string>;
@@ -1376,7 +1376,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // notify: the apply jobs post a waiting, refused or failed wave to the webhooks, read from the secrets the key names.
   const notifyOn = input.notify ? { notify: true } : {};
   const notifyEnv = Object.fromEntries(
-    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"]] as const)
+    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"], ["webhook", "TERRAGUCCI_WEBHOOK"], ["webhook_key", "TERRAGUCCI_WEBHOOK_KEY"]] as const)
       .filter(([k]) => input.notify?.[k])
       .map(([k, v]) => [v, forge === "gitlab" ? `$${input.notify![k]}` : `\${{ secrets.${input.notify![k]} }}`]),
   );

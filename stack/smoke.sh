@@ -283,6 +283,7 @@ audit-override|the audit record keeps a policy refusal after its report is repla
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
+notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
 cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|'
@@ -9590,6 +9591,59 @@ claim_notify_chat() {
   return $rc
 }
 
+claim_notify_webhook() {
+  # The gated fixture (gate: always) with notify naming a generic webhook and
+  # its key: the secret HOOK_URL holds a stand-in receiver's address and
+  # HOOK_KEY the key it verifies with. The push to main stops at wave 1, and
+  # its job posts one event: X-Terragucci-Event waiting, a signature that
+  # verifies over the raw body with the key, and a terragucci.notify/v1 body
+  # naming the project, forgejo, the commit pushed, wave 1, canary/one and an
+  # id, whose outcome says waiting with the digest the job's chant approve
+  # command names, the gate, mode ledger and that command.
+  # BREAK: HOOK_KEY holds another key than the receiver's, so the signature
+  # does not verify.
+  log() { echo "[smoke notify-webhook] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/notify-webhook" name="tgs-hook-$STAMP" key="smoke-hook-$STAMP" sent wf sha reqs hook digest rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo notify-webhook || { drop_work "$work"; return 1; }
+  printf 'notify:\n  webhook: HOOK_URL\n  webhook_key: HOOK_KEY\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  # shellcheck disable=SC2016 # the expression the forge expands
+  grep -qF 'TERRAGUCCI_WEBHOOK_KEY: '"'"'${{ secrets.HOOK_KEY }}'"'" "$wf" || { log "the apply jobs do not map HOOK_KEY"; drop_work "$work"; return 1; }
+  sent="$key"
+  [ -z "${BREAK:-}" ] || sent="another-$key"
+  for s in HOOK_URL:"http://$name:8790/hook" HOOK_KEY:"$sent"; do
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "${s#*:}" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/${s%%:*}" \
+      || { log "could not set the ${s%%:*} secret"; drop_work "$work"; return 1; }
+  done
+  stand_in_up "$work" "$name" 8790 MODE=webhook "HMAC_KEY=$key" || { stand_in_down; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "notify-webhook: two waves")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    digest="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+    [ -n "$digest" ] || { log "wave 1 did not wait for its approval"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep 'terragucci notify:' >&2 || true
+    reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
+    hook="$(jq -c '[.[] | select(.method == "POST" and .path == "/hook")] | last // empty' <<<"$reqs")"
+    log "the receiver got: headers $(jq -c '.headers // {} | with_entries(select(.key | startswith("x-terragucci")))' <<<"${hook:-null}"), verified $(jq -r '.verified' <<<"${hook:-null}")"
+    log "body: $(jq -c '.body' <<<"${hook:-null}")"
+    [ -n "$hook" ] || { log "nothing was posted to the webhook"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(jq -r '.verified' <<<"$hook")" = true ] || { log "the signature does not verify over the raw body with the receiver's key"; rc=1; }
+    [ "$(jq -r '.headers["x-terragucci-event"]' <<<"$hook")" = waiting ] || { log "X-Terragucci-Event is not waiting"; rc=1; }
+    jq -e --arg sha "$sha" --arg d "$digest" '.body | .schema == "terragucci.notify/v1" and .event == "waiting" and (.id | test("^[0-9a-f]{64}$")) and (.project | endswith("notify-webhook")) and .forge == "forgejo" and .sha == $sha and .wave == 1 and .roots == ["canary/one"] and (.run_url | contains("/actions/runs/")) and .outcome.schema == "terragucci.outcome/v1" and .outcome.status == "waiting" and .outcome.set_digest == $d and .outcome.gate.name == "wave-1" and .outcome.approval_mode == "ledger" and .outcome.approve_command == ("chant approve tf-apply wave-1 --plan " + $d)' <<<"$hook" >/dev/null \
+      || { log "the event body is not as expected"; rc=1; }
+  fi
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 1 waited, and the webhook got a signed terragucci.notify/v1 event with its outcome, digest and approve command"
+  return $rc
+}
+
 claim_cost_estimate() {
   # Two roots, app and net, and cost in terragucci.yml naming the secret
   # COST_KEY and a command, cost.mjs, that sends the root's plan with that key
@@ -9923,6 +9977,7 @@ audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150
 notify-chat          runner self! weight=250
+notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
