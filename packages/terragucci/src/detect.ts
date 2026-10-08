@@ -13,13 +13,16 @@ const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modu
 function tfFiles(dir: string): string[] {
   try {
     return readdirSync(dir)
-      .filter((n) => n.endsWith(".tf") || n.endsWith(".tofu"))
+      .filter((n) => n.endsWith(".tf") || n.endsWith(".tofu") || isJson(n))
       .map((n) => join(dir, n))
       .filter((p) => statSync(p).isFile());
   } catch {
     return [];
   }
 }
+
+/** Terraform's JSON syntax, which CDK Terrain synthesizes (`cdk.tf.json`). */
+const isJson = (name: string): boolean => name.endsWith(".tf.json") || name.endsWith(".tofu.json");
 
 function dirs(root: string): string[] {
   const out: string[] = [];
@@ -48,7 +51,12 @@ export function isRoot(dir: string): boolean {
 
 /** Why a directory is a root: the first thing in its Terraform files that makes it one. */
 export function rootReason(dir: string): string | undefined {
-  const texts = tfFiles(dir).map((f) => stripComments(readFileSync(f, "utf-8")));
+  const files = tfFiles(dir);
+  for (const f of files.filter(isJson)) {
+    const reason = jsonRootReason(readFileSync(f, "utf-8"));
+    if (reason) return reason;
+  }
+  const texts = files.filter((f) => !isJson(f)).map((f) => stripComments(readFileSync(f, "utf-8")));
   for (const text of texts) {
     const m = text.match(/\bbackend\s+"([^"]+)"\s*\{/);
     if (m) return `backend ${m[1]}`;
@@ -59,6 +67,27 @@ export function rootReason(dir: string): string | undefined {
     if (m) return `provider ${m[1]}`;
   }
   return undefined;
+}
+
+/** The same reasons, read from a file in Terraform's JSON syntax. */
+function jsonRootReason(text: string): string | undefined {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+  // A `terraform` block may be an object or, in Terraform's JSON syntax, a list of them.
+  const terraform = obj(doc)?.terraform;
+  const blocks = (Array.isArray(terraform) ? terraform : [terraform]).map(obj).filter((b): b is Record<string, unknown> => b !== undefined);
+  for (const b of blocks) {
+    const backend = Object.keys(obj(b.backend) ?? {})[0];
+    if (backend) return `backend ${backend}`;
+  }
+  if (blocks.some((b) => b.cloud !== undefined)) return "cloud block";
+  const provider = Object.keys(obj(obj(doc)?.provider) ?? {})[0];
+  return provider ? `provider ${provider}` : undefined;
 }
 
 function stripComments(text: string): string {

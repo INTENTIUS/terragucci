@@ -283,6 +283,12 @@ export interface ProjectSettings {
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
   /**
+   * The command that writes the roots before any job reads them, such as
+   * CDK Terrain's `npx cdktn synth`. Run from the repo's root, in the check,
+   * plan, apply and drift jobs, on their own checkout.
+   */
+  synth?: string;
+  /**
    * GitLab only: the cron of the comments schedule, or false. The pipeline
    * gets a `comments` job that reads new merge request notes on that
    * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
@@ -396,7 +402,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -441,6 +447,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
+  }
+  if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
+    problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
   }
   if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
     problems.push(`${where}.drift must be a cron schedule or false`);

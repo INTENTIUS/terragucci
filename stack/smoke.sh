@@ -274,7 +274,8 @@ alerts-fire|with short thresholds every alert init writes fires on its signal, a
 blob-gcs-key|with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key|
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
-cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|'
+cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
+cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans every synthesized stack|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -8941,6 +8942,61 @@ HCL
   return $rc
 }
 
+claim_cdktn_synth() {
+  # A CDK Terrain app (fixtures/cdktn) with two stacks, and synth in
+  # terragucci.yml. The stacks are synthesized on the host so init finds them
+  # under cdktf.out/stacks; the pushed pipeline runs synth itself, since
+  # cdktf.out is not committed. The push to main passes check and applies
+  # both stacks; a pull request that changes the size of prod in main.js gets
+  # a passing terragucci/plan whose job ran cdktn synth before tf-plan and
+  # planned both stacks.
+  # BREAK: synth is left out of terragucci.yml, so the pipeline runs no synth
+  # step and its checkout holds no stacks to check, apply or plan.
+  log() { echo "[smoke cdktn-synth] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cdktn-synth" wf sha head pr jobs id plan_log rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo cdktn-synth || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/cdktn/." "$work/tree/"
+  if [ -n "${BREAK:-}" ]; then sed -i.bak '/^synth:/d' "$work/tree/terragucci.yml" && rm -f "$work/tree/terragucci.yml.bak"; fi
+  (cd "$work/tree" && npm ci --no-audit --no-fund >/dev/null 2>&1 && npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host"; drop_work "$work"; return 1; }
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  [ -n "${BREAK:-}" ] || grep -q 'npx cdktn synth' "$wf" || { log "the pipeline runs no synth step"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "cdktn-synth: two stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  jobs="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs")"
+  log "the push to main ran: $(jq -r '[.[] | "\(.name) \(.status)"] | join(", ")' <<<"$jobs")"
+  [ "$(jq -r '.[] | select(.name == "check") | .status' <<<"$jobs")" = success ] || { log "check did not pass on the synthesized stacks"; rc=1; }
+  [ "$(jq -r '.[] | select(.name == "apply-wave-1") | .status' <<<"$jobs")" = success ] || { log "apply-wave-1 did not apply the synthesized stacks"; rc=1; }
+  if [ $rc = 0 ]; then
+    sed -i.bak 's/prod: 3/prod: 5/' "$work/tree/main.js" && rm -f "$work/tree/main.js.bak"
+    head="$(push_tree "$work/tree" "$repo" change "cdktn-synth: prod holds 5")" || rc=1
+    git -C "$work/tree" checkout -q main
+  fi
+  if [ $rc = 0 ]; then
+    pr="$(pr_open "$repo" change "cdktn-synth: prod holds 5")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(context_state "$repo" "$head" terragucci/plan)" = success ] || { log "terragucci/plan did not pass on pull request $pr"; rc=1; }
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '.[] | select(.name == "plan") | .id')"
+    plan_log="$(api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null || true)"
+    grep -E 'Generated Terraform code|every root: synth|cdktf.out/stacks/[a-z]+: ' <<<"$plan_log" >&2 || true
+    grep -q 'Generated Terraform code for the stacks: dev, prod' <<<"$plan_log" || { log "the plan job did not run cdktn synth"; rc=1; }
+    [ "$(grep -n 'Generated Terraform code' <<<"$plan_log" | head -1 | cut -d: -f1)" -lt "$(grep -n 'every root: synth writes them' <<<"$plan_log" | tail -1 | cut -d: -f1)" ] 2>/dev/null || { log "synth did not run before tf-plan"; rc=1; }
+    for id in dev prod; do
+      grep -q "cdktf.out/stacks/$id: Plan:" <<<"$plan_log" || { log "tf-plan did not plan cdktf.out/stacks/$id"; rc=1; }
+    done
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "synth ran before check, apply and tf-plan, which planned the synthesized stacks dev and prod"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -9139,6 +9195,7 @@ blob-gcs-key         gcs! weight=120
 blob-azure-key       azurite! weight=120
 index-writes         self! weight=90
 cdf-shared-bucket    weight=120
+cdktn-synth          runner self! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
