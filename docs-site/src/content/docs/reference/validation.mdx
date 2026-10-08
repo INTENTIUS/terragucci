@@ -1,12 +1,12 @@
 ---
 title: Validation
-description: Every pipeline terragucci generates runs on a Forgejo or GitLab server and runner, or on GitHub's workflow engine under act against a mock API, before it ships.
+description: Every pipeline feature is proven on a local Forgejo against an AWS emulator; the per-forge claims list what is also proven on GitHub and GitLab.
 ---
 
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
-Before a release, every pipeline terragucci generates runs against an AWS emulator. Each feature's check must pass, and also fail when broken on purpose.
+Every pipeline feature has a check that runs on a local Forgejo against an AWS emulator. The per-forge claims below list what is also proven on GitHub and GitLab. A check must pass, and also fail when broken on purpose.
 
 | Forge | What runs |
 |---|---|
@@ -14,15 +14,15 @@ Before a release, every pipeline terragucci generates runs against an AWS emulat
 | GitHub | the generated workflow, run by `act` against a mock GitHub API |
 | GitLab | GitLab CE and its runner |
 
-## The claims
+## The per-forge claims
 
-Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
+These are the features proven on each forge. Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
 
 <ValidationClaims />
 
 ## The example's checks
 
-Each feature has one check, run against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo. A check that passes has also been broken on purpose, and it failed then.
+Every pipeline feature has a check here, run against the [tutorial's example](/terragucci/tutorial/) on a local Forgejo. A check that passes has also been broken on purpose, and it failed then.
 
 <SmokeClaims />
 
