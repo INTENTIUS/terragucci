@@ -4,18 +4,24 @@
   "commands": [
     {
       "cmd": "just see-runs",
-      "output": "tf-plan: 15 roots planned, 3 groups (pull request 1)\ntf-drift: 1 roots drifted\ntf-apply wave 1: nothing to change, so nothing to approve\ntf-apply wave 2: waits for an approval\nGrafana shows the runs: forgejo:3000/terragucci-admin/example\n\nThe dashboards, in Grafana at http://localhost:3310 (folder terragucci):\n  http://localhost:3310/d/terragucci-pipeline-health\n  http://localhost:3310/d/terragucci-change-review\n  http://localhost:3310/d/terragucci-rollouts-waves\n  http://localhost:3310/d/terragucci-drift\n  http://localhost:3310/d/terragucci-estate\n  http://localhost:3310/d/terragucci-runs\n  http://localhost:3310/d/slo-terragucci-plan-time",
+      "output": "tf-plan: 15 roots planned, 3 groups (pull request 1)\ntf-drift: 15 roots drifted\ntf-apply wave 1: nothing to change, so nothing to approve\ntf-apply wave 2: waits for an approval\nGrafana shows the runs: forgejo:3000/terragucci-admin/example\n\nThe dashboards, in Grafana at http://localhost:3310 (folder terragucci):\n  http://localhost:3310/d/terragucci-pipeline-health\n  http://localhost:3310/d/terragucci-change-review\n  http://localhost:3310/d/terragucci-rollouts-waves\n  http://localhost:3310/d/terragucci-drift\n  http://localhost:3310/d/terragucci-estate\n  http://localhost:3310/d/terragucci-runs\n  http://localhost:3310/d/slo-terragucci-plan-time",
       "exit": 0
     }
   ],
   "shots": {
-    "pipeline-light": "f0b9cc2b8d2e6d77",
-    "pipeline-dark": "3e2a26b5f000c1bf",
+    "pipeline-light": "a82fc566f936a389",
+    "pipeline-dark": "193c61b1ca5461a1",
     "waves-light": "7251dcf873ed8bdd",
     "waves-dark": "fa3156e83a31af45",
-    "drift-light": "1162169d3967cc23",
-    "drift-dark": "64d4ba88d24ca681",
+    "drift-light": "7eca76d2a3e4b4cf",
+    "drift-dark": "dd5ffed38471c9d4",
     "runs-light": "4aabd4d02ae33151",
-    "runs-dark": "35a4c54421cfafb0"
+    "runs-dark": "35a4c54421cfafb0",
+    "changes-light": "96b68b4810f3af9a",
+    "changes-dark": "eba11920e81fb2d9",
+    "estate-light": "b8aa3d9d774996c0",
+    "estate-dark": "d7c318636f627252",
+    "slos-light": "dd98fd7f0dad016f",
+    "slos-dark": "fa4e9e5794622e70"
   }
 }

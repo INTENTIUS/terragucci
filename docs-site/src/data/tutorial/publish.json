@@ -1,0 +1,11 @@
+{
+  "step": "publish",
+  "source_hash": "89523777c20d72d8",
+  "commands": [],
+  "shots": {
+    "tags-light": "a87ab0452a41c0df",
+    "tags-dark": "ee010a9247846e7f",
+    "release-light": "117f8aa63419a58b",
+    "release-dark": "77c3cc3c83ab62c6"
+  }
+}

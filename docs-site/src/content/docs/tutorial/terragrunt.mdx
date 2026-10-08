@@ -13,6 +13,8 @@ prompt: |
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
+import Shot from '../../../components/Shot.astro';
+
 :::note[Where the example stands]
 This path uses `example-terragrunt/`, beside the plain example. Boot it with `just example-terragrunt up`; `just example-terragrunt reset` gets you back to it from any step.
 :::
@@ -63,6 +65,8 @@ An unformatted `.hcl` file fails the job by name:
 ```bash
 just example-terragrunt change unformatted
 ```
+
+<Shot step="tg" view="check" alt="The check job of the unformatted scenario's push run on the Terragrunt example in Forgejo: Format check and validate, every unit fails with the diff of live/dev/orders/owner.hcl and the error that the file needs formatting, exit code 1" />
 
 ## A file Terragrunt does not see
 
