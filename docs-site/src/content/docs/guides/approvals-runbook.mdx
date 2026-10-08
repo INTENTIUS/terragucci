@@ -24,7 +24,7 @@ The ledger is `_gates/tf-apply.jsonl` on the [`chant/lifecycle`](/terragucci/con
 | `approval` | An approval counts when | Setup |
 |---|---|---|
 | `ledger` (default) | it names the wave's digest. Anyone who can push to `chant/lifecycle` can write one in anyone's name: it binds the plans, not the person. | none |
-| `pr-review` | the merged pull request's head was approved by a writer other than its author and the wave plans what the review saw, or, as under `ledger`, it names the digest | GitHub or Forgejo; optionally require `terragucci/approval` |
+| `pr-review` | the merged pull request's head was approved by a writer other than its author and the wave plans what the review saw, or, as under `ledger`, it names the digest | none; optionally require `terragucci/approval` (GitHub, Forgejo) or an approval rule (GitLab) |
 | `sealed` | it names the digest and its seal verifies against the signers file at base | [Set up signers](#set-up-signers) |
 
 `terragucci config check` prints the mode in force and where it comes from. A wave reads it at base, so a change to it governs the merges after it.
@@ -81,6 +81,9 @@ Under `approval: pr-review`, approve the pull request on its head before it merg
 <Tabs syncKey="forge">
   <TabItem label="GitHub">
     Files changed > Review changes > Approve, with write access. `terragucci/approval` on the head turns success.
+  </TabItem>
+  <TabItem label="GitLab">
+    Approve the merge request after its last push, as a Developer or higher. An approval before a push counts for nothing.
   </TabItem>
   <TabItem label="Forgejo">
     Files changed > Review > Approve, as an official reviewer. `terragucci/approval` on the head turns success.

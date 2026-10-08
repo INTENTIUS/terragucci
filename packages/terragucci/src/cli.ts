@@ -34,7 +34,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, NO_GITLAB_PR_APPLY, NO_GITLAB_PR_REVIEW, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, NO_GITLAB_PR_APPLY, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { approvalStatus } from "./review";
@@ -382,7 +382,6 @@ export async function main(argv: string[]): Promise<number> {
           if (config.apply?.when === "pull-request" && !config.forge && detectForge(dirname(resolve(path)))?.value === "gitlab") {
             problems.push(`apply.when: ${NO_GITLAB_PR_APPLY}`);
           }
-          if (config.approval === "pr-review" && !config.forge && detectForge(dirname(resolve(path)))?.value === "gitlab") problems.push(`approval: ${NO_GITLAB_PR_REVIEW}`);
         } catch (e) {
           if (!(e instanceof ConfigError)) throw e;
           problems = e.problems ?? [e.message];

@@ -36,14 +36,14 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 | Mode | Counts | Setup | What it proves |
 |---|---|---|---|
 | `ledger` (default) | any `chant approve` of the digest on `chant/lifecycle`, signed or not | none | someone with push access to `chant/lifecycle` approved these exact plans. Anyone who can push there can write an approval in anyone's name: it binds the plans, not the person. |
-| `pr-review` | the merged pull request's approval of its head, by a reviewer other than its author with write access, when the wave plans what the review saw; and any `chant approve` of the digest, as under `ledger` | GitHub or Forgejo; optionally require `terragucci/approval` in branch protection | a writer other than the author approved the head whose plans these are. A `chant approve` still binds the plans, not the person. |
+| `pr-review` | the merged pull request's approval of its head, by a reviewer other than its author with write access, when the wave plans what the review saw; and any `chant approve` of the digest, as under `ledger` | on GitHub or Forgejo, optionally require `terragucci/approval` in branch protection; on GitLab, an approval rule | a writer other than the author approved the head whose plans these are. A `chant approve` still binds the plans, not the person. |
 | `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
 
 A wave reads the mode at base, like the signers file ([Which commit the rule is read from](#which-commit-the-rule-is-read-from)). `terragucci config check` prints the mode in force and its source. A repo whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` and whose config names no mode stays `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates.
 
 ## Approve by review (`approval: pr-review`)
 
-GitHub and Forgejo. GitLab's merge request approvals name no commit, so `pr-review` is refused there.
+Every forge. GitLab's merge request approvals name no commit, so there an approval counts only when it came after the merge request's latest push.
 
 <Steps>
 
@@ -55,19 +55,23 @@ GitHub and Forgejo. GitLab's merge request approvals name no commit, so `pr-revi
      <TabItem label="GitHub">
        Files changed > Review changes > Approve, from an account with write access.
      </TabItem>
+     <TabItem label="GitLab">
+       Approve on the merge request, as a member with the Developer role or higher, after its last push. An approval the author gives, or one withdrawn later, never counts.
+     </TabItem>
      <TabItem label="Forgejo">
        Files changed > Review > Approve. Forgejo marks the review official when you have write access, and only an official one counts.
      </TabItem>
    </Tabs>
 
-   The author's own approval never counts. A push after your review needs a fresh one, since a review counts only on the commit it names, and a latest review that asks for changes holds every wave back.
+   The author's own approval never counts. A push after your review needs a fresh one, since a review counts only on the commit it names (on GitLab, only after the latest push), and a latest review that asks for changes holds every wave back.
 
-3. Check `terragucci/approval` on the head. It is pending while a wave the gate will hold has no approving review, and success once it has. Require it in branch protection to keep such a change from merging unreviewed.
+3. Keep unreviewed changes from merging.
 
-   | Forge | Require it under |
+   | Forge | Require |
    |---|---|
-   | GitHub | Settings > Branches (or Rules) > the default branch > Require status checks > `terragucci/approval` |
-   | Forgejo | Settings > Branches > the default branch's rule > Status check patterns > `terragucci/approval` |
+   | GitHub | `terragucci/approval` under Settings > Branches (or Rules) > the default branch > Require status checks. It is pending while a wave the gate will hold has no approving review of the head. |
+   | Forgejo | `terragucci/approval` under Settings > Branches > the default branch's rule > Status check patterns, with the same meaning. |
+   | GitLab | an approval rule under Settings > Merge requests (GitLab Premium and Ultimate); the pipeline posts no `terragucci/approval` there. |
 
 4. Merge. Each gated wave plans the merge commit and compares the digest of its changes with the one the note recorded for the reviewed head.
 

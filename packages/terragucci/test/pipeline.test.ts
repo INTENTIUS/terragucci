@@ -1924,15 +1924,18 @@ describe("approval: pr-review", () => {
     const plan = doc.jobs.plan.steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-plan")).run as string;
     expect(plan.indexOf(`terragucci approval-status --forge ${forge} --report terragucci-report`)).toBeGreaterThan(plan.indexOf('tg note "$note"'));
     expect(doc.jobs.approval.if).toContain("github.event_name == 'pull_request_review'");
-    expect(doc.jobs.approval.permissions).toEqual({ contents: "read", statuses: "write", "pull-requests": "read" });
+    // Forgejo reads no job permissions, so its dialect writes none.
+    if (forge === "github") expect(doc.jobs.approval.permissions).toEqual({ contents: "read", statuses: "write", "pull-requests": "read" });
+    else expect(doc.jobs.approval.permissions).toBeUndefined();
     expect(doc.jobs.approval.steps[0].run).toBe(`terragucci approval-status --forge ${forge}`);
   });
 
-  it("is not in a pipeline without it, and GitLab refuses it", () => {
+  it("is not in a pipeline without it, and on GitLab, whose approval rules hold a merge request, the pipeline posts no terragucci/approval", () => {
     const doc = body(render("github"));
     expect(Object.keys(doc.on)).not.toContain("pull_request_review");
     expect(doc.jobs.approval).toBeUndefined();
-    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, prReview: true })).toThrow(/pr-review is not supported on GitLab/);
-    expect(() => validateConfig({ forge: "gitlab", approval: "pr-review" }, "t")).toThrow(/pr-review is not supported on GitLab/);
+    const gitlab = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, prReview: true }).content;
+    expect(gitlab).not.toContain("approval-status");
+    expect(validateConfig({ forge: "gitlab", approval: "pr-review" }, "t")).toEqual({ forge: "gitlab", approval: "pr-review" });
   });
 });

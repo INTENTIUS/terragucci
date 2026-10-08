@@ -45,6 +45,11 @@
 #              resource to the root is approved on its head by a second user
 #              with write access and merged: the merge's wave 1 applies with no
 #              chant approve, and the bucket exists.
+#              gitlab: the same root, with merge request approvals, which
+#              name no commit. A merge request approved and then pushed to
+#              again merges, and wave 1 still waits: the approval came before
+#              the latest version. A second merge request, approved after its
+#              latest push, merges, and wave 1 applies.
 #
 # The images are the ones the generated pipeline pins by digest; the runner
 # (gitlab-runner, or act on the host) pulls each the first time.
@@ -55,7 +60,8 @@
 # `|| exit $?` after each job's heredoc, so the waiting job ends with 1;
 # own-jobs writes terragucci's jobs over the repo's .gitlab-ci.yml, as init
 # did before it kept the file, so the repo's job is gone.
-# pr-review merges with no review, so wave 1 waits and nothing applies.
+# pr-review merges with no review (on gitlab, the second merge request is
+# approved before its last push), so wave 1 waits and nothing applies.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,7 +78,7 @@ fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
 case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review)" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in forgejo:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo here" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in forgejo:pr-review|gitlab:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
@@ -312,6 +318,66 @@ run_pr_review() {
   log "the merge's wave 1 applied on $who's review of ${head:0:8}, and $BUCKET exists"
 }
 
+# approval: pr-review on GitLab: an approval counts only after the merge
+# request's latest version.
+run_pr_review_gitlab() {
+  local repo=validate-review who="validate-reviewer" pass="validate-$RANDOM-$RANDOM-Aa1" uid rtoken sha
+  forge_reset_repo "$repo"
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
+  prepare "$WORK/main"
+  printf 'approval: pr-review\ngate: always\n' > "$WORK/main/terragucci.yml"
+  (cd "$WORK/main" && "$TERRAGUCCI" init --forge "$FORGE" --binary tofu >/dev/null) || fail "init failed with approval: pr-review"
+  sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  [ "$(bucket_code "$BUCKET")" = 404 ] || fail "wave 1 applied with no approval"
+  log "pushed to $repo main at ${sha:0:8}; wave 1 waits"
+  uid="$(glapi "$URL/api/v4/users?username=$who" | jq -r '.[0].id // empty')"
+  if [ -z "$uid" ]; then
+    uid="$(glapi -X POST "$URL/api/v4/users" --data-urlencode "username=$who" --data-urlencode "name=$who" --data-urlencode "email=$who@terragucci.local" \
+      --data-urlencode "password=$pass" --data-urlencode "skip_confirmation=true" | jq -r '.id // empty')"
+  fi
+  [ -n "$uid" ] || fail "could not make $who"
+  glapi -o /dev/null -X POST "$URL/api/v4/projects/$(pid "$repo")/members" --data-urlencode "user_id=$uid" --data-urlencode "access_level=30" 2>/dev/null || true
+  rtoken="$(glapi -X POST "$URL/api/v4/users/$uid/personal_access_tokens" --data-urlencode "name=validate-$RANDOM" --data-urlencode "scopes[]=api" | jq -r '.token // empty')"
+  [ -n "$rtoken" ] || fail "no token for $who"
+
+  # mr branch file approve-then-push -> merges a merge request that adds FILE, approved before its last push (1) or after it (0); prints nothing
+  mr() {
+    local branch="$1" file="$2" late="$3" head iid merge
+    printf 'resource "terraform_data" "%s" {\n  input = "%s"\n}\n' "$branch" "$branch" > "$WORK/main/infra/$file"
+    head="$(forge_push "$WORK/main" "$repo" "$branch" "$(msg)")"
+    iid="$(glapi -X POST "$URL/api/v4/projects/$(pid "$repo")/merge_requests" --data-urlencode "source_branch=$branch" --data-urlencode "target_branch=main" --data-urlencode "title=validate $branch" | jq -r '.iid // empty')"
+    [ -n "$iid" ] || fail "no merge request from $branch"
+    forge_run "$repo" "$branch" "$head" merge_request_event
+    if [ "$late" = 1 ]; then
+      curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $rtoken" -X POST "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/approve" || fail "$who could not approve !$iid"
+      sleep 2
+      echo "$branch after the approval" > "$WORK/main/infra/$branch.txt"
+      head="$(forge_push "$WORK/main" "$repo" "$branch" "$(msg)")"
+      forge_run "$repo" "$branch" "$head" merge_request_event
+      log "!$iid approved by $who, then pushed to at ${head:0:8}"
+    else
+      sleep 2
+      curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $rtoken" -X POST "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/approve" || fail "$who could not approve !$iid"
+      log "!$iid approved by $who after its last push, ${head:0:8}"
+    fi
+    forge_merge_pr "$repo" "$iid"
+    merge="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r '.merge_commit_sha // .squash_commit_sha // empty')"
+    [ -n "$merge" ] || fail "!$iid has no merge commit"
+    forge_run "$repo" main "$merge"
+  }
+
+  mr early early.tf 1
+  [ "$(bucket_code "$BUCKET")" = 404 ] || { forge_logs; fail "wave 1 applied on an approval given before the merge request's last push"; }
+  grep -q "no member other than its author approved merge request" "$RUN_LOG" || { forge_logs; fail "wave 1 did not say the approval came before the latest push"; }
+  log "an approval before the last push left wave 1 waiting"
+  if [ -n "$BREAK" ]; then mr late late.tf 1; else mr late late.tf 0; fi
+  [ "$(bucket_code "$BUCKET")" = 200 ] || { forge_logs; fail "wave 1 did not apply on an approval after the merge request's last push"; }
+  grep -q "was approved on its head" "$RUN_LOG" || { forge_logs; fail "wave 1 did not say the approval approved it"; }
+  log "an approval after the last push applied wave 1, and $BUCKET exists"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -331,7 +397,7 @@ case "$CLAIM" in
     ;;
   gate-wait) run_gate_wait ;;
   own-jobs) run_own_jobs ;;
-  pr-review) run_pr_review ;;
+  pr-review) if [ "$FORGE" = gitlab ]; then run_pr_review_gitlab; else run_pr_review; fi ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done

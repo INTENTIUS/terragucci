@@ -48,7 +48,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, NO_GITLAB_PR_REVIEW, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -115,7 +115,7 @@ export interface PipelineInput {
   gate?: Gate;
   /** A control repo's `approval:`, which the project's repo has no config to carry: the waves' `--approval`. */
   approval?: Approval;
-  /** `approval: pr-review`: the plan job and a review job post `terragucci/approval` on the pull request's head. GitHub and Forgejo. */
+  /** `approval: pr-review`: on GitHub and Forgejo the plan job and a review job post `terragucci/approval` on the pull request's head. */
   prReview?: boolean;
   /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
   respond?: Partial<Record<RespondEvent, string>>;
@@ -1064,9 +1064,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
-  // approval: pr-review posts terragucci/approval from the plan job and a review job; GitLab has none.
-  if (input.prReview && forge === "gitlab") throw new RenderError(`approval: ${NO_GITLAB_PR_REVIEW}`);
-  const prReview = input.prReview === true;
+  // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
+  const prReview = input.prReview === true && forge !== "gitlab";
   // A job asks the forge for an OIDC token when it assumes a role, by oidc or by unit path.
   const needsToken = Boolean(oidc || credentials);
   // The canary wave comes from the repo's terragucci.yml at plan time, so a repo

@@ -13,7 +13,6 @@ import { declaredGates } from "./approval";
 import {
   ConfigError,
   NO_GITLAB_PR_APPLY,
-  NO_GITLAB_PR_REVIEW,
   findConfig,
   loadConfig,
   resolveRepo,
@@ -179,7 +178,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
 
   if (forgeChoice.value === "gitlab" && settings.apply?.when === "pull-request") throw new ConfigError(`apply.when: ${NO_GITLAB_PR_APPLY}`);
-  if (forgeChoice.value === "gitlab" && (settings.approval ?? options.approval) === "pr-review") throw new ConfigError(`approval: ${NO_GITLAB_PR_REVIEW}`);
 
   // The approval mode: the config's key, then --approval; a declaration that already seals its gates keeps them sealed.
   const declPath = join(repo, "chant.workspace.json");

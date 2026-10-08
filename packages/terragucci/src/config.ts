@@ -23,8 +23,8 @@ export const GATES = ["always", "on-destroy", "never"] as const;
  * What counts as the approval of a waiting wave (`approval:`). `ledger` (the
  * default): any `chant approve` of the wave's set digest on chant/lifecycle,
  * signed or not. `pr-review`: also the merged pull request's approving review
- * of its head, when the plans have not moved since (./review.ts); GitHub and
- * Forgejo. `sealed`: only one sealed with a key the signers file at base
+ * of its head (on GitLab, an approval after its latest push), when the plans
+ * have not moved since (./review.ts). `sealed`: only one sealed with a key the signers file at base
  * lists for its approver. Every mode binds the digest.
  */
 export const APPROVALS = ["ledger", "pr-review", "sealed"] as const;
@@ -389,7 +389,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
-  if (s.forge === "gitlab" && s.approval === "pr-review") problems.push(`${where}.approval: ${NO_GITLAB_PR_REVIEW}`);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems);
   if (s.forge === "gitlab" && isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.apply.when: ${NO_GITLAB_PR_APPLY}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
@@ -492,9 +491,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
  * pipeline file) inside a pipeline the merge request controls, and the apply
  * role would have to trust every branch of the project.
  */
-/** Why GitLab has no pr-review: its merge request approvals name no commit, so a review cannot be bound to the plans it saw. */
-export const NO_GITLAB_PR_REVIEW = "pr-review is not supported on GitLab, whose merge request approvals name no commit; use ledger or sealed";
-
 export const NO_GITLAB_PR_APPLY = "pull-request is not supported on GitLab, where a merge request's pipeline is defined by the merge request itself, so nothing it runs can be trusted with the apply role; leave apply.when unset, and the change applies after it merges";
 
 function checkApply(a: unknown, where: string, problems: string[]): void {
