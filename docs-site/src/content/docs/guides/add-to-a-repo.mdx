@@ -9,7 +9,7 @@ prompt: |
   Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
   List the token, OIDC roles and required status I must set in the forge settings.
   Do not create secrets, variables or branch protection yourself.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';

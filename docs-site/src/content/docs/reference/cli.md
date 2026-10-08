@@ -4,7 +4,7 @@ description: Every terragucci command, its flags and its exit codes.
 prompt: |
   Read https://intentius.io/terragucci/reference/cli/.
   Run `npx terragucci config check` and `npx terragucci init --dry-run --json` in this repo and tell me the roots, binary and forge it found, and any config problem, with the exit code of each.
-  Read only. Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 `npx terragucci <command>` runs from the root of a repo. A generated pipeline calls the same commands.

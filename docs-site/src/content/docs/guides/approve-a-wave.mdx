@@ -6,9 +6,8 @@ prompt: |
   Read https://intentius.io/terragucci/guides/approve-a-wave/.
   Find the waiting wave with `npx terragucci approve --dry-run`, summarize its
   report (destroys, replacements, roots) and print the command it gives for me.
-  Never run it, never sign, and never touch .chant/allowed_signers.
-  Never run apply, `chant approve`, `terragucci approve` without --dry-run or
-  `--mode apply`, and never merge.
+  The `--dry-run` preview is the one form of `terragucci approve` you may run; never sign.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Captured from '../../../components/Captured.astro';

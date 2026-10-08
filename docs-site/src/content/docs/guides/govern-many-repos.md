@@ -2,6 +2,11 @@
 title: Govern many repos from one place
 description: List your projects in a control repo and let terragucci open a pull request in each one that needs a change.
 claims: [reconcile]
+prompt: |
+  Read https://intentius.io/terragucci/guides/govern-many-repos/.
+  In this control repo, write terragucci.yml with the projects I name, run `npx terragucci config check`, then run the preview, `npx terragucci reconcile --config terragucci.yml`, and show me its output for each project.
+  Open a pull request in this control repo with the file. Print the `--mode apply` command for me to run; do not run it.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 ## What you end up with

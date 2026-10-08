@@ -19,8 +19,8 @@ Setting terragucci up with a coding agent? Paste this prompt into it.
 Set up terragucci in this repository.
 Read https://intentius.io/terragucci/llms.txt first, then
 https://intentius.io/terragucci/getting-started/agents/ and follow it.
-Do not apply anything. Open a pull request with the result.
-Never approve or run chant approve; never merge.
+Open a pull request with the result.
+Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ```
 
 `llms.txt` lists every page and `llms-full.txt` holds their text. An agent working on this repo itself reads [AGENTS.md](AGENTS.md) instead.
