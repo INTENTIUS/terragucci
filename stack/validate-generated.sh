@@ -53,6 +53,19 @@
 #   approve    gitlab: with the gate at always, a push to main waits at wave
 #              1. terragucci approve, run in a clone, finds the waiting wave
 #              and approves its digest; the next push applies the root.
+#   gl-comment-plan  gitlab: comments: set, and a pipeline schedule with
+#              TERRAGUCCI_SCHEDULE=comments. A Developer's /terragucci plan
+#              note starts one merge request pipeline, which plans; a root
+#              that is not one is refused, a Reporter's note gets no reply,
+#              and a second play answers nothing again.
+#   gl-comment-apply  gitlab: with the gate at always, a merged merge
+#              request's wave 1 waits. /terragucci apply on an open merge
+#              request is refused; on the merged one it retries wave 1 at the
+#              merge commit, which waits again; after terragucci approve the
+#              next note's retry applies it.
+#   gl-comment-drift-schedule  gitlab: with drift and comments set, a
+#              schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone,
+#              and the comments schedule the comments job alone.
 #
 # The images are the ones the generated pipeline pins by digest; the runner
 # (gitlab-runner, or act on the host) pulls each the first time.
@@ -66,6 +79,10 @@
 # pr-review merges with no review (on gitlab, the second merge request is
 # approved before its last push), so wave 1 waits and nothing applies;
 # approve runs terragucci approve with --dry-run, which approves nothing.
+# gl-comment-plan drops the comments job, so the play starts no pipeline;
+# gl-comment-apply pushes to main after the merge, so the merge commit is
+# superseded and no job at it is retried; gl-comment-drift-schedule drops the
+# variable check from the drift rule, so the comments schedule runs drift too.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -81,10 +98,11 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review)" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:approve) ;; *:approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in forgejo:pr-review|gitlab:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:gl-comment-*) ;; *:gl-comment-*) echo "$CLAIM is gitlab's: it checks the comments schedule" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
 case "$FORGE:$CLAIM" in forgejo:check|forgejo:apply|forgejo:reconcile) echo "forgejo's $CLAIM is validate.sh's own; this script runs its tg-* and cdf-* claims" >&2; exit 2 ;; esac
@@ -408,6 +426,239 @@ run_approve() {
   log "terragucci approve approved wave 1's digest, and the next push applied $BUCKET"
 }
 
+# ── GitLab comment commands: the comments schedule ────────────────────────────
+
+# The fixture with comments: set (and the settings given), the pipeline init
+# writes for it, the project's token, and no schedule left from a run before.
+prepare_comments() { # repo terragucci.yml-lines...
+  local repo="$1" sid; shift
+  forge_reset_repo "$repo"
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
+  for sid in $(glapi "$URL/api/v4/projects/$(pid "$repo")/pipeline_schedules" | jq -r '.[].id'); do
+    glapi -o /dev/null -X DELETE "$URL/api/v4/projects/$(pid "$repo")/pipeline_schedules/$sid" || true
+  done
+  # A directory of its own per repo, so nothing from another claim's tree is in it.
+  CDIR="$WORK/comments-$repo"; mkdir -p "$CDIR"
+  cp -R "$FIXTURE/infra" "$CDIR/"
+  printf '%s\n' 'comments: "*/5 * * * *"' "$@" > "$CDIR/terragucci.yml"
+  (cd "$CDIR" && git init -q -b main && "$TERRAGUCCI" init --forge gitlab --binary tofu >/dev/null) || fail "init failed with comments set"
+  grep -q '^comments:$' "$CDIR/$PIPELINE_FILE" || fail "the pipeline init wrote has no comments job"
+}
+
+# A pipeline schedule on main, with TERRAGUCCI_SCHEDULE set to VALUE when one
+# is given. Its cron is far off: the claim plays it.
+gl_schedule() { # repo description [value] -> prints the schedule id
+  local sid
+  sid="$(glapi -X POST "$URL/api/v4/projects/$(pid "$1")/pipeline_schedules" --data-urlencode "description=$2" --data-urlencode "ref=main" \
+    --data-urlencode "cron=0 0 1 1 *" --data-urlencode "active=true" | jq -r '.id // empty')"
+  [ -n "$sid" ] || fail "could not make the $2 schedule"
+  if [ -n "${3:-}" ]; then
+    glapi -o /dev/null -X POST "$URL/api/v4/projects/$(pid "$1")/pipeline_schedules/$sid/variables" --data-urlencode "key=TERRAGUCCI_SCHEDULE" --data-urlencode "value=$3" \
+      || fail "could not set TERRAGUCCI_SCHEDULE on the $2 schedule"
+  fi
+  echo "$sid"
+}
+
+# Play a schedule and wait for its pipeline to end. PLAY_PIPE is its id and
+# PLAY_STATUS its status, both empty when the play started no pipeline (a
+# pipeline with no job for it). GitLab plays a schedule once a minute at most.
+gl_play() { # repo schedule-id [wait-for-end]
+  local p="$URL/api/v4/projects/$(pid "$1")" before id="" i st deadline
+  PLAY_PIPE=""; PLAY_STATUS=""
+  before="$(glapi "$p/pipelines?source=schedule&order_by=id&sort=desc&per_page=1" | jq -r '.[0].id // 0')"
+  for i in 1 2 3 4 5 6 7; do
+    glapi -o /dev/null -X POST "$p/pipeline_schedules/$2/play" 2>/dev/null && break
+    sleep 10
+  done
+  for i in $(seq 1 30); do
+    id="$(glapi "$p/pipelines?source=schedule&order_by=id&sort=desc&per_page=1" | jq -r '.[0].id // 0')"
+    [ "$id" -gt "$before" ] && break
+    sleep 3
+  done
+  [ "$id" -gt "$before" ] || { log "playing schedule $2 started no pipeline"; return 0; }
+  PLAY_PIPE="$id"
+  [ "${3:-1}" = 1 ] || return 0
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  while :; do
+    st="$(glapi "$p/pipelines/$id" | jq -r .status)"
+    case "$st" in success|failed|canceled|skipped) break ;; esac
+    [ "$(date +%s)" -lt "$deadline" ] || fail "pipeline $id did not end in ${TIMEOUT}s"
+    sleep 5
+  done
+  PLAY_STATUS="$st"
+  log "schedule $2 started pipeline $id: $st"
+}
+
+# The names of a pipeline's jobs, sorted, one line.
+gl_jobs() { # repo pipeline
+  glapi "$URL/api/v4/projects/$(pid "$1")/pipelines/$2/jobs?per_page=100" | jq -r '[.[].name] | sort | join(" ")'
+}
+
+# A user who is a member of REPO at LEVEL (30 Developer, 20 Reporter), with
+# an api token of its own.
+gl_member() { # repo name level -> prints the user's token
+  local uid pass="validate-$RANDOM-$RANDOM-Aa1"
+  uid="$(glapi "$URL/api/v4/users?username=$2" | jq -r '.[0].id // empty')"
+  if [ -z "$uid" ]; then
+    uid="$(glapi -X POST "$URL/api/v4/users" --data-urlencode "username=$2" --data-urlencode "name=$2" --data-urlencode "email=$2@terragucci.local" \
+      --data-urlencode "password=$pass" --data-urlencode "skip_confirmation=true" | jq -r '.id // empty')"
+  fi
+  [ -n "$uid" ] || fail "could not make $2"
+  glapi -o /dev/null -X POST "$URL/api/v4/projects/$(pid "$1")/members" --data-urlencode "user_id=$uid" --data-urlencode "access_level=$3" 2>/dev/null \
+    || glapi -o /dev/null -X PUT "$URL/api/v4/projects/$(pid "$1")/members/$uid" --data-urlencode "access_level=$3" \
+    || fail "could not make $2 a member at level $3"
+  glapi -X POST "$URL/api/v4/users/$uid/personal_access_tokens" --data-urlencode "name=validate-$RANDOM" --data-urlencode "scopes[]=api" | jq -r '.token // empty'
+}
+
+# A note on merge request IID, written with TOKEN-OF-AUTHOR. Prints its id.
+gl_note() { # repo iid token body
+  curl -fsS -H "PRIVATE-TOKEN: $3" -X POST "$URL/api/v4/projects/$(pid "$1")/merge_requests/$2/notes" --data-urlencode "body=$4" | jq -r '.id // empty'
+}
+
+# The comments job's replies on merge request IID, one per line.
+gl_replies() { # repo iid
+  glapi "$URL/api/v4/projects/$(pid "$1")/merge_requests/$2/notes?per_page=100" | jq -r '.[] | select(.body | contains("terragucci:note=")) | .body | gsub("\n"; " ")'
+}
+
+# A merge request from BRANCH that adds a resource. Prints its iid once its
+# pipeline ended.
+gl_change_mr() { # repo branch
+  local head iid
+  printf 'resource "terraform_data" "%s" {\n  input = "%s"\n}\n' "${2//-/_}" "$2" > "$CDIR/infra/$2.tf"
+  head="$(forge_push "$CDIR" "$1" "$2" "$(msg)")"
+  iid="$(glapi -X POST "$URL/api/v4/projects/$(pid "$1")/merge_requests" --data-urlencode "source_branch=$2" --data-urlencode "target_branch=main" --data-urlencode "title=validate $2" | jq -r '.iid // empty')"
+  [ -n "$iid" ] || fail "no merge request from $2"
+  forge_run "$1" "$2" "$head" merge_request_event >&2
+  echo "$iid"
+}
+
+# /terragucci plan on GitLab: a Developer's note starts a merge request
+# pipeline, a root that is not one and a Reporter's note start nothing, and a
+# second play answers nothing again.
+run_comment_plan() {
+  local repo=validate-comments sid sha iid dev rep n1 n2 n3 before after replies
+  prepare_comments "$repo"
+  if [ -n "$BREAK" ]; then
+    sed '/^comments:$/,$d' "$CDIR/$PIPELINE_FILE" > "$CDIR/$PIPELINE_FILE.new" && mv "$CDIR/$PIPELINE_FILE.new" "$CDIR/$PIPELINE_FILE"
+    ! grep -q '^comments:$' "$CDIR/$PIPELINE_FILE" || fail "could not drop the comments job"
+  fi
+  sha="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  sid="$(gl_schedule "$repo" "terragucci comments" comments)"
+  dev="$(gl_member "$repo" validate-dev 30)"; rep="$(gl_member "$repo" validate-reporter 20)"
+  [ -n "$dev" ] && [ -n "$rep" ] || fail "no tokens for the developer and the reporter"
+  iid="$(gl_change_mr "$repo" comment-plan)"
+  before="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/pipelines" | jq length)"
+  n1="$(gl_note "$repo" "$iid" "$dev" "/terragucci plan")"
+  n2="$(gl_note "$repo" "$iid" "$dev" "/terragucci plan envs/not-a-root")"
+  n3="$(gl_note "$repo" "$iid" "$rep" "/terragucci plan")"
+  [ -n "$n1" ] && [ -n "$n2" ] && [ -n "$n3" ] || fail "could not write the notes on !$iid"
+  log "notes on !$iid: the developer's plan ($n1) and bad root ($n2), the reporter's plan ($n3)"
+  gl_play "$repo" "$sid"
+  [ -n "$PLAY_PIPE" ] || fail "playing the comments schedule started no pipeline"
+  [ "$(gl_jobs "$repo" "$PLAY_PIPE")" = comments ] || fail "the comments schedule's pipeline ran $(gl_jobs "$repo" "$PLAY_PIPE"), not the comments job alone"
+  [ "$PLAY_STATUS" = success ] || fail "the comments pipeline ended $PLAY_STATUS"
+  after="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/pipelines" | jq length)"
+  [ "$after" -eq $(( before + 1 )) ] || fail "!$iid has $after pipelines after the play, not $(( before + 1 ))"
+  local mrp
+  mrp="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/pipelines" | jq -r 'sort_by(.id) | last | .sha')"
+  forge_run "$repo" comment-plan "$mrp" merge_request_event
+  grep -q "^----- job 'plan' -----" "$RUN_LOG" || { forge_logs; fail "the new merge request pipeline ran no plan job"; }
+  replies="$(gl_replies "$repo" "$iid")"
+  grep -q "started pipeline .* to re-plan !$iid for validate-dev .*terragucci:note=$n1 -->" <<<"$replies" || { echo "$replies"; fail "no reply started a pipeline for the developer's plan"; }
+  grep -q "envs/not-a-root is not a root of this repository.*terragucci:note=$n2 -->" <<<"$replies" || { echo "$replies"; fail "the bad root was not refused"; }
+  ! grep -q "terragucci:note=$n3 -->" <<<"$replies" || fail "the reporter's note got a reply"
+  log "the developer's plan started one merge request pipeline, the bad root was refused, the reporter got no reply"
+  sleep 61
+  gl_play "$repo" "$sid"
+  [ "$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/pipelines" | jq length)" -eq "$after" ] || fail "the second play started another merge request pipeline"
+  [ "$(gl_replies "$repo" "$iid" | wc -l)" -eq "$(wc -l <<<"$replies")" ] || fail "the second play replied again"
+  log "the second play answered nothing again"
+}
+
+# /terragucci apply on GitLab: an open merge request is refused; on a merged
+# one the merge commit's waiting wave is retried, waits again with no
+# approval, and applies once terragucci approve approved it.
+run_comment_apply() {
+  local repo=validate-comments-apply sid sha iid open merge dev n job pipe
+  prepare_comments "$repo" "gate: always"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
+  sha="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  sid="$(gl_schedule "$repo" "terragucci comments" comments)"
+  dev="$(gl_member "$repo" validate-dev 30)"
+  [ -n "$dev" ] || fail "no token for the developer"
+  iid="$(gl_change_mr "$repo" comment-apply)"
+  open="$(gl_change_mr "$repo" comment-open)"
+  forge_merge_pr "$repo" "$iid"
+  merge="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r '.merge_commit_sha // .squash_commit_sha // .sha')"
+  forge_run "$repo" main "$merge"
+  grep -q "chant approve tf-apply wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 of the merge commit did not wait"; }
+  pipe="$(glapi "$URL/api/v4/projects/$(pid "$repo")/pipelines?sha=$merge&source=push" | jq -r '.[0].id')"
+  log "!$iid merged at ${merge:0:8}; wave 1 waits in pipeline $pipe"
+  if [ -n "$BREAK" ]; then
+    # A later push to main: its apply supersedes the merge commit, so no job at the merge commit is retried.
+    sha="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+    forge_run "$repo" main "$sha"
+  fi
+  gl_note "$repo" "$open" "$dev" "/terragucci apply" >/dev/null
+  n="$(gl_note "$repo" "$iid" "$dev" "/terragucci apply")"
+  gl_play "$repo" "$sid"
+  [ "$PLAY_STATUS" = success ] || fail "the comments pipeline ended '${PLAY_STATUS:-none}'"
+  gl_replies "$repo" "$open" | grep -q "!$open is not merged" || fail "the open merge request's apply was not refused"
+  job="$(glapi "$URL/api/v4/projects/$(pid "$repo")/pipelines/$pipe/jobs?per_page=100" | jq -r '[.[] | select(.name == "apply-wave-1")] | sort_by(.id) | last | .id')"
+  gl_replies "$repo" "$iid" | grep -q "retried apply-wave-1 of !$iid's merge commit ${merge:0:8}.*terragucci:note=$n -->" || { gl_replies "$repo" "$iid"; fail "the merged merge request's apply retried nothing at the merge commit"; }
+  [ "$(glapi "$URL/api/v4/projects/$(pid "$repo")/jobs/$job" | jq -r .pipeline.sha)" = "$merge" ] || fail "the retried job did not run at the merge commit"
+  wait_job "$repo" "$job"
+  glapi "$URL/api/v4/projects/$(pid "$repo")/jobs/$job/trace" | grep -q "Job failed: exit code 3" || fail "the retried wave did not wait again (exit code 3) with no approval"
+  [ "$(bucket_code "$BUCKET")" = 404 ] || fail "the retried wave applied with no approval"
+  log "the retried wave 1 waited again with no approval"
+  git clone -q "$(forge_remote "$repo")" "$WORK/approver" || fail "could not clone $repo"
+  git -C "$WORK/approver" config user.name validate-approver
+  git -C "$WORK/approver" config user.email validate-approver@terragucci.local
+  (cd "$WORK/approver" && PATH="$HERE/../node_modules/.bin:$PATH" "$TERRAGUCCI" approve --actor validate-approver >/dev/null 2>&1) || fail "terragucci approve failed"
+  n="$(gl_note "$repo" "$iid" "$dev" "/terragucci apply")"
+  sleep 61
+  gl_play "$repo" "$sid"
+  job="$(glapi "$URL/api/v4/projects/$(pid "$repo")/pipelines/$pipe/jobs?per_page=100" | jq -r '[.[] | select(.name == "apply-wave-1")] | sort_by(.id) | last | .id')"
+  wait_job "$repo" "$job"
+  [ "$(glapi "$URL/api/v4/projects/$(pid "$repo")/jobs/$job" | jq -r .status)" = success ] || fail "the retried wave 1 did not apply after the approval"
+  [ "$(bucket_code "$BUCKET")" = 200 ] || fail "$BUCKET is not in floci after the approved retry"
+  log "after terragucci approve, the next note's retry applied wave 1 at ${merge:0:8}, and $BUCKET exists"
+}
+
+wait_job() { # repo job
+  local deadline=$(( $(date +%s) + TIMEOUT ))
+  until case "$(glapi "$URL/api/v4/projects/$(pid "$1")/jobs/$2" | jq -r .status)" in success|failed|canceled|skipped) true ;; *) false ;; esac; do
+    [ "$(date +%s)" -lt "$deadline" ] || fail "job $2 did not finish in ${TIMEOUT}s"
+    sleep 5
+  done
+}
+
+# A drift schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone, and
+# the comments schedule the comments job alone.
+run_comment_drift_schedule() {
+  local repo=validate-comments-drift sha drift comments f
+  prepare_comments "$repo" 'drift: "17 4 * * *"'
+  f="$CDIR/$PIPELINE_FILE"
+  if [ -n "$BREAK" ]; then
+    sed 's/ && \$TERRAGUCCI_SCHEDULE != "comments"//' "$f" > "$f.new" && mv "$f.new" "$f"
+    ! grep -q 'TERRAGUCCI_SCHEDULE != "comments"' "$f" || fail "could not drop the variable check from the drift rule"
+  fi
+  sha="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  drift="$(gl_schedule "$repo" "terragucci drift")"
+  comments="$(gl_schedule "$repo" "terragucci comments" comments)"
+  gl_play "$repo" "$drift" 0
+  [ -n "$PLAY_PIPE" ] || fail "the drift schedule started no pipeline"
+  [ "$(gl_jobs "$repo" "$PLAY_PIPE")" = drift ] || fail "the drift schedule's pipeline ran '$(gl_jobs "$repo" "$PLAY_PIPE")', not the drift job alone"
+  log "the drift schedule, with no TERRAGUCCI_SCHEDULE, ran the drift job alone"
+  gl_play "$repo" "$comments" 0
+  [ -n "$PLAY_PIPE" ] || fail "the comments schedule started no pipeline"
+  [ "$(gl_jobs "$repo" "$PLAY_PIPE")" = comments ] || fail "the comments schedule's pipeline ran '$(gl_jobs "$repo" "$PLAY_PIPE")', not the comments job alone"
+  log "the comments schedule ran the comments job alone"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -429,6 +680,9 @@ case "$CLAIM" in
   own-jobs) run_own_jobs ;;
   pr-review) if [ "$FORGE" = gitlab ]; then run_pr_review_gitlab; else run_pr_review; fi ;;
   approve) run_approve ;;
+  gl-comment-plan) run_comment_plan ;;
+  gl-comment-apply) run_comment_apply ;;
+  gl-comment-drift-schedule) run_comment_drift_schedule ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done

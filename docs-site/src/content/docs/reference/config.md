@@ -124,6 +124,7 @@ dashboards: true
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
+| `comments` | `false` (off) | GitLab only: the cron of the comments schedule, whose pipelines answer `/terragucci` merge request notes; see [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket`, `endpoint`, `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-s3/#5-serve-the-index)) and `role` (the ARN that writes); see [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/) |
 | `version` | the one every root pins exactly, else terragucci's default for the binary | the binary's version |

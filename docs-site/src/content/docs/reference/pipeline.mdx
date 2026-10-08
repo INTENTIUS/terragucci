@@ -30,7 +30,7 @@ The comment approves nothing; a gated wave still needs its approval record, seal
 
 ## When a comment runs nothing
 
-Every comment command is checked before any credential is used. A failed check stops the job, and the reply starting `terragucci:` names it. GitLab has no comment commands.
+Every comment command is checked before any credential is used. A failed check stops the job, and the reply starting `terragucci:` names it. On GitLab, with [`comments:`](/terragucci/guides/re-plan-from-a-comment/) set, the `comments` job checks that the author is a Developer or above, the note is one it has not answered, the merge request is from this project, a named root is a root of the pipeline, and for `apply` that the merge request merged into the default branch and no later commit there has an apply of its own.
 
 | Check | `plan` | `apply`, merged PR | `apply`, open PR | `lock` | `agent` |
 |---|---|---|---|---|---|

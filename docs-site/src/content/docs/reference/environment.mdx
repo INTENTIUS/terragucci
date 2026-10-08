@@ -28,7 +28,7 @@ The config names variables and never holds a value. Put secrets in your forge's 
 | Variable | Used by | Needs |
 |---|---|---|
 | the run's own token (`github.token` on GitHub and Forgejo) | the generated plan and apply jobs | comments and statuses; apply also writes [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
-| `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable |
+| `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable; with `comments:` set it also needs the Developer role |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | `reconcile`, `rollout` and `respond --mode apply`, by the project's forge | push branches and open pull requests in the projects they touch |
 | `TG_TOKEN` | the comment, status and respond steps | set by the job; set it yourself outside a pipeline |
 | `GITEA_TOKEN` | nothing | the agent's job clears it with the other runner tokens, so it never reaches the agent |
@@ -152,6 +152,7 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 
 | Variable | Flag | Meaning |
 |---|---|---|
+| `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone; a schedule without it runs drift |
 | `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
 | `TOFU_INSTALL_DIR` |  | where `terragucci install` puts the binary; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
 | `RUNNER_TEMP` |  | set by GitHub and Forgejo runners |

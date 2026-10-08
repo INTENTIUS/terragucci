@@ -19,7 +19,7 @@ terragucci needs no server: `init` writes jobs into your forge's CI. Everything 
 
 ## Comment commands
 
-Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note: push to the merge request or retry its job instead.
+Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note, so there [`comments:`](/terragucci/guides/re-plan-from-a-comment/) adds a scheduled job that answers `/terragucci plan` and `/terragucci apply` on its next run.
 
 | To do this | Atlantis | OpenTaco | terragucci |
 |---|---|---|---|

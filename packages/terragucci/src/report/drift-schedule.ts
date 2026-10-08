@@ -12,7 +12,7 @@
 import { spawnSync } from "node:child_process";
 import type { ForgeName } from "../config";
 import { call, type Fetch, type ForgeTarget } from "../forge";
-import { PIPELINE_PATHS } from "../render";
+import { PIPELINE_PATHS, SCHEDULE_VAR } from "../render";
 
 // ── cron ─────────────────────────────────────────────────────────────────────
 
@@ -120,9 +120,20 @@ export async function driftRuns(fetch: Fetch, t: ForgeTarget): Promise<DriftRuns
   if (t.forge === "gitlab") {
     const id = encodeURIComponent(t.path);
     const pipelines = (await call(fetch, t, "GET", `/projects/${id}/pipelines?source=schedule&per_page=1&order_by=id&sort=desc`)) as Json[];
-    const schedules = (await call(fetch, t, "GET", `/projects/${id}/pipeline_schedules?scope=active&per_page=1`)) as Json[];
-    const last = newest(pipelines.map((p) => p.created_at as string | undefined));
-    return { ...(last ? { last } : {}), ...(schedules.length === 0 ? { noSchedule: true } : {}) };
+    const schedules = (await call(fetch, t, "GET", `/projects/${id}/pipeline_schedules?scope=active&per_page=100`)) as Json[];
+    // The comments schedule (TERRAGUCCI_SCHEDULE=comments) runs no drift job, so its pipelines are no drift runs.
+    // Its variables are on each schedule, not the list; only a project with one asks for the drift schedules' last pipelines.
+    const details = (await Promise.all(schedules.map((s) => call(fetch, t, "GET", `/projects/${id}/pipeline_schedules/${Number(s.id)}`)))) as Json[];
+    const isComments = (d: Json): boolean => Array.isArray(d.variables) && d.variables.some((v: Json) => v?.key === SCHEDULE_VAR && v?.value === "comments");
+    if (!details.some(isComments)) {
+      const last = newest(pipelines.map((p) => p.created_at as string | undefined));
+      return { ...(last ? { last } : {}), ...(schedules.length === 0 ? { noSchedule: true } : {}) };
+    }
+    const drift = details.filter((d) => !isComments(d));
+    const lastIds = drift.map((d) => Number((d.last_pipeline as Json | undefined)?.id)).filter((n) => Number.isInteger(n) && n > 0);
+    const lasts = (await Promise.all(lastIds.map((n) => call(fetch, t, "GET", `/projects/${id}/pipelines/${n}`)))) as Json[];
+    const last = newest(lasts.map((p) => p.created_at as string | undefined));
+    return { ...(last ? { last } : {}), ...(drift.length === 0 ? { noSchedule: true } : {}) };
   }
   const file = PIPELINE_PATHS[t.forge].split("/").pop()!;
   if (t.forge === "github") {

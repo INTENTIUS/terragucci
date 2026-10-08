@@ -58,7 +58,7 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
 | `tips` | a push to the default branch | merged code | `GITLAB_TOKEN` | none |
 
-GitLab has no comment commands, no apply before merge and no agent comment. `GITLAB_TOKEN` cannot be a protected variable, because the merge request's plan job posts its note with it, so any branch's pipeline can read it. The OIDC subject carries the pipeline's branch: a merge request's plan job has its source branch, so the plan role trusts every branch.
+GitLab has no apply before merge and no agent comment. Its comment commands come from the `comments` job, which a pipeline schedule runs from the default branch: it reads notes, checks the author's role, and starts or retries pipelines with `GITLAB_TOKEN`, with no cloud credentials. `GITLAB_TOKEN` cannot be a protected variable, because the merge request's plan job posts its note with it, so any branch's pipeline can read it. The OIDC subject carries the pipeline's branch: a merge request's plan job has its source branch, so the plan role trusts every branch.
 
 </TabItem>
 <TabItem label="Forgejo">

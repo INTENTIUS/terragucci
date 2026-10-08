@@ -99,6 +99,24 @@ describe("driftRuns", () => {
     expect(asked[0]).toContain("/api/v4/projects/acme%2Finfra/pipelines?source=schedule");
   });
 
+  it("gitlab: the comments schedule's pipelines are no drift runs", async () => {
+    // Longer keys first: the fake answers the first key a URL contains.
+    const { fetch } = forge([
+      ["pipeline_schedules/1", { id: 1, variables: [{ key: "TERRAGUCCI_SCHEDULE", value: "comments" }], last_pipeline: { id: 90 } }],
+      ["pipeline_schedules/2", { id: 2, variables: [], last_pipeline: { id: 50 } }],
+      ["pipeline_schedules?", [{ id: 1 }, { id: 2 }]],
+      ["pipelines?source=schedule", [{ created_at: "2026-10-07T11:55:00Z" }]],
+      ["pipelines/50", { id: 50, created_at: "2026-09-01T06:00:00Z" }],
+    ]);
+    expect(await driftRuns(fetch, target("gitlab"))).toEqual({ last: "2026-09-01T06:00:00Z" });
+    const only = forge([
+      ["pipeline_schedules/1", { id: 1, variables: [{ key: "TERRAGUCCI_SCHEDULE", value: "comments" }], last_pipeline: { id: 90 } }],
+      ["pipeline_schedules?", [{ id: 1 }]],
+      ["pipelines?source=schedule", [{ created_at: "2026-10-07T11:55:00Z" }]],
+    ]);
+    expect(await driftRuns(only.fetch, target("gitlab"))).toEqual({ noSchedule: true });
+  });
+
   it("forgejo: reads each run's event and workflow, whatever the query honours", async () => {
     const { fetch } = forge([
       ["/actions/runs", { workflow_runs: [
