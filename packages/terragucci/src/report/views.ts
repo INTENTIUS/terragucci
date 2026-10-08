@@ -79,6 +79,8 @@ export interface NoteOptions {
   artifacts?: boolean;
   /** The most characters the note may hold. Default GitHub's 65,536. */
   limit?: number;
+  /** Lines about the pipeline itself, such as overdue drift checks, shown under the summary. */
+  notices?: string[];
 }
 
 function changeText(l: PlanSummaryChange): string {
@@ -115,6 +117,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   if (refused > 0) parts.push(`${refused} refused`);
   head.push(`${plural(report.units, unitWord)}: ${parts.join(", ")}. ${full}`, "");
   if (report.roots.length === 0 && run.stage === "tf-plan") head.push("This change reaches no root, so nothing was planned.", "");
+  for (const n of options.notices ?? []) head.push(`> ${n}`, "");
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts ? "full report" : to("full report", "tips")}.`, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
   // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
