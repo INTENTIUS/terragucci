@@ -55,9 +55,18 @@ An open change that applies from its head in the same waves and gates as a merge
 
 3. Open the change as usual and get its head approved on the forge by a reviewer other than its author. A push after the review needs a fresh approval.
 
-4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#when-a-comment-runs-nothing). A head behind the default branch needs it merged or rebased in, then a new plan and approval; one with conflicts needs them resolved. [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of approval, mergeable, up to date and green checks the comment needs; all four by default.
+4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#when-a-comment-runs-nothing).
 
-5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives its [chant](/terragucci/concepts/glossary/#chant) approve command; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again.
+   | Check (`apply.requires`) | Fails when | Fix |
+   |---|---|---|
+   | `approved` | no reviewer other than the author approved the head, or a reviewer's last review asks for changes | get the head approved; a push needs a fresh approval |
+   | `undiverged` | the head is behind the default branch | merge or rebase the default branch in, then get a new plan and approval |
+   | `mergeable` | the forge says it does not merge: conflicts with the default branch, or on GitHub a branch protection rule blocks it | resolve the conflicts, or meet the rule |
+   | `checks` | a status or check on the head failed or has not passed yet | fix and push, or wait for it |
+
+   [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, `terragucci/plan` must pass on the head, the change must leave the pipeline file alone, and no other open pull request may hold a lock on a root it reaches.
+
+5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives the command that approves it; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again.
 
 6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
 

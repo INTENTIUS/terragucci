@@ -39,7 +39,13 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 | `pr-review` | the merged pull request's approval of its head, by a reviewer other than its author with write access, when the wave plans what the review saw; and any `chant approve` of the digest, as under `ledger` | on GitHub or Forgejo, optionally require `terragucci/approval` in branch protection; on GitLab, an approval rule | a writer other than the author approved the head whose plans these are. A `chant approve` still binds the plans, not the person. |
 | `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
 
-A wave reads the mode at base, like the signers file ([Which commit the rule is read from](#which-commit-the-rule-is-read-from)). `terragucci config check` prints the mode in force and its source. A repo whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` and whose config names no mode stays `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates.
+A wave reads the mode at base, like the signers file ([Which commit the rule is read from](#which-commit-the-rule-is-read-from)), and `terragucci config check` prints the mode in force and its source.
+
+| `terragucci.yml` | Mode in force |
+|---|---|
+| sets `approval` | that mode |
+| sets none, and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under `identity.gates` | `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates |
+| sets none, and no gates are listed | `ledger` |
 
 ## Approve by review (`approval: pr-review`)
 
@@ -101,6 +107,10 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    <Shot step="wave-waiting" view="log" alt="The apply job's log: the wave waits, exit code 3, and the chant approve command with the plan digest" optional />
    <Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
+   On GitHub, the waiting wave's job ends with a red cross, exit code 3:
+
+   <Shot step="github" view="waiting" alt="A GitHub Actions run on main after a destroy merged: check and apply-wave-1 to apply-wave-3 green, apply-wave-4 stopped with a red cross while it waits for an approval" />
+
 2. Read what the wave will do.
 
    The wave waits because a plan destroys or replaces something, or because `gate` is `always`. Destroys and replacements are never grouped, so they sit at the top of the report. Read each one.
@@ -122,7 +132,15 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
      </TabItem>
    </Tabs>
 
-   `terragucci approve` fetches `chant/lifecycle`, finds the waiting wave (name it, as `wave-2`, when several wait), prints its roots and destroys, and runs `chant approve tf-apply wave-<k> --plan <digest>` for the digest that wave planned. `--dry-run` prints the command and runs nothing. The approval binds that digest only; a wave that plans differently is refused as changed. Pass `--actor` on your own machine, where chant would otherwise record `$USER`.
+   | `terragucci approve` | Does |
+   |---|---|
+   | with no flag | fetches `chant/lifecycle`, finds the waiting wave, prints its roots and destroys, and runs `chant approve tf-apply wave-<k> --plan <digest>` for the digest that wave planned |
+   | `wave-<k>` | picks the wave when several wait |
+   | `--actor` | the name the approval records; pass it on your own machine, where chant would otherwise record `$USER` |
+   | `--sign` | seals the approval; the default under `approval: sealed` |
+   | `--dry-run` | prints the command and runs nothing |
+
+   The approval binds that digest only; a wave that plans differently is refused as changed.
 
    <Captured step="wave-refused" cmd="just example approve" optional />
 
@@ -134,7 +152,16 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | `apply.when: merge`, GitLab | Retry the job. |
    | `apply.when: pull-request` | Comment `/terragucci apply` on the open pull request again. The mode and the signers come from the default branch, so the pull request cannot relax them or add its own approver. The forge's review is also required. |
 
-   The comment approves nothing. A wave without an approval that counts in its mode waits, with the command in the reply; one whose plans changed is refused; otherwise it applies, resuming where it stopped. A comment that fails a check runs nothing, and the reply names the check ([the checks](/terragucci/reference/pipeline/#when-a-comment-runs-nothing)). [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
+   The comment approves nothing.
+
+   | The wave or comment | Outcome |
+   |---|---|
+   | a wave without an approval that counts in its mode | waits, with the command in the reply |
+   | a wave whose plans changed after the approval | refused |
+   | an approved wave | applies, resuming where it stopped |
+   | a comment that fails a check | runs nothing; the reply names the check ([the checks](/terragucci/reference/pipeline/#when-a-comment-runs-nothing)) |
+
+   [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
 
    The report then shows the wave as approved, linked to its record.
 
@@ -186,13 +213,26 @@ The `approval` key in `terragucci.yml`, the signers file, `.chant/trust.json` an
 | Rebase of one commit | the default branch before the merge | yes |
 | Rebase of several commits | the pull request's own next-to-last commit | no: merge with a merge commit or a squash |
 
-Sealing turns off for later merges when `approval` changes to `ledger`, or, with no `approval` key, when `chant.workspace.json` is deleted or its `identity.gates` emptied, so those changes need the same review as the signers file. The [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses it.
+| A change that turns sealing off for later merges | Applies when |
+|---|---|
+| `approval` set to `ledger` | always |
+| `chant.workspace.json` deleted, or its `identity.gates` emptied | `terragucci.yml` sets no `approval` |
+
+Give those changes the same review as the signers file. The [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses them.
 
 ## Who can push to `chant/lifecycle`
 
-Approvers push records as fast-forwards with their own credentials. The apply job pushes pending records with its token (`github.token`, or `GITLAB_TOKEN` on GitLab); on GitHub no rule can tell it from another workflow.
+| Who pushes | What | With |
+|---|---|---|
+| an approver | approval records, as fast-forwards | their own credentials |
+| the apply job | pending records | its token (`github.token`, or `GITLAB_TOKEN` on GitLab); on GitHub no rule can tell it from another workflow |
 
-Under `sealed` the seal decides what counts: a line whose seal does not verify against the signers file at base counts for nothing. Under `ledger` every line of the digest counts, so who can push here is who can approve. Protection keeps history from being rewritten.
+| Mode | What a pushed line counts for |
+|---|---|
+| `sealed` | nothing, unless its seal verifies against the signers file at base |
+| `ledger` and `pr-review` | every line of the digest counts, so who can push here is who can approve |
+
+Protection keeps history from being rewritten.
 
 | Forge | Protect `chant/lifecycle` with |
 |---|---|

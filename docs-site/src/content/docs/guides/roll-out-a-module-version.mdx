@@ -18,11 +18,13 @@ Every root that pins the module moved to the new version through one pull reques
 
 ## Before you start
 
-- Roots that pin the module exactly by `oci://` tag or digest, registry `version` or git tag. A range cannot move ([Stages](/terragucci/reference/stages/#rolling-out-a-module-version) lists the cases).
-- The new version published ([Publish your modules](/terragucci/guides/publish-modules/)).
-- The HCL parser beside terragucci: `npm i -D @cdktn/hcl2json`.
-- A forge token, in the variable `token_env` names, that can open pull requests (only the apply run needs it).
-- Optional: `waves.canary` in `terragucci.yml` for the first wave.
+| You need | Why |
+|---|---|
+| Roots that pin the module exactly by `oci://` tag or digest, registry `version` or git tag | a range cannot move ([Stages](/terragucci/reference/stages/#rolling-out-a-module-version) lists the cases) |
+| The new version published ([Publish your modules](/terragucci/guides/publish-modules/)) | the rollout pins roots to it |
+| The HCL parser beside terragucci: `npm i -D @cdktn/hcl2json` | the rollout edits each root's pin with it |
+| A forge token that can open pull requests, in the variable `token_env` names | only the apply run needs it, to open the rollout's pull requests |
+| Optional: `waves.canary` in `terragucci.yml` | it picks the roots that move first |
 
 ## Steps
 

@@ -27,8 +27,10 @@ The page reads `index.json` files only. It never opens a report, a plan's text o
 
 ## Before you start
 
-- [Reports in S3](/terragucci/guides/keep-reports-in-s3/) for every project you want on the page.
-- A repo to run the job in: your [control repo](/terragucci/guides/govern-many-repos/), or any repo whose `terragucci.yml` names the bucket.
+| You need | Why |
+|---|---|
+| [Reports in a bucket](/terragucci/guides/keep-reports-in-s3/) for every project you want on the page | the page reads each project's report index there |
+| A repo to run the job in: your [control repo](/terragucci/guides/govern-many-repos/), or any repo whose `terragucci.yml` names the bucket | the job writes the page to that bucket |
 
 ## Steps
 

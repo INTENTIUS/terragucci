@@ -17,7 +17,7 @@ import Shot from '../../../components/Shot.astro';
 
 ## What you end up with
 
-A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch. Pick your forge in any tab; the other forge tabs on the site follow.
+Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch. Pick your forge in any tab; the other forge tabs on the site follow.
 
 <Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green, with the check report and each wave's report as artifacts" />
 
@@ -102,6 +102,8 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
    On a host the table does not list, pass `--forge` once and `init` records it in `terragucci.yml`.
 
+   Terragrunt repo? `init` finds the units and writes the same files; [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
+
 2. Give the pipeline a token.
 
    <Tabs syncKey="forge">
@@ -162,6 +164,8 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    git push -u origin add-terragucci
    ```
 
+   <Shot step="github" view="note" alt="terragucci's plan note on a GitHub pull request: one instance in one group, no destroys, the slowest data sources, wave 2 with its set digest and approval not requested, and the change to module.service.terraform_data.jobs" />
+
    </TabItem>
    <TabItem label="GitLab">
 
@@ -196,6 +200,12 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
    Add `terragucci/plan` to the default branch's protection rule as a required status.
 
+   <Shot step="github" view="required" alt="A GitHub ruleset named terragucci/plan required, active on the default branch, requiring the status check terragucci/plan" />
+
+   A failed check fails the run:
+
+   <Shot step="github" view="check" alt="A GitHub Actions run for a change pushed without tofu fmt: the check job failed and the plan and apply jobs after it were skipped" />
+
    </TabItem>
    <TabItem label="GitLab">
 
@@ -215,7 +225,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    </TabItem>
    </Tabs>
 
-6. Make approval possible. A wave that destroys something waits for a person, who approves it with [chant](/terragucci/concepts/glossary/#chant) (`npm i -D @intentius/chant`). Signed approvals also need a signers file: [before your first approval](/terragucci/getting-started/#before-your-first-approval).
+6. Make approval possible. A wave that destroys something waits for a person, who approves it with `npx terragucci approve` from a checkout, which runs [chant](/terragucci/concepts/glossary/#chant) (`npm i -D @intentius/chant`), or with a review of the pull request under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes). Signing is optional: only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#before-your-first-approval)).
 
 </Steps>
 

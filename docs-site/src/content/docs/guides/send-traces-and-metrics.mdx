@@ -1,0 +1,155 @@
+---
+title: Send traces and metrics
+description: Point the pipeline at your OpenTelemetry collector, get one trace per stage run and its metrics, and load the Grafana dashboards and alerts init writes.
+claims: [traces, metrics, dash-pipeline, dash-changes, dash-waves, dash-drift, dash-estate, dash-runs, dash-slos, drill-down]
+prompt: |
+  Read https://intentius.io/terragucci/guides/send-traces-and-metrics/.
+  Add `OTEL_EXPORTER_OTLP_ENDPOINT` under `env:` in terragucci.yml, `telemetry.headers_secret` if the collector needs a key, and `dashboards: true`.
+  Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the pipeline and observability/terragucci/.
+  List the secret I must add for my forge; do not create it.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Shot from '../../../components/Shot.astro';
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+Every plan, drift and apply job sends one trace and its metrics over OTLP to your collector, and your Grafana shows nine dashboards and the alerts `init` writes. The jobs run in your CI and send to your own collector; nothing else receives them.
+
+<Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| The pipeline from [Get your first plan note](/terragucci/getting-started/) | `init` adds the variables to its jobs |
+| An OpenTelemetry collector with an OTLP/HTTP receiver (port 4318) the runners can reach | the jobs send OTLP/JSON over HTTP, not gRPC |
+| Prometheus, through the collector's Prometheus exporter or remote write | the metrics and the dashboards' queries |
+| Grafana, and Tempo for traces | the dashboards; only the Runs dashboard's trace list needs Tempo |
+
+An unreachable collector never fails a stage, so you can turn this on before the collector is ready.
+
+## Steps
+
+<Steps>
+
+1. Point every job at the collector in `terragucci.yml`.
+
+   ```yaml
+   env:
+     OTEL_EXPORTER_OTLP_ENDPOINT: https://otel-collector.example.com:4318
+   ```
+
+   Traces go to `/v1/traces` and metrics to `/v1/metrics` under it. `env` holds values only; a key goes in the next step. [Variables](/terragucci/reference/observability/#variables) lists the other OpenTelemetry variables the jobs read.
+
+2. If the collector needs a key, name the secret that holds the headers.
+
+   ```yaml
+   telemetry:
+     headers_secret: OTLP_HEADERS
+   ```
+
+   The generated plan, apply and drift jobs set `OTEL_EXPORTER_OTLP_HEADERS` from it. Its value is `key=value` pairs, such as `x-api-key=abc123`.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       Settings > Secrets and variables > Actions > New repository secret, named `OTLP_HEADERS`.
+     </TabItem>
+     <TabItem label="GitLab">
+       Settings > CI/CD > Variables, named `OTLP_HEADERS`, masked.
+     </TabItem>
+     <TabItem label="Forgejo">
+       Settings > Actions > Secrets, named `OTLP_HEADERS`.
+     </TabItem>
+   </Tabs>
+
+   A pull request from a fork gets no secrets.
+
+3. Ask for the dashboards and alerts.
+
+   ```yaml
+   dashboards: true
+   ```
+
+   When your Grafana datasources are not named `prometheus` and `tempo`, give their uids instead:
+
+   ```yaml
+   dashboards:
+     prometheus: my-prometheus
+     tempo: my-tempo
+   ```
+
+   [Dashboard settings](/terragucci/reference/observability/#dashboard-settings) lists the folder, path and alert thresholds.
+
+4. Link each report to its trace (optional).
+
+   ```yaml
+   telemetry:
+     headers_secret: OTLP_HEADERS
+     trace_url: "https://grafana.example.com/explore?left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22{trace_id}%22%7D%5D%7D"
+   ```
+
+   The report links the run's trace in place of printing its id. With `reports.url` set, the Runs and Estate dashboards link back to the reports.
+
+5. Check the file and write the pipeline again.
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+   ```text
+   terragucci.yml: ok
+   approval: ledger (the default)
+   ```
+
+   `init` adds the variables to the jobs and writes `observability/terragucci/`:
+
+   | File | Load it into |
+   |---|---|
+   | `grafana/dashboards/<uid>.json` | Grafana, at the dashboards `path` (default `/var/lib/grafana/dashboards/terragucci`) |
+   | `grafana/provisioning/dashboards/terragucci.yaml` | Grafana, under `/etc/grafana/provisioning/dashboards/` |
+   | `grafana/provisioning/alerting/terragucci.yaml` | Grafana, under `/etc/grafana/provisioning/alerting/` |
+   | `prometheus/terragucci.rules.yml` | Prometheus, in `rule_files` |
+
+   Page from the Grafana alerting file or from the Prometheus `ErrorBudgetBurn` alerts, not both. `init` leaves files in that directory it did not write alone.
+
+6. Add the span metrics connector to your collector. The SLO dashboards read span metrics:
+
+   ```yaml
+   connectors:
+     spanmetrics:
+       namespace: terragucci.spans
+       dimensions:
+         - name: terragucci.stage
+         - name: terragucci.project
+         - name: terragucci.result
+       resource_metrics_key_attributes: [service.name, terragucci.project]
+       histogram:
+         unit: s
+         explicit:
+           buckets: [5s, 15s, 30s, 60s, 120s, 300s, 600s, 1200s, 1800s, 3600s]
+   ```
+
+7. Open a pull request with `terragucci.yml`, the pipeline and `observability/terragucci/`, and merge it.
+
+8. Open the next pull request that changes a root. Its plan job sends a trace with a span per root and the binary's spans inside it, and the Pipeline health and Change review dashboards show the run.
+
+   <Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
+
+</Steps>
+
+## What each dashboard needs
+
+| Dashboard | Fills in after |
+|---|---|
+| Pipeline health, Change review, Runs, Estate | a plan on a pull request |
+| Drift | a scheduled drift run ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)) |
+| Rollouts and waves | a wave on the default branch, or one that waits for an approval |
+| The three SLO dashboards | the recording rules in Prometheus, and the span metrics connector |
+
+## Next
+
+- [Traces and metrics](/terragucci/reference/observability/) lists every span, metric, label and alert.
+- [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/) gives the dashboards' report links somewhere to go.

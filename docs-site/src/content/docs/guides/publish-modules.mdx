@@ -18,9 +18,11 @@ Every module that changed on the default branch released under a new number, eac
 
 ## Before you start
 
-- Modules in one place, such as `modules/network` and `modules/service`.
-- Conventional commit messages, which decide the version bump.
-- An OCI registry, or permission to push git tags to `origin`. Terraform has no OCI sources, so its roots pin a git tag.
+| You need | Why |
+|---|---|
+| Modules in one place, such as `modules/network` and `modules/service` | each directory there is published on its own |
+| Conventional commit messages | they decide the version bump |
+| An OCI registry, or permission to push git tags to `origin` | where the versions go; Terraform has no OCI sources, so its roots pin a git tag |
 
 ## Steps
 

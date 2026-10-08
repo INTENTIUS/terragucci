@@ -98,6 +98,7 @@ export default defineConfig({
 								{ label: 'Turn on drift checks', slug: 'guides/turn-on-drift-checks' },
 								{ label: 'Keep reports in S3', slug: 'guides/keep-reports-in-s3' },
 								{ label: 'See every project in one page', slug: 'guides/see-every-project' },
+								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
 							],
 						},
 						{
