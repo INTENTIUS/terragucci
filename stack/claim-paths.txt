@@ -39,7 +39,7 @@ packages/terragucci/src/telemetry.ts      traces metrics lock-wait provider-call
 
 # Approvals.
 packages/terragucci/src/approval.ts       sealed* ledger-default approval-* approve-command pr-review* signer-trust pending-expiry tg-sealed tg-gate-* waves refuse
-packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command signer-trust pending-expiry tg-sealed tg-gate-*
+packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command approve-plan signer-trust pending-expiry tg-sealed tg-gate-*
 packages/terragucci/src/seal.ts           sealed* approval-at-base approve-command signer-trust tg-sealed
 packages/terragucci/src/review.ts         pr-review* notify-chat
 

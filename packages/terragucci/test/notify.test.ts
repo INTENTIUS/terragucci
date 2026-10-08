@@ -14,7 +14,7 @@ describe("notify: chat webhooks for a wave", () => {
   it("names the wave, its roots, the approve command and the run of a waiting wave", () => {
     const n = waveNotice("waiting", 2, { outcome: waiting.line, result: waiting, reportDir: report(), env: ENV });
     expect(n).toMatchObject({ project: "github.com/acme/infra", roots: ["envs/prod/app", "envs/prod/db"], digest: "jcs1-sha256:ab", run: "https://github.com/acme/infra/actions/runs/42" });
-    expect(n.approve).toBe("chant approve tf-apply wave-2 --plan jcs1-sha256:ab (or npx terragucci approve wave-2)");
+    expect(n.approve).toBe("chant approve tf-apply wave-2 --plan jcs1-sha256:ab (or npx terragucci approve wave-2 --plan jcs1-sha256:ab)");
     const slack = slackMessage(n).text;
     for (const want of ["wave 2 of github.com/acme/infra waits for an approval", "envs/prod/app, envs/prod/db", "chant approve tf-apply wave-2", "<https://github.com/acme/infra/actions/runs/42>"]) expect(slack).toContain(want);
     const card = teamsMessage(n) as any;
@@ -41,11 +41,11 @@ describe("notify: chat webhooks for a wave", () => {
   });
 
   it("says what a refused and a failed wave leave to a person", () => {
-    const refusal = { schema: "terragucci.outcome/v1", status: "refused", exit: 4, wave: 3, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 3 changed after approval: envs/prod/app", refused: { reason: "approval", approved: "jcs1-sha256:aa", by: "alice", roots: ["envs/prod/app"] } } as WaveOutcome;
+    const refusal = { schema: "terragucci.outcome/v1", status: "refused", exit: 4, wave: 3, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 3 changed after approval: envs/prod/app", set_digest: "jcs1-sha256:dd", refused: { reason: "approval", approved: "jcs1-sha256:aa", by: "alice", roots: ["envs/prod/app"] } } as WaveOutcome;
     const refused = waveNotice("refused", 3, { result: refusal, env: ENV });
     expect(refused.roots).toEqual(["envs/prod/app"]);
     expect(refused.outcome).toBe("wave 3 changed after approval: envs/prod/app");
-    expect(refused.approve).toContain("npx terragucci approve wave-3");
+    expect(refused.approve).toBe("read the plans that moved, then npx terragucci approve wave-3 --plan jcs1-sha256:dd, or revert");
     expect(waveNotice("refused", 3, { result: { ...refusal, refused: { reason: "override", roots: ["envs/prod/app"] } }, env: ENV }).approve).toContain("policy override");
     expect(waveNotice("failed", 1, { env: ENV }).approve).toBe("nothing to approve: the apply failed; read the job log");
     const denied = { schema: "terragucci.outcome/v1", status: "failed", exit: 1, wave: 1, roots: ["envs/prod/app", "envs/prod/db"], refused: { reason: "policy", roots: ["envs/prod/app"] }, policy_denied: ["envs/prod/app"] } as WaveOutcome;

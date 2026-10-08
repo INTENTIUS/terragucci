@@ -223,6 +223,7 @@ pr-review-status|with approval: pr-review terragucci/approval on the head of a p
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
+approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
 approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
 tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
 tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
@@ -6297,6 +6298,49 @@ claim_approve_command() {
   return $rc
 }
 
+claim_approve_plan() {
+  # The gated fixture, approval ledger. A push to main waits at wave 1 for
+  # digest D0; a second push changes canary/one, and wave 1 now waits for D1.
+  # In a clone, terragucci approve --plan D0, the digest a person read before
+  # the plans moved, must approve nothing: it exits 1, names D1 as the digest
+  # waiting, and chant/lifecycle gets no approval of wave 1.
+  # BREAK: the approval names D1, the digest waiting, so it is recorded.
+  log() { echo "[smoke approve-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/approve-plan" sha d0 d1 pinned out code=0 resolved rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo approve-plan || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "approve-plan: first")"
+  wait_run "$repo" "$sha" || rc=1
+  [ $rc = 0 ] && d0="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+  [ -n "${d0:-}" ] || { log "wave 1 of the first push did not wait"; rc=1; }
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/canary/one/rev.txt"
+    sha="$(push_tree "$work/tree" "$repo" main "approve-plan: canary/one moves")"
+    wait_run "$repo" "$sha" || rc=1
+  fi
+  [ $rc = 0 ] && d1="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+  [ -n "${d1:-}" ] && [ "${d1:-}" != "${d0:-}" ] || { [ $rc = 0 ] && log "wave 1 of the second push does not wait for a new digest (${d0:-none}, then ${d1:-none})"; rc=1; }
+  if [ $rc = 0 ]; then
+    pinned="$d0"
+    [ -z "${BREAK:-}" ] || pinned="$d1"
+    git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver-clone" || rc=1
+    git -C "$work/approver-clone" config user.name smoke-approver
+    git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
+    out="$(cd "$work/approver-clone" && PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" approve --plan "$pinned" --actor smoke-approver 2>&1)" || code=$?
+    log "terragucci approve --plan ${pinned}: exit $code: $(tr '\n' ' ' <<<"$out")"
+    [ "$code" = 1 ] || { log "terragucci approve --plan of a stale digest exited $code, not 1"; rc=1; }
+    grep -qF "waiting: wave-1 for $d1" <<<"$out" || { log "the refusal does not name the digest waiting, $d1"; rc=1; }
+    git -C "$work/approver-clone" fetch -q origin chant/lifecycle || rc=1
+    resolved="$(git -C "$work/approver-clone" show origin/chant/lifecycle:_gates/tf-apply.jsonl | jq -s '[.[] | select(.kind == "resolution" and .gate == "wave-1")] | length')"
+    [ "$resolved" = 0 ] || { log "chant/lifecycle has $resolved approval(s) of wave 1"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the stale digest approved nothing, and the refusal named the digest waiting"
+  return $rc
+}
+
 # ── policy overrides ──────────────────────────────────────────────────────
 # stack/fixtures/policy-wave with a bare repo for origin, the policy key
 # listing smoke-approver under override, and gate: never, so only the policy
@@ -9816,6 +9860,7 @@ drift-overdue        self! weight=60
 pr-review            runner self! weight=300
 pr-review-moved      runner self! weight=300
 pr-review-status     runner self! weight=250
+approve-plan         runner self! weight=150
 cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
