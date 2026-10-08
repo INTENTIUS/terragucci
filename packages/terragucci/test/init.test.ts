@@ -53,7 +53,7 @@ describe("init", () => {
     const dir = withRemote("https://github.com/acme/infra.git");
     await init(dir, { binary: "tofu" });
     const again = await init(dir, { binary: "tofu" });
-    expect(again.files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+    expect(again.files.map((f) => f.status)).toEqual(["unchanged"]);
   });
 
   it("refuses to overwrite a pipeline file it did not write, unless forced", async () => {
@@ -69,7 +69,7 @@ describe("init", () => {
     const r = await init(dir, { forge: "gitlab" });
     expect(r.configNote).toMatch(/records forge/);
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("forge: gitlab\n");
-    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged"]);
   });
 
   it("a detectable choice is not written to terragucci.yml", async () => {

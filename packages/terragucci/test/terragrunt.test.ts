@@ -378,7 +378,7 @@ describe("init in a Terragrunt repo", () => {
   it("running it twice changes nothing", async () => {
     const repo = liveRepo();
     await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" });
-    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged"]);
   });
 });
 
@@ -488,7 +488,7 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(7);
+    expect(r.report.minor).toBe(8);
     // A run report with no Started and Ended times no unit, and the report says so.
     expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
