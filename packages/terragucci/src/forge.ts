@@ -122,7 +122,10 @@ export async function findIssue(fetch: Fetch, t: ForgeTarget, marker: string): P
     const hit = list.find((i) => (i.description ?? "").includes(marker));
     return hit ? { url: hit.web_url, number: hit.iid, body: hit.description ?? "", ...(hit.created_at ? { created: hit.created_at } : {}) } : undefined;
   }
-  const list = (await call(fetch, t, "GET", `/repos/${t.path}/issues?state=open&type=issues&per_page=100`)) as Array<{ html_url: string; number: number; body?: string | null; pull_request?: unknown; created_at?: string }>;
+  // Forgejo filters pull requests out with type=issues; github.com answers 422
+  // to that parameter, so there pull requests are dropped from the list below.
+  const only = t.forge === "forgejo" ? "&type=issues" : "";
+  const list = (await call(fetch, t, "GET", `/repos/${t.path}/issues?state=open${only}&per_page=100`)) as Array<{ html_url: string; number: number; body?: string | null; pull_request?: unknown; created_at?: string }>;
   const hit = list.find((i) => !i.pull_request && (i.body ?? "").includes(marker));
   return hit ? { url: hit.html_url, number: hit.number, body: hit.body ?? "", ...(hit.created_at ? { created: hit.created_at } : {}) } : undefined;
 }

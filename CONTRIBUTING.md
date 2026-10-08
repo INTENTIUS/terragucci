@@ -250,17 +250,36 @@ just sandbox change destroy
 just sandbox merge destroy         # wave 4 waits, with its approve command
 just sandbox approve               # chant approve --plan ... --sign, then re-run the stopped jobs
 just sandbox approve --hold        # approve only; then change and merge module-bump: wave 4 is refused
+just sandbox drift                 # delete a file staging orders keeps, run the drift job, wait for its issue
 just sandbox shot list             # the pages the steps recorded
 just sandbox shot all              # each one logged out, light and dark
-just sandbox reset                 # close the pull requests, delete the branches, main back to its first commit
+just sandbox reset                 # close the pull requests and issues, delete the branches, main back to its first commit
 just sandbox minutes 2026-10-07T00:00:00Z   # Actions run time since then
+just sandbox capture               # all of the docs' GitHub views, from reset to reset
 ```
+
+`just sandbox capture` resets the sandbox, runs `change one-root`, `plan-comment one-root`, `change unformatted`, `change destroy`, `merge destroy` and `drift`, shoots each view right after its step, writes them as the step `github`, and resets the sandbox again. It takes about 15 minutes. A page uses them as it uses a Forgejo step's: `<Shot step="github" view="note" alt="..." />`, and `<Captured step="github" />` for the commands and the lines of the two job logs a logged-out reader cannot open.
+
+| View | Page | Shows |
+|---|---|---|
+| `note` | the one-root pull request | the plan note |
+| `reply` | the same pull request | the note the `/terragucci plan` comment re-planned, and the comment |
+| `check` | the run of the unformatted branch's push | the failed check job and its annotation |
+| `drift` | the drift issue | the issue the drift job opened for staging orders |
+| `waiting` | the run of the destroy's merge | wave 4 stopped, waiting for its approval |
+| `required` | the ruleset on main | `terragucci/plan` as a required status check |
+
+The `drift` view needs a release whose drift job can keep its issue on github.com: 0.3.1 asks github.com for `type=issues`, which it refuses with a 422, so on 0.3.1 `capture` says so, leaves the view out and keeps the one committed, if any.
+
+The files are `docs-site/src/data/tutorial/github.json` and `docs-site/src/assets/tutorial/github-<view>-<light|dark>.png`, so `just tutorial-check` holds a page that shows them to the same rules as the Forgejo steps.
 
 | Piece | How |
 |---|---|
 | Roots | `example/` with each AWS resource made a `terraform_data` whose `input` holds its arguments and whose `triggers_replace` holds the ones that replace it. A scenario is `example/changes/<s>.patch` applied to the example and converted the same way, so `example/` stays the only source. `float`, `drift` and `pin` have no plan-only form. |
 | State | `local`, in each root's `terraform.tfstate`, committed. The only store a GitHub-hosted job reaches without an account is the repo. `main.tf` keeps its `s3` backend and `state_override.tf` replaces it, so `init` finds the same four waves as on the example. The runner's disk is gone after a job, so after a green apply the script applies the same tree in the pipeline's image and commits the state with `[skip ci]`. |
 | Pipeline | `npx @intentius/terragucci@0.3.1 init` (`TERRAGUCCI_SANDBOX_RELEASE`), pinned by digest to the published images, which mark every checkout safe for git. `TERRAGUCCI_SANDBOX_SAFE_DIRECTORY=1` adds an `env` that does the same, for running the sandbox on 0.3.0, whose container jobs ran git as root in a checkout the runner's user owns. |
+| Drift | `terraform_data` reads nothing back, so a refresh finds no drift in it. `drift` adds a `local_file` to staging orders, applies it into the state, and deletes the file on main with `[skip ci]`; the drift job's refresh then finds it gone. |
+| Ruleset | `terragucci/plan required`, made by `up` and `capture` when missing: the default branch requires the `terragucci/plan` status. It is a ruleset, not a classic protection rule, because a logged-out reader can open a ruleset. Repository admins bypass it, so the script's own pushes and merges to main go through. |
 | Signer | an ed25519 key made by `up` and `reset` in the scratch directory, listed as `sandbox-signer` in `.chant/allowed_signers` on main by the first `merge`. Its private half never leaves the scratch directory. |
 | Token | `TERRAGUCCI_SANDBOX_TOKEN`, else `gh auth token`, read at run time and handed to `gh` (`GH_TOKEN`) and to git (a credential helper in `GIT_CONFIG_*` that reads the variable) in the script's own environment. It is never written to a file, a git config or a log. |
 | Screenshots | `stack/shot.mjs` in `mcr.microsoft.com/playwright` (`TERRAGUCCI_SHOT_IMAGE`) with a fresh profile, so the page is the one a logged-out reader sees, in `prefers-color-scheme` light and dark. |

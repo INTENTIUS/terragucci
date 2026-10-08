@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Fetch } from "../src/forge";
+import { findIssue, type Fetch } from "../src/forge";
 import { driftPlan, renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
 import { buildReport } from "../src/report/build";
 import { renderHtml } from "../src/report/html";
@@ -175,6 +175,21 @@ describe("terragucci stage tf-drift", () => {
     expect(await trackDrift(forgeFetch, target, report)).toMatchObject({ action: "left-open" });
     expect(calls).toEqual(["GET /api/v1/repos/me/infra/issues"]);
     expect(renderDriftIssue(report)).toContain("could not be planned");
+  });
+});
+
+describe("findIssue", () => {
+  it("asks Forgejo for issues alone, and github.com with no type, which it refuses", async () => {
+    const asked: string[] = [];
+    const forgeFetch: Fetch = async (url) => {
+      asked.push(new URL(url).search);
+      return { ok: true, status: 200, json: async () => [{ html_url: "http://f/pull/2", number: 2, body: "<!-- m -->", pull_request: {} }, { html_url: "http://f/i/1", number: 1, body: "<!-- m -->" }], text: async () => "" };
+    };
+    for (const forge of ["github", "forgejo"] as const) {
+      const target = targetFromEnv(forge, { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "https://github.com" }, "t")!;
+      expect(await findIssue(forgeFetch, target, "<!-- m -->")).toMatchObject({ number: 1 });
+    }
+    expect(asked).toEqual(["?state=open&per_page=100", "?state=open&type=issues&per_page=100"]);
   });
 });
 

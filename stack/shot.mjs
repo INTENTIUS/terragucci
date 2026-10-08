@@ -19,6 +19,8 @@
 //        [--fit 1]           with --scroll, the picture is the element's own
 //                            height, plus 16px above and below, not --height
 //        [--style CSS]       add this CSS to the page first
+//        [--click TEXT]      click the first button or summary whose text is
+//                            TEXT first, such as a section's "Show more"
 //        [--cookie NAME=VALUE] send this cookie to the page's site, such as a
 //                            signed-in session (example-gitlab.sh shot)
 //
@@ -98,7 +100,7 @@ try {
   await page("Page.navigate", { url: opts.url });
   await loaded;
 
-  const prepare = async ({ hide, expand, focus, scroll, match, style }) => {
+  const prepare = async ({ hide, expand, focus, scroll, match, style, click }) => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const until = async (fn, ms = 15000) => {
       const end = Date.now() + ms;
@@ -126,6 +128,10 @@ try {
       const el = document.createElement("style");
       el.textContent = `${hide ? `${hide} { display: none !important; }` : ""}${style ?? ""}`;
       document.head.append(el);
+    }
+    if (click) {
+      const el = await until(() => [...document.querySelectorAll("button, summary")].find((b) => b.textContent.trim() === click));
+      if (el) { el.click(); await wait(700); } else notes.push(`nothing to click named "${click}"`);
     }
     if (expand) {
       const summary = await until(() => [...document.querySelectorAll(".job-step-summary")].find((s) => s.textContent.includes(expand)));
@@ -166,7 +172,7 @@ try {
     return { notes: notes.join("; "), box };
   };
   const res = await page("Runtime.evaluate", {
-    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus, scroll: opts.scroll, match: opts.match, style: opts.style })})`,
+    expression: `(${prepare})(${JSON.stringify({ hide: opts.hide, expand: opts.expand, focus: opts.focus, scroll: opts.scroll, match: opts.match, style: opts.style, click: opts.click })})`,
     awaitPromise: true,
     returnByValue: true,
   });
