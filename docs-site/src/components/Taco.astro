@@ -4,6 +4,7 @@
 // every art pixel stays square and sharp; `small` is the 26x16 mark for inline
 // use, a PNG at twice that size resampled once from the sharp art.
 // Decorative by default (alt=""), since a word beside it names terragucci.
+// Every taco sits on a tile, white in the light theme and black in the dark.
 interface Props {
 	scale?: number | 'small';
 	alt?: string;
@@ -14,16 +15,25 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const small = scale === 'small';
 const n = small ? 1 : scale;
 ---
-<img
-	class:list={['tg-taco', className]}
+<span class:list={['tg-taco-tile', className]} style={`padding:${small ? 3 : 4 * n}px ${small ? 4 : 6 * n}px;border-radius:${small ? 5 : 6 * n}px`}><img
+	class="tg-taco"
 	src={small ? `${base}/brand/taco-small.png` : `${base}/brand/taco.svg`}
 	width={small ? 26 : 51 * n}
 	height={small ? 16 : 31 * n}
 	alt={alt}
 	decoding="async"
-/>
+/></span>
 
 <style>
+	/* Every taco sits on a tile: white in the light theme, black in the dark. */
+	.tg-taco-tile {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		vertical-align: middle;
+		background: var(--tg-taco-ground);
+		line-height: 0;
+	}
 	.tg-taco {
 		display: inline-block;
 		max-width: none;

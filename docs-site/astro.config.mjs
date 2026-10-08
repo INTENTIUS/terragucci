@@ -51,19 +51,19 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'terragucci',
-			// The taco: the logo beside the title, the favicons, and the card a shared link shows.
+			// The taco: the logo beside the title, the favicons, and the square 160 px taco a shared link shows (LinkedIn, Slack, X).
 			logo: { src: './src/assets/brand/taco.svg', alt: '' },
 			favicon: '/favicon.svg',
 			head: [
 				{ tag: 'link', attrs: { rel: 'icon', href: '/terragucci/favicon.ico', sizes: '32x32' } },
 				{ tag: 'link', attrs: { rel: 'icon', href: '/terragucci/favicon-32.png', type: 'image/png', sizes: '32x32' } },
 				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/terragucci/apple-touch-icon.png' } },
-				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://intentius.io/terragucci/og.png' } },
-				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
-				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
-				{ tag: 'meta', attrs: { property: 'og:image:alt', content: 'A pixel-art taco with a diamond in it, beside the terragucci name and tagline' } },
-				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
-				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://intentius.io/terragucci/og.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://intentius.io/terragucci/taco-share.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '400' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '400' } },
+				{ tag: 'meta', attrs: { property: 'og:image:alt', content: 'The terragucci taco: a pixel-art taco with a diamond in it' } },
+				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://intentius.io/terragucci/taco-share.png' } },
 			],
 			expressiveCode: { plugins: [newlinesBetweenLines], shiki: { langs: [rego] } },
 			customCss: ['./src/styles/terragucci.css'],
