@@ -1008,7 +1008,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "0fd52aa"
+      "commit": "0bde4ea"
     },
     {
       "claim": "audit",
@@ -1070,9 +1070,9 @@
       "claim": "cdktn-affected",
       "says": "with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "0fd52aa"
+      "commit": "0bde4ea"
     }
   ]
 }
