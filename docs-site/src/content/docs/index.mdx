@@ -1,6 +1,6 @@
 ---
 title: terragucci
-description: CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. Runs as jobs in your own CI; no account, no sign-in. Grouped plans on every pull request, applies in gated waves, and drift reports.
+description: Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run. No account, no sign-in, no platform.
 template: splash
 ---
 
@@ -9,35 +9,17 @@ import Lifecycle from '../../components/Lifecycle.astro';
 import PlanNote from '../../components/PlanNote.astro';
 import Waves from '../../components/Waves.astro';
 import Runtimes from '../../components/Runtimes.astro';
-import KeepYours from '../../components/KeepYours.astro';
 import Validated from '../../components/Validated.astro';
 import Shot from '../../components/Shot.astro';
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <Landing />
 
-<CardGrid>
-<LinkCard title="No server to host" description="Every job runs in your forge's CI and writes to your repo and your bucket." href="/terragucci/concepts/how-it-works/#what-runs-where" />
-<LinkCard title="GitHub, GitLab or Forgejo" description="One init writes the pipeline in your forge's own format." href="/terragucci/guides/add-to-a-repo/#per-forge" />
-<LinkCard title="Object storage on AWS, GCP or Azure" description="State, plan reports and the estate page stay in your S3, GCS or Azure Blob storage; with oidc set, CI reaches them with no stored keys." href="/terragucci/reference/pipeline/#credentials" />
-<LinkCard title="Tracing and metrics" description="One trace per stage run and the pipeline's numbers as metrics, over OTLP to your collector." href="/terragucci/guides/send-traces-and-metrics/" />
-<LinkCard title="Rich lifecycles" description="Check on every push, plan on the pull request, apply on merge (or before it), and drift on a schedule." href="/terragucci/concepts/how-it-works/" />
-<LinkCard title="Gated waves" description="A wave that destroys or replaces waits for an approval bound to its plans." href="/terragucci/concepts/waves-and-approvals/" />
-<LinkCard title="Aggregated plan output" description="One note groups the roots taking the same change and names every destroy." href="/terragucci/concepts/why-plans-are-grouped/" />
-<LinkCard title="Module publishing and pinned rollouts" description="Version modules on merge, then move each pin one wave of pull requests at a time." href="/terragucci/guides/publish-modules/" />
-</CardGrid>
+## One note for two hundred plans
 
-## See every run as a trace
+<PlanNote />
 
-Every plan, apply and drift run sends one OpenTelemetry trace over OTLP to your collector, with the pipeline's metrics beside it.
-
-<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, wave 2, the root span for envs/dev/orders, the tofu init and plan spans under it, and OpenTofu's own spans inside them" />
-
-| The trace shows | Page |
-|---|---|
-| The stage, then a span per wave and per root, with digests, change counts and status | [Send traces and metrics](/terragucci/guides/send-traces-and-metrics/) |
-| The binary's own spans inside each root: OpenTofu's resources, and with choudoufu its provider calls and state lock waits | [Traces and metrics](/terragucci/reference/observability/#spans-from-the-binary) |
-| Metrics and the Grafana dashboards `init` writes with `dashboards: true` | [The metrics](/terragucci/reference/observability/#the-metrics) |
+Roots taking the same change share a line, and every destroy is named; [the full report](/terragucci/reference/report/) links each root's plan.
 
 ## Pull request automation
 
@@ -48,7 +30,7 @@ These are plain CI jobs in your pipeline. None of them runs a coding agent.
 | One grouped plan note and a `terragucci/plan` status | open or push to the pull request | all three | [Get your first plan note](/terragucci/getting-started/) |
 | Tips and policy results on the plan | on by default with the plan; `tips: false` turns tips off, `policy` adds checks | all three | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
 | A re-plan | comment `/terragucci plan [root]` | all three; GitLab through the comments schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
-| Root locks | comment `/terragucci lock` or `/terragucci unlock`; `locks: plan` locks from the first plan | GitHub and Forgejo | [Locks](/terragucci/guides/apply-before-merge/#locks) |
+| Root locks | comment `/terragucci lock` or `/terragucci unlock`; `locks: plan` locks from the first plan | GitHub and Forgejo; GitLab takes the comments with apply before merge and `comments:` set, without `locks: plan` | [Locks](/terragucci/guides/apply-before-merge/#locks) |
 | Apply before merge, then merge after the last wave | `apply.when: pull-request`, then comment `/terragucci apply [wave-<n>]` | GitHub, Forgejo, and GitLab with `comments:` set | [Apply before merge](/terragucci/guides/apply-before-merge/) |
 | An approval for a waiting wave | `approval: ledger`, `pr-review` or `sealed`; run `terragucci approve` | all three | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
 | A recorded policy override | a listed person runs `terragucci override` | all three | [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) |
@@ -63,62 +45,68 @@ Two features run a coding agent. Both are off until you set them up, and both ne
 | Comment `/terragucci agent <ask>` and an agent commits the change to the pull request | `agent.comment` in `terragucci.yml` | GitHub and Forgejo | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
 | A summary of what moved in a refused wave | add the explain-refusal job to the pipeline by hand | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
+## See every run as a trace
+
+Every plan, apply and drift run sends one OpenTelemetry trace over OTLP to your collector, with the pipeline's metrics beside it.
+
+<Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, wave 2, the root span for envs/dev/orders, the tofu init and plan spans under it, and OpenTofu's own spans inside them" />
+
+| The trace shows | Page |
+|---|---|
+| The stage, then a span per wave and per root, with digests, change counts and status | [Send traces and metrics](/terragucci/guides/send-traces-and-metrics/) |
+| The binary's own spans inside each root: OpenTofu's resources, and with choudoufu its provider calls and state lock waits | [Traces and metrics](/terragucci/reference/observability/#spans-from-the-binary) |
+| Metrics and the Grafana dashboards `init` writes with `dashboards: true` | [The metrics](/terragucci/reference/observability/#the-metrics) |
+
+## The lifecycle around your roots
+
+`init` writes the pipeline that runs these stages, in your forge's own format, so you write no pipeline yourself. [How terragucci works](/terragucci/concepts/how-it-works/).
+
+<Lifecycle />
+
+## Waves and approvals
+
+The change goes out a few roots at a time, the [canary](/terragucci/concepts/glossary/#canary) roots first. By default a wave that destroys or replaces something waits for an approval. That approval covers exactly the plans it was shown.
+
+<Waves />
+
+The report lists each wave with the digest of its plans and links the approval record that let it go out. A pinned module rolls out the same way: one pull request per wave, across as many repos as use it. [How waves and approvals work](/terragucci/concepts/waves-and-approvals/).
+
+## Security
+
+| Guard | What it means |
+|---|---|
+| Plan and apply use separate roles | `oidc` takes one identity for plan and one for apply, and terragucci rejects the same role for both |
+| The plan job cannot apply | it runs the pull request's code with the read-only plan role and never gets the apply role; under `approval: sealed` an approval also needs a signer's key, which no job holds |
+| A changed plan is refused | a gated wave whose plans moved after the approval applies nothing and names both digests |
+
+[The threat model](/terragucci/reference/threat-model/) lists what each job can reach on each forge.
+
+## Works with
+
+<Runtimes />
+
+terragucci reads your roots and runs your binary. Code, state backend and provider pins stay as you have them.
+
+<Validated />
 
 ## Start from what you want
 
 <CardGrid>
 <LinkCard title="See a plan note in about 10 minutes" description="A 15-root example on your laptop, with a local forge and an AWS stand-in. No cloud account." href="/terragucci/tutorial/" />
 <LinkCard title="Add terragucci to my repo" description="One page for GitHub, GitLab and Forgejo: install, run init, and read the plan note on your next pull request." href="/terragucci/guides/add-to-a-repo/" />
-<LinkCard title="Hand it to my agent" description="Optional. A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies, approves or merges." href="/terragucci/getting-started/agents/" />
 <LinkCard title="Switching from Atlantis or OpenTaco" description="The commands and settings you use now, and the terragucci key or command for each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
 <LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
 <LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
 </CardGrid>
 
-## The lifecycle around your roots
-
-[chant](/terragucci/concepts/glossary/#chant) stages, rendered for your forge, run the whole lifecycle of a root, and you write no pipeline. [How terragucci works](/terragucci/concepts/how-it-works/).
-
-<Lifecycle />
-
-## One note for two hundred plans
-
-One pull request note groups roots taking the same change and names every destroy and replacement.
-
-<PlanNote />
-
-[The full report](/terragucci/reference/report/) opens on destroys and outliers, links every root's plan, and comes as JSON too.
-
-## Rollouts in waves
-
-The change goes out a few roots at a time, the [canary](/terragucci/concepts/glossary/#canary) roots first. By default a wave that destroys or replaces something waits for an approval, and that approval covers exactly the plans it was given.
-
-<Waves />
-
-The report lists each wave with its [set digest](/terragucci/concepts/glossary/#set-digest) and links the approval record that let it go out.
-
-A pinned module rolls out the same way: one pull request per wave, across as many repos as use it.
-
-## Runs where you already work
-
-<Runtimes />
-
-## Keep what you have
-
-terragucci reads your roots and runs your binary. It adds the steps around them and changes nothing inside them.
-
-<KeepYours />
-
-<Validated />
-
 ## More with choudoufu
 
-Set `binary: choudoufu` in `terragucci.yml` and the stages gain these. [The glossary](/terragucci/concepts/glossary/#choudoufu) says what choudoufu is.
+Set `binary: choudoufu` in `terragucci.yml` and the stages gain these. [The glossary](/terragucci/concepts/glossary/#choudoufu) says what choudoufu is. It keeps no state file: each resource carries a tag, and the next plan reads those tags back ([how](/terragucci/guides/use-a-binary/#choudoufu)).
 
 | You get | Where you see it |
 |---|---|
 | A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
-| No state file to host or lose: each resource carries a tag the next plan reads back | [your cloud's own tags](/terragucci/guides/use-a-binary/#choudoufu) |
+| No state file to host or lose | [your cloud's own tags](/terragucci/guides/use-a-binary/#choudoufu) |
 | How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
 | Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
 | Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |

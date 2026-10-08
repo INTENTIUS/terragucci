@@ -1,51 +1,91 @@
 ---
-// Where the stages run: the three forges.
-const forges = [
-	{ name: 'GitHub', how: 'GitHub Actions, with the plan note as a pull request comment.' },
-	{ name: 'GitLab', how: 'GitLab CI, with the summary as the merge-request note.' },
-	{ name: 'Forgejo', how: 'Forgejo Actions, on your own instance.' },
+// The "Works with" strip: the forges, the object stores, the binaries and the
+// two jobs around them, one compact row each, every name linking its page.
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const rows = [
+	{
+		what: 'Forges',
+		items: [
+			{ name: 'GitHub', href: '/guides/add-to-a-repo/#per-forge' },
+			{ name: 'GitLab', href: '/guides/add-to-a-repo/#per-forge' },
+			{ name: 'Forgejo', href: '/guides/add-to-a-repo/#per-forge' },
+		],
+	},
+	{
+		what: 'Buckets',
+		items: [
+			{ name: 'S3', href: '/guides/keep-reports-in-a-bucket/' },
+			{ name: 'GCS', href: '/guides/keep-reports-in-a-bucket/' },
+			{ name: 'Azure Blob', href: '/guides/keep-reports-in-a-bucket/' },
+			{ name: 'OIDC, no stored keys', href: '/reference/pipeline/#credentials' },
+		],
+	},
+	{
+		what: 'Binaries',
+		items: [
+			{ name: 'Terraform', href: '/guides/use-a-binary/' },
+			{ name: 'OpenTofu', href: '/guides/use-a-binary/' },
+			{ name: 'Terragrunt', href: '/guides/use-terragrunt/' },
+			{ name: 'choudoufu', href: '/guides/use-a-binary/#choudoufu' },
+		],
+	},
+	{
+		what: 'Also',
+		items: [
+			{ name: 'Drift checks', href: '/guides/turn-on-drift-checks/' },
+			{ name: 'Module publishing', href: '/guides/publish-modules/' },
+			{ name: 'Pinned rollouts', href: '/guides/roll-out-a-module-version/' },
+		],
+	},
 ];
 ---
-<div class="tg-runtimes not-content">
-	<ul class="forges">
-		{forges.map((f) => (
-			<li>
-				<span class="name">{f.name}</span>
-				<p>{f.how}</p>
-			</li>
-		))}
-	</ul>
-</div>
+<dl class="tg-works not-content">
+	{rows.map((r) => (
+		<div>
+			<dt>{r.what}</dt>
+			<dd>
+				{r.items.map((i) => <a href={`${base}${i.href}`}>{i.name}</a>)}
+			</dd>
+		</div>
+	))}
+</dl>
 
 <style>
-	.tg-runtimes {
+	.tg-works {
+		margin: 1rem 0 0;
 		display: grid;
-		gap: 2rem;
-	}
-	.forges {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
-		gap: 0;
 		border-top: 1px solid var(--tg-rule);
 	}
-	.forges li {
-		margin: 0;
-		padding: 1rem 1.25rem 1rem 0;
+	.tg-works div {
+		display: grid;
+		grid-template-columns: 7rem 1fr;
+		gap: 1rem;
+		align-items: baseline;
+		padding: 0.6rem 0;
 		border-bottom: 1px solid var(--tg-rule);
 		min-width: 0;
 	}
-	.name {
-		font-family: var(--tg-display);
-		font-size: 1.3rem;
-		font-weight: 600;
-		color: var(--sl-color-white);
+	dt {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
 	}
-	.forges p {
-		margin: 0.3rem 0 0;
-		color: var(--sl-color-gray-2);
-		font-size: 0.95rem;
+	dd {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem 1.25rem;
+	}
+	a {
+		color: var(--sl-color-accent-high);
+		font-weight: 500;
+	}
+	@media (max-width: 30rem) {
+		.tg-works div {
+			grid-template-columns: 1fr;
+			gap: 0.25rem;
+		}
 	}
 </style>

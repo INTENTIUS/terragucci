@@ -1,28 +1,30 @@
 # terragucci
 
-CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. CI does this: every job runs in your forge's CI and lands in your git and your bucket. No account, no sign-in, no platform. Every stage run is one OpenTelemetry trace, a span per root with the binary's own spans inside, sent over OTLP to your collector.
+Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.
+
+CI does this: each job runs in your forge's CI and lands in your git and your bucket, with no account to create and no platform to sign in to.
 
 | You get | How |
 |---|---|
-| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#what-runs-where) | every job runs in your forge's CI and writes to your repo and your bucket |
-| [GitHub, GitLab or Forgejo](https://intentius.io/terragucci/guides/add-to-a-repo/#per-forge) | one init writes the pipeline in your forge's own format |
-| [Object storage on AWS, GCP or Azure](https://intentius.io/terragucci/reference/pipeline/#credentials) | state, plan reports and the estate page stay in your S3, GCS or Azure Blob storage; with `oidc` set, CI reaches them with no stored keys |
-| [Tracing and metrics](https://intentius.io/terragucci/guides/send-traces-and-metrics/) | one trace per stage run and the pipeline's numbers as metrics, over OTLP to your collector |
-| [Rich lifecycles](https://intentius.io/terragucci/concepts/how-it-works/) | check on every push, plan on the pull request, apply on merge (or before it), and drift on a schedule |
-| [Gated waves](https://intentius.io/terragucci/concepts/waves-and-approvals/) | a wave that destroys or replaces waits for an approval bound to its plans |
-| [Aggregated plan output](https://intentius.io/terragucci/concepts/why-plans-are-grouped/) | one note groups the roots taking the same change and names every destroy |
-| [Module publishing and pinned rollouts](https://intentius.io/terragucci/guides/publish-modules/) | version modules on merge, then move each pin one wave of pull requests at a time |
+| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#what-runs-where) | Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket. |
+| [Built for many roots](https://intentius.io/terragucci/concepts/why-plans-are-grouped/) | One grouped note for 200 plans. Canary roots apply first, then the rest in [waves](https://intentius.io/terragucci/concepts/waves-and-approvals/). An approval covers exactly the plans it was shown, and a plan that changed after it is refused. |
+| [A trace of every run](https://intentius.io/terragucci/guides/send-traces-and-metrics/) | One OpenTelemetry trace per stage run, with a span per root and the binary's own spans inside it (lock waits and slow provider calls with choudoufu). Metrics and dashboards come with it. |
 
-[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the two opt-in agent features run a coding agent.
+Works with:
 
-It runs whichever binary you already use; [Choose Terraform, OpenTofu, Terragrunt or choudoufu](https://intentius.io/terragucci/guides/use-a-binary/) compares them.
+- Forges: [GitHub, GitLab and Forgejo](https://intentius.io/terragucci/guides/add-to-a-repo/#per-forge)
+- Buckets: [S3, GCS and Azure Blob](https://intentius.io/terragucci/guides/keep-reports-in-a-bucket/), reached over [OIDC with no stored keys](https://intentius.io/terragucci/reference/pipeline/#credentials)
+- Binaries: [Terraform, OpenTofu](https://intentius.io/terragucci/guides/use-a-binary/), [Terragrunt](https://intentius.io/terragucci/guides/use-terragrunt/) and [choudoufu](https://intentius.io/terragucci/guides/use-a-binary/#choudoufu)
+- Also: [drift checks](https://intentius.io/terragucci/guides/turn-on-drift-checks/), [module publishing](https://intentius.io/terragucci/guides/publish-modules/) and [pinned rollouts](https://intentius.io/terragucci/guides/roll-out-a-module-version/)
+
+[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the two opt-in agent features run a coding agent. Every pipeline feature on the site is proven by a recorded claim that fails when broken ([validation](https://intentius.io/terragucci/reference/validation/)).
 
 ```bash
 npm i -D @intentius/terragucci
 npx terragucci init
 ```
 
-The site is [intentius.io/terragucci](https://intentius.io/terragucci/), and [How terragucci works](https://intentius.io/terragucci/concepts/how-it-works/) follows one change from pull request to drift. Its [validation page](https://intentius.io/terragucci/reference/validation/) lists every check the generated pipelines pass.
+The site is [intentius.io/terragucci](https://intentius.io/terragucci/), and [How terragucci works](https://intentius.io/terragucci/concepts/how-it-works/) follows one change through its whole lifecycle.
 
 ## For agents
 
@@ -44,4 +46,4 @@ Never apply, approve (a pull request review, `terragucci approve`, `chant approv
 
 ## Licence
 
-The licence is Apache 2.0, in [LICENSE](./LICENSE).
+terragucci is Apache-2.0 ([LICENSE](./LICENSE)) and there is nothing to buy.
