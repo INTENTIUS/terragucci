@@ -45,7 +45,8 @@ const token = { TERRAGUCCI_SANDBOX_TOKEN: "${{ secrets.TERRAGUCCI_SANDBOX_TOKEN 
 
 export const sandbox = new Job({
   "runs-on": "ubuntu-latest",
-  timeoutMinutes: 60,
+  // Each phase of prove is a half hour or more of real GitHub runs.
+  timeoutMinutes: 180,
   // One sandbox, so one run drives it at a time.
   concurrency: { group: "terragucci-sandbox", "cancel-in-progress": false },
   env: { TERRAGUCCI_SANDBOX_DIR: SANDBOX_DIR },
