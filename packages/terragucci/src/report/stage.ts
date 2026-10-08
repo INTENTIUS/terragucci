@@ -14,7 +14,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
+import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { parseTerragruntReport } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
@@ -23,8 +23,9 @@ import { describeTerragruntAffectedReason, findTerragruntAffected } from "@inten
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../../package.json";
-import { applyWaves, lockTimeoutArgs } from "../apply";
-import { declaredGates } from "../approval";
+import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
+import { approvalRule, declaredGates } from "../approval";
+import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terragrunt";
@@ -962,6 +963,45 @@ async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInp
   };
 }
 
+/**
+ * The overrides that stand for the roots the policy denied, when
+ * `policy.override` in the config at base names who may write one (the
+ * governing policy key names some, and approvalRule reads the list). The root
+ * still fails the plan: the override lets `tf-apply` apply it, and the note
+ * and the report say so. Nothing is recorded here; the wave records the
+ * denial an override answers. Anything that cannot be read leaves the roots
+ * as they are.
+ */
+export async function planOverrides(repo: string, options: StageOptions, env: NodeJS.ProcessEnv, inputs: RootInput[], policy: ReportPolicy, log: (line: string) => void): Promise<RootInput[]> {
+  const denied = inputs.filter((i) => i.plan !== undefined && i.policy?.result === "denied");
+  if (denied.length === 0 || options.project) return inputs;
+  const base = options.base ?? baseRef(env);
+  const configPath = options.config ?? findConfig(repo);
+  try {
+    const rule = await approvalRule(repo, { ...(base ? { at: base } : {}), ...(configPath ? { config: configPath } : {}) });
+    if (rule.overriders.length === 0) return inputs;
+    policy.overriders = rule.overriders;
+    const ledger = readLedger(repo, OVERRIDE_LEDGER);
+    const now = new Date().toISOString();
+    const overridden: string[] = [];
+    const out = inputs.map((i) => {
+      if (!denied.includes(i)) return i;
+      const planDigest = terraformChangeSetPart({ member: i.path, plan: i.plan, planner: i.planner ?? "terraform" }).member.planDigest;
+      if (!planDigest) return i;
+      const decision = decideOverride(ledger, rule, i.path, planDigest, i.policy!.rules ?? [], now);
+      if (decision.status !== "overridden") return i;
+      overridden.push(i.path);
+      log(`${i.path}: the policy denial is overridden by ${decision.override.by} at ${decision.override.at}, so tf-apply applies this plan; the plan still fails here`);
+      return { ...i, policy: { ...i.policy!, override: decision.override } };
+    });
+    if (overridden.length > 0) policy.overridden = overridden.sort();
+    return out;
+  } catch (e) {
+    log(`policy override: ${(e as Error).message}, so no override is shown`);
+    return inputs;
+  }
+}
+
 /** Where the policy key is read: the config file and the project the run reads. */
 function policyTrust(repo: string, options: StageOptions): TrustedOptions {
   const configPath = options.config ?? findConfig(repo);
@@ -986,6 +1026,7 @@ async function finish(
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
     const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
     ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run));
+    if (governing.policy.override?.length) inputs = await planOverrides(repo, options, env, inputs, policy, log);
   }
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },

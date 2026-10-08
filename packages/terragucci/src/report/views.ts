@@ -9,6 +9,7 @@ import {
 } from "@intentius/chant/plan-summary";
 import { groupAnchor, rootAnchor } from "./build";
 import { approveCommand, noteMarker } from "./marker";
+import { overrideCommand } from "../override";
 import { actionWord, type Report, type ReportNamed } from "./schema";
 import { duration } from "./spans";
 
@@ -140,6 +141,19 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       blocks.push({ group: false, units: 0, text: `- ${to(code(what), rootAnchor(n.root))} (${actionWord(run.stage, n.action)}${forced})${reason}\n` });
     }
     blocks.push({ group: false, units: 0, text: "\n" });
+  }
+  // A denial a listed approver may override: the override that stands, or the command that writes one.
+  const overridable = report.policy?.overriders?.length ? report.roots.filter((r) => r.policy?.result === "denied") : report.roots.filter((r) => r.policy?.override);
+  if (overridable.length > 0) {
+    let t = `**Policy overrides (${report.roots.filter((r) => r.policy?.override).length} of ${overridable.length} denied):**\n\n`;
+    for (const r of overridable) {
+      const o = r.policy!.override;
+      const rules = (o?.rules ?? r.policy!.rules ?? []).map(code).join(", ") || "its rules";
+      t += o
+        ? `- ${to(code(r.path), rootAnchor(r.path))}: ${rules} overridden by ${o.by} at ${o.at}${o.sealed ? ", sealed" : ""}, for plan ${code(o.plan_digest)}: ${o.reason.split(/\s+/).join(" ")}${run.stage === "tf-plan" ? ". tf-apply applies this plan; this run still fails it" : ""}\n`
+        : `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. ${report.policy!.overriders!.join(", ")} may override it once a tf-apply wave records the denial: ${code(overrideCommand(r.path, r.policy!.rules ?? [], options.sealed))}\n`;
+    }
+    blocks.push({ group: false, units: 0, text: t + "\n" });
   }
   const warned = report.roots.filter((r) => r.policy?.warnings.length);
   if (warned.length > 0) {

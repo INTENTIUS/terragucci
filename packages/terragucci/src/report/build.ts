@@ -216,6 +216,7 @@ export function buildReport(input: BuildInput): Report {
     const highlights: Highlight[] = changes.filter((c) => c.why !== undefined).map((c) => ({ address: c.address, type: c.type, action: c.action, why: c.why! }));
     const why: string[] = [];
     if (m.status === "failed") why.push(policyRefused(src) ? "refused by policy" : "refused to plan");
+    if (src.policy?.override) why.push(`policy overridden by ${src.policy.override.by}`);
     if (src.policy?.warnings.length) why.push(`${src.policy.warnings.length} policy warning${src.policy.warnings.length === 1 ? "" : "s"}`);
     if (inputRun.stage === "tf-drift" && changes.length > 0) why.push("drifted");
     if (outliers.has(m.member)) why.push("outlier: its change matches no other root's");

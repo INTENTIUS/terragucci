@@ -198,7 +198,10 @@ approve-command|the plan note of a pull request gives the chant approve command 
 tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
 tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
 plan-lock|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
-plan-lock-release|with locks: plan the merge of a pull request releases the lock its first plan took|'
+plan-lock-release|with locks: plan the merge of a pull request releases the lock its first plan took|
+policy-override|a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest|
+policy-override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
+policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -6203,6 +6206,151 @@ claim_approve_command() {
   return $rc
 }
 
+# ── policy overrides ──────────────────────────────────────────────────────
+# stack/fixtures/policy-wave with a bare repo for origin, the policy key
+# listing smoke-approver under override, and gate: never, so only the policy
+# holds the wave. The first run is denied (exit 1) and records the denial on
+# chant/lifecycle; terragucci override, run on the host in a clone with chant
+# from node_modules, writes the override as chant approve does.
+
+policy_override_repo() { # work [override list] -> $work/wave committed, $work/origin.git
+  local work="$1" listed="${2-}"
+  cp -R "$HERE/fixtures/policy-wave/." "$work/wave/"
+  printf 'policy:\n  engine: conftest\n  path: policy\n' >> "$work/wave/terragucci.yml"
+  [ -n "$listed" ] && printf '  override: [%s]\n' "$listed" >> "$work/wave/terragucci.yml"
+  git init -q --bare "$work/origin.git"
+  git -C "$work/wave" init -q -b main
+  git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke policy override"
+  git -C "$work/wave" push -q "$work/origin.git" main
+  git -C "$work/wave" remote add origin /origin.git
+}
+
+policy_override_wave() { # work image -> the exit code of one tf-apply wave 1
+  local work="$1" image="$2" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0
+  run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >"$work/run.log" 2>&1 || code=$?
+  cat "$work/run.log" >&2
+  clean_mounted "$work/wave" "$image"
+  echo "$code"
+}
+
+policy_override_write() { # work actor -> runs terragucci override for app with the rules the denial recorded
+  local work="$1" actor="$2"
+  local clone="$work/approver" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rules out
+  [ -d "$clone" ] || git clone -q "$work/origin.git" "$clone" || return 1
+  git -C "$clone" config user.name "$actor"
+  git -C "$clone" config user.email "$actor@terragucci.local"
+  git -C "$clone" fetch -q origin chant/lifecycle || return 1
+  rules="$(git -C "$clone" show origin/chant/lifecycle:_gates/policy-override.jsonl | jq -rs '[.[] | select(.kind == "pending" and .gate == "app")] | last | .rules // [] | join(",")')"
+  [ -n "$rules" ] || { echo "the denial of app names no rule" >&2; return 1; }
+  echo "[smoke policy-override] the denial names $rules" >&2
+  out="$(cd "$clone" && PATH="$(dirname "$CHANT"):$PATH" node "$bundle" override app --rule "$rules" --reason "smoke: the probe goes out" --actor "$actor" 2>&1)" || { echo "terragucci override failed: $out" >&2; return 1; }
+  echo "[smoke policy-override] terragucci override: $(tr '\n' ' ' <<<"$out")" >&2
+}
+
+policy_override_applied() { # work -> 0 when app has state with a resource
+  [ -f "$1/wave/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$1/wave/app/terraform.tfstate" >/dev/null 2>&1
+}
+
+claim_policy_override() {
+  # A denied wave records the denial; smoke-approver, whom policy.override at
+  # base lists, overrides it with terragucci override; the next run applies
+  # app, and its report names the override: who, the rules, the reason and
+  # the plan digest.
+  # BREAK: the config lists nobody under policy.override, so the wave records
+  # no denial and nothing can be overridden.
+  log() { echo "[smoke policy-override] $*" >&2; }
+  local work image code rc=0 r q listed=smoke-approver
+  [ -n "${BREAK:-}" ] && listed=""
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/wave"
+  policy_override_repo "$work" "$listed"
+  code="$(policy_override_wave "$work" "$image")"
+  [ "$code" = 1 ] || { log "the first run exited $code, not 1: the policy did not deny the wave"; rc=1; }
+  if [ $rc = 0 ]; then policy_override_write "$work" smoke-approver || rc=1; fi
+  if [ $rc = 0 ]; then
+    code="$(policy_override_wave "$work" "$image")"
+    [ "$code" = 0 ] || { log "the run after the override exited $code, not 0"; rc=1; }
+    policy_override_applied "$work" || { log "app has no state: the override did not let it apply"; rc=1; }
+    r="$work/wave/terragucci-report/report.json"
+    q='.roots[] | select(.path == "app") | .policy'
+    jq -e "$q | .result == \"denied\" and .override.by == \"smoke-approver\" and .override.reason == \"smoke: the probe goes out\" and (.override.rules | length > 0) and (.override.plan_digest | test(\"sha256:\"))" "$r" >/dev/null \
+      || { log "the report does not name the override under app: $(jq -c "$q" "$r" 2>/dev/null)"; rc=1; }
+    jq -e '.policy.overridden == ["app"]' "$r" >/dev/null || { log "the report policy does not list app as overridden"; rc=1; }
+    grep -q "overridden by smoke-approver" "$work/wave/terragucci-report/note.md" || { log "the wave note does not name the override"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the denied wave applied once smoke-approver overrode its plan, and the report names who, the rules, the reason and the digest"
+  return $rc
+}
+
+claim_policy_override_moved() {
+  # smoke-approver overrides the denial of one plan; then a commit changes app,
+  # so the wave plans another digest. The override counts for nothing: the
+  # wave applies nothing, exits 4 and says the override names an earlier plan.
+  # BREAK: no commit changes app, so the override still names its plan and
+  # the wave applies.
+  log() { echo "[smoke policy-override-moved] $*" >&2; }
+  local work image code rc=0
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/wave"
+  policy_override_repo "$work" smoke-approver
+  code="$(policy_override_wave "$work" "$image")"
+  [ "$code" = 1 ] || { log "the first run exited $code, not 1: the policy did not deny the wave"; rc=1; }
+  if [ $rc = 0 ]; then policy_override_write "$work" smoke-approver || rc=1; fi
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "probe" {\n  input = "policy, moved"\n}\n' > "$work/wave/app/main.tf"
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "smoke: app moves after its override" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    code="$(policy_override_wave "$work" "$image")"
+    [ "$code" = 4 ] || { log "the run after the plan moved exited $code, not 4"; rc=1; }
+    policy_override_applied "$work" && { log "app has state: an override of an earlier plan let it apply"; rc=1; }
+    grep -q "overrode an earlier plan or other rules" "$work/run.log" || { log "the wave does not say the override names an earlier plan"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "an override of the earlier plan applied nothing once app planned another digest, and the wave exited 4"
+  return $rc
+}
+
+claim_policy_override_unlisted() {
+  # smoke-stranger, whom policy.override at base does not list, overrides the
+  # denial with terragucci override. The override counts for nothing: the
+  # wave exits 1, applies nothing, and says smoke-stranger is not listed.
+  # BREAK: smoke-approver, who is listed, writes the override, so the wave
+  # applies.
+  log() { echo "[smoke policy-override-unlisted] $*" >&2; }
+  local work image code rc=0 actor=smoke-stranger
+  [ -n "${BREAK:-}" ] && actor=smoke-approver
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/wave"
+  policy_override_repo "$work" smoke-approver
+  code="$(policy_override_wave "$work" "$image")"
+  [ "$code" = 1 ] || { log "the first run exited $code, not 1: the policy did not deny the wave"; rc=1; }
+  if [ $rc = 0 ]; then policy_override_write "$work" "$actor" || rc=1; fi
+  if [ $rc = 0 ]; then
+    code="$(policy_override_wave "$work" "$image")"
+    [ "$code" = 1 ] || { log "the run after an override by $actor exited $code, not 1"; rc=1; }
+    policy_override_applied "$work" && { log "app has state: an override by $actor let it apply"; rc=1; }
+    grep -q "$actor is not listed under policy.override at base" "$work/run.log" || { log "the wave does not say $actor is not listed"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "an override by smoke-stranger, whom policy.override at base does not list, applied nothing"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -6349,6 +6497,9 @@ tg-pr-apply          runner self! weight=300
 tg-pr-apply-lock     runner self! weight=300
 plan-lock            runner self! weight=250
 plan-lock-release    runner self! weight=200
+policy-override      weight=150
+policy-override-moved     weight=150
+policy-override-unlisted  weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

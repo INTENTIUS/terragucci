@@ -114,6 +114,8 @@ export interface IndexEntry {
   waiting_since?: string;
   /** When a tf-apply wave finished applying: its gate let it through and no root failed. */
   applied?: string;
+  /** Roots the policy denied that a recorded override let through. Absent when none. */
+  overridden?: number;
   /** Destroys and replacements, as `root: address`: the first INDEX_DESTROYS of them. */
   destroys: string[];
   /** How many there are, when there are more than the row lists. */
@@ -146,6 +148,7 @@ export function indexEntry(report: Report, path: string): IndexEntry {
   const failed = report.roots.filter((r) => r.status === "failed" && !r.terragrunt?.provisional).length;
   const wave = report.run.stage === "tf-apply" ? report.waves[0] : undefined;
   const approval = wave && wave.approval !== "not-requested" ? wave.approval : undefined;
+  const overridden = report.roots.filter((r) => r.policy?.override).length;
   return {
     project: report.run.project,
     commit: report.run.commit,
@@ -162,6 +165,7 @@ export function indexEntry(report: Report, path: string): IndexEntry {
     ...(approval ? { approval } : {}),
     ...(approval === "waiting" ? { waiting_since: wave!.waiting_since ?? report.run.finished } : {}),
     ...(approval && approval !== "waiting" && failed === 0 ? { applied: report.run.finished } : {}),
+    ...(overridden > 0 ? { overridden } : {}),
     destroys: destroys.slice(0, INDEX_DESTROYS),
     ...(destroys.length > INDEX_DESTROYS ? { destroys_total: destroys.length } : {}),
     ...(report.run.commit_url ? { commit_url: report.run.commit_url } : {}),

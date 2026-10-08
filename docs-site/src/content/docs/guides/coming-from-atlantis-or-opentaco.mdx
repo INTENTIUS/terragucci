@@ -34,7 +34,7 @@ Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merg
 | Unlock | `atlantis unlock` | `digger unlock` | `/terragucci unlock`, with `apply.when: pull-request` or `locks: plan` |
 | Import | `atlantis import <address> <id>` | none | refused; [an `import` block](#left-out-on-purpose) in the change |
 | Remove from state | `atlantis state rm <address>` | none | refused; [a `removed` block](#left-out-on-purpose) in the change |
-| Pass a failed policy | `atlantis approve_policies` | none | refused; [no override](/terragucci/reference/policy/#no-override) |
+| Pass a failed policy | `atlantis approve_policies` | none | refused from a comment; a person `policy.override` lists runs [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) for one root's plan |
 | Approve | the forge's review | the forge's review | [`terragucci approve`](/terragucci/reference/cli/#approve) (it runs [`chant approve`](/terragucci/concepts/glossary/#chant)) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes) |
 
 A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply saying a comment never runs it. [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) lists what each command accepts.
@@ -75,7 +75,7 @@ A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-
 | Not here | terragucci's rule | Do this instead |
 |---|---|---|
 | `import` or `state rm` from a comment | every state change comes from a reviewed commit, through a plan and the gate | an `import` or `removed` block in the change: it plans, shows in the plan note and waits at the gate like any other change |
-| Passing a failed policy | a policy decides from the base branch; a change to it goes through review | change the code, or change the policy in a reviewed pull request |
+| Passing a failed policy from a comment | a policy decides from the base branch; an override names one root's plan and its rules, and only a person the base lists can write one | change the code, change the policy in a reviewed pull request, or [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) by a listed approver |
 | Approving from a comment | an approval binds the wave's set digest, which a comment does not carry | `terragucci approve` from a checkout, or a review under `approval: pr-review`; the approval is signed only under `approval: sealed` |
 | Applying one root of a wave | an approval covers the wave's plans as one set | split the change, or `waves.canary` to send roots out first |
 | Flags at run time | what an approval covers is fixed by the commit and the config | the change itself, or a key in `terragucci.yml` |

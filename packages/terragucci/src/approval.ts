@@ -36,6 +36,8 @@ export interface ApprovalMode {
 export interface ApprovalRule extends ApprovalMode, SealRule {
   /** The commit the rule was read from. */
   base: string;
+  /** Who may override a policy denial: `policy.override` in the config at base. Empty: nobody. */
+  overriders: string[];
 }
 
 /** Whether a value is one of APPROVALS. */
@@ -88,8 +90,10 @@ export async function approvalRule(repo: string, options: { at?: string; config?
   const seal = sealRule(repo, base);
   const read = await configAtBase(repo, base, options.config ? { config: options.config } : {});
   if ("error" in read) throw new ConfigError(`approval is read from the config at base, and it could not be read (${read.error}), so the gate cannot be decided`);
-  const key = (read.config as TerragucciConfig).projects ? undefined : read.config.approval;
-  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base };
+  const own = !(read.config as TerragucciConfig).projects;
+  const key = own ? read.config.approval : undefined;
+  const overriders = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o) => typeof o === "string") : [];
+  return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders };
 }
 
 /** The mode a repo's checkout holds, as `config check` reports it. */
