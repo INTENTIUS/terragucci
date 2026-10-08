@@ -448,6 +448,11 @@ fi
 api -o /dev/null -H 'content-type: application/json' -X PATCH \
   -d '{"has_actions":true}' "$FORGEJO_URL/api/v1/repos/$ADMIN_USER/$REPO"
 
+# The generated pipelines' jobs run in terragucci's images, named by tag
+# alone once the claims drop init's digest pins (validate-generated.sh), so
+# the runner takes this tree's build.
+ensure_ci_image
+
 write_env forgejo \
   "TERRAGUCCI_FORGEJO_URL=$FORGEJO_URL" \
   "TERRAGUCCI_FORGEJO_TOKEN=$TOKEN" \

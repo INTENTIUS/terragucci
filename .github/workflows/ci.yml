@@ -7,13 +7,14 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: '${{ github.ref != ''refs/heads/main'' }}'
 
 jobs:
   check:
@@ -33,6 +34,13 @@ jobs:
           tar -xzf /tmp/just.tar.gz -C /tmp just
           sudo mv /tmp/just /usr/local/bin/just
           just --version
+      - name: Install OpenTofu
+        run: |
+          arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+          curl -fsSL -o /tmp/tofu.tar.gz https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_$arch.tar.gz
+          tar -xzf /tmp/tofu.tar.gz -C /tmp tofu
+          sudo mv /tmp/tofu /usr/local/bin/tofu
+          tofu version
       - name: Install
         run: npm ci
       - name: Check

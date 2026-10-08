@@ -198,7 +198,7 @@ stack-down:
     stack/down.sh
 
 [doc("Run one claim against a running profile. BREAK=1 breaks the property and must fail.")]
-validate forge="forgejo" claim="apply":
+validate forge="forgejo" claim="apply": build-cli
     #!/usr/bin/env bash
     set -euo pipefail
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
@@ -213,7 +213,7 @@ validate forge="forgejo" claim="apply":
 # stack/example-terragrunt.sh. stack/smoke.sh holds one claim per feature.
 
 [doc("Run every claim of one forge plain and under BREAK=1 on a running profile; fails when one is not as expected.")]
-validate-forge forge:
+validate-forge forge: build-cli
     stack/validation.sh run {{forge}}
 
 [doc("Boot each forge in turn, run its claims plain and broken, and write the record the validation page shows.")]

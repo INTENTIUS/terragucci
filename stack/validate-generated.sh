@@ -82,8 +82,12 @@
 #              by mr-apply, which reads the head from GitLab, and nothing
 #              applies.
 #
-# The images are the ones the generated pipeline pins by digest; the runner
-# (gitlab-runner, or act on the host) pulls each the first time.
+# init pins the images by the digest of the published release. `validation.sh
+# run` (the CI gate) tests this commit, so push_dir and the github forge_run
+# drop the digests and the runner takes the images bootstrap built from this
+# tree under the same tag. `validation.sh record` sets TG_KEEP_DIGESTS=1: the
+# record a release publishes runs the pinned, published images, which the
+# runner (gitlab-runner, or act on the host) pulls the first time.
 #
 # BREAK=1 breaks the property each claim is about: a check claim puts its bad
 # file in the clean push; an apply claim drops the apply job so the run stays
@@ -110,7 +114,10 @@ CLAIM="${2:?claim}"
 BREAK="${BREAK:-}"
 TIMEOUT="${TERRAGUCCI_VALIDATE_TIMEOUT:-900}"
 FIXTURE="$HERE/fixtures/s3-bucket"
-TERRAGUCCI="$HERE/../node_modules/.bin/terragucci"
+# The bundle itself, not node_modules/.bin: npm ci links a workspace bin only
+# when its target exists, and on a fresh clone dist/ is built after the
+# install. `just validate` and `just validate-forge` build it first.
+TERRAGUCCI="$HERE/../packages/terragucci/dist/terragucci.mjs"
 BUCKET="terragucci-validate"
 
 log()  { echo "[validate $FORGE $CLAIM] $*"; }
@@ -136,6 +143,14 @@ forge_load
 
 ci_image() { (cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }'); }
 
+# The pipeline files under DIR name terragucci's images by tag alone.
+unpin_images() { # dir
+  local f
+  for f in "$1"/.forgejo/workflows/*.yml "$1"/.github/workflows/*.yml "$1"/.gitlab/*.yml "$1"/.gitlab-ci.yml; do
+    if [ -f "$f" ]; then perl -pi -e 's#(ghcr\.io/intentius/terragucci-[a-z]+:[^@\s]+)\@sha256:[0-9a-f]{64}#$1#g' "$f"; fi
+  done
+}
+
 # One commit of DIR, force-pushed. The message carries a timestamp, so every
 # push has a new sha.
 push_dir() { # dir remote branch message
@@ -143,6 +158,7 @@ push_dir() { # dir remote branch message
     cd "$1"
     [ -d .git ] || git init -q -b "$3"
     git checkout -q -B "$3"
+    [ -n "${TG_KEEP_DIGESTS:-}" ] || unpin_images .
     git add -A
     git -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q --allow-empty -m "$4"
     local out
@@ -893,7 +909,9 @@ provider "aws" {
 binary: tofu
 token_env: $FORGE_TOKEN_ENV"
     (cd "$WORK/in-line" && git init -q -b main && echo "$DEFAULTS" > terragucci.yml && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
-    forge_push "$WORK/in-line" in-line main "Two roots, pipeline in line" >/dev/null
+    # Pushed as init writes it, digests and all, so reconcile finds it in line;
+    # the github forge_run drops the digests from the clone it runs.
+    TG_KEEP_DIGESTS=1 forge_push "$WORK/in-line" in-line main "Two roots, pipeline in line" >/dev/null
     forge_push "$WORK/two-roots" two-roots main "Two roots, no pipeline" >/dev/null
 
     cat > "$WORK/terragucci.yml" <<YML
