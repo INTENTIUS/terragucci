@@ -14,7 +14,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
-`estate.html` and `estate.json` at the top of your reports prefix, rebuilt on a schedule. Nothing is hosted: the page is an object in your bucket, opened by a presigned link the job prints.
+`estate.html` and `estate.json` at the top of your reports prefix, rebuilt on a schedule. Nothing is hosted: the page is an object in your S3 bucket, GCS bucket or Azure Blob container, opened by a link the job prints: presigned on S3, a V4 signed URL on GCS, a user delegation SAS on Azure.
 
 | The page shows | From |
 |---|---|
@@ -30,7 +30,7 @@ The page reads `index.json` files only. It never opens a report, a plan's text o
 
 | You need | Why |
 |---|---|
-| [Reports in a bucket](/terragucci/guides/keep-reports-in-s3/) for every project you want on the page | the page reads each project's report index there |
+| [Reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) for every project you want on the page | the page reads each project's report index there |
 | A repo to run the job in: your [control repo](/terragucci/guides/govern-many-repos/), or any repo whose `terragucci.yml` names the bucket | the job writes the page to that bucket |
 
 ## Steps
@@ -51,8 +51,10 @@ The page reads `index.json` files only. It never opens a report, a plan's text o
    | one central bucket | every project's `reports.bucket` names it, each writing with a `reports.role` of its own |
    | a bucket per account | the project's `reports` in the control repo names its bucket and a `role` that can read it |
 
-2. Give the job an identity. It reads the indexes, writes two objects and signs the link:
+2. Give the job an identity. It reads the indexes, writes two objects and signs the link.
 
+   <Tabs syncKey="cloud">
+     <TabItem label="AWS">
    ```json
    {
      "Version": "2012-10-17",
@@ -62,80 +64,88 @@ The page reads `index.json` files only. It never opens a report, a plan's text o
      ]
    }
    ```
+     </TabItem>
+     <TabItem label="GCP">
+   A service account with `roles/storage.objectUser` on the bucket and `roles/iam.serviceAccountTokenCreator` on itself, named in the `external_account` file that `GOOGLE_APPLICATION_CREDENTIALS` points to. On GitHub, `google-github-actions/auth` with `workload_identity_provider` and `service_account` writes that file.
+     </TabItem>
+     <TabItem label="Azure">
+   A client with Storage Blob Data Contributor on the container and Storage Blob Delegator on the account, in `ARM_TENANT_ID` and `ARM_CLIENT_ID`, with the job's OIDC token (audience `api://AzureADTokenExchange`) written to the file `ARM_OIDC_TOKEN_FILE_PATH` names.
+     </TabItem>
+   </Tabs>
 
-   Credentials are read as for reports: [Keep reports in S3, step 3](/terragucci/guides/keep-reports-in-s3/#3-give-the-job-an-identity-that-writes-only-reports).
+   Credentials are read as for reports: [Keep reports in a bucket, step 3](/terragucci/guides/keep-reports-in-a-bucket/#3-give-the-job-an-identity-that-writes-only-reports).
 
 3. Add the scheduled job.
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
-       `.github/workflows/estate.yml`:
+   `.github/workflows/estate.yml`:
 
-       ```yaml
-       name: estate
-       on:
-         schedule:
-           - cron: "23 * * * *"
-         workflow_dispatch: {}
-       permissions:
-         contents: read
-         id-token: write
-       jobs:
-         estate:
-           runs-on: ubuntu-latest
-           steps:
-             - uses: actions/checkout@v4
-             - uses: actions/setup-node@v4
-               with:
-                 node-version: 24
-             - uses: aws-actions/configure-aws-credentials@v4
-               with:
-                 role-to-assume: arn:aws:iam::123456789012:role/terragucci-estate
-                 aws-region: us-east-1
-             - run: npx --yes @intentius/terragucci estate
-       ```
+   ```yaml
+   name: estate
+   on:
+     schedule:
+       - cron: "23 * * * *"
+     workflow_dispatch: {}
+   permissions:
+     contents: read
+     id-token: write
+   jobs:
+     estate:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - uses: actions/setup-node@v4
+           with:
+             node-version: 24
+         - uses: aws-actions/configure-aws-credentials@v4
+           with:
+             role-to-assume: arn:aws:iam::123456789012:role/terragucci-estate
+             aws-region: us-east-1
+         - run: npx --yes @intentius/terragucci estate
+   ```
      </TabItem>
      <TabItem label="GitLab">
-       A job in `.gitlab-ci.yml`, and a schedule under Build, Pipeline schedules:
+   A job in `.gitlab-ci.yml`, and a schedule under Build, Pipeline schedules:
 
-       ```yaml
-       estate:
-         image: node:24
-         rules:
-           - if: $CI_PIPELINE_SOURCE == "schedule"
-         id_tokens:
-           AWS_TOKEN:
-             aud: sts.amazonaws.com
-         variables:
-           AWS_ROLE_ARN: arn:aws:iam::123456789012:role/terragucci-estate
-           AWS_REGION: us-east-1
-         script:
-           - echo "$AWS_TOKEN" > "$CI_BUILDS_DIR/aws-token"
-           - export AWS_WEB_IDENTITY_TOKEN_FILE="$CI_BUILDS_DIR/aws-token"
-           - npx --yes @intentius/terragucci estate
-       ```
+   ```yaml
+   estate:
+     image: node:24
+     rules:
+       - if: $CI_PIPELINE_SOURCE == "schedule"
+     id_tokens:
+       AWS_TOKEN:
+         aud: sts.amazonaws.com
+     variables:
+       AWS_ROLE_ARN: arn:aws:iam::123456789012:role/terragucci-estate
+       AWS_REGION: us-east-1
+     script:
+       - echo "$AWS_TOKEN" > "$CI_BUILDS_DIR/aws-token"
+       - export AWS_WEB_IDENTITY_TOKEN_FILE="$CI_BUILDS_DIR/aws-token"
+       - npx --yes @intentius/terragucci estate
+   ```
      </TabItem>
      <TabItem label="Forgejo">
-       `.forgejo/workflows/estate.yml`, with `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as repository secrets:
+   `.forgejo/workflows/estate.yml`, with `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as repository secrets:
 
-       ```yaml
-       name: estate
-       on:
-         schedule:
-           - cron: "23 * * * *"
-         workflow_dispatch: {}
-       jobs:
-         estate:
-           runs-on: docker
-           container: node:24
-           steps:
-             - uses: actions/checkout@v4
-             - run: npx --yes @intentius/terragucci estate
-               env:
-                 AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-                 AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-                 AWS_REGION: us-east-1
-       ```
+   ```yaml
+   name: estate
+   on:
+     schedule:
+       - cron: "23 * * * *"
+     workflow_dispatch: {}
+   jobs:
+     estate:
+       runs-on: docker
+       container: node:24
+       steps:
+         - uses: actions/checkout@v4
+         - run: npx --yes @intentius/terragucci estate
+           env:
+             AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+             AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+             AWS_REGION: us-east-1
+   ```
      </TabItem>
    </Tabs>
 
@@ -159,7 +169,7 @@ The page reads `index.json` files only. It never opens a report, a plan's text o
    |---|---|
    | 24 hours | the default |
    | up to 168 hours | `--link-hours` |
-   | shorter | the job's role session, when that ends first; the log prints the real end |
+   | shorter | the job's AWS role session, when that ends first; the log prints the real end |
 
 </Steps>
 

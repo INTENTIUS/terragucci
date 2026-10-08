@@ -7,7 +7,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, mergeScript, movedRoots, planScript, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, mergeScript, movedRoots, planScript, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -536,70 +536,9 @@ describe("apply before merge (apply.when: pull-request)", () => {
     expect(mergeScript("forgejo")).toContain('terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA" --forge forgejo');
   });
 
-  it("gitlab needs comments and a merge token: the comments job reads the note and starts the apply pipeline with that token", () => {
-    expect(() => renderPr("gitlab", undefined, "MERGE_TOKEN")).toThrow(/apply\.when: pull-request on GitLab needs comments: <cron>/);
-    expect(() => body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, comments: "*/5 * * * *", applyWhen: "pull-request" }).content)).toThrow(/needs apply\.merge_token_env/);
-  });
-
-  describe("gitlab", () => {
-    const gl = (extra: Partial<Parameters<typeof renderPipeline>[0]> = {}): Record<string, any> =>
-      body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, comments: "*/5 * * * *", applyWhen: "pull-request", applyMergeTokenEnv: "MERGE_TOKEN", ...extra }).content);
-
-    it("the push after the merge confirms; the apply pipeline runs mr-apply alone, from the default branch, under the apply group", () => {
-      const doc = gl();
-      expect(doc["apply-wave-1"]).toBeUndefined();
-      expect(doc.confirm.rules[0].if).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_MR == null');
-      expect(doc.confirm.script.join("\n")).toContain(OIDC.plan_role);
-      expect(doc.confirm.script.join("\n")).not.toContain(OIDC.apply_role);
-      expect(doc.check.rules[0].if).toBe('$CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_MR == null');
-      const job = doc["mr-apply"];
-      expect(job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TERRAGUCCI_MR' }]);
-      expect(job.resource_group).toBe("terragucci-apply");
-      expect(job.variables.GIT_DEPTH).toBe("0");
-      expect(job.environment).toBeUndefined();
-      expect(JSON.stringify(job)).not.toContain("MERGE_TOKEN");
-      const run = job.script.join("\n");
-      expect(run).toContain("terragucci comment-apply --forge gitlab --layers 'network;app,cache' --when pull-request --out terragucci-comment.json || exit 1");
-      // The decision comes before the apply role.
-      expect(run.indexOf("terragucci comment-apply")).toBeLessThan(run.indexOf(OIDC.apply_role));
-      expect(run).toContain('tf_base="--base origin/$TG_BASE"');
-      expect(run).toMatch(/--gate on-destroy \$tf_base/);
-      // No status on the head: a failed one would fail the merge request's own pipeline.
-      expect(run).not.toContain("tg status");
-      expect(run).toContain("Merge it when you are ready");
-      expect(doc["pr-merge"]).toBeUndefined();
-    });
-
-    it("the comments job polls with --when pull-request and holds the merge token, in the merge environment, as pr-merge does", () => {
-      const doc = gl({ applyMerge: "auto", applyRequires: ["approved", "checks"] });
-      expect(doc.comments.variables).toEqual({ TG_TOKEN: "$GITLAB_TOKEN", TG_MERGE_TOKEN: "$MERGE_TOKEN", GIT_STRATEGY: "none" });
-      expect(doc.comments.environment).toEqual({ name: "terragucci-merge", action: "access" });
-      expect(doc.comments.script.join("\n")).toContain("terragucci comment --forge gitlab --poll --layers 'network;app,cache' --when pull-request --requires approved,checks");
-      const merge = doc["pr-merge"];
-      expect(merge.needs).toEqual([{ job: "mr-apply", artifacts: false }]);
-      expect(merge.environment).toEqual({ name: "terragucci-merge", action: "access" });
-      expect(merge.variables).toEqual({ TG_TOKEN: "$GITLAB_TOKEN", TG_MERGE_TOKEN: "$MERGE_TOKEN" });
-      expect(merge.id_tokens).toBeUndefined();
-      expect(merge.script.join("\n")).toContain('terragucci pr-merge --forge gitlab --pr "$TG_PR" --sha "$TG_SHA"');
-      const run = doc["mr-apply"].script.join("\n");
-      expect(run).toContain("--when pull-request --requires approved,checks --out");
-      expect(run).toContain("<!-- terragucci:applied head=$TG_SHA pipeline=$CI_PIPELINE_ID -->");
-      expect(run).not.toContain("terragucci pr-merge");
-    });
-
-    it("a Terragrunt repo's mr-apply runs its waves of units with --terragrunt and locks units", () => {
-      const run = gitlabApplyScript("tofu", [["live/a"], ["live/b"]], OIDC, { when: "pull-request", terragrunt: { prelude: "# prelude" } });
-      expect(run).toContain("terragucci comment-apply --forge gitlab --layers 'live/a;live/b' --when pull-request --terragrunt --out");
-      expect(run).toContain("# prelude");
-      expect(run).toMatch(/terragucci stage tf-apply --wave "\$wave" .*--terragrunt \$tf_base \$rest/);
-    });
-
-    it("pr-merge reads nothing the mr-apply job wrote: only the pipeline's variables pass, as digits and a sha", () => {
-      const run = gitlabMergeScript();
-      expect(run).toContain('case "${TERRAGUCCI_MR:-}" in ""|*[!0-9]*)');
-      expect(run).toContain('case "${TERRAGUCCI_HEAD:-}" in ""|*[!0-9a-f]*)');
-      expect(run).not.toMatch(/artifact|dotenv/);
-    });
+  it("gitlab refuses apply.when pull-request: a merge request's pipeline is the merge request's own", () => {
+    expect(() => renderPr("gitlab")).toThrow(/apply\.when: pull-request is not supported on GitLab/);
+    expect(() => renderPr("gitlab", "auto")).toThrow(/not supported on GitLab/);
   });
 
   it("apply.merge auto merges in a pr-merge job of its own, the only job that gets apply.merge_token_env's secret", () => {

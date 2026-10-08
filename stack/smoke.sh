@@ -201,7 +201,9 @@ plan-lock|with locks: plan a pull request locks the roots it reaches from its fi
 plan-lock-release|with locks: plan the merge of a pull request releases the lock its first plan took|
 policy-override|a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest|
 policy-override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
-policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|'
+policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|
+blob-azure|with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it|
+blob-gcs|with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -6351,6 +6353,254 @@ claim_policy_override_unlisted() {
   return $rc
 }
 
+# ── reports on Azure Blob Storage and GCS ─────────────────────────────────
+# Each claim: one project whose reports.bucket names the emulator, a tf-plan
+# that copies its report there, then `terragucci estate` writing the page and
+# printing its link. The job has only the OIDC identity a job with oidc.azure
+# or oidc.gcp gets; a stand-in for the cloud's token service runs in the job
+# container on 127.0.0.1 and answers only the token the job was handed.
+
+# A JWT with these claims and a signature nobody checks: what the stand-ins answer.
+blob_jwt() { # claims json
+  local h b
+  h="$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | base64 | tr '+/' '-_' | tr -d '=\n')"
+  b="$(printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '=\n')"
+  printf '%s.%s.c21va2U' "$h" "$b"
+}
+
+# A project named NAME in WORK/NAME with one terraform_data root, app/, and the reports block.
+blob_project() { # work, name, reports yaml
+  mkdir -p "$1/$2/app"
+  printf '%s\n' "$3" >"$1/$2/terragucci.yml"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$2" >"$1/$2/app/main.tf"
+  git -C "$1/$2" init -q -b main
+  git -C "$1/$2" add -A && git -C "$1/$2" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke $2"
+}
+
+# Run a command in the CI image for project NAME, with WORK/stub at /stub and
+# the stand-in STUB (a file in it) listening first. The rest of the -e
+# arguments come from BLOB_ENV.
+blob_run() { # work, name, image, stub, command...
+  local work="$1" name="$2" image="$3" stub="$4"; shift 4
+  run_copied --rm --network terragucci -v "$work/$name:/projects/$name" -v "$work/stub:/stub" -w "/projects/$name" \
+    -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    "${BLOB_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" sh -c 'node "/stub/$0" >>/stub/stub.log 2>&1 & i=0; until [ -s /stub/ready ] || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done; "$@"' "$stub" "$@"
+}
+
+claim_blob_azure() {
+  # reports.bucket is az://devstoreaccount1/<container> on Azurite, over TLS
+  # with OAuth on. The job has ARM_TENANT_ID, ARM_CLIENT_ID and a token in
+  # ARM_OIDC_TOKEN_FILE_PATH and no account key; the stand-in for Entra ID
+  # (AZURE_AUTHORITY_HOST) takes that token as the client assertion for that
+  # client and scope, and answers a storage token. tf-plan copies the report
+  # and both indexes to the container; terragucci estate writes the page and
+  # prints a user delegation SAS, and Azurite serves the page on that link.
+  # BREAK: one character of the link signature changes, and Azurite must refuse it.
+  log() { echo "[smoke blob-azure] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image port="${TERRAGUCCI_AZURITE_PORT:-10010}" certs="$HERE/.state/azurite-certs" name=blob-azure container tenant=7d2c0b4e-0000-4000-8000-00000000a2e1 client=4f1a9c0d-0000-4000-8000-0000000c11e7
+  local now jwt out link served path rc=0 i code
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  # Azurite bind-mounts its certificates and outlives the claim: rewritten in place, as the registry's are.
+  mkdir -p "$certs" "$work/newcerts" "$work/stub"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,DNS:azurite,IP:127.0.0.1" \
+    -keyout "$work/newcerts/azurite.key" -out "$work/newcerts/azurite.crt" >/dev/null 2>&1 \
+    || { log "openssl could not make a certificate"; drop_work "$work"; return 1; }
+  cat "$work/newcerts/azurite.key" >"$certs/azurite.key"
+  cat "$work/newcerts/azurite.crt" >"$certs/azurite.crt"
+  chmod 644 "$certs/azurite.key"
+  cp "$certs/azurite.crt" "$work/stub/ca.crt"
+  with_lock compose env TERRAGUCCI_AZURITE_CERTS="$certs" docker compose -f "$HERE/docker-compose.yml" --project-name terragucci \
+    --profile blob up -d --force-recreate azurite >&2 || { drop_work "$work"; return 1; }
+  # What Entra ID would answer: Azurite checks the audience, the issuer and the lifetime, and keys the delegation on oid and tid.
+  now="$(date +%s)"
+  jwt="$(blob_jwt "{\"aud\":\"https://storage.azure.com\",\"iss\":\"https://sts.windows.net/$tenant/\",\"nbf\":$((now - 60)),\"exp\":$((now + 3600)),\"oid\":\"$client\",\"tid\":\"$tenant\",\"appid\":\"$client\"}")"
+  azr() { curl -sS --cacert "$certs/azurite.crt" -H "Authorization: Bearer $jwt" -H 'x-ms-version: 2021-08-06' "$@"; }
+  for i in $(seq 1 30); do
+    [ "$(azr -o /dev/null -w '%{http_code}' "https://localhost:$port/devstoreaccount1?comp=list" 2>/dev/null)" = 200 ] && break
+    sleep 1
+  done
+  container="tg-$(date +%s)"
+  code="$(azr -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Length: 0' "https://localhost:$port/devstoreaccount1/$container?restype=container" 2>/dev/null)" || true
+  [ "$code" = 201 ] || { log "Azurite did not make container $container ($code)"; drop_work "$work"; return 1; }
+  printf 'forge-oidc-token-%s' "$now" >"$work/stub/forge-token"
+  printf '%s' "$jwt" >"$work/stub/storage-token"
+  cat >"$work/stub/entra.mjs" <<'JS'
+// Entra ID's token endpoint for one tenant and client: a client assertion that is the job's token buys the storage token.
+import { readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+const [tenant, client] = [process.env.ARM_TENANT_ID, process.env.ARM_CLIENT_ID];
+createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    const f = new URLSearchParams(body);
+    const ok = req.method === "POST" && req.url === `/${tenant}/oauth2/v2.0/token` && f.get("client_id") === client && f.get("grant_type") === "client_credentials"
+      && f.get("scope") === "https://storage.azure.com/.default" && f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+      && f.get("client_assertion") === readFileSync("/stub/forge-token", "utf-8");
+    console.log(`${req.method} ${req.url} ${ok ? "token" : "refused"}`);
+    res.writeHead(ok ? 200 : 400, { "content-type": "application/json" });
+    res.end(JSON.stringify(ok ? { token_type: "Bearer", expires_in: 3599, access_token: readFileSync("/stub/storage-token", "utf-8") } : { error: "invalid_client", error_description: "AADSTS700213: No matching federated identity record found." }));
+  });
+}).listen(8180, "127.0.0.1", () => writeFileSync("/stub/ready", "1"));
+JS
+  blob_project "$work" "$name" "$(printf 'reports:\n  bucket: az://devstoreaccount1/%s\n  endpoint: https://azurite:10000/devstoreaccount1\n  prefix: reports' "$container")"
+  local -a BLOB_ENV=(-e "ARM_TENANT_ID=$tenant" -e "ARM_CLIENT_ID=$client" -e ARM_OIDC_TOKEN_FILE_PATH=/stub/forge-token -e ARM_USE_OIDC=true
+    -e AZURE_AUTHORITY_HOST=http://127.0.0.1:8180 -e NODE_EXTRA_CA_CERTS=/stub/ca.crt)
+  blob_run "$work" "$name" "$image" entra.mjs terragucci stage tf-plan --layers app >&2 || { log "the plan run failed"; rc=1; }
+  clean_mounted "$work/$name" "$image"
+  if [ $rc = 0 ]; then
+    path="$(azr "https://localhost:$port/devstoreaccount1/$container/reports/$name/index.json" | jq -r '.reports[0].path // empty')"
+    [ -n "$path" ] || { log "no row in reports/$name/index.json"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    azr -f -o /dev/null "https://localhost:$port/devstoreaccount1/$container/reports/$name/$path/report.html" || { log "no report.html at reports/$name/$path"; rc=1; }
+    [ "$(azr "https://localhost:$port/devstoreaccount1/$container/reports/index.json" | jq -r '[.reports[].project] | join(",")')" = "$name" ] || { log "the top index does not list $name"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    : >"$work/stub/ready"
+    out="$(blob_run "$work" "$name" "$image" entra.mjs terragucci estate --bucket "az://devstoreaccount1/$container" --bucket-endpoint https://azurite:10000/devstoreaccount1 --bucket-prefix reports --link-hours 1)" || { log "terragucci estate failed"; rc=1; }
+    printf '%s\n' "$out" >&2
+  fi
+  if [ $rc = 0 ]; then
+    link="$(grep -E '^https://azurite:10000/devstoreaccount1/' <<<"$out" | head -1)"
+    grep -q 'skoid=' <<<"$link" || { log "the command printed no user delegation SAS"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ -n "${BREAK:-}" ] && link="${link/sig=/sig=A}"
+    served="$(curl -sS --cacert "$certs/azurite.crt" -w '\n%{http_code}' "https://localhost:$port${link#https://azurite:10000}")" || true
+    [ "$(tail -1 <<<"$served")" = 200 ] || { log "Azurite refused the link ($(tail -1 <<<"$served"))"; rc=1; }
+    [ $rc = 0 ] && { grep -q "$name" <<<"$served" || { log "the link does not serve the page with $name on it"; rc=1; }; }
+  fi
+  [ $rc = 0 ] || sed 's/^/[entra] /' "$work/stub/stub.log" >&2 2>/dev/null || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "with only its Azure OIDC identity the job wrote the report, both indexes and the estate page to $container, and the SAS link served the page"
+  return $rc
+}
+
+claim_blob_gcs() {
+  # reports.bucket is gs://<bucket> on fake-gcs-server, written through the
+  # JSON API. The job has GOOGLE_APPLICATION_CREDENTIALS, an external_account
+  # file like the one oidc.gcp writes: its token file, Google STS and the
+  # service account it impersonates, here a stand-in that answers only the
+  # job's token and signs blobs with the service account's key. tf-plan
+  # copies the report and both indexes to the bucket; terragucci estate
+  # writes the page and prints a V4 signed URL. The emulator checks no
+  # signature, so the claim verifies it with the service account's public
+  # key, then reads the page through the link.
+  # BREAK: one hex digit of the link signature changes, and the signature must not verify.
+  log() { echo "[smoke blob-gcs] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image port="${TERRAGUCCI_GCS_PORT:-4453}" name=blob-gcs bucket sa=terragucci-plan@smoke-project.iam.gserviceaccount.com
+  local out link served path rc=0 i sig flip
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/stub"
+  with_lock compose docker compose -f "$HERE/docker-compose.yml" --project-name terragucci --profile blob up -d gcs >&2 || { drop_work "$work"; return 1; }
+  gcs() { curl -sS -H 'Host: gcs:4443' "$@"; }
+  for i in $(seq 1 30); do
+    gcs -f -o /dev/null "http://localhost:$port/_internal/healthcheck" 2>/dev/null && break
+    sleep 1
+  done
+  bucket="tg-blob-$(date +%s)"
+  gcs -f -o /dev/null -X POST -H 'content-type: application/json' -d "{\"name\":\"$bucket\"}" "http://localhost:$port/storage/v1/b?project=smoke-project" \
+    || { log "fake-gcs-server did not make bucket $bucket"; drop_work "$work"; return 1; }
+  openssl genrsa -out "$work/stub/sa.pem" 2048 >/dev/null 2>&1 || { log "openssl could not make a key"; drop_work "$work"; return 1; }
+  openssl rsa -in "$work/stub/sa.pem" -pubout -out "$work/sa.pub" >/dev/null 2>&1
+  printf 'forge-oidc-token-%s' "$(date +%s)" >"$work/stub/forge-token"
+  # What oidc.gcp writes, with STS and IAM at the stand-in.
+  printf '{"type":"external_account","audience":"//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/smoke/providers/forge","subject_token_type":"urn:ietf:params:oauth:token-type:jwt","token_url":"http://127.0.0.1:8181/v1/token","service_account_impersonation_url":"http://127.0.0.1:8181/v1/projects/-/serviceAccounts/%s:generateAccessToken","credential_source":{"file":"/stub/forge-token"}}\n' "$sa" >"$work/stub/creds.json"
+  cat >"$work/stub/google.mjs" <<'JS'
+// Google STS, then IAM Credentials for one service account: the job's token buys a federated token,
+// that buys the service account's token, and that signs blobs with the service account's key.
+import { createSign } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+const sa = process.env.SMOKE_SA;
+const answer = (res, status, body) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    const path = decodeURIComponent(req.url);
+    const bearer = req.headers.authorization;
+    console.log(`${req.method} ${path}`);
+    if (path === "/v1/token") {
+      const f = new URLSearchParams(body);
+      const ok = f.get("grant_type") === "urn:ietf:params:oauth:grant-type:token-exchange" && f.get("subject_token") === readFileSync("/stub/forge-token", "utf-8")
+        && f.get("audience") === "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/smoke/providers/forge";
+      return ok ? answer(res, 200, { access_token: "federated-token", token_type: "Bearer", expires_in: 3600 }) : answer(res, 400, { error: "invalid_grant", error_description: "The token is not valid" });
+    }
+    if (path === `/v1/projects/-/serviceAccounts/${sa}:generateAccessToken` && bearer === "Bearer federated-token") {
+      return answer(res, 200, { accessToken: "sa-token", expireTime: new Date(Date.now() + 3600_000).toISOString() });
+    }
+    if (path === `/v1/projects/-/serviceAccounts/${sa}:signBlob` && bearer === "Bearer sa-token") {
+      const payload = Buffer.from(JSON.parse(body).payload, "base64");
+      return answer(res, 200, { keyId: "smoke", signedBlob: createSign("RSA-SHA256").update(payload).sign(readFileSync("/stub/sa.pem", "utf-8")).toString("base64") });
+    }
+    answer(res, 403, { error: { code: 403, message: `refused ${req.method} ${path}` } });
+  });
+}).listen(8181, "127.0.0.1", () => writeFileSync("/stub/ready", "1"));
+JS
+  blob_project "$work" "$name" "$(printf 'reports:\n  bucket: gs://%s\n  endpoint: http://gcs:4443\n  prefix: reports' "$bucket")"
+  local -a BLOB_ENV=(-e GOOGLE_APPLICATION_CREDENTIALS=/stub/creds.json -e "SMOKE_SA=$sa")
+  blob_run "$work" "$name" "$image" google.mjs terragucci stage tf-plan --layers app >&2 || { log "the plan run failed"; rc=1; }
+  clean_mounted "$work/$name" "$image"
+  obj() { gcs "http://localhost:$port/storage/v1/b/$bucket/o/$(jq -rn --arg k "$1" '$k | @uri')?alt=media"; }
+  if [ $rc = 0 ]; then
+    path="$(obj "reports/$name/index.json" | jq -r '.reports[0].path // empty')"
+    [ -n "$path" ] || { log "no row in reports/$name/index.json"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    obj "reports/$name/$path/report.html" | grep -q '<!doctype html>' || { log "no report.html at reports/$name/$path"; rc=1; }
+    [ "$(obj reports/index.json | jq -r '[.reports[].project] | join(",")')" = "$name" ] || { log "the top index does not list $name"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    : >"$work/stub/ready"
+    out="$(blob_run "$work" "$name" "$image" google.mjs terragucci estate --bucket "gs://$bucket" --bucket-endpoint http://gcs:4443 --bucket-prefix reports --link-hours 1)" || { log "terragucci estate failed"; rc=1; }
+    printf '%s\n' "$out" >&2
+  fi
+  if [ $rc = 0 ]; then
+    link="$(grep -E "^http://gcs:4443/$bucket/reports/estate.html\\?X-Goog-Algorithm=GOOG4-RSA-SHA256&" <<<"$out" | head -1)"
+    [ -n "$link" ] || { log "the command printed no signed URL"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    sig="${link##*X-Goog-Signature=}"
+    flip=0; [ "${sig:0:1}" = 0 ] && flip=1
+    link="${link%X-Goog-Signature=*}X-Goog-Signature=$flip${sig:1}"
+  fi
+  if [ $rc = 0 ]; then
+    # GOOG4-RSA-SHA256 as Google checks it: the canonical request from the link, its hash in the string-to-sign, the signature over that.
+    node -e '
+      const { createHash, createVerify, readFileSync } = { ...require("node:crypto"), ...require("node:fs") };
+      const u = new URL(process.argv[1]);
+      const query = u.search.slice(1).replace(/&X-Goog-Signature=.*$/, "");
+      const stamp = u.searchParams.get("X-Goog-Date");
+      const canonical = ["GET", u.pathname, query, "host:" + u.host, "", "host", "UNSIGNED-PAYLOAD"].join("\n");
+      const toSign = ["GOOG4-RSA-SHA256", stamp, stamp.slice(0, 8) + "/auto/storage/goog4_request", createHash("sha256").update(canonical).digest("hex")].join("\n");
+      process.exit(createVerify("RSA-SHA256").update(toSign).verify(readFileSync(process.argv[2], "utf-8"), Buffer.from(u.searchParams.get("X-Goog-Signature"), "hex")) ? 0 : 1);
+    ' "$link" "$work/sa.pub" || { log "the signature of the link does not verify with the public key of $sa"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    served="$(gcs -f "http://localhost:$port${link#http://gcs:4443}")" || { log "the emulator did not serve the link"; rc=1; }
+    [ $rc = 0 ] && { grep -q "$name" <<<"$served" || { log "the link does not serve the page with $name on it"; rc=1; }; }
+  fi
+  [ $rc = 0 ] || sed 's/^/[google] /' "$work/stub/stub.log" >&2 2>/dev/null || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "with only its GCP OIDC identity the job wrote the report, both indexes and the estate page to $bucket through the JSON API, and the link is signed by $sa"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -6500,6 +6750,8 @@ plan-lock-release    runner self! weight=200
 policy-override      weight=150
 policy-override-moved     weight=150
 policy-override-unlisted  weight=150
+blob-azure           azurite! weight=120
+blob-gcs             gcs! weight=120
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
