@@ -228,7 +228,16 @@ fork-no-plan|a pull request from a fork runs check and no plan job|
 highlight-sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
 approval-revoke|removing an approval line from chant/lifecycle makes its wave wait again|
 pending-expiry|a pending fact past its 48 hours is recorded afresh by the next run of its wave|
-signer-trust|init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it|'
+signer-trust|init --signer writes the signers line from git config user.signingkey, .chant/trust.json moves the signers file, and a sealed approval verifies against it|
+rollout-control|from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied|
+rollout-provider|rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave|
+rollout-pins|rollout moves an oci:// tag and a registry version pin, each in the shape it had|
+policy-opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
+policy-hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
+policy-hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
+tg-policy|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
+tg-credentials|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
+tg-dependents|terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -7908,6 +7917,422 @@ claim_signer_trust() {
   return $rc
 }
 
+# ── rollouts across projects, providers and pin kinds ─────────────────────
+
+# A new, empty repo with Actions on, under the admin.
+rollout_repo() { # name
+  fresh_repo "$1" || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$USER/$1"
+}
+
+# The open or merged pull request of a branch, in any state.
+branch_pr() { # repo, branch -> the number, or nothing
+  api "$URL/api/v1/repos/$1/pulls?state=all&limit=50" | jq -r --arg b "$2" '[.[] | select(.head.ref == $b)][0].number // empty'
+}
+
+claim_rollout_control() {
+  # A control repo with two projects, ro-a and ro-b, each with dev/app (a
+  # canary) and prod/app on modules/network 0.1.0 from a module repo by git
+  # tag. rollout modules/network 0.2.0 --mode apply from the control repo:
+  # wave 1 opens one pull request on each project, moving dev/app alone, and
+  # nothing else; the next run waits. Both merged and applied, wave 2 opens on
+  # ro-a alone (prod/app); merged and applied, wave 3 opens on ro-b.
+  # BREAK: the opening runs are dry runs, so no pull request opens.
+  log() { echo "[smoke rollout-control] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work mode=apply mod="$USER/ro-mod" source p r out rc=0 pr sha files wave key
+  local branch="terragucci/rollout/modules-network-0.2.0"
+  [ -n "${BREAK:-}" ] && mode=dry-run
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  for p in ro-mod ro-a ro-b; do rollout_repo "$p" || return 1; done
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
+  for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=rollout-control/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  done
+  # The module, tagged 0.1.0 and then 0.2.0.
+  mkdir -p "$work/mod/modules/network"
+  printf 'variable "name" {}\n\noutput "name" {\n  value = var.name\n}\n' > "$work/mod/modules/network/main.tf"
+  ( cd "$work/mod" && git init -q -b main && git add -A \
+    && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -qm "feat: modules/network" \
+    && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.1.0 -m 0.1.0 \
+    && printf '\noutput "version" {\n  value = "0.2.0"\n}\n' >> modules/network/main.tf \
+    && git -c user.name=terragucci -c user.email=t@t -c commit.gpgsign=false commit -qam "feat(network): a version output" \
+    && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.2.0 -m 0.2.0 \
+    && git push -q --tags "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$mod.git" main ) 2>/dev/null || { log "could not push the module repo"; return 1; }
+  source="git::http://forgejo:3000/$mod.git//modules/network?ref=modules/network/v0.1.0"
+  for p in ro-a ro-b; do
+    for r in dev/app prod/app; do
+      mkdir -p "$work/$p/$r"
+      printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "rollout-control/%s/%s.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nmodule "network" {\n  source = "%s"\n  name   = "%s-%s"\n}\n' "$p" "$r" "$source" "$p" "${r%/app}" > "$work/$p/$r/main.tf"
+    done
+    printf 'forge: forgejo\nbinary: tofu\ngate: never\nwaves:\n  canary: ["dev/*"]\n' > "$work/$p/terragucci.yml"
+    (cd "$work/$p" && "$TERRAGUCCI" init >/dev/null) || { log "init failed in $p"; return 1; }
+    sha="$(push_tree "$work/$p" "$USER/$p" main "$p: two roots on modules/network 0.1.0")" || return 1
+    wait_run "$USER/$p" "$sha" || return 1
+    [ "$RUN_STATUS" = success ] || { print_logs "$USER/$p" "$RUN_ID" | tail -40 >&2; log "the first apply of $p ended $RUN_STATUS"; return 1; }
+  done
+  mkdir -p "$work/control"
+  cat > "$work/control/terragucci.yml" <<YML
+defaults:
+  forge: forgejo
+  binary: tofu
+  token_env: TERRAGUCCI_FORGEJO_TOKEN
+  waves:
+    canary: ["dev/*"]
+projects:
+  localhost/$USER/ro-a:
+    url: $URL/$USER/ro-a
+  localhost/$USER/ro-b:
+    url: $URL/$USER/ro-b
+YML
+  ( cd "$work/control" && git init -q -b main && git add -A && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm "the control repo" ) || return 1
+  ro() { (cd "$work/control" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout modules/network 0.2.0 --mode "$mode" 2>&1); }
+  wave_files() { # project, wave -> the files its pull request changes, or nothing
+    local n
+    n="$(branch_pr "$USER/$1" "$branch/wave-$2")"
+    [ -n "$n" ] && pr_files "$USER/$1" "$n"
+  }
+  merge_wave() { # project, wave -> merges its pull request and waits for the apply on the merge commit
+    local n m
+    n="$(branch_pr "$USER/$1" "$branch/wave-$2")"
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$USER/$1/pulls/$n/merge" || return 1
+    m="$(api "$URL/api/v1/repos/$USER/$1/pulls/$n" | jq -r .merge_commit_sha)"
+    wait_run "$USER/$1" "$m" push || return 1
+    [ "$RUN_STATUS" = success ] || { log "the apply of $1 wave $2 ended $RUN_STATUS"; return 1; }
+  }
+  out="$(ro)"; echo "$out" >&2
+  for p in ro-a ro-b; do
+    files="$(wave_files "$p" 1)"
+    [ "$files" = "dev/app/main.tf" ] || { log "wave 1 on $p changes '${files:-nothing}', not dev/app/main.tf"; rc=1; }
+  done
+  [ $rc = 0 ] || { drop_work "$work"; return 1; }
+  out="$(ro)"; r=$?
+  [ -z "$(wave_files ro-a 2)$(wave_files ro-b 2)$(wave_files ro-b 3)" ] || { echo "$out" >&2; log "a later wave opened while wave 1 was open"; rc=1; }
+  { merge_wave ro-a 1 && merge_wave ro-b 1; } || rc=1
+  if [ $rc = 0 ]; then
+    out="$(ro)"; echo "$out" >&2
+    [ "$(wave_files ro-a 2)" = "prod/app/main.tf" ] || { log "wave 2 did not open on ro-a for prod/app"; rc=1; }
+    [ -z "$(wave_files ro-b 2)$(wave_files ro-b 3)" ] || { log "ro-b got a pull request before wave 2 on ro-a applied"; rc=1; }
+  fi
+  [ $rc = 0 ] && { merge_wave ro-a 2 || rc=1; }
+  if [ $rc = 0 ]; then
+    out="$(ro)"; echo "$out" >&2
+    [ "$(wave_files ro-b 3)" = "prod/app/main.tf" ] || { log "wave 3 did not open on ro-b for prod/app"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 1 opened one pull request per project for its canary, then wave 2 on ro-a and wave 3 on ro-b, each once the last applied"
+  return $rc
+}
+
+claim_rollout_provider() {
+  # A repo whose root app locks hashicorp/external at 2.3.4 (pinned exactly
+  # in required_providers) and hashicorp/aws at 6.67.0. rollout --provider
+  # hashicorp/external 2.3.5 --mode apply, run in the tofu CI image, opens one
+  # pull request that changes app/.terraform.lock.hcl and app/main.tf: the
+  # external entry and its constraint are at 2.3.5, and the aws entry is the
+  # same text as before.
+  # BREAK: the rollout runs as a dry run, so no pull request opens.
+  log() { echo "[smoke rollout-provider] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/rollout-provider" mode=apply out pr sha lock aws_before aws_after files rc=0
+  local branch="terragucci/rollout/hashicorp-external-2.3.5/wave-1"
+  [ -n "${BREAK:-}" ] && mode=dry-run
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  rollout_repo rollout-provider || return 1
+  respond_tree "$work" "$repo" 'terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.67.0"
+    }
+    external = {
+      source  = "hashicorp/external"
+      version = "2.3.4"
+    }
+  }
+  backend "local" {}
+}'
+  rm -f "$work/tree/app/.terraform.lock.hcl"
+  in_image "$work/tree" sh -c 'cd app && tofu providers lock -no-color >/dev/null' >&2 || { log "could not lock the providers"; return 1; }
+  clean_mounted "$work/tree"
+  lock="$work/tree/app/.terraform.lock.hcl"
+  grep -q 'provider "registry.opentofu.org/hashicorp/external"' "$lock" || { log "the lock file has no external entry"; return 1; }
+  aws_before="$(awk '/^provider "registry.opentofu.org\/hashicorp\/aws"/,/^}/' "$lock")"
+  push_tree "$work/tree" "$repo" main "app locks external 2.3.4 and aws 6.67.0" >/dev/null || return 1
+  out="$(in_image "$work/tree" terragucci rollout --provider hashicorp/external 2.3.5 --mode "$mode" 2>&1)" || true
+  echo "$out" >&2
+  pr="$(branch_pr "$repo" "$branch")"
+  [ -n "$pr" ] || { log "no pull request from $branch"; drop_work "$work"; return 1; }
+  files="$(pr_files "$repo" "$pr")"
+  [ "$files" = "app/.terraform.lock.hcl,app/main.tf" ] || { log "the pull request changes $files"; rc=1; }
+  sha="$(remote_head "$repo" "$branch")"
+  file_at "$repo" "$branch" "$sha" app/.terraform.lock.hcl > "$work/new.lock" || { log "cannot read the lock file on $branch"; rc=1; }
+  awk '/^provider "registry.opentofu.org\/hashicorp\/external"/,/^}/' "$work/new.lock" | grep -q 'version *= "2.3.5"' || { log "external is not at 2.3.5 in the new lock file"; rc=1; }
+  aws_after="$(awk '/^provider "registry.opentofu.org\/hashicorp\/aws"/,/^}/' "$work/new.lock")"
+  [ "$aws_after" = "$aws_before" ] || { log "the aws entry of the lock file moved"; rc=1; }
+  file_at "$repo" "$branch" "$sha" app/main.tf | grep -q 'version = "2.3.5"' || { log "the exact constraint of external did not move to 2.3.5"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $pr moves external to 2.3.5 in the lock file and its constraint, and leaves aws as it was"
+  return $rc
+}
+
+claim_rollout_pins() {
+  # A repo with two roots: dev/oci calls modules/network from an OCI registry
+  # pinned ?tag=1.3.0, and dev/reg calls acme/network/aws from a registry with
+  # version = "1.3.0". rollout modules/network 1.4.0 and rollout
+  # acme/network/aws 1.4.0, each with --mode apply, open one pull request each:
+  # the OCI source ends ?tag=1.4.0 and the registry call says version =
+  # "1.4.0", each in the shape it had, and each changes its own root alone.
+  # BREAK: the rollouts run as dry runs, so no pull request opens.
+  log() { echo "[smoke rollout-pins] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/rollout-pins" tree mode=apply out want pr branch sha rc=0
+  [ -n "${BREAK:-}" ] && mode=dry-run
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  rollout_repo rollout-pins || return 1
+  tree="$work/tree"
+  mkdir -p "$tree/dev/oci" "$tree/dev/reg"
+  printf 'terraform {\n  backend "local" {}\n}\n\nmodule "network" {\n  source = "oci://registry.example.com/acme/modules/network?tag=1.3.0"\n  name   = "oci"\n}\n' > "$tree/dev/oci/main.tf"
+  printf 'terraform {\n  backend "local" {}\n}\n\nmodule "network" {\n  source  = "acme/network/aws"\n  version = "1.3.0"\n  name    = "reg"\n}\n' > "$tree/dev/reg/main.tf"
+  printf 'forge: forgejo\nbinary: tofu\nurl: %s/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' "$URL" "$repo" > "$tree/terragucci.yml"
+  ( cd "$tree" && git init -q -b main && git remote add origin "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" ) || return 1
+  push_tree "$tree" "$repo" main "two roots on two pin kinds" >/dev/null || return 1
+  for want in "modules/network|terragucci/rollout/modules-network-1.4.0/wave-1|dev/oci/main.tf|source = \"oci://registry.example.com/acme/modules/network?tag=1.4.0\"" \
+              "acme/network/aws|terragucci/rollout/acme-network-aws-1.4.0/wave-1|dev/reg/main.tf|version = \"1.4.0\""; do
+    IFS='|' read -r name branch file line <<<"$want"
+    out="$(cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout "$name" 1.4.0 --mode "$mode" 2>&1)" || true
+    echo "$out" >&2
+    pr="$(branch_pr "$repo" "$branch")"
+    [ -n "$pr" ] || { log "$name: no pull request from $branch"; rc=1; continue; }
+    [ "$(pr_files "$repo" "$pr")" = "$file" ] || { log "$name: the pull request changes $(pr_files "$repo" "$pr"), not $file"; rc=1; }
+    sha="$(remote_head "$repo" "$branch")"
+    file_at "$repo" "$branch" "$sha" "$file" | grep -qF "$line" || { log "$name: $file on $branch does not hold $line"; rc=1; }
+  done
+  drop_work "$work"
+  [ $rc = 0 ] && log "the OCI tag and the registry version each moved to 1.4.0 in its own shape, one pull request each"
+  return $rc
+}
+
+# ── policy engines and Terragrunt ─────────────────────────────────────────
+
+claim_policy_opa() {
+  # policy-wave with engine: opa: the same denial, warning and report as with
+  # conftest. BREAK: as policy-wave, no policy is turned on.
+  SMOKE_POLICY_ENGINE=opa SMOKE_POLICY_INPUT=plan claim_policy_wave
+}
+
+claim_policy_hcp() {
+  # policy-wave with engine: opa and input: hcp, reading the HCP Terraform
+  # policy in policy-hcp/ that names input.run.workspace.name. BREAK: as
+  # policy-wave, no policy is turned on.
+  SMOKE_POLICY_ENGINE=opa SMOKE_POLICY_INPUT=hcp claim_policy_wave
+}
+
+claim_policy_hcl() {
+  # stack/fixtures/policy-wave with engine: opa, input: hcp and the policy set
+  # in policy-hcl/: its policies.hcl names no_terraform_data mandatory and
+  # probe_note advisory. The wave exits 1 and applies nothing; the report
+  # denies app with the mandatory policy's message and carries the advisory
+  # one as a warning, each named by its policy.
+  # BREAK: policies.hcl marks no_terraform_data advisory too, so nothing
+  # denies and the wave applies.
+  log() { echo "[smoke policy-hcl] $*" >&2; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 rc=0 r q
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$HERE/fixtures/policy-wave/." "$work/"
+  printf 'policy:\n  engine: opa\n  path: policy-hcl\n  input: hcp\n' >> "$work/terragucci.yml"
+  [ -n "${BREAK:-}" ] && sed -i.bak 's/enforcement_level = "mandatory"/enforcement_level = "advisory"/' "$work/policy-hcl/policies.hcl" && rm -f "$work/policy-hcl/policies.hcl.bak"
+  git -C "$work" init -q -b main
+  git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke policy-hcl"
+  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >&2 || code=$?
+  clean_mounted "$work" "$image"
+  r="$work/terragucci-report/report.json"
+  [ "$code" = 1 ] || { log "the wave exited $code, not 1: the mandatory policy did not deny it"; rc=1; }
+  if [ -f "$work/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$work/app/terraform.tfstate" >/dev/null 2>&1; then
+    log "app has state: the wave applied it"; rc=1
+  fi
+  if [ ! -f "$r" ]; then
+    log "the wave wrote no report"; rc=1
+  else
+    q='.roots[] | select(.path == "app")'
+    jq -e "$q | .policy.result == \"denied\" and (.policy.denials | any(test(\"^no_terraform_data: terraform_data.probe: terraform_data is not allowed here\")))" "$r" >/dev/null \
+      || { log "app is not denied by no_terraform_data: $(jq -c "$q | .policy" "$r")"; rc=1; }
+    jq -e "$q | .policy.warnings | any(test(\"^probe_note: terraform_data.probe: a new resource, check its owner tag\"))" "$r" >/dev/null \
+      || { log "the advisory policy probe_note is not a warning"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "policies.hcl: the mandatory policy denied the wave and the advisory one warned"
+  return $rc
+}
+
+# The Terragrunt gated fixture as a local repo under STATE PREFIX, with
+# terragucci.yml extra lines and the CI image's way of running a stage.
+tg_fixture() { # dir, prefix, extra config
+  mkdir -p "$1"
+  cp -R "$HERE/fixtures/tg-gated-waves/." "$1/"
+  find "$1" -name root.hcl -exec sed -i.bak "s#@PREFIX@#$2#" {} \;
+  find "$1" -name '*.bak' -delete
+  sed -i.bak 's/^gate: always$/gate: never/' "$1/terragucci.yml" && rm -f "$1/terragucci.yml.bak"
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >> "$1/terragucci.yml"
+}
+
+tg_fixture_stage() { # dir, docker run args (up to --), stage args...
+  local dir="$1" code=0
+  shift
+  local -a extra=()
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do extra+=("$1"); shift; done
+  [ "${1:-}" = -- ] && shift
+  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    ${extra[@]+"${extra[@]}"} "$(tg_image)" terragucci stage "$@" >&2 || code=$?
+  clean_mounted "$dir"
+  return $code
+}
+
+claim_tg_policy() {
+  # The Terragrunt gated fixture with a policy that denies a terraform_data
+  # whose input is "denied", and live/canary/one set to "denied". tf-plan
+  # --terragrunt exits 1 with live/canary/one failed under policy and
+  # live/fleet/two planned; the tf-apply wave 1, which holds live/canary/one,
+  # exits 1 and leaves it with no state.
+  # BREAK: live/canary/one keeps its value, so nothing is denied and the wave
+  # applies it.
+  log() { echo "[smoke tg-policy] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work prefix="tg-policy-$STAMP" code=0 r layers rc=0
+  docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_fixture "$work/repo" "$prefix" "$(printf 'policy:\n  engine: conftest\n  path: policy')"
+  mkdir -p "$work/repo/policy"
+  printf 'package main\n\nimport rego.v1\n\ndeny contains msg if {\n  some rc in input.resource_changes\n  rc.type == "terraform_data"\n  rc.change.after.input == "denied"\n  msg := sprintf("%%s: this input is denied", [rc.address])\n}\n' > "$work/repo/policy/plan.rego"
+  [ -n "${BREAK:-}" ] || echo denied > "$work/repo/live/canary/one/rev.txt"
+  (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  layers="$(grep -o "tf-apply --wave 1 --layers '[^']*'" "$work/repo/.forgejo/workflows/terragucci.yml" | head -1 | sed "s/.*--layers '//; s/'$//")"
+  [ -n "$layers" ] || { log "the pipeline names no layers"; drop_work "$work"; return 1; }
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke tg-policy"
+  tg_fixture_stage "$work/repo" -- tf-plan --terragrunt --binary tofu --layers "$layers" || code=$?
+  r="$work/repo/terragucci-report/report.json"
+  [ "$code" = 1 ] || { log "tf-plan exited $code, not 1"; rc=1; }
+  if [ -f "$r" ]; then
+    jq -e '.roots[] | select(.path == "live/canary/one" and .status == "failed" and .policy.result == "denied")' "$r" >/dev/null || { log "live/canary/one is not failed by the policy"; rc=1; }
+    jq -e '.roots[] | select(.path == "live/fleet/two" and .status == "planned")' "$r" >/dev/null || { log "live/fleet/two did not plan"; rc=1; }
+  else
+    log "tf-plan wrote no report"; rc=1
+  fi
+  code=0
+  rm -rf "$work/repo/terragucci-report"
+  tg_fixture_stage "$work/repo" -- tf-apply --wave 1 --layers "$layers" --binary tofu --gate never --terragrunt || code=$?
+  [ "$code" = 1 ] || { log "the wave exited $code, not 1"; rc=1; }
+  [ -z "$(tg_gated_applied "$prefix")" ] || { log "the denied wave applied: $(tg_gated_applied "$prefix")"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the denied unit failed tf-plan, and its wave applied nothing"
+  return $rc
+}
+
+claim_tg_credentials() {
+  # The Terragrunt gated fixture with terragrunt.credentials naming one role
+  # pair for live/canary/** and another for live/fleet/**, and live/fleet/three
+  # setting its own iam_role. init puts the plan roles in the plan job's auth
+  # provider. tf-plan runs with that environment and an STS stand-in: the
+  # stand-in is asked for the canary plan role, the fleet plan role and the
+  # own role of live/fleet/three, each with the job token.
+  # BREAK: the role map is empty, so only the own role of live/fleet/three is
+  # asked for.
+  log() { echo "[smoke tg-credentials] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work prefix="tg-cred-$STAMP" name="tgs-sts-$STAMP" roles got want rc=0 arn=arn:aws:iam::000000000000:role
+  docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_fixture "$work/repo" "$prefix" "$(printf 'terragrunt:\n  credentials:\n    "live/canary/**": { plan: %s/canary-plan, apply: %s/canary-apply }\n    "live/fleet/**": { plan: %s/fleet-plan, apply: %s/fleet-apply }' "$arn" "$arn" "$arn" "$arn")"
+  printf '\niam_role = "%s/three-own"\n' "$arn" >> "$work/repo/live/fleet/three/terragrunt.hcl"
+  (cd "$work/repo" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  roles="[[\"live/canary/**\",\"$arn/canary-plan\"],[\"live/fleet/**\",\"$arn/fleet-plan\"]]"
+  grep -qF "TERRAGUCCI_PHASE=plan TERRAGUCCI_TG_ROLES='$roles'" "$work/repo/.forgejo/workflows/terragucci.yml" \
+    || { log "the plan job does not hand the auth provider the plan roles"; rc=1; }
+  [ -n "${BREAK:-}" ] && roles='[]'
+  printf '%s' 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJyZXBvOnNtb2tlL3RnOnB1bGxfcmVxdWVzdCJ9.c21va2U' > "$work/repo/.oidc-token"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke tg-credentials"
+  [ $rc = 0 ] && { stand_in_up "$work" "$name" 8791 MODE=sts || rc=1; }
+  if [ $rc = 0 ]; then
+    tg_fixture_stage "$work/repo" -e AWS_WEB_IDENTITY_TOKEN_FILE=/repo/.oidc-token -e TERRAGUCCI_REPO=/repo -e TERRAGUCCI_PHASE=plan \
+      -e "TERRAGUCCI_TG_ROLES=$roles" -e "TG_AUTH_PROVIDER_CMD=terragucci auth-provider" -e TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN=/repo/.oidc-token \
+      -e "AWS_ENDPOINT_URL_STS=http://$name:8791" -- tf-plan --terragrunt --binary tofu || log "tf-plan exited non-zero"
+    got="$(curl -fsS "$STANDIN_CTL/_requests" | jq -r '[.[] | select(.form.Action == "AssumeRoleWithWebIdentity") | .form.RoleArn] | unique | join(",")')"
+    want="$arn/canary-plan,$arn/fleet-plan,$arn/three-own"
+    log "the units asked STS for: ${got:-nothing}"
+    [ "$got" = "$want" ] || { log "the roles asked for are not $want"; rc=1; }
+  fi
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "live/canary/one and live/fleet/two assumed the plan roles of their globs, and live/fleet/three its own iam_role"
+  return $rc
+}
+
+claim_tg_dependents() {
+  # The Terragrunt gated fixture with live/fleet/two depending on
+  # live/canary/one, a fourth unit under live/sandbox, and terragrunt.exclude
+  # leaving live/sandbox/** out. A change to live/canary/one and to the
+  # sandbox unit is planned twice against the base: with dependents: plan,
+  # live/fleet/two is previewed, provisional and deferred; with
+  # dependents: follow it is not planned; both runs have the same set
+  # digests, and neither plans the sandbox unit.
+  # BREAK: the first run also has dependents: follow, so nothing is previewed.
+  log() { echo "[smoke tg-dependents] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work prefix="tg-dep-$STAMP" dir mode base r1 r2 rc=0 i
+  local -a dep_modes=(plan follow)
+  [ -n "${BREAK:-}" ] && dep_modes=(follow follow)
+  docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  for i in 1 2; do
+    dir="$work/run$i"; mode="${dep_modes[$((i - 1))]}"
+    tg_fixture "$dir" "$prefix" "$(printf 'terragrunt:\n  exclude: ["live/sandbox/**"]\n  dependents: %s' "$mode")" || return 1
+    printf '\ndependencies {\n  paths = ["../../canary/one"]\n}\n' >> "$dir/live/fleet/two/terragrunt.hcl"
+    mkdir -p "$dir/live/sandbox/four"
+    cp "$dir/live/fleet/three/terragrunt.hcl" "$dir/live/sandbox/four/"
+    echo 1 > "$dir/live/sandbox/four/rev.txt"
+    git -C "$dir" init -q -b main
+    git -C "$dir" add -A && git -C "$dir" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm base
+    base="$(git -C "$dir" rev-parse HEAD)"
+    echo 2 > "$dir/live/canary/one/rev.txt"
+    echo 2 > "$dir/live/sandbox/four/rev.txt"
+    git -C "$dir" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "change canary/one and the sandbox"
+    tg_fixture_stage "$dir" -e "TG_BASE=$base" -- tf-plan --terragrunt --binary tofu || log "dependents: $mode: tf-plan exited non-zero"
+  done
+  r1="$work/run1/terragucci-report/report.json"
+  r2="$work/run2/terragucci-report/report.json"
+  [ -f "$r1" ] && [ -f "$r2" ] || { log "a run wrote no report"; drop_work "$work"; return 1; }
+  jq -e '.roots[] | select(.path == "live/canary/one" and .status == "planned" and (.terragrunt.provisional | not))' "$r1" >/dev/null || { log "live/canary/one is not a real plan"; rc=1; }
+  jq -e '.roots[] | select(.path == "live/fleet/two" and .terragrunt.provisional == true)' "$r1" >/dev/null || { log "dependents: plan did not preview live/fleet/two as provisional"; rc=1; }
+  jq -e '.deferred[] | select(.unit == "live/fleet/two" and .previewed == true)' "$r1" >/dev/null || { log "live/fleet/two is not deferred and previewed"; rc=1; }
+  jq -e '[.roots[] | select(.path == "live/fleet/two")] | length == 0' "$r2" >/dev/null || { log "dependents: follow planned live/fleet/two"; rc=1; }
+  [ "$(jq -c '[.waves[]?.set_digest]' "$r1")" = "$(jq -c '[.waves[]?.set_digest]' "$r2")" ] || { log "the preview changed a set digest"; rc=1; }
+  jq -e '[.roots[] | select(.path | startswith("live/sandbox"))] | length == 0' "$r1" >/dev/null || { log "the excluded sandbox unit was planned"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "dependents: plan previewed live/fleet/two outside every digest, follow left it for later, and the excluded unit never planned"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -8084,6 +8509,15 @@ highlight-sensitive  weight=90
 approval-revoke      runner self! weight=250
 pending-expiry       runner self! weight=250
 signer-trust         runner self! weight=250
+rollout-control      runner self! weight=400
+rollout-provider     self! weight=120
+rollout-pins         self! weight=80
+policy-opa           weight=150
+policy-hcp           weight=150
+policy-hcl           weight=150
+tg-policy            weight=200
+tg-credentials       weight=200
+tg-dependents        weight=250
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

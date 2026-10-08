@@ -16,7 +16,7 @@ Every event has a default response that needs no model. No response runs a codin
 | tip raised | one small pull request per tip: pin a provider from its lock file, add a lock file, add a canary | `off` |
 | format check failed | a `fmt` commit on the pull request's branch, on request | `off` |
 | module published | release notes from conventional commits | `off` |
-| rollout wave merged | the next wave's pull requests, as `tf-rollout` opens them | `off` |
+| rollout wave merged | none in the pipeline; `respond rollout`, run on a schedule or after each merge, opens the next wave's pull requests once the merged wave applied, as `tf-rollout` does | `off` |
 | module changed with no conventional commit | none; `tf-publish` proposes a patch | `suggest`: a suggested bump in a release pull request, from the typed-decision service |
 | pull request opened or updated | none | `check`: a typed decision flags a description that leaves out what the plan destroys or replaces |
 
@@ -58,6 +58,7 @@ terragucci respond tips --mode apply
 terragucci respond fmt --branch my-change --mode apply
 terragucci respond publish --module modules/network
 terragucci respond version-bump --module modules/network --mode apply
+terragucci respond rollout modules/network 1.4.0 --mode apply
 ```
 
 `--json` prints one envelope, as every other command does.
