@@ -141,3 +141,38 @@ describe("approvalStatus", () => {
     expect(await approvalStatus({ env: prEnv, fetch: f.fetch, forge: "forgejo", report: report(false) })).toMatchObject({ state: "success" });
   });
 });
+
+describe("pr-review on GitLab", () => {
+  const glEnv = { CI_API_V4_URL: "https://api.test", CI_PROJECT_ID: "9", TG_TOKEN: "t" };
+  const mr = { iid: 3, state: "merged", merge_commit_sha: MERGE, sha: HEAD, author: { username: "author" } };
+  const system = (who: string, id: number, body: string, at: string) => ({ system: true, author: { username: who, id }, body, created_at: at });
+  const routes = (notes: unknown[]) => ({
+    [`GET projects/9/repository/commits/${MERGE}/merge_requests`]: [mr],
+    "GET projects/9/merge_requests/3/versions": [{ id: 2, head_commit_sha: HEAD, created_at: "2026-10-01T10:00:00Z" }, { id: 1, head_commit_sha: "c".repeat(40), created_at: "2026-10-01T09:00:00Z" }],
+    "GET projects/9/merge_requests/3/notes": [{ system: false, body: noteMarker({ head: HEAD, waves: [{ number: 1, digest: "jcs1-sha256:aa", waits: true }] }) }, ...notes],
+    "GET projects/9/members/all/1": { access_level: 30 },
+    "GET projects/9/members/all/2": { access_level: 20 },
+    "GET projects/9/members/all/3": { access_level: 40 },
+  });
+
+  it("an approval after the latest push by a developer other than the author approves the wave", async () => {
+    const { fetch } = forge(routes([system("alice", 1, "approved this merge request", "2026-10-01T11:00:00Z"), system("author", 3, "approved this merge request", "2026-10-01T11:00:00Z")]));
+    expect(await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toEqual({ kind: "approved", pr: 3, head: HEAD, by: ["alice"] });
+  });
+
+  it("an approval before the latest push, one withdrawn, or one by a reporter counts for nothing", async () => {
+    for (const notes of [
+      [system("alice", 1, "approved this merge request", "2026-10-01T09:30:00Z")],
+      [system("alice", 1, "approved this merge request", "2026-10-01T11:00:00Z"), system("alice", 1, "unapproved this merge request", "2026-10-01T12:00:00Z")],
+      [system("rita", 2, "approved this merge request", "2026-10-01T11:00:00Z")],
+    ]) {
+      const { fetch } = forge(routes(notes));
+      expect((await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).kind).toBe("none");
+    }
+  });
+
+  it("plans that moved after the approval are refused, as on the other forges", async () => {
+    const { fetch } = forge(routes([system("alice", 1, "approved this merge request", "2026-10-01T11:00:00Z")]));
+    expect(await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:bb" })).toMatchObject({ kind: "moved", reviewed: "jcs1-sha256:aa" });
+  });
+});

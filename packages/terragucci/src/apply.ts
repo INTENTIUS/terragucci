@@ -698,7 +698,7 @@ async function gateWave(
     let moved: Extract<ReviewOutcome, { kind: "moved" }> | undefined;
     if (decision.status === "waiting" && mode === "pr-review") {
       const env = options.env ?? process.env;
-      const forge = env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
+      const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
       const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
       const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })));
       const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest });
