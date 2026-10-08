@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/notify/v1/notify.schema.json",
+  "title": "terragucci.notify/v1",
+  "description": "The event terragucci notify posts to the generic webhook when a tf-apply wave waits, is refused or fails. The schema changes only when a field is removed or changes meaning; new fields can appear without a bump.",
+  "type": "object",
+  "required": ["schema", "id", "event", "sent_at", "project", "wave", "roots"],
+  "properties": {
+    "schema": { "const": "terragucci.notify/v1" },
+    "id": { "type": "string", "description": "sha256 hex over the project, the wave, the event and the set digest (the commit when there is none): the same for every post of one wave's event about one digest." },
+    "event": { "enum": ["waiting", "refused", "failed"] },
+    "sent_at": { "type": "string", "description": "When the job posted it, ISO 8601." },
+    "project": { "type": "string", "description": "<host>/<path> of the repo." },
+    "forge": { "enum": ["github", "gitlab", "forgejo"] },
+    "repo": { "type": "string", "description": "owner/name on GitHub and Forgejo, the project path on GitLab." },
+    "sha": { "type": "string", "description": "The commit the wave applied." },
+    "pr": { "type": "integer", "description": "The pull or merge request the job applied, when a comment started it." },
+    "wave": { "type": "integer" },
+    "roots": { "type": "array", "items": { "type": "string" }, "description": "The wave's roots; for a refused or denied wave, the roots that moved or were denied; for a failed one, the roots that failed." },
+    "run_url": { "type": "string" },
+    "report_url": { "type": "string" },
+    "outcome": { "$ref": "#/$defs/outcome" }
+  },
+  "$defs": {
+    "outcome": {
+      "type": "object",
+      "description": "terragucci.outcome/v1, as stage tf-apply wrote it to TG_OUTCOME_JSON.",
+      "required": ["schema", "status", "exit", "wave", "roots"],
+      "properties": {
+        "schema": { "const": "terragucci.outcome/v1" },
+        "status": { "enum": ["applied", "waiting", "refused", "failed"] },
+        "exit": { "type": "integer" },
+        "wave": { "type": "integer" },
+        "roots": { "type": "array", "items": { "type": "string" } },
+        "line": { "type": "string" },
+        "set_digest": { "type": "string" },
+        "gate": {
+          "type": "object",
+          "required": ["name", "branch", "path"],
+          "properties": { "name": { "type": "string" }, "branch": { "type": "string" }, "path": { "type": "string" } }
+        },
+        "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
+        "approval_mode": { "enum": ["ledger", "pr-review", "sealed"] },
+        "approve_command": { "type": "string" },
+        "waiting_since": { "type": "string" },
+        "review": {
+          "type": "object",
+          "required": ["pull_request", "url"],
+          "properties": { "pull_request": { "type": "integer" }, "url": { "type": "string" } }
+        },
+        "refused": {
+          "type": "object",
+          "required": ["reason", "roots"],
+          "properties": {
+            "reason": { "enum": ["approval", "review", "override", "policy"] },
+            "approved": { "type": "string" },
+            "by": { "type": "string" },
+            "roots": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "policy_denied": { "type": "array", "items": { "type": "string" } },
+        "failed_roots": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

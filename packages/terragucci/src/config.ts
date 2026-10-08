@@ -289,11 +289,12 @@ export interface ProjectSettings {
    */
   synth?: string;
   /**
-   * Chat notifications: the names of the secrets holding a Slack or Teams
-   * incoming webhook. An apply job whose wave waits, is refused or fails
-   * posts to each (notify.ts).
+   * Notifications: the names of the secrets holding a Slack or Teams
+   * incoming webhook, and a generic webhook's address with the key that
+   * signs its body. An apply job whose wave waits, is refused or fails posts
+   * to each (notify.ts).
    */
-  notify?: { slack?: string; teams?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
   /**
    * Cost estimates per root in the plan note: Infracost on the customer's
    * own key (`key_secret`, default INFRACOST_API_KEY), or a `command` that
@@ -468,12 +469,15 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.notify !== undefined) {
     const n = s.notify;
-    if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: slack, teams)`);
+    const keys = ["slack", "teams", "webhook", "webhook_key"];
+    if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: ${keys.join(", ")})`);
     else {
       for (const [k, v] of Object.entries(n)) {
-        if (k !== "slack" && k !== "teams") problems.push(`${where}.notify.${k} is not a setting (settings: slack, teams)`);
-        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address itself`);
+        if (!keys.includes(k)) problems.push(`${where}.notify.${k} is not a setting (settings: ${keys.join(", ")})`);
+        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the ${k === "webhook_key" ? "key that signs the webhook's body, such as WEBHOOK_KEY; never the key" : `webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address`} itself`);
       }
+      // A generic webhook is always signed, so its receiver can tell terragucci's posts from anyone's.
+      if ((n.webhook === undefined) !== (n.webhook_key === undefined)) problems.push(`${where}.notify.webhook and notify.webhook_key go together: the key signs every body posted to the webhook`);
     }
   }
   if (s.cost !== undefined && s.cost !== true) {

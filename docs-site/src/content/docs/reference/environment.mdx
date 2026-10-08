@@ -76,6 +76,8 @@ Each names a secret in your forge's store.
 | `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
 | `notify.slack` | none | a Slack incoming webhook address; the apply jobs get it as `TERRAGUCCI_SLACK_WEBHOOK` |
 | `notify.teams` | none | a Microsoft Teams incoming webhook address; the apply jobs get it as `TERRAGUCCI_TEAMS_WEBHOOK` |
+| `notify.webhook` | none | a webhook's address for the JSON event; the apply jobs get it as `TERRAGUCCI_WEBHOOK` |
+| `notify.webhook_key` | none, required with `notify.webhook` | the key that signs the event; the apply jobs get it as `TERRAGUCCI_WEBHOOK_KEY` |
 | `telemetry.headers_secret` | none | the value of `OTEL_EXPORTER_OTLP_HEADERS` |
 | `token_env` | by forge, see above | the forge token |
 

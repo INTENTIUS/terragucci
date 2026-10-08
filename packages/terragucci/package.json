@@ -17,7 +17,8 @@
     ".": {
       "types": "./dist/types.d.ts"
     },
-    "./report.schema.json": "./dist/report.schema.json"
+    "./report.schema.json": "./dist/report.schema.json",
+    "./notify.schema.json": "./dist/notify.schema.json"
   },
   "files": [
     "dist",
