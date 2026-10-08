@@ -1,5 +1,10 @@
 /** The marker a plan note carries its waves in, for `approval: pr-review` (../review.ts). */
 
+/** The command that approves wave `wave`'s plans of `digest`, with `--sign` under `approval: sealed`. */
+export function approveCommand(wave: number, digest: string, sealed = false): string {
+  return `chant approve tf-apply wave-${wave} --plan ${digest}${sealed ? " --sign" : ""}`;
+}
+
 /** The marker the plan note carries the waves in. */
 export const WAVES_MARKER = "terragucci:waves";
 

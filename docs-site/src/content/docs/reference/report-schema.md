@@ -52,7 +52,7 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 |---|---|
 | every destroy, replacement and refusal | `named[]`, filtered on `action` |
 | the roots a group folds | `groups[].units`, matched to `roots[].path` |
-| the digest an approval binds | `waves[].set_digest`, over each root's `roots[].plan_digest` |
+| the digest an approval binds | `waves[].set_digest` of a `tf-apply` wave, over the `roots[].plan_digest` of each root whose plan changes something; a plan's waves carry the same digest as `review_digest` |
 | the digest a pull request review binds | `waves[].review_digest` in the plan report, compared with the same digest the wave plans after the merge |
 | why a root is shown open | `roots[].why` |
 | the full plan of a root | `roots[].plan` |

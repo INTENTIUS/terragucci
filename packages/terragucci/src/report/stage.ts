@@ -24,6 +24,7 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../../package.json";
 import { applyWaves, lockTimeoutArgs } from "../apply";
+import { declaredGates } from "../approval";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
 import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terragrunt";
@@ -1027,7 +1028,9 @@ async function finish(
     const late = reader ? await checkDriftSchedule(repo, settings.drift, reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), options.now ?? new Date(), log) : undefined;
     if (late) notices.push(late.message);
   }
-  writeReportDir(dir, report, plans, { ...links.note, ...(notices.length ? { notices } : {}) });
+  // A waiting wave's command in the note asks for --sign when the repo seals its approvals.
+  const sealed = (settings.approval ?? (declaredGates(existsSync(join(repo, "chant.workspace.json")) ? readFileSync(join(repo, "chant.workspace.json"), "utf-8") : undefined) > 0 ? "sealed" : "ledger")) === "sealed";
+  writeReportDir(dir, report, plans, { ...links.note, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
   let uploaded: Uploaded | undefined;
   if (reports?.bucket) {
     const s3 = new S3Client(s3FromEnv(reports, env), options.fetch);

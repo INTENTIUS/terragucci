@@ -50,6 +50,9 @@
 #              again merges, and wave 1 still waits: the approval came before
 #              the latest version. A second merge request, approved after its
 #              latest push, merges, and wave 1 applies.
+#   approve    gitlab: with the gate at always, a push to main waits at wave
+#              1. terragucci approve, run in a clone, finds the waiting wave
+#              and approves its digest; the next push applies the root.
 #
 # The images are the ones the generated pipeline pins by digest; the runner
 # (gitlab-runner, or act on the host) pulls each the first time.
@@ -61,7 +64,8 @@
 # own-jobs writes terragucci's jobs over the repo's .gitlab-ci.yml, as init
 # did before it kept the file, so the repo's job is gone.
 # pr-review merges with no review (on gitlab, the second merge request is
-# approved before its last push), so wave 1 waits and nothing applies.
+# approved before its last push), so wave 1 waits and nothing applies;
+# approve runs terragucci approve with --dry-run, which approves nothing.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,7 +81,8 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review)" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:approve) ;; *:approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in forgejo:pr-review|gitlab:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
@@ -378,6 +383,31 @@ run_pr_review_gitlab() {
   log "an approval after the last push applied wave 1, and $BUCKET exists"
 }
 
+# terragucci approve on GitLab: the ledger is git, so the command works from
+# any clone the person can push from.
+run_approve() {
+  local repo=validate-approve sha f out
+  forge_reset_repo "$repo"
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
+  prepare "$WORK/main"
+  f="$WORK/main/$PIPELINE_FILE"
+  sed 's/--gate on-destroy/--gate always/' "$f" > "$f.new" && mv "$f.new" "$f"
+  sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  grep -q "chant approve tf-apply wave-1" "$RUN_LOG" || { forge_logs; fail "wave 1 did not wait"; }
+  [ "$(bucket_code "$BUCKET")" = 404 ] || fail "wave 1 applied with no approval"
+  git clone -q "$(forge_remote "$repo")" "$WORK/approver" || fail "could not clone $repo"
+  git -C "$WORK/approver" config user.name validate-approver
+  git -C "$WORK/approver" config user.email validate-approver@terragucci.local
+  out="$(cd "$WORK/approver" && PATH="$HERE/../node_modules/.bin:$PATH" "$TERRAGUCCI" approve --actor validate-approver ${BREAK:+--dry-run} 2>&1)" || { echo "$out"; fail "terragucci approve failed"; }
+  log "terragucci approve: $(tail -1 <<<"$out")"
+  sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  [ "$(bucket_code "$BUCKET")" = 200 ] || { forge_logs; fail "the push after terragucci approve did not apply wave 1"; }
+  log "terragucci approve approved wave 1's digest, and the next push applied $BUCKET"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -398,6 +428,7 @@ case "$CLAIM" in
   gate-wait) run_gate_wait ;;
   own-jobs) run_own_jobs ;;
   pr-review) if [ "$FORGE" = gitlab ]; then run_pr_review_gitlab; else run_pr_review; fi ;;
+  approve) run_approve ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done

@@ -10,6 +10,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { emitYAML } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import { declaredGates } from "./approval";
+import { SIGNERS_PATH } from "./seal";
 import {
   ConfigError,
   NO_GITLAB_PR_APPLY,
@@ -40,6 +41,8 @@ export interface InitOptions {
   binary?: Binary;
   /** `--approval`: what counts as a waiting wave's approval. */
   approval?: Approval;
+  /** `--signer <principal>`: under approval: sealed, write the first signers line from `git config user.signingkey`. */
+  signer?: string;
   /** Overwrite a pipeline file terragucci did not write. */
   force?: boolean;
   /** Settings to use instead of reading terragucci.yml: a control repo's project. */
@@ -259,6 +262,18 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // Under approval: sealed every tf-apply wave gate is listed, so chant approve asks for --sign. A Terragrunt repo's layers are its waves.
   const decl = declaration(repo, tgMode ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
   if (decl) files.push(decl);
+  // Under sealed, the first signers line can come from the person's own git signing key.
+  if (approval.value === "sealed") {
+    const signersPath = join(repo, SIGNERS_PATH);
+    if (existsSync(signersPath)) {
+      if (options.signer) notes.push(`${SIGNERS_PATH} exists and init does not edit it; add ${options.signer} to it by hand`);
+    } else if (options.signer) {
+      files.push(plan(signersPath, signerLine(repo, options.signer)));
+      notes.push(`${SIGNERS_PATH} lists ${options.signer}; merge it in a reviewed pull request before the first wave waits`);
+    } else {
+      notes.push(`approval: sealed counts only approvals sealed by a key ${SIGNERS_PATH} lists, and there is none yet; terragucci init --signer <your principal> writes it from git config user.signingkey`);
+    }
+  }
 
   // A control repo's project reads policy from its own terragucci.yml at the base, so the control repo's key is written there.
   if (options.settings) {
@@ -393,6 +408,31 @@ function declaration(repo: string, waves: number, want: "seal" | "unseal" | "lea
   }
   // A declaration that already lists every gate is left as it is written.
   return plan(path, changed ? `${JSON.stringify(decl, null, 2)}\n` : before!);
+}
+
+/**
+ * The signers line for `principal` from git's `user.signingkey`: an ssh public
+ * key, a `key::` literal, or the path of a key whose `.pub` sits beside it.
+ */
+export function signerLine(repo: string, principal: string): string {
+  if (!/^[^\s,"*?!]+$/.test(principal)) throw new ConfigError(`--signer ${JSON.stringify(principal)} is not a principal; use a name with no spaces, commas, quotes or patterns, such as github:alice`);
+  let key = "";
+  try {
+    key = execFileSync("git", ["-C", repo, "config", "user.signingkey"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    /* unset */
+  }
+  if (!key) throw new ConfigError("--signer reads git config user.signingkey, which is not set; set it to your ssh key (git config --global user.signingkey ~/.ssh/id_ed25519.pub)");
+  let pub = key.replace(/^key::/, "");
+  if (!/^(ssh-|sk-|ecdsa-)/.test(pub)) {
+    const path = pub.replace(/^~(?=\/)/, process.env.HOME ?? "~");
+    const file = path.endsWith(".pub") ? path : `${path}.pub`;
+    if (!existsSync(file)) throw new ConfigError(`--signer found user.signingkey ${key}, and no public key at ${file}`);
+    pub = readFileSync(file, "utf-8").trim();
+  }
+  const [type, blob] = pub.split(/\s+/);
+  if (!type || !blob || !/^(ssh-(ed25519|rsa)|sk-ssh-ed25519@openssh\.com)$/.test(type)) throw new ConfigError(`--signer needs an ed25519 or RSA ssh key; user.signingkey gives ${type ?? "nothing"}`);
+  return `${principal} ${type} ${blob}\n`;
 }
 
 /** A declaration name: lowercase letters, digits and hyphens, at most 40. */

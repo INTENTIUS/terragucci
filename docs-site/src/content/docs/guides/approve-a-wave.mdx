@@ -4,10 +4,11 @@ description: Read what a wave will do, record your approval, and let the apply c
 claims: [waves, sealed, comment-apply, wave-report]
 prompt: |
   Read https://intentius.io/terragucci/guides/approve-a-wave/.
-  Find the waiting wave, summarize its report (destroys, replacements, roots)
-  and print the exact `chant approve` command with its digest for me.
+  Find the waiting wave with `npx terragucci approve --dry-run`, summarize its
+  report (destroys, replacements, roots) and print the command it gives for me.
   Never run it, never sign, and never touch .chant/allowed_signers.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never run apply, `chant approve`, `terragucci approve` without --dry-run or
+  `--mode apply`, and never merge.
 ---
 
 import Captured from '../../../components/Captured.astro';
@@ -24,7 +25,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 |---|---|
 | A wave that ran | After a merge, or from `/terragucci apply` on an open pull request when [`apply.when`](/terragucci/reference/config/#apply-before-merge) is `pull-request`. |
 | A gate | `gate` set to `on-destroy` (the default) or `always`. With `never`, no wave waits ([Gate policy](/terragucci/reference/stages/#gate-policy)). |
-| [chant](/terragucci/concepts/glossary/#chant) | `npm i -D @intentius/chant`, where you approve. |
+| [chant](/terragucci/concepts/glossary/#chant) | `npm i -D @intentius/chant @intentius/terragucci`, where you approve. |
 | Write access | `chant approve` pushes a commit to `chant/lifecycle` with your own git credentials. |
 | Under `approval: sealed` only | An ssh key of yours in `.chant/allowed_signers` on the default branch ([setup](#set-up-the-signers-file), once per repo). |
 | To be a person | Nothing signs off for you. |
@@ -87,22 +88,15 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
 
 <Steps>
 
-1. Find the waiting wave.
+1. Find the waiting wave and its command.
 
-   A waiting wave stops its job with exit code 3 and prints the command with the digest it planned. A comment-run apply puts it in its reply. The plan note lacks it: the digest is made after the note.
-
-   | Forge | `terragucci/apply` on the commit |
+   | Where | What it gives |
    |---|---|
-   | GitHub, Forgejo | pending, the command as its description |
-   | GitLab | failed, the command as its description; GitLab cannot move a running status back to pending, and a running one holds the pipeline open |
+   | the pull request's plan note, before the merge | each wave the gate will hold, with `chant approve tf-apply wave-<k> --plan <digest>`; after the merge the wave asks for that digest unless its plans moved |
+   | `terragucci/apply` on the commit | the waiting wave's command, as the status's description: pending on GitHub and Forgejo, failed on GitLab, which cannot move a running status back to pending |
+   | the job's log, or a comment's reply | the same command; the job exits with code 3 |
 
-   ```text
-   chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3...
-   ```
-
-   Under `approval: sealed` the command ends in `--sign`.
-
-   In the example, `just example change destroy` opens a destroy and `just example merge destroy` merges it. The report has a Waves table with each wave's set digest and state.
+   In the example, `just example change destroy` opens a destroy and `just example merge destroy` merges it.
 
    <Shot step="wave-waiting" view="pull" alt="The destroy pull request in Forgejo with terragucci's plan note, which lists the destroy at the top" optional />
    <Shot step="wave-waiting" view="log" alt="The apply job's log: the wave waits, exit code 3, and the chant approve command with the plan digest" optional />
@@ -112,44 +106,26 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
 
    The wave waits because a plan destroys or replaces something, or because `gate` is `always`. Destroys and replacements are never grouped, so they sit at the top of the report. Read each one.
 
-3. Approve it.
+3. Approve it from a checkout of the repo.
 
    <Tabs syncKey="approval">
      <TabItem label="ledger (default) or pr-review">
        ```bash
-       npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
+       npx terragucci approve --actor github:alice
        ```
-
-       `--actor` is the name the record carries. Nothing checks it.
      </TabItem>
      <TabItem label="sealed">
        ```bash
-       npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
+       npx terragucci approve --actor github:alice --sign ~/.ssh/id_ed25519
        ```
 
-       `--actor` is your principal in `.chant/allowed_signers`; a seal counts only for a listed principal. `--sign` seals with your key, or git's `user.signingkey` when `gpg.format` is `ssh`. The seal covers the record, so an edited record no longer verifies.
+       `--actor` must be your principal in `.chant/allowed_signers`. Left out, `--sign` uses git's `user.signingkey` when `gpg.format` is `ssh`.
      </TabItem>
    </Tabs>
 
-   The approval binds the `--plan` digest only; a wave that plans differently is refused as changed. Without `--plan`, chant binds whatever is pending, maybe plans you did not read, so always pass it.
-
-   Left out, `--actor` falls back by forge. On your own machine only `$USER` is set, so pass `--actor`.
-
-   <Tabs syncKey="forge">
-     <TabItem label="GitHub">
-       `$GITHUB_ACTOR`, in a workflow.
-     </TabItem>
-     <TabItem label="GitLab">
-       `$GITLAB_USER_LOGIN`, in a pipeline.
-     </TabItem>
-     <TabItem label="Forgejo">
-       No variable of its own: pass `--actor`, or chant uses `$USER`.
-     </TabItem>
-   </Tabs>
+   `terragucci approve` fetches `chant/lifecycle`, finds the waiting wave (name it, as `wave-2`, when several wait), prints its roots and destroys, and runs `chant approve tf-apply wave-<k> --plan <digest>` for the digest that wave planned. `--dry-run` prints the command and runs nothing. The approval binds that digest only; a wave that plans differently is refused as changed. Pass `--actor` on your own machine, where chant would otherwise record `$USER`.
 
    <Captured step="wave-refused" cmd="just example approve" optional />
-
-   The record names the wave's set digest, which hashes every root's plan digest.
 
 4. Run the stage again.
 
@@ -175,7 +151,7 @@ Only `approval: sealed` reads it. With that key in `terragucci.yml`, `terragucci
 
 <Steps>
 
-1. In a reviewed pull request to the default branch, add `.chant/allowed_signers`, one line per approver, in ssh-keygen's allowed_signers format:
+1. In a reviewed pull request to the default branch, add `.chant/allowed_signers`, one line per approver, in ssh-keygen's allowed_signers format. `terragucci init --signer github:alice` writes the first line from your `git config user.signingkey` when the file does not exist yet:
 
    ```text
    github:alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
