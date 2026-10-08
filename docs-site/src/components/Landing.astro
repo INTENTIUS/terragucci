@@ -25,12 +25,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 			bucket. No account, no sign-in, no platform. Each pull request gets one grouped plan note,
 			<a href={`${base}/concepts/glossary/#root`}>roots</a> apply in waves with a destroy waiting for an approval bound to its
 			<a href={`${base}/concepts/glossary/#set-digest`}>set digest</a>, and drift is reported on a schedule.
+			Every stage run is one OpenTelemetry <a href={`${base}/guides/send-traces-and-metrics/`}>trace</a>, with a span per root
+			and the binary's own spans inside it (provider calls and state lock waits with choudoufu), sent over OTLP to your
+			collector with the pipeline's metrics and the Grafana dashboards <code>init</code> can write.
 			<a href={`${base}/concepts/how-it-works/`}>How it works</a>.
 		</p>
 	</section>
 ) : (
 	<section class="tg-landing tg-agent not-content">
-		<AgentPrompt text={setupPrompt} />
+		<AgentPrompt text={setupPrompt} label="Optional: hand the setup to your coding agent" note="Setup works by hand too: install terragucci and run init, as the getting started page shows." />
 	</section>
 )}
 

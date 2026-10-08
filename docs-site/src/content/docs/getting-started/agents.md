@@ -4,6 +4,8 @@ description: How a coding agent adopts terragucci in a repository, and the promp
 prompt: setup
 ---
 
+Setup needs no agent; [Get your first plan note](/terragucci/getting-started/) gives every step by hand. Only two features run an agent, and both are off until you add them ([what needs an agent](/terragucci/getting-started/#what-needs-an-agent)).
+
 This page is for a coding agent setting terragucci up, and the person handing it the task. Run your coding agent in the repository and paste it the prompt above. The repository can hold Terraform, OpenTofu or Terragrunt roots.
 
 ## What the agent reads
@@ -14,7 +16,7 @@ This page is for a coding agent setting terragucci up, and the person handing it
 | [`llms-full.txt`](https://intentius.io/terragucci/llms-full.txt) | the text of every page in one file |
 | Copy page as Markdown, under each page's title | that page's text, with its prompt |
 
-A task page's own prompt sits under its title as "Hand this to your agent". Each one forbids apply, approve and merge.
+A task page's own prompt sits under its title as "Optional: hand this page to your coding agent". Each one forbids apply, approve and merge.
 
 A key that `terragucci config check` refuses is not part of terragucci.
 
