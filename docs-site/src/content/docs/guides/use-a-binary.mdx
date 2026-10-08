@@ -21,7 +21,7 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 | State | your backend | your backend | each unit's backend | no state file: a tag on each resource |
 | What `tf-check` runs | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) |
 | What the report times | nothing (no traces) | each resource | each unit, from Terragrunt's run report | each resource; [slow provider calls](/terragucci/reference/observability/#what-the-report-lists), [summed timings](/terragucci/reference/observability/#what-the-report-lists) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend |
-| CI image | `terragucci-terraform`, Terraform 1.14.0 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 | `terragucci-choudoufu`, choudoufu 0.22.0 |
+| CI image | `terragucci-terraform`, Terraform 1.14.0 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 | `terragucci-choudoufu`, choudoufu 0.23.0 |
 | Version pin | `version`, or an exact `required_version` | `version`, or an exact `required_version` | `terragrunt.version`, or an exact `terragrunt_version_constraint` | `version` only |
 
 A pin the image does not carry is installed in the job, checked against the release's SHA256SUMS. Images are pinned by digest.
