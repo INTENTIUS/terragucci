@@ -14,6 +14,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 
 :root {
+	/* The tile every taco sits on: black in the dark theme, white in the light. */
+	--tg-taco-ground: #000000;
 	--tg-display: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 	--sl-font: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 	--sl-font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -39,6 +41,7 @@
 }
 
 :root[data-theme='light'] {
+	--tg-taco-ground: #ffffff;
 	--sl-color-white: #09090b;
 	--sl-color-gray-1: #27272a;
 	--sl-color-gray-2: #3f3f46;
@@ -220,4 +223,12 @@ code, pre, kbd, samp {
 .tg-404 a {
 	color: var(--sl-color-accent-high);
 	font-weight: 500;
+}
+
+/* The header logo sits on the same tile as every other taco. */
+.site-title img {
+	background: var(--tg-taco-ground);
+	padding: 4px 6px;
+	border-radius: 6px;
+	box-sizing: content-box;
 }
