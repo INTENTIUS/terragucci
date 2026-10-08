@@ -7,7 +7,7 @@ prompt: |
   Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-With `notify.webhook` and `notify.webhook_key` set, each apply job whose wave waits, is refused or fails posts one event to the webhook. [Send events to your own webhook](/terragucci/guides/notify-a-chat-channel/#send-events-to-your-own-webhook) sets it up and verifies it.
+With `notify.webhook` and `notify.webhook_key` set, each apply job whose wave waits, is refused or fails posts one event to the webhook. [Send events to your own webhook](/terragucci/guides/notify-a-chat-channel/#send-events-to-your-own-webhook) sets it up and verifies it. Slack and Teams notices need none of it; the event is for a program of yours, such as a relay that turns a chat click into `terragucci approve --plan`.
 
 ```json
 {
