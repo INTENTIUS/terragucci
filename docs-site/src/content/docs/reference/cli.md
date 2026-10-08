@@ -21,6 +21,7 @@ prompt: |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, and pushes an agent's change; the generated pipeline runs it |
 | `comment-apply` | reads a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; the generated pipeline runs it |
+| `pr-lock` | takes or releases a pull request's plan locks under `locks: plan`; the generated pipeline runs it |
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
@@ -173,6 +174,14 @@ Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and write
 
 [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
 
+## pr-lock
+
+```text
+terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]
+```
+
+Reads a `pull_request_target` event, or a `/terragucci plan`, `/terragucci lock` or `/terragucci unlock` comment, from the event file, and takes or releases the pull request's plan locks on `chant/lifecycle`. It posts `terragucci/lock` on the head and replies when another pull request holds a root. The generated `pr-lock` job runs it under [`locks: plan`](/terragucci/reference/config/#plan-locks). `--when pull-request` leaves `lock` and `unlock` to `comment-apply`; `--terragrunt` locks units.
+
 ## comment-apply
 
 ```text
@@ -275,6 +284,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `rollout` | complete | stopped | | waiting | |
 | `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |
 | `comment`, `comment-apply` | decision written | forge error, unreadable event file | | | |
+| `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | | |
 | `pr-merge` | merged | not merged | | | |
 | `config check` | `ok` | | problems found | | |
 | `check-root`, `check-policy` | passed | failed | | | |

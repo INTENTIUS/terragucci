@@ -1,9 +1,9 @@
 /**
- * Root locks for `apply.when: pull-request`. A pull request that applies
- * before it merges, or that a writer locks with `/terragucci lock`, holds a
- * lock on each root its change reaches, so no other
- * pull request applies those roots until it merges or closes, or someone with
- * write access comments `/terragucci unlock` on it.
+ * Root locks. A pull request that applies before it merges (`apply.when:
+ * pull-request`), that a writer locks with `/terragucci lock`, or, with
+ * `locks: plan`, that planned, holds a lock on each root its change reaches,
+ * so no other pull request applies or locks those roots until it merges or
+ * closes, or someone with write access comments `/terragucci unlock` on it.
  *
  * The locks are one file, `_locks/tf-apply.json`, on the repo's
  * `chant/lifecycle` branch, next to the gate ledger the apply waves already
@@ -13,7 +13,8 @@
  *
  * A lock held by a pull request that is no longer open is released: the
  * holder merged or closed, and the next pull request that needs the root
- * takes it over. So merging or closing needs no job of its own.
+ * takes it over. So merging or closing needs no job of its own; with
+ * `locks: plan` the `pr-lock` job also releases a closed pull request's locks.
  */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -35,6 +36,8 @@ export interface RootLock {
   head: string;
   /** `lock` when `/terragucci lock` took it without applying. Absent for a lock an apply took. */
   via?: "lock";
+  /** `plan` when the pull request's plan took it (`locks: plan`). Absent for an apply's or a `/terragucci lock` lock, as in files written before plan locks. */
+  stage?: "plan";
 }
 
 export interface LockFile {
@@ -47,7 +50,7 @@ export interface HeldLock extends RootLock {
   root: string;
 }
 
-export type TakeResult = { ok: true; taken: string[] } | { ok: false; held: HeldLock[] };
+export type TakeResult = { ok: true; taken: string[]; released?: string[] } | { ok: false; held: HeldLock[] };
 
 function git(repo: string, args: string[], input?: string, env: NodeJS.ProcessEnv = process.env) {
   return spawnSync("git", args, { cwd: repo, encoding: "utf-8", input, env });
@@ -70,7 +73,7 @@ export function parseLocks(text: string): LockFile {
     if (doc?.version === 1 && doc.locks && typeof doc.locks === "object" && !Array.isArray(doc.locks)) {
       const locks: Record<string, RootLock> = {};
       for (const [root, l] of Object.entries(doc.locks as Record<string, any>)) {
-        if (Number.isInteger(l?.pr) && typeof l.by === "string" && typeof l.at === "string" && typeof l.head === "string") locks[root] = { pr: l.pr, by: l.by, at: l.at, head: l.head, ...(l.via === "lock" ? { via: "lock" as const } : {}) };
+        if (Number.isInteger(l?.pr) && typeof l.by === "string" && typeof l.at === "string" && typeof l.head === "string") locks[root] = { pr: l.pr, by: l.by, at: l.at, head: l.head, ...(l.via === "lock" ? { via: "lock" as const } : {}), ...(l.stage === "plan" ? { stage: "plan" as const } : {}) };
       }
       return { version: 1, locks };
     }
@@ -116,9 +119,12 @@ function write(repo: string, parent: string, file: LockFile, message: string): b
  * request that `isOpen` says is still open is held, and nothing is locked;
  * a root locked by one that merged or closed is taken over. Roots this pull
  * request already holds stay its own, with the new head. An apply takes over
- * the pull request's own `/terragucci lock` locks as apply locks.
+ * the pull request's own `/terragucci lock` and plan locks as apply locks; a
+ * plan keeps the pull request's own apply and lock locks as they are. With
+ * `release`, the pull request's plan locks on roots it no longer reaches are
+ * released (`released`).
  */
-export async function takeLocks(repo: string, roots: readonly string[], holder: RootLock, isOpen: (pr: number) => Promise<boolean>): Promise<TakeResult> {
+export async function takeLocks(repo: string, roots: readonly string[], holder: RootLock, isOpen: (pr: number) => Promise<boolean>, o: { release?: boolean } = {}): Promise<TakeResult> {
   const open = new Map<number, boolean>();
   const stillOpen = async (pr: number): Promise<boolean> => {
     if (!open.has(pr)) open.set(pr, await isOpen(pr));
@@ -133,8 +139,22 @@ export async function takeLocks(repo: string, roots: readonly string[], holder: 
     }
     if (held.length > 0) return { ok: false, held };
     const next: LockFile = { version: 1, locks: { ...file.locks } };
-    for (const root of roots) next.locks[root] = holder;
-    if (roots.length === 0 || write(repo, parent, next, `Lock ${roots.length} root${roots.length === 1 ? "" : "s"} for pull request ${holder.pr}`)) return { ok: true, taken: [...roots].sort() };
+    const released: string[] = [];
+    if (o.release) {
+      for (const [root, l] of Object.entries(file.locks)) {
+        if (l.pr === holder.pr && l.stage === "plan" && !roots.includes(root)) {
+          delete next.locks[root];
+          released.push(root);
+        }
+      }
+    }
+    for (const root of roots) {
+      const own = file.locks[root];
+      next.locks[root] = holder.stage === "plan" && own?.pr === holder.pr && own.stage !== "plan" ? own : holder;
+    }
+    const done: TakeResult = { ok: true, taken: [...roots].sort(), ...(released.length ? { released: released.sort() } : {}) };
+    if (roots.length === 0 && released.length === 0) return done;
+    if (write(repo, parent, next, `Lock ${roots.length} root${roots.length === 1 ? "" : "s"} for pull request ${holder.pr}`)) return done;
   }
   throw new ConfigError(`could not push the root locks to ${LIFECYCLE}; check that the job may push to it`);
 }
@@ -155,5 +175,5 @@ export function releaseLocks(repo: string, pr: number): string[] {
 export function describeHeld(held: readonly HeldLock[]): string {
   const byPr = new Map<number, HeldLock[]>();
   for (const h of held) byPr.set(h.pr, [...(byPr.get(h.pr) ?? []), h]);
-  return [...byPr].map(([pr, hs]) => `${hs.map((h) => `\`${h.root}\``).join(", ")} ${hs.length === 1 ? "is" : "are"} locked by pull request ${pr} (${hs[0]!.via === "lock" ? "locked with `/terragucci lock`" : "applied"} by ${hs[0]!.by})`).join("; ");
+  return [...byPr].map(([pr, hs]) => `${hs.map((h) => `\`${h.root}\``).join(", ")} ${hs.length === 1 ? "is" : "are"} locked by pull request ${pr} (${hs[0]!.stage === "plan" ? "planned" : hs[0]!.via === "lock" ? "locked with `/terragucci lock`" : "applied"} by ${hs[0]!.by})`).join("; ");
 }

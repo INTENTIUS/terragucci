@@ -431,6 +431,51 @@ describe("the comment trigger", () => {
   });
 });
 
+describe("locks: plan", () => {
+  const renderLocks = (forge: ForgeName, extra: object = {}): Record<string, any> =>
+    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, locksPlan: true, ...extra }).content);
+
+  it.each(["github", "forgejo"] as const)("%s: the pr-lock job runs on pull_request_target and on plan, lock and unlock comments, from the default branch, with no cloud role and no binary", (forge) => {
+    const doc = renderLocks(forge);
+    expect(doc.on.pull_request_target).toEqual({ types: ["opened", "reopened", "synchronize", "closed"] });
+    const job = doc.jobs["pr-lock"];
+    expect(job.if).toBe("github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci plan') || (startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))))");
+    if (forge === "github") expect(job.permissions).toEqual({ contents: "write", statuses: "write", "pull-requests": "write" });
+    expect(job.env).toEqual({ TG_TOKEN: "${{ github.token }}" });
+    // The checkout is the default branch's: no ref of the pull request, no install, no OIDC.
+    expect(job.steps).toHaveLength(2);
+    expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
+    expect(JSON.stringify(job)).not.toContain(OIDC.plan_role);
+    expect(JSON.stringify(job)).not.toContain("head.sha");
+    expect(job["enable-openid-connect"]).toBeUndefined();
+    expect(job.steps[1].run.trim()).toBe(`set -euo pipefail\nterragucci pr-lock --layers 'network;app,cache'${forge === "forgejo" ? " --forge forgejo" : ""}`);
+    // The re-plan job leaves lock and unlock to it; apply-comment still takes only apply.
+    expect(doc.jobs.replan.if).toContain("!(startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    // Pushes, plans and applies do not run on the new trigger: every other job names its own event or needs check.
+    for (const [name, j] of Object.entries(doc.jobs) as [string, any][]) {
+      if (name === "pr-lock") continue;
+      expect(String(j.if ?? "") + String(j.needs ?? ""), name).toMatch(/event_name == '(push|pull_request|issue_comment|pull_request_review|schedule)'|check|apply-wave|confirm/);
+    }
+    if (forge === "forgejo") expect(doc.concurrency.group).toContain("github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number)");
+  });
+
+  it("under apply.when: pull-request, pr-lock reads only plan comments, and the apply-comment job keeps lock and unlock; a Terragrunt repo locks units", () => {
+    const doc = renderLocks("github", { applyWhen: "pull-request", terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] }, layers: [["live/a"]] });
+    expect(doc.jobs["pr-lock"].if).toBe("github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci plan'))");
+    expect(doc.jobs["pr-lock"].steps[1].run).toContain("terragucci pr-lock --layers 'live/a' --when pull-request --terragrunt");
+    expect(doc.jobs["apply-comment"].if).toContain("'/terragucci unlock'");
+    expect(doc.jobs.replan.if).not.toContain("!(startsWith(github.event.comment.body, '/terragucci lock')");
+  });
+
+  it("GitLab refuses it, and without it no pipeline has pull_request_target or pr-lock", () => {
+    expect(() => renderLocks("gitlab")).toThrow(/locks: plan is not supported on GitLab/);
+    for (const forge of ["github", "forgejo"] as const) {
+      expect(render(forge)).not.toContain("pull_request_target");
+      expect(body(render(forge)).jobs["pr-lock"]).toBeUndefined();
+    }
+  });
+});
+
 describe("apply before merge (apply.when: pull-request)", () => {
   const renderPr = (forge: ForgeName, merge?: "auto" | "manual", mergeToken?: string, requires?: ("approved" | "mergeable" | "undiverged" | "checks")[]): Record<string, any> =>
     body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, applyWhen: "pull-request", ...(merge ? { applyMerge: merge } : {}), ...(mergeToken ? { applyMergeTokenEnv: mergeToken } : {}), ...(requires ? { applyRequires: requires } : {}) }).content);

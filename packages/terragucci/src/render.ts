@@ -48,7 +48,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, NO_GITLAB_PLAN_LOCKS, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -131,6 +131,8 @@ export interface PipelineInput {
   applyMergeTokenEnv?: string;
   /** `apply.requires`: what an open pull request needs before it applies. Every requirement when unset. */
   applyRequires?: ApplyRequire[];
+  /** `locks: plan`: the `pr-lock` job locks a pull request's roots from its first plan (GitHub and Forgejo). */
+  locksPlan?: boolean;
 }
 
 export interface RenderedPipeline {
@@ -806,6 +808,19 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
   ].join("\n");
 }
 
+/**
+ * The `pr-lock` job's script (`locks: plan`): `terragucci pr-lock` reads the
+ * event and the change, takes or releases the locks and posts
+ * `terragucci/lock`. A pull request held by another fails the status, not the
+ * job: the job fails only when the locks could not be read or written.
+ */
+export function planLockScript(layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", prMode = false, terragrunt = false): string {
+  return [
+    "set -euo pipefail",
+    `terragucci pr-lock --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""}${prMode ? " --when pull-request" : ""}${terragrunt ? " --terragrunt" : ""}`,
+  ].join("\n");
+}
+
 /** Shell for a Terragrunt job's credentials: the auth provider, and the AWS OIDC token when `oidc` did not fetch it. */
 function terragruntCredentials(forge: ForgeName, phase: "plan" | "apply", oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>): string[] {
   if (!credentials || Object.keys(credentials).length === 0) return [];
@@ -1116,6 +1131,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
   if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
   if (prApply && forge === "gitlab") throw new RenderError(`apply.when: ${NO_GITLAB_PR_APPLY}`);
+  const locksPlan = input.locksPlan === true;
+  if (locksPlan && forge === "gitlab") throw new RenderError(`locks: ${NO_GITLAB_PLAN_LOCKS}`);
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
@@ -1272,6 +1289,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       issue_comment: { types: ["created"] },
       // approval: pr-review: a review of the head re-posts terragucci/approval.
       ...(prReview ? { pull_request_review: {} } : {}),
+      // locks: plan: the pr-lock job, from the default branch's workflow, locks a pull request's roots and releases them when it closes.
+      ...(locksPlan ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
       ...(drift ? { schedule: [{ cron: drift }], workflow_dispatch: {} } : {}),
     },
     env: jobEnv,
@@ -1279,7 +1298,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // Forgejo cancels the runs of an earlier push to a branch, even one that is
     // applying, unless the workflow names a concurrency group. A group that does
     // not cancel makes a later run wait instead.
-    ...(forge === "forgejo" ? { concurrency: { group: "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false } } : {}),
+    // A pull_request_target run's ref is the default branch's, so with locks: plan it gets a group of its own pull request's.
+    ...(forge === "forgejo"
+      ? { concurrency: { group: locksPlan
+        ? "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number) || github.ref }}"
+        : "terragucci-${{ github.event_name == 'issue_comment' && format('comment-{0}', github.event.issue.number) || github.ref }}", "cancel-in-progress": false } }
+      : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
   const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string): InstanceType<typeof Step>[] => [
@@ -1350,12 +1374,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const APPLY_COMMENT = prApply
     ? "(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))"
     : "startsWith(github.event.comment.body, '/terragucci apply')";
+  // With locks: plan and apply.when: merge, `/terragucci lock` and `/terragucci unlock` are the pr-lock job's.
+  const LOCK_COMMENT = "(startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))";
+  const lockElsewhere = locksPlan && !prApply ? ` && !${LOCK_COMMENT}` : "";
   // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
   // never an expression in the script: the command reads it from the event file (comment.ts).
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !${APPLY_COMMENT}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
+    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...driftRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
@@ -1430,6 +1457,24 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     } as never) as never);
   }
   if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
+  if (locksPlan) {
+    // locks: plan. The workflow is the default branch's on pull_request_target and on a comment, and the job checks out
+    // only the default branch: it reads the change as data from git, runs no binary and assumes no cloud role. So it may
+    // push the locks to chant/lifecycle (contents: write) and post terragucci/lock.
+    const planLockIf = prApply ? "startsWith(github.event.comment.body, '/terragucci plan')" : `(startsWith(github.event.comment.body, '/terragucci plan') || ${LOCK_COMMENT})`;
+    entities.set("pr-lock", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      if: `github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && ${planLockIf})`,
+      permissions: { contents: "write", statuses: "write", "pull-requests": "write" },
+      concurrency: { group: "terragucci-lock-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}", "cancel-in-progress": false },
+      env: { TG_TOKEN: "${{ github.token }}" },
+      steps: [
+        new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
+        new Step({ name: "Lock the roots the pull request reaches, or release them", shell: "bash", run: planLockScript(layers, forge, prApply, Boolean(tg)) }),
+      ],
+    } as never) as never);
+  }
   for (const [i, job] of pushApplyJobs.entries()) {
     entities.set(job.name, new Job({
       "runs-on": "ubuntu-latest",
