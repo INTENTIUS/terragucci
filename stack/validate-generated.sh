@@ -377,10 +377,13 @@ run_pr_review() {
   log "the merge's wave 1 applied on $who's review of ${head:0:8}, and $BUCKET exists"
 }
 
+# A password GitLab takes: it refuses one made of common words and digits.
+gl_password() { echo "Tg$(openssl rand -hex 16)!Zq"; }
+
 # approval: pr-review on GitLab: an approval counts only after the merge
 # request's latest version.
 run_pr_review_gitlab() {
-  local repo=validate-review who="validate-reviewer" pass="validate-$RANDOM-$RANDOM-Aa1" uid rtoken sha
+  local repo=validate-review who="validate-reviewer" pass="$(gl_password)" uid rtoken sha
   forge_reset_repo "$repo"
   forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
   curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
@@ -476,7 +479,8 @@ prepare_comments() { # repo terragucci.yml-lines...
   # A directory of its own per repo, so nothing from another claim's tree is in it.
   CDIR="$WORK/comments-$repo"; mkdir -p "$CDIR"
   cp -R "$FIXTURE/infra" "$CDIR/"
-  printf '%s\n' 'comments: "*/5 * * * *"' "$@" > "$CDIR/terragucci.yml"
+  # The stack's GitLab is on localhost, which init does not take for GitLab, so the file names the forge.
+  printf '%s\n' 'forge: gitlab' 'comments: "*/5 * * * *"' "$@" > "$CDIR/terragucci.yml"
   (cd "$CDIR" && git init -q -b main && "$TERRAGUCCI" init --forge gitlab --binary tofu >/dev/null) || fail "init failed with comments set"
   grep -q '^comments:$' "$CDIR/$PIPELINE_FILE" || fail "the pipeline init wrote has no comments job"
 }
@@ -533,7 +537,7 @@ gl_jobs() { # repo pipeline
 # A user who is a member of REPO at LEVEL (30 Developer, 20 Reporter), with
 # an api token of its own.
 gl_member() { # repo name level -> prints the user's token
-  local uid pass="validate-$RANDOM-$RANDOM-Aa1"
+  local uid pass="$(gl_password)"
   uid="$(glapi "$URL/api/v4/users?username=$2" | jq -r '.[0].id // empty')"
   if [ -z "$uid" ]; then
     uid="$(glapi -X POST "$URL/api/v4/users" --data-urlencode "username=$2" --data-urlencode "name=$2" --data-urlencode "email=$2@terragucci.local" \
@@ -634,6 +638,9 @@ run_comment_apply() {
   log "!$iid merged at ${merge:0:8}; wave 1 waits in pipeline $pipe"
   if [ -n "$BREAK" ]; then
     # A later push to main: its apply supersedes the merge commit, so no job at the merge commit is retried.
+    # It goes on top of main as GitLab has it, so the open merge request's branch stays unmerged.
+    git -C "$CDIR" fetch -q "$(forge_remote "$repo")" main || fail "could not fetch main"
+    git -C "$CDIR" checkout -q -f -B main FETCH_HEAD
     sha="$(forge_push "$CDIR" "$repo" main "$(msg)")"
     forge_run "$repo" main "$sha"
   fi
@@ -702,7 +709,7 @@ run_comment_drift_schedule() {
 # comments and pr-merge jobs name. The stack leaves main unprotected, so the
 # variable is not protected either.
 prepare_pr_apply() { # repo merge
-  prepare_comments "$1" "forge: gitlab" "apply:" "  when: pull-request" "  merge: $2" "  merge_token_env: TERRAGUCCI_MERGE_TOKEN"
+  prepare_comments "$1" "apply:" "  when: pull-request" "  merge: $2" "  merge_token_env: TERRAGUCCI_MERGE_TOKEN"
   grep -q '^mr-apply:$' "$CDIR/$PIPELINE_FILE" || fail "the pipeline init wrote has no mr-apply job"
   local p="$URL/api/v4/projects/$(pid "$1")"
   curl -s -o /dev/null -H "PRIVATE-TOKEN: $TOKEN" -X DELETE "$p/variables/TERRAGUCCI_MERGE_TOKEN?filter%5Benvironment_scope%5D=terragucci-merge" || true

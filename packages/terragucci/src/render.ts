@@ -324,9 +324,20 @@ const FORGE_API_JS = [
   "}",
 ].join("\n");
 
+/**
+ * GitLab's copy: a status on the job's own commit names the job's pipeline.
+ * Without it GitLab files the status under the newest pipeline of that
+ * commit, which may be another one (the comments schedule's, after the poll
+ * retried a wave), and a waiting wave's failed status then fails that one.
+ */
+const FORGE_API_JS_GITLAB = FORGE_API_JS.replace(
+  `{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url });`,
+  '{ name: context, state: { pending: "running", success: "success", failure: "failed" }[state], description, target_url: url, ...(sha === e.CI_COMMIT_SHA && /^[0-9]+$/.test(e.CI_PIPELINE_ID || "") ? { pipeline_id: Number(e.CI_PIPELINE_ID) } : {}) });',
+);
+
 /** Shell that defines `tg`, the forge calls above. */
 export function forgeApi(forge: ForgeName): string {
-  return [`export TG_FORGE=${forge}`, `tg() { node --input-type=module -e '${FORGE_API_JS}' -- "$@"; }`].join("\n");
+  return [`export TG_FORGE=${forge}`, `tg() { node --input-type=module -e '${forge === "gitlab" ? FORGE_API_JS_GITLAB : FORGE_API_JS}' -- "$@"; }`].join("\n");
 }
 
 const AUDIENCE = "sts.amazonaws.com";

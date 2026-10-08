@@ -25,7 +25,8 @@ pid() { echo "$USER%2F$1"; }
 
 # A project is kept between runs (deleting one is asynchronous and holds its
 # name for a while). Reset it instead: open merge requests closed, the
-# pipeline branch gone, main unprotected so a run can force-push it.
+# pipeline branch and chant/lifecycle gone, main unprotected so a run can
+# force-push it.
 forge_reset_repo() { # name
   if ! glapi -o /dev/null "$URL/api/v4/projects/$(pid "$1")" 2>/dev/null; then
     glapi -o /dev/null -X POST "$URL/api/v4/projects" --data-urlencode "name=$1" \
@@ -36,6 +37,8 @@ forge_reset_repo() { # name
     glapi -o /dev/null -X PUT "$URL/api/v4/projects/$(pid "$1")/merge_requests/$mr" --data-urlencode "state_event=close"
   done
   curl -s -o /dev/null -H "PRIVATE-TOKEN: $TOKEN" -X DELETE "$URL/api/v4/projects/$(pid "$1")/repository/branches/terragucci%2Fpipeline"
+  # A run's approvals and root locks live on chant/lifecycle; the next run starts with none.
+  curl -s -o /dev/null -H "PRIVATE-TOKEN: $TOKEN" -X DELETE "$URL/api/v4/projects/$(pid "$1")/repository/branches/chant%2Flifecycle"
   # The first branch pushed to an empty project becomes its default branch,
   # which must be main for the apply job's rule. Seed main with an empty
   # commit (no pipeline file, so no pipeline), then unprotect it.

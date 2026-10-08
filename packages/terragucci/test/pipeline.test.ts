@@ -1382,6 +1382,19 @@ describe("a GitLab wave in the runner's own shell", () => {
     }
   });
 
+  it("names the job's own pipeline on a status of the job's commit, and no pipeline on another commit", async () => {
+    const api = await stubApi(() => ({}));
+    try {
+      const post = (sha: string) => runStep(`${forgeApi("gitlab")}\ntg status terragucci/apply pending applying`, { TG_TOKEN: "t", TG_SHA: sha, CI_COMMIT_SHA: "s", CI_PIPELINE_ID: "102", CI_API_V4_URL: api.url, CI_PROJECT_ID: "9", CI_PIPELINE_URL: "http://gitlab/p/102" });
+      await post("s");
+      await post("other");
+      const sent = api.hits.filter((h) => h.url.includes("/statuses/")).map((h) => h.body.pipeline_id);
+      expect(sent).toEqual([102, undefined]);
+    } finally {
+      api.close();
+    }
+  });
+
   it("the stub refuses what GitLab refuses: running again, or back to pending, from running", async () => {
     const gl = gitlabStatuses();
     const api = await stubApi(gl.route);
