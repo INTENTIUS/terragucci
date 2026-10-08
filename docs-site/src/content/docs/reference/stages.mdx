@@ -206,7 +206,7 @@ terragucci publish --dry-run
 terragucci publish
 ```
 
-The `publish` job runs after `apply` on the default branch and alone gets the [registry credentials](/terragucci/reference/environment/). See [Publish your modules](/terragucci/guides/publish-modules/).
+The `publish` job runs after `apply` on the default branch and alone gets the [registry credentials](/terragucci/reference/environment/). With `modules.attest` it also signs each release and records it in the release ledger on `chant/lifecycle`. See [Publish your modules](/terragucci/guides/publish-modules/).
 
 ### Version bump rules
 

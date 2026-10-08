@@ -7,6 +7,8 @@
  *   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
+  terragucci verify-release <module> <version> [--config <file>]
+ *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
  *   terragucci check-root <dir> [--binary <b>]
@@ -56,7 +58,7 @@ import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { assertLinux, install, type Tool } from "./install";
 import { plan } from "./plan";
-import { describePublish, publish } from "./publish";
+import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
@@ -309,6 +311,14 @@ export async function main(argv: string[]): Promise<number> {
         const results = await publish(cwd, settings, { dryRun: flags["dry-run"] === true });
         console.log(describePublish(results));
         return 0;
+      }
+      case "verify-release": {
+        const [module, version] = args;
+        if (!module || !version) throw new ConfigError("usage: terragucci verify-release <module> <version> [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const checks = await verifyPublished(cwd, resolveRepo(path ? await loadConfig(resolve(path)) : {}), module, version);
+        console.log(describeChecks(checks));
+        return checks.every((c) => c.verified) ? 0 : 1;
       }
       case "respond": {
         const event = args[0] ?? "";

@@ -334,7 +334,17 @@ export function appendPending(repo: string, record: PendingRecord, files: Record
 
 /** Append lines to the ledger (`path`, the waves' file by default) and push them in one commit, as appendPending does. */
 function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord | AppliedRecord[], files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
-  const line = (Array.isArray(record) ? record : [record]).map((r) => JSON.stringify(r)).join("\n");
+  appendLifecycle(repo, path, (Array.isArray(record) ? record : [record]).map((r) => JSON.stringify(r)), files, message);
+}
+
+/**
+ * Append `lines` to `path` on chant/lifecycle, write `files` beside it, and
+ * push the commit, retrying when another writer moved the branch. `refs` are
+ * pushed with it in one atomic push (a release tag), so the branch and the
+ * refs move together or not at all.
+ */
+export function appendLifecycle(repo: string, path: string, lines: string[], files: Record<string, string>, message: string, refs: string[] = []): void {
+  const line = lines.join("\n");
   for (let attempt = 0; attempt < 5; attempt++) {
     const exists = fetchLifecycle(repo);
     const parent = exists ? git(repo, ["rev-parse", REMOTE_REF]).stdout.trim() : "";
@@ -351,11 +361,11 @@ function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | A
     const tree = git(repo, ["write-tree"], undefined, env).stdout.trim();
     const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", message], undefined, env).stdout.trim();
     rmSync(scratch, { recursive: true, force: true });
-    if (!commit) throw new ConfigError(`could not write the gate record (${message})`);
-    const push = git(repo, ["push", "-q", "origin", `${commit}:refs/heads/${LIFECYCLE}`]);
+    if (!commit) throw new ConfigError(`could not write the ledger record (${message})`);
+    const push = git(repo, ["push", "-q", ...(refs.length ? ["--atomic"] : []), "origin", `${commit}:refs/heads/${LIFECYCLE}`, ...refs]);
     if (push.status === 0) return;
   }
-  throw new ConfigError(`could not push the gate record (${message}) to ${LIFECYCLE}; check that the job may push to it`);
+  throw new ConfigError(`could not push the ledger record (${message}) to ${LIFECYCLE}${refs.length ? ` with ${refs.join(", ")}` : ""}; check that the job may push to it`);
 }
 
 // ── planning and applying ────────────────────────────────────────────────

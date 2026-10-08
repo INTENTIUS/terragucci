@@ -21,7 +21,7 @@ packages/terragucci/src/render-agent.ts   comment-agent
 packages/terragucci/src/agent-comment.ts  comment-agent
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit*
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit*
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
@@ -67,7 +67,7 @@ packages/terragucci/src/report            report highlight* drill-down note-* wa
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close
-packages/terragucci/src/publish           publish version-bump-job
+packages/terragucci/src/publish           publish publish-attest version-bump-job
 packages/terragucci/src/rollout           rollout rollout-*
 packages/terragucci/src/tips              tips respond-tips
 

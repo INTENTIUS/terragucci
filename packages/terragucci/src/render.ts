@@ -129,6 +129,8 @@ export interface PipelineInput {
   reports?: PlanReportInput["reports"];
   /** Set when `modules.publish` is: the pipeline gets a job that publishes changed modules after apply. */
   publish?: boolean;
+  /** Set when `modules.attest` is: the publish job gets the signing key's two secrets (GitHub and Forgejo; GitLab's CI variables are already there). */
+  attest?: boolean;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
   /** GitLab only: the comments schedule's cron. The pipeline gets a `comments` job for the pipelines that schedule starts. */
@@ -1558,8 +1560,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       } as never) as never);
     }
     if (input.publish) {
-      // GitLab hands project variables (TERRAGUCCI_REGISTRY_USER and _PASSWORD)
-      // to every job, so mark them protected and masked to keep them off merge requests.
+      // GitLab hands project variables (TERRAGUCCI_REGISTRY_USER and _PASSWORD, and with
+      // attest COSIGN_PRIVATE_KEY and COSIGN_PASSWORD) to every job, so mark them
+      // protected and masked to keep them off merge requests.
       jobs.set("publish", new GitLabJob({
         stage: "publish",
         image: jobImage,
@@ -1901,6 +1904,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TERRAGUCCI_REGISTRY_USER: "${{ secrets.TERRAGUCCI_REGISTRY_USER }}",
         TERRAGUCCI_REGISTRY_PASSWORD: "${{ secrets.TERRAGUCCI_REGISTRY_PASSWORD }}",
         TERRAGUCCI_REGISTRY_INSECURE: "${{ secrets.TERRAGUCCI_REGISTRY_INSECURE }}",
+        ...(input.attest ? { COSIGN_PRIVATE_KEY: "${{ secrets.COSIGN_PRIVATE_KEY }}", COSIGN_PASSWORD: "${{ secrets.COSIGN_PASSWORD }}" } : {}),
       },
       steps: [
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
