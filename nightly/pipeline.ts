@@ -4,10 +4,15 @@
  * `just ci` renders this into .github/workflows/nightly.yml. GitLab CE is
  * several gigabytes and boots in minutes; a GitHub runner is amd64, which is
  * the image's own architecture, so nothing is emulated here.
+ *
+ * The sandbox job drives INTENTIUS/terragucci-sandbox on github.com with the
+ * newest published release (`just sandbox prove`). This workflow's own token
+ * reaches only this repo, so it needs TERRAGUCCI_SANDBOX_TOKEN, a token that
+ * pushes to the sandbox and administers it.
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, UPLOAD_ARTIFACT, installJust } from "../workflows/shared";
 
 export const workflow = new Workflow({
   name: "nightly",
@@ -30,5 +35,60 @@ export const gitlab = new Job({
     new Step({ name: "Start the gitlab profile", run: "just stack-up gitlab" }),
     new Step({ name: "Run the gitlab claims", run: "just validate-forge gitlab" }),
     new Step({ name: "Stop the stack", if: "always()", run: "just stack-down" }),
+  ],
+});
+
+// The scratch directory holds the run's signer key, so only the verdicts and
+// the logs are kept.
+const SANDBOX_DIR = "/tmp/terragucci-sandbox";
+const token = { TERRAGUCCI_SANDBOX_TOKEN: "${{ secrets.TERRAGUCCI_SANDBOX_TOKEN }}" };
+
+export const sandbox = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 60,
+  // One sandbox, so one run drives it at a time.
+  concurrency: { group: "terragucci-sandbox", "cancel-in-progress": false },
+  env: { TERRAGUCCI_SANDBOX_DIR: SANDBOX_DIR },
+  steps: [
+    new Step({
+      name: "Check the sandbox token",
+      env: token,
+      run: [
+        `if [ -z "$TERRAGUCCI_SANDBOX_TOKEN" ]; then`,
+        `  echo "::error::The repo secret TERRAGUCCI_SANDBOX_TOKEN is not set. Add a token that can push to INTENTIUS/terragucci-sandbox and administer it: a fine-grained token on that repo with Administration, Contents, Workflows, Pull requests, Issues and Actions read and write and Commit statuses read, or a classic token with repo and workflow, from an admin of the repo."`,
+        `  exit 1`,
+        `fi`,
+      ].join("\n"),
+    }),
+    Checkout({ defaults: { step: { uses: CHECKOUT } } }).step,
+    SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
+    installJust(),
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({
+      name: "Use the newest published release",
+      run: `echo "TERRAGUCCI_SANDBOX_RELEASE=$(npm view @intentius/terragucci version)" >> "$GITHUB_ENV"`,
+    }),
+    new Step({ name: "Prove the features on the sandbox", env: token, run: "just sandbox prove" }),
+    new Step({
+      name: "List the verdicts",
+      if: "always()",
+      run: [
+        `f="${SANDBOX_DIR}/prove.json"`,
+        `[ -f "$f" ] || exit 0`,
+        `{ echo "Release $(jq -r .release "$f")"; echo; echo "| Claim | Result |"; echo "|---|---|"; jq -r '.claims[] | "| \\(.claim) | \\(.verdict) |"' "$f"; } >> "$GITHUB_STEP_SUMMARY"`,
+      ].join("\n"),
+    }),
+    new Step({
+      name: "Reset the sandbox",
+      if: "always()",
+      env: token,
+      run: `[ -z "$TERRAGUCCI_SANDBOX_TOKEN" ] || just sandbox reset`,
+    }),
+    new Step({
+      name: "Keep the verdicts and logs",
+      if: "always()",
+      uses: UPLOAD_ARTIFACT,
+      with: { name: "sandbox-prove", path: `${SANDBOX_DIR}/prove.json\n${SANDBOX_DIR}/logs/`, "if-no-files-found": "ignore", "retention-days": 30 },
+    }),
   ],
 });

@@ -1,22 +1,30 @@
 ---
 title: Validation
-description: Every pipeline feature is proven on a local Forgejo against an AWS emulator; the per-forge claims list what is also proven on GitHub and GitLab.
+description: Every pipeline feature is proven on a local Forgejo against an AWS emulator; the per-forge claims list what is also proven on GitHub, github.com and GitLab.
 ---
 
 import SmokeClaims from '../../../components/SmokeClaims.astro';
 import ValidationClaims from '../../../components/ValidationClaims.astro';
 
-Every pipeline feature has a check that runs on a local Forgejo against an AWS emulator. The per-forge claims below list what is also proven on GitHub and GitLab. A check must pass, and also fail when broken on purpose.
+Every pipeline feature has a check that runs on a local Forgejo against an AWS emulator. The per-forge claims below list what is also proven on GitHub, github.com and GitLab. A local check must pass, and also fail when broken on purpose.
 
 | Forge | What runs |
 |---|---|
 | Forgejo | a Forgejo server and its runner |
 | GitHub | the generated workflow, run by `act` against a mock GitHub API |
+| github.com | the published release's generated workflow on GitHub-hosted runners, in a public plan-only repo, each night |
 | GitLab | GitLab CE and its runner |
 
 ## The per-forge claims
 
 These are the features proven on each forge. Each claim also runs with its property broken, and must then fail. `reconcile` follows a control repo's pull request through check, merge and apply. `tg-` claims run a two-unit Terragrunt repo and `cdf-` claims a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each in its pinned CI image.
+
+The github.com claims run the newest published release against real GitHub: its pull request events, statuses, comments and OIDC tokens. Every resource there is a `terraform_data`, so nothing needs a cloud account. That has two limits:
+
+| Limit | What runs instead |
+|---|---|
+| no cloud role | `oidc` checks each job's token against GitHub's published keys, its repo, run, audience and role, and trades it with nothing; the trade with STS is proven on Forgejo |
+| no broken run | these claims are not broken on purpose, so they read "passes" |
 
 <ValidationClaims />
 
