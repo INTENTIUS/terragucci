@@ -442,9 +442,9 @@ step_approved() {
   pr="$(api "$URL/api/v1/repos/$REPO/pulls?state=closed&limit=50" | jq -r '[.[] | select(.head.ref == "change/module-bump" and .merged)] | max_by(.number) | .number // empty')"
   [ -n "$pr" ] || { log "approved: no merged module-bump pull request"; return 0; }
   run="$(say "$REPO" "$pr" "/terragucci apply")"
-  reply_shot approved reply "$FORGEJO/pulls/$pr" 'terragucci: .*wave 4'
+  reply_shot approved reply "$FORGEJO/pulls/$pr" 'terragucci: applied wave'
   page="$(job_page "$run" '.name == "apply-comment"')"
-  if [ -n "$page" ]; then shot approved log "$page" 1600 "Apply a merged pull request" "wave 4"; else log "approved: the comment's run has no apply-comment job"; fi
+  if [ -n "$page" ]; then shot approved log "$page" 1000 "Apply a merged pull request" "approved by"; else log "approved: the comment's run has no apply-comment job"; fi
 }
 
 # Publish modules/service and open the first rollout wave. The scenario pins
