@@ -7,7 +7,7 @@ prompt: |
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
   add a `terragrunt:` block only where the page says one is needed, and open a
   pull request.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Steps } from '@astrojs/starlight/components';

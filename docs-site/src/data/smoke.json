@@ -478,6 +478,13 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught"
+    },
+    {
+      "claim": "estate",
+      "says": "terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     }
   ]
 }

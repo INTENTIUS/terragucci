@@ -7,6 +7,12 @@ sidebar:
     text: 10 min
     variant: note
 claims: [publish, rollout]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/modules/.
+  In the terragucci clone with the example booted, run `just example change pin` and summarize the rollout pull request it opens: the roots it covers and the `ref` each moves.
+  `just example change pin` runs the rollout against the local Forgejo, which opens that pull request; that is the one exception to the line below.
+  Then stop and print the page's merge and `just example rollout` commands for me. Never merge the rollout pull request.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Captured from '../../../components/Captured.astro';

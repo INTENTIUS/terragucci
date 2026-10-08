@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/agent-refused-wave/.
   Add the explain-refusal job for wave <k> to the apply workflow, using a token
   that can only comment, and open a pull request. Give the job no other permission.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';

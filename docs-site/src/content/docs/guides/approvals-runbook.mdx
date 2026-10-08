@@ -5,9 +5,8 @@ claims: [waves, sealed, refuse]
 prompt: |
   Read https://intentius.io/terragucci/guides/approvals-runbook/.
   Run the "List the waves waiting" command with a read-only clone and tell me
-  each wave, digest and expiry.
-  Do not revoke, approve or push to chant/lifecycle.
-  Never run apply, `chant approve`, `terragucci approve` or `--mode apply`, and never merge.
+  each wave, digest and expiry. Do not revoke an approval.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Shot from '../../../components/Shot.astro';

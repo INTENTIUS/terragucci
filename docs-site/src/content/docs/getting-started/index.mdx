@@ -8,7 +8,7 @@ prompt: |
   Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
   Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
   Do not create secrets.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Badge, CardGrid, LinkCard, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
