@@ -19,8 +19,8 @@ interface World {
   mrs: any[];
   notes: Record<number, any[]>;
   members?: Record<number, number>;
-  pipelines?: any[];
-  jobs?: Record<number, any[]>;
+  pipelines?: readonly any[];
+  jobs?: Record<number, readonly any[]>;
   statuses?: Record<string, any[]>;
   fail?: RegExp;
 }

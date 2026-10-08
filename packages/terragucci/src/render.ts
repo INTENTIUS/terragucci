@@ -53,7 +53,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, GITLAB_ONLY_COMMENTS, NO_GITLAB_PLAN_LOCKS, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, NO_GITLAB_PLAN_LOCKS, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -1171,7 +1171,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Attribution reads CloudTrail through the aws CLI, which the images do not carry.
   const awsStep = !tg && responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
-  if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${GITLAB_ONLY_COMMENTS}`);
+  if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   if (forge === "gitlab") {
     if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
     const jobImage = new Image({ name: image });

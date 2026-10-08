@@ -424,7 +424,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.comments !== undefined && s.comments !== false && typeof s.comments !== "string") {
     problems.push(`${where}.comments must be a cron schedule or false`);
   }
-  if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${GITLAB_ONLY_COMMENTS}`);
+  if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${COMMENTS_GITLAB_ONLY}`);
   if (s.tips !== undefined && typeof s.tips !== "boolean") problems.push(`${where}.tips must be true or false`);
   if (s.waves !== undefined) {
     if (!isObject(s.waves)) problems.push(`${where}.waves must be a map`);
@@ -515,7 +515,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
  * role would have to trust every branch of the project.
  */
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
-export const GITLAB_ONLY_COMMENTS = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
+export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
 
 export const NO_GITLAB_PR_APPLY = "pull-request is not supported on GitLab, where a merge request's pipeline is defined by the merge request itself, so nothing it runs can be trusted with the apply role; leave apply.when unset, and the change applies after it merges";
 
