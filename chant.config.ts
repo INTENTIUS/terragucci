@@ -10,6 +10,11 @@ import type { ChantConfig } from "@intentius/chant";
 export default {
   lexicons: ["github", "docker", "otel", "prometheus", "aws"],
 
+  // chant.workspace.json declares no members; it is there for ci.green (the
+  // ci/green tags chant-ci-green.yml writes), so chant build and lint keep
+  // building this root project alone.
+  rootOnly: true,
+
   lint: {
     rules: {
       // A workflow is a nested object: a job's permissions, environment and
