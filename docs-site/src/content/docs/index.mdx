@@ -21,7 +21,7 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 <LinkCard title="GitHub, GitLab or Forgejo" description="One init writes the pipeline in your forge's own format." href="/terragucci/guides/add-to-a-repo/#per-forge" />
 <LinkCard title="Object storage on AWS, GCP or Azure" description="State, plan reports and the estate page stay in your S3, GCS or Azure Blob storage; with oidc set, CI reaches them with no stored keys." href="/terragucci/reference/pipeline/#credentials" />
 <LinkCard title="Tracing and metrics" description="One trace per stage run and the pipeline's numbers as metrics, over OTLP to your collector." href="/terragucci/guides/send-traces-and-metrics/" />
-<LinkCard title="Rich lifecycles" description="Check on every push, plan on the pull request, apply on merge (or before it, on GitHub and Forgejo), and drift on a schedule." href="/terragucci/concepts/how-it-works/" />
+<LinkCard title="Rich lifecycles" description="Check on every push, plan on the pull request, apply on merge (or before it), and drift on a schedule." href="/terragucci/concepts/how-it-works/" />
 <LinkCard title="Gated waves" description="A wave that destroys or replaces waits for an approval bound to its plans." href="/terragucci/concepts/waves-and-approvals/" />
 <LinkCard title="Aggregated plan output" description="One note groups the roots taking the same change and names every destroy." href="/terragucci/concepts/why-plans-are-grouped/" />
 <LinkCard title="Module publishing and pinned rollouts" description="Version modules on merge, then move each pin one wave of pull requests at a time." href="/terragucci/guides/publish-modules/" />
@@ -49,7 +49,7 @@ These are plain CI jobs in your pipeline. None of them runs a coding agent.
 | Tips and policy results on the plan | on by default with the plan; `tips: false` turns tips off, `policy` adds checks | all three | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
 | A re-plan | comment `/terragucci plan [root]` | all three; GitLab through the comments schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
 | Root locks | comment `/terragucci lock` or `/terragucci unlock`; `locks: plan` locks from the first plan | GitHub and Forgejo | [Locks](/terragucci/guides/apply-before-merge/#locks) |
-| Apply before merge, then merge after the last wave | `apply.when: pull-request`, then comment `/terragucci apply [wave-<n>]` | GitHub and Forgejo | [Apply before merge](/terragucci/guides/apply-before-merge/) |
+| Apply before merge, then merge after the last wave | `apply.when: pull-request`, then comment `/terragucci apply [wave-<n>]` | GitHub, Forgejo, and GitLab with `comments:` set | [Apply before merge](/terragucci/guides/apply-before-merge/) |
 | An approval for a waiting wave | `approval: ledger`, `pr-review` or `sealed`; run `terragucci approve` | all three | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
 | A recorded policy override | a listed person runs `terragucci override` | all three | [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) |
 | Comment commands on GitLab | `comments:` sets the schedule that answers merge request notes | GitLab | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |

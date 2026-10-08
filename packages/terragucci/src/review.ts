@@ -147,14 +147,28 @@ const DEVELOPER = 30;
 
 /**
  * A merged merge request's approvals that count, read from GitLab: the merge
- * request whose merge (or squash) commit is `sha`, its latest version (the
- * head reviewed), and each user's latest approval note, counted when it is
- * newer than that version.
+ * request whose merge (or squash) commit is `sha`, or the one `TG_PR` names
+ * when the job applies an open merge request before it merges.
  */
-export async function gitlabReviews(f: ForgeCalls, sha: string): Promise<{ pr: ReviewedPull; by: string[]; changes: string[]; note?: NoteWaves } | undefined> {
-  const list = await f.get(`${f.repo}/repository/commits/${sha}/merge_requests`);
-  const mr = (Array.isArray(list) ? list : []).find((m: any) => m?.state === "merged" && (m?.merge_commit_sha === sha || m?.squash_commit_sha === sha));
+export async function gitlabReviews(f: ForgeCalls, sha: string, env: NodeJS.ProcessEnv = {}): Promise<{ pr: ReviewedPull; by: string[]; changes: string[]; note?: NoteWaves } | undefined> {
+  const named = (env.TG_PR ?? "").trim();
+  let mr: any;
+  if (/^\d+$/.test(named)) mr = await f.get(`${f.repo}/merge_requests/${named}`);
+  else {
+    const list = await f.get(`${f.repo}/repository/commits/${sha}/merge_requests`);
+    mr = (Array.isArray(list) ? list : []).find((m: any) => m?.state === "merged" && (m?.merge_commit_sha === sha || m?.squash_commit_sha === sha));
+  }
   if (!mr || !Number.isInteger(mr.iid)) return undefined;
+  return gitlabApprovals(f, mr);
+}
+
+/**
+ * A merge request's approvals that count: its latest version (the head
+ * reviewed), and each user's latest approval note, counted when it is newer
+ * than that version and its author is not the merge request's and holds
+ * Developer or more. A later request for changes is named in `changes`.
+ */
+export async function gitlabApprovals(f: ForgeCalls, mr: any): Promise<{ pr: ReviewedPull; by: string[]; changes: string[]; note?: NoteWaves }> {
   const versions = await f.get(`${f.repo}/merge_requests/${mr.iid}/versions`);
   const latest = (Array.isArray(versions) ? versions : []).reduce((a: any, v: any) => (!a || Date.parse(v?.created_at) > Date.parse(a.created_at) ? v : a), undefined);
   const head = latest?.head_commit_sha ?? mr.sha;
@@ -209,7 +223,7 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
     let changes: string[];
     let note: NoteWaves | undefined;
     if (o.forge === "gitlab") {
-      const got = await gitlabReviews(gitlabCalls(o.env, o.fetch), o.sha);
+      const got = await gitlabReviews(gitlabCalls(o.env, o.fetch), o.sha, o.env);
       if (!got) return { kind: "none", why: `no merged merge request made ${o.sha.slice(0, 8)}` };
       ({ pr, by, changes, note } = got);
       if (by.length === 0 && changes.length === 0) return { kind: "none", why: `no member other than its author approved merge request ${pr.number} after its latest push, ${pr.head.slice(0, 8)}` };

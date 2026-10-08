@@ -78,8 +78,12 @@ export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
  * its own, with the token in the secret `merge_token_env` names when it is
  * set (required on Forgejo, whose job token cannot push to the default
  * branch). `requires` lists what an open pull request needs before it
- * applies (APPLY_REQUIRES, all by default). GitHub and Forgejo only
- * (NO_GITLAB_PR_APPLY), for plain roots and Terragrunt units alike.
+ * applies (APPLY_REQUIRES, all by default). On every forge, for plain
+ * roots and Terragrunt units alike. On GitLab a merge request note starts no
+ * pipeline, so `when: pull-request` needs `comments:` (the schedule whose
+ * job reads `/terragucci apply`) and `merge_token_env`, a variable whose
+ * token may run pipelines on the default branch and merge there, with
+ * `merge: manual` too (PR_APPLY_NEEDS_ON_GITLAB).
  */
 export interface ApplySettings {
   when?: ApplyWhen;
@@ -414,8 +418,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
-  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems);
-  if (s.forge === "gitlab" && isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.apply.when: ${NO_GITLAB_PR_APPLY}`);
+  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge);
+  if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
@@ -524,22 +528,36 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
 }
 
-/**
- * Why GitLab has no apply before merge. GitLab builds a merge request's
- * pipeline from the merge request's own `.gitlab-ci.yml`, so a job that
- * applies it would run the checks before the apply (approval, locks, the
- * pipeline file) inside a pipeline the merge request controls, and the apply
- * role would have to trust every branch of the project.
- */
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
 export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
 
-export const NO_GITLAB_PR_APPLY = "pull-request is not supported on GitLab, where a merge request's pipeline is defined by the merge request itself, so nothing it runs can be trusted with the apply role; leave apply.when unset, and the change applies after it merges";
+/**
+ * What GitLab's apply before merge needs. A merge request's own pipeline
+ * runs its own `.gitlab-ci.yml`, so the apply runs in a pipeline of the
+ * default branch, which the comments job starts on a `/terragucci apply`
+ * note: so `comments:` must be set, and `apply.merge_token_env` must name the
+ * variable whose token may start a pipeline on the protected default branch
+ * (and, with `merge: auto`, merge there).
+ */
+export const PR_APPLY_NEEDS_ON_GITLAB = {
+  comments: "pull-request on GitLab needs comments: <cron>: a merge request note starts no pipeline, so the comments schedule's job is what reads `/terragucci apply`",
+  token: "pull-request on GitLab needs apply.merge_token_env: the comments job starts the apply pipeline on the default branch with that variable's token, which must be allowed to merge there, so name a protected, masked variable holding one",
+};
 
-/** Why GitLab has no plan-time locks: its applies run after merge, one at a time, and no merge request event runs a pipeline from the default branch. */
-export const NO_GITLAB_PLAN_LOCKS = "plan is not supported on GitLab, where every apply runs after merge, one at a time, and no merge request event runs a job from the default branch that could hold the lock; leave locks unset";
+/** The problems with a GitLab project's `apply.when: pull-request`, when it has any. */
+export function gitlabPrApplyProblems(s: Record<string, unknown>, where: string): string[] {
+  const a = s.apply;
+  if (!isObject(a) || a.when !== "pull-request") return [];
+  return [
+    ...(s.comments ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.comments}`]),
+    ...(a.merge_token_env ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.token}`]),
+  ];
+}
 
-function checkApply(a: unknown, where: string, problems: string[]): void {
+/** Why GitLab has no plan-time locks: no merge request event runs a pipeline from the default branch. */
+export const NO_GITLAB_PLAN_LOCKS = "plan is not supported on GitLab, where no merge request event runs a job from the default branch that could hold the lock; leave locks unset, and with apply.when: pull-request a merge request locks its roots on `/terragucci apply` or `/terragucci lock`";
+
+function checkApply(a: unknown, where: string, problems: string[], forge?: unknown): void {
   if (!isObject(a)) {
     problems.push(`${where} must be a map (settings: ${APPLY_KEYS.join(", ")})`);
     return;
@@ -550,7 +568,8 @@ function checkApply(a: unknown, where: string, problems: string[]): void {
   if (a.merge !== undefined && a.when !== "pull-request") problems.push(`${where}.merge is set, and only a pull request applied before it merges is merged by terragucci; set ${where}.when to pull-request or drop merge`);
   if (a.merge_token_env !== undefined) {
     if (!(typeof a.merge_token_env === "string" && SECRET_NAME.test(a.merge_token_env))) problems.push(`${where}.merge_token_env must name the secret holding the token the merge is made with, such as MERGE_TOKEN`);
-    else if (a.merge !== "auto") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env`);
+    // On GitLab the token also starts the apply pipeline, so it is set with merge: manual too.
+    else if (a.merge !== "auto" && forge !== "gitlab") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env (on GitLab, where the token also starts the apply pipeline, set forge: gitlab)`);
   }
   if (a.requires !== undefined) {
     if (!Array.isArray(a.requires) || a.requires.some((r) => !(APPLY_REQUIRES as readonly unknown[]).includes(r))) problems.push(`${where}.requires must be a list of ${APPLY_REQUIRES.join(", ")}`);
