@@ -77,6 +77,9 @@ forge_run() { # name branch sha [source: unused here; act runs a push event]
   # 2026-05), and act runs one job at a time anyway, so its copy drops the line.
   grep -v '^ *queue: max$' "$dir/$PIPELINE_FILE" > "$dir.workflow.yml"
   cat "$dir.workflow.yml" > "$dir/$PIPELINE_FILE"
+  # A pipeline the claim did not push (reconcile's pull requests) still pins
+  # the published images; the gate runs this tree's build (validate-generated.sh).
+  [ -n "${TG_KEEP_DIGESTS:-}" ] || unpin_images "$dir"
   jq -n --arg ref "refs/heads/$branch" --arg sha "$sha" --arg repo "$USER/$name" \
     '{ref: $ref, after: $sha, repository: {full_name: $repo, default_branch: "main"}}' > "$dir.event.json"
   RUN_LOG="$dir.log"

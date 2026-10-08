@@ -77,6 +77,9 @@ case "${1:-}" in
     forges="${*:-$ALL_FORGES}"
     rows=()
     rc=0
+    # The record a release publishes runs the published images init pins;
+    # `run`, the CI gate, runs this tree's build (validate-generated.sh).
+    export TG_KEEP_DIGESTS=1
     for forge in $forges; do
       "$HERE/down.sh" >&2
       "$HERE/bootstrap.sh" "$forge" >&2

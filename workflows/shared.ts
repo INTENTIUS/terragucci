@@ -65,3 +65,20 @@ export const installAct = (): InstanceType<typeof Step> =>
       `act --version`,
     ].join("\n"),
   });
+
+/**
+ * OpenTofu at the version the tofu image carries, for the tests that run the
+ * real binary (they skip where `tofu` is missing, so the check job installs
+ * it: a laptop has it, a fresh runner does not).
+ */
+export const installTofu = (version: string): InstanceType<typeof Step> =>
+  new Step({
+    name: "Install OpenTofu",
+    run: [
+      `arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac`,
+      `curl -fsSL -o /tmp/tofu.tar.gz https://github.com/opentofu/opentofu/releases/download/v${version}/tofu_${version}_linux_$arch.tar.gz`,
+      `tar -xzf /tmp/tofu.tar.gz -C /tmp tofu`,
+      `sudo mv /tmp/tofu /usr/local/bin/tofu`,
+      `tofu version`,
+    ].join("\n"),
+  });

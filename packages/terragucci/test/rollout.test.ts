@@ -125,7 +125,7 @@ describe("rollout of a module pin in one repo", () => {
     r = await rollout(repo, opts);
     expect([r.status, rolloutExit(r)]).toEqual(["complete", 0]);
     expect(r.roots.every((s) => s.state === "to")).toBe(true);
-  });
+  }, 30_000); // a dozen git commands per wave: 1.7 s alone, over 5 s beside the whole suite
 
   it("stops at a failed apply, naming the root, and opens nothing after it", async () => {
     const { repo, bare } = checkout(pinnedRepo());

@@ -23,6 +23,7 @@
     "scripts/*.ts",
     "workflows/**/*.ts",
     "test/**/*.ts",
-    "chant.config.ts"
+    "chant.config.ts",
+    "vitest.config.ts"
   ]
 }

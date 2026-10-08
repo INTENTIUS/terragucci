@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +13,8 @@ import { describeRefused, refusedDiff } from "../src/respond/refused";
 import { addCanary, canaryFor, missingLocks, pinFromLock, tipProposals } from "../src/respond/tips";
 import { bareFrom, git, tmp, write } from "./helpers";
 import { plan, rc, RUN } from "./report-fixtures";
+
+const TOFU = spawnSync("tofu", ["version"]).status === 0;
 
 const problems = (raw: unknown): string[] => {
   try {
@@ -356,7 +359,7 @@ describe("respond: running a response", () => {
     expect(existsSync(join(repo, "app/terragucci_imports.tf"))).toBe(false);
   });
 
-  it("fmt commits to the pull request's branch and refuses the default branch", async () => {
+  it.skipIf(!TOFU)("fmt commits to the pull request's branch and refuses the default branch", async () => {
     const { repo, bare } = checkout({ "app/main.tf": 'locals {\n    a   = 1\n}\n' });
     git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature");
     const forge = forgejo();
@@ -368,6 +371,17 @@ describe("respond: running a response", () => {
     expect(git(bare, "show", "feature:app/main.tf")).toBe("locals {\n  a = 1\n}\n");
     expect(git(bare, "log", "-1", "--format=%s", "feature").trim()).toBe("style: tofu fmt");
     expect(git(bare, "rev-parse", "main")).not.toBe(git(bare, "rev-parse", "feature"));
+  });
+
+  it("fmt names a binary that cannot run, and a file fmt cannot parse, instead of calling the branch formatted", async () => {
+    const { repo } = checkout({ "app/main.tf": "locals {\n" });
+    git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature");
+    const dir = tmp();
+    await expect(respond("fmt", repo, { branch: "feature", binary: join(dir, "missing") })).rejects.toThrow(/respond fmt could not run .*missing/);
+    const bin = join(dir, "tofu");
+    writeFileSync(bin, "#!/bin/sh\necho 'Error: Unclosed configuration block' >&2\nexit 2\n");
+    chmodSync(bin, 0o755);
+    await expect(respond("fmt", repo, { branch: "feature", binary: bin })).rejects.toThrow(/feature: .*tofu fmt failed:\nError: Unclosed configuration block/);
   });
 });
 

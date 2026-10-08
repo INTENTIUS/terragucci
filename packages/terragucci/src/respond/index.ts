@@ -311,7 +311,11 @@ async function fmt(repo: string, settings: ResolvedSettings, binary: string, mod
   const tree = worktree(repo, "FETCH_HEAD");
   try {
     const f = spawnSync(binary, ["fmt", "-recursive", "-list=true", ...(mode === "apply" ? [] : ["-check"])], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv(env) });
+    if (f.error) throw new ConfigError(`respond fmt could not run ${binary}: ${f.error.message}`);
     const files = f.stdout.split("\n").filter(Boolean).sort();
+    // -check exits non-zero when it lists a file; non-zero with nothing listed
+    // is a file fmt could not parse, which is not "already formatted".
+    if (f.status !== 0 && files.length === 0) throw new ConfigError(`${branch}: ${binary} fmt failed:\n${tail(f.stderr || f.stdout)}`);
     const data = { branch, files };
     if (files.length === 0) return { text: `${branch}: already formatted`, data };
     if (mode !== "apply") return { text: `${branch}: would commit ${binary} fmt on ${files.join(", ")}`, data };
