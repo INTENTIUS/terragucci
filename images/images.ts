@@ -14,8 +14,12 @@ import { Dockerfile } from "@intentius/chant-lexicon-docker";
 import pkg from "../packages/terragucci/package.json" with { type: "json" };
 import { DECIDE_IMAGE, LAYA_MODEL, TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
-/** Base images by index digest, so a rebuild cannot change underneath a tag. */
-const NODE = "node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c";
+/**
+ * Base images by index digest, so a rebuild cannot change underneath a tag.
+ * NODE carries Node 22.23.3; CDK Terrain's cdktn 0.24, which a `synth` job
+ * runs on the image, needs 22.19 or later.
+ */
+const NODE = "node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392";
 const DEBIAN = "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 const PYTHON = "python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3";
 
