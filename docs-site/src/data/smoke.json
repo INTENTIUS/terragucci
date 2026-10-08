@@ -51,21 +51,23 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1d4fe88"
+      "commit": "66f2fcd"
     },
     {
       "claim": "refuse",
       "says": "a wave whose plans changed after approval applies nothing",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "66f2fcd"
     },
     {
       "claim": "sealed",
       "says": "under approval: sealed a wave counts only an approval sealed by a key the signers file lists",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "66f2fcd"
     },
     {
       "claim": "drift",
@@ -191,7 +193,8 @@
       "says": "a refused wave names each root whose plan moved and the attributes that moved",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "66f2fcd"
     },
     {
       "claim": "respond-triage",
@@ -422,7 +425,8 @@
       "says": "a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "66f2fcd"
     },
     {
       "claim": "tg-sealed",
@@ -555,14 +559,16 @@
       "says": "with approval: pr-review a pull request approved on its head by a writer other than its author merges, and its gated wave applies with no chant approve, recorded on the ledger as via pr-review",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "66f2fcd"
     },
     {
       "claim": "pr-review-moved",
       "says": "with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the chant approve command for its new digest",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "66f2fcd"
     },
     {
       "claim": "pr-review-status",
@@ -1026,7 +1032,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4c27247"
+      "commit": "66f2fcd"
     },
     {
       "claim": "audit-control",
@@ -1051,6 +1057,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "1d4fe88"
+    },
+    {
+      "claim": "approval-used",
+      "says": "once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "66f2fcd"
     }
   ]
 }
