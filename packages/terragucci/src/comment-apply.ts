@@ -21,10 +21,11 @@
  * nothing waives a denial), the head did not move while the comment was
  * read, it does not change the pipeline file, which the comment's job runs
  * from the default branch, and no other open pull request holds a lock on a
- * root it reaches (locks.ts). The decision then takes those locks.
- * `/terragucci lock` takes them without applying, and `/terragucci unlock`
- * releases them. GitLab has no apply before merge: its merge request
- * pipelines come from the merge request itself.
+ * root it reaches (locks.ts). The decision then takes those locks. In a
+ * Terragrunt repo the locks are on units (reachedUnits). `/terragucci lock`
+ * takes them without applying, and `/terragucci unlock` releases them. GitLab
+ * has no apply before merge: its merge request pipelines come from the merge
+ * request itself.
  *
  * The comment is untrusted input, read from the event file and parsed by the
  * one grammar in comment.ts. What leaves this file for the pipeline's shell is
@@ -40,6 +41,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { posix } from "node:path";
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { applyWaves } from "./apply";
 import { apiOf, BRANCH, LOGIN, parseComment, SHA, type CommentDecision } from "./comment";
@@ -47,6 +49,7 @@ import { APPLY_REQUIRES, ConfigError, type ApplyRequire, type ApplyWhen } from "
 import { rootDependencies } from "./detect";
 import type { Fetch } from "./forge";
 import { describeHeld, releaseLocks, takeLocks } from "./locks";
+import { literalDependencies } from "./terragrunt";
 
 /** What the apply job does next: apply from the merge commit (`go`), or stop with a reason. */
 export interface ApplyCommentDecision extends Omit<CommentDecision, "root"> {
@@ -85,6 +88,10 @@ export interface ApplyCommentOptions {
   requires?: readonly ApplyRequire[];
   /** How the decision waits between reads of a pull request the forge has not finished checking. Default: a timer. */
   wait?: (ms: number) => Promise<void>;
+  /** A Terragrunt repo: the layers are its waves of units, and the locks are on the units a pull request reaches (reachedUnits). */
+  terragrunt?: boolean;
+  /** The decision made again once the apply lock is held (Forgejo): it does not repeat the note on a lock of every unit. */
+  again?: boolean;
 }
 
 const short = (sha: string): string => sha.slice(0, 8);
@@ -190,7 +197,7 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
     return broke(`could not read pull request ${number} (${(e as Error).message})`);
   }
   if (prMode && pr?.state === "open" && pr?.merged !== true) {
-    return decideOpen({ ...o, git, number, user, pr, base: event.repository?.default_branch, wave: parsed.wave, call, refuse, broke });
+    return decideOpen({ ...o, git, number, user, pr, base: event.repository?.default_branch, wave: parsed.wave, call, refuse, broke, reply });
   }
   // Only merged code applies: never an open pull request's head, never a closed one's.
   if (pr?.merged !== true) {
@@ -272,6 +279,55 @@ export function reachedRoots(repo: string, git: Git, from: string, to: string, l
   return [...selected].filter((r) => all.includes(r)).sort();
 }
 
+/** Changed files that reach no unit: documentation. */
+const READS_NOTHING = /\.md$/i;
+
+/**
+ * The Terragrunt units a change from `from` to `to` reaches, read from git
+ * alone. No Terragrunt runs: the files are the pull request's, and a lock can
+ * come before anyone reviewed them. A unit is reached when a file under its
+ * directory changes, and so is every unit that names a reached one in a
+ * `dependency` or `dependencies` block with a plain path, at either end of
+ * the range, followed through. A changed file under no unit's directory
+ * (`root.hcl`, a module, a stack template) may change any unit, so it reaches
+ * every unit, and so does a range git cannot diff; `every` then says why.
+ * Markdown files reach nothing.
+ */
+export function reachedUnits(git: Git, from: string, to: string, layers: string[][]): { units: string[]; every?: string } {
+  const all = [...new Set(layers.flat())].sort();
+  const diff = git(["diff", "--name-only", "--no-renames", `${from}...${to}`]);
+  if (diff.status !== 0) return { units: all, every: "git could not list the files it changes" };
+  const files = diff.stdout.split("\n").map((l) => l.trim()).filter((f) => f && !READS_NOTHING.test(f));
+  // The deepest unit holding a file is the one it belongs to.
+  const deepest = [...all].sort((a, b) => b.length - a.length);
+  const selected = new Set<string>();
+  for (const f of files) {
+    const u = deepest.find((d) => f.startsWith(`${d}/`));
+    if (!u) return { units: all, every: `it changes \`${f}\`, which is in no unit's directory` };
+    selected.add(u);
+  }
+  const reads = new Map<string, Set<string>>();
+  for (const u of all) {
+    const deps = new Set<string>();
+    for (const ref of [from, to]) {
+      const shown = git(["show", `${ref}:${u}/terragrunt.hcl`]);
+      if (shown.status !== 0) continue;
+      for (const p of literalDependencies(shown.stdout)) deps.add(posix.normalize(posix.join(u, p)).replace(/\/+$/, ""));
+    }
+    reads.set(u, deps);
+  }
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [u, deps] of reads) {
+      if (!selected.has(u) && [...deps].some((d) => selected.has(d))) {
+        selected.add(u);
+        grew = true;
+      }
+    }
+  }
+  return { units: [...selected].sort() };
+}
+
 /** One review as GitHub and Forgejo list them. */
 export interface Review {
   user?: { login?: string };
@@ -315,6 +371,7 @@ interface OpenInput extends ApplyCommentOptions {
   call: (method: string, path: string, body?: unknown) => Promise<any>;
   refuse: (reason: string) => Promise<ApplyCommentDecision>;
   broke: (reason: string) => ApplyCommentDecision;
+  reply: (text: string) => Promise<void>;
 }
 
 /** An open pull request's head, read and fetched: the head commit and branch, the default branch, and the remote ref it was fetched to. */
@@ -352,10 +409,15 @@ async function openHead(i: OpenInput): Promise<OpenHead | ApplyCommentDecision> 
   return { sha, base, remote, repoName };
 }
 
-/** Take the locks of the roots a pull request reaches. A refusal names every root another open pull request holds. */
-async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Promise<{ roots: string[] } | ApplyCommentDecision> {
+/**
+ * Take the locks of the roots (in a Terragrunt repo, the units) a pull
+ * request reaches. A refusal names every root another open pull request
+ * holds. `every` is set when a Terragrunt change locks every unit, and says why.
+ */
+async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Promise<{ roots: string[]; every?: string } | ApplyCommentDecision> {
   const repo = i.repo ?? process.cwd();
-  const roots = reachedRoots(repo, i.git, h.remote, h.sha, i.layers);
+  const reach = i.terragrunt ? reachedUnits(i.git, h.remote, h.sha, i.layers) : { units: reachedRoots(repo, i.git, h.remote, h.sha, i.layers) };
+  const roots = reach.units;
   let locked;
   try {
     locked = await takeLocks(repo, roots, { pr: i.number, by: i.user, at: new Date().toISOString(), head: h.sha, ...(how === "lock" ? { via: "lock" as const } : {}) }, async (n) => {
@@ -369,20 +431,23 @@ async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Prom
     const what = how === "lock" ? "locked" : "applied";
     return i.refuse(`${describeHeld(locked.held)}, so pull request ${i.number} is not ${what}. It ${how === "lock" ? "locks" : "applies"} once that pull request merges or closes, or someone with write access comments \`/terragucci unlock\` on it`);
   }
-  return { roots };
+  return { roots, ...(reach.every ? { every: reach.every } : {}) };
 }
+
+/** The reply's words for a Terragrunt change that locks every unit. */
+const everyUnit = (number: number, why: string): string => `pull request ${number} locks every unit: ${why}`;
 
 const isDecision = (x: object): x is ApplyCommentDecision => "go" in x;
 
 /** `/terragucci lock` on an open pull request under `apply.when: pull-request`: lock the roots it reaches, apply nothing. */
-async function decideLock(i: OpenInput & { reply: (text: string) => Promise<void> }): Promise<ApplyCommentDecision> {
+async function decideLock(i: OpenInput): Promise<ApplyCommentDecision> {
   const h = await openHead(i);
   if (isDecision(h)) return h;
   const l = await lockRoots(i, h, "lock");
   if (isDecision(l)) return l;
   const text = l.roots.length
-    ? `locked ${l.roots.map((r) => `\`${r}\``).join(", ")} for pull request ${i.number} at ${short(h.sha)}, for ${i.user}; nothing was applied. The locks hold until it merges or closes, or someone with write access comments \`/terragucci unlock\``
-    : `pull request ${i.number} reaches no root, so nothing is locked`;
+    ? `${l.every ? `${everyUnit(i.number, l.every)}. ` : ""}locked ${l.roots.map((r) => `\`${r}\``).join(", ")} for pull request ${i.number} at ${short(h.sha)}, for ${i.user}; nothing was applied. The locks hold until it merges or closes, or someone with write access comments \`/terragucci unlock\``
+    : `pull request ${i.number} reaches no ${i.terragrunt ? "unit" : "root"}, so nothing is locked`;
   await i.reply(text);
   return { go: false, reason: text };
 }
@@ -510,6 +575,8 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
   // No other open pull request holds a root this one reaches.
   const l = await lockRoots(i, h, "apply");
   if (isDecision(l)) return l;
+  // The apply's own reply comes at the end of its run; a lock on every unit is said before it starts.
+  if (l.every && !i.again) await i.reply(`${everyUnit(number, l.every)}. Applying its head ${short(sha)}`);
 
   const through = i.wave !== undefined ? ` through wave ${i.wave}` : "";
   const what = l.roots.length ? `, locking ${l.roots.join(", ")}` : "";

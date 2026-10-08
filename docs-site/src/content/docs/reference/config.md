@@ -158,7 +158,7 @@ apply:
 | Setting | Does | Allowed on |
 |---|---|---|
 | `when: merge` | only merged code applies, and the apply role never meets a pull request's code | every forge |
-| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; `/terragucci lock` takes the locks without applying; roots stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | GitHub and Forgejo, plain roots; `init` and `config check` refuse it on GitLab, `init` refuses it in a Terragrunt repo |
+| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; `/terragucci lock` takes the locks without applying; roots (units in a Terragrunt repo) stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | GitHub and Forgejo, plain roots and Terragrunt repos; `init` and `config check` refuse it on GitLab |
 | `merge: manual` | a person merges | `when: pull-request` only; `config check` refuses `merge` without it |
 | `merge: auto` | `pr-merge` merges once every wave applied, never after a partial apply | `when: pull-request` only |
 | `merge_token_env` | the secret the merge is made with; only `pr-merge`, which runs no pull request code, gets it | required on Forgejo |
