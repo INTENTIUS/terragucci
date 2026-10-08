@@ -101,14 +101,14 @@ terragucci reads your roots and runs your binary. Code, state backend and provid
 <LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
 </CardGrid>
 
-## Locking per resource, with no state file
+## Locks that settle at the API, with no database to run
 
-Every resource carries its estate as a tag from its create call and keeps its own record in your bucket. [How it works](/terragucci/concepts/locking-per-resource/).
+Every resource keeps its own record in an S3 backend you own, and every record write is a conditional write, so the API settles two runs that meet: no lock table, no database. Each resource also carries its estate as a tag from its create call. [How it works](/terragucci/concepts/locking-per-resource/).
 
 | You get | How | Page |
 |---|---|---|
 | Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner, named | every record write is a conditional S3 write, so the second write to one resource fails and overwrites nothing | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
-| No state file to host or lose, and an estate any cloud tool can list by its tag | the next plan reads the tags back from the cloud | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
+| An estate any cloud tool can list by its tag, and each address finding its real resource | the next plan reads the tags back from the cloud | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
 | A role scoped to one estate, refused on another estate's resources | an IAM condition on the `tofu-estate` tag | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
 | One bucket for every estate | each estate writes under its own prefix | [One backend for all your estates](/terragucci/concepts/locking-per-resource/#one-backend-for-all-your-estates) |
 
