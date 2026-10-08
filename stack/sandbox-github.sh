@@ -31,8 +31,8 @@
 #                                     the docs show, screenshotted into
 #                                     docs-site as step `github`, then reset
 #   stack/sandbox-github.sh prove [merge|pull-request|modules] [--record FILE]
-#                                     from a reset sandbox, each phase (merge
-#                                     when none is named) sets main up
+#                                     from a reset sandbox, each phase (all
+#                                     three when none is named) sets main up
 #                                     for its claims and runs them, and the
 #                                     sandbox is reset after each; prints a
 #                                     verdict per claim; --record merges them
@@ -1718,7 +1718,7 @@ EOF
         *) fail "unknown argument '$1' (merge, pull-request, modules, --record FILE)" ;;
       esac
     done
-    [ -n "$phases" ] || phases="merge"
+    [ -n "$phases" ] || phases="merge pull-request modules"
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "prove needs Docker, for the roots' state"; fi
     started="$(date +%s)"
     : > "$WORK/verdicts"

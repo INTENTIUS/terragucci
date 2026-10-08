@@ -310,7 +310,7 @@ just sandbox capture               # all of the docs' GitHub views, from reset t
 just sandbox prove                 # the github.com claims, from reset to reset; a phase name runs one; --record FILE writes their rows
 ```
 
-`just sandbox prove` runs the `merge` phase; `just sandbox prove pull-request modules` runs the other two. Each phase starts from a reset sandbox whose main it sets up with `[skip ci]` commits, lets `init` of the release rewrite the pipeline, runs its claims, and resets the sandbox. The merge phase takes about 35 minutes.
+`just sandbox prove` runs three phases; `just sandbox prove merge` (or `pull-request`, `modules`) runs the ones named. Each phase starts from a reset sandbox whose main it sets up with `[skip ci]` commits, lets `init` of the release rewrite the pipeline, runs its claims, and resets the sandbox. The merge phase takes about 35 minutes and the other two about 20 together.
 
 | Phase | main gets | Claims |
 |---|---|---|
