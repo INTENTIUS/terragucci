@@ -13,6 +13,10 @@
 //                GetCallerIdentity answers the account 000000000000
 //   MODE=webhook a chat incoming webhook (Slack, Teams): any POST answers
 //                200 "ok", as Slack's does, and is kept with its JSON body
+//   MODE=cost    a cost estimator's API: POST /estimate takes a plan's
+//                show -json and answers Infracost's JSON, 10.00 a month for
+//                each resource the plan creates, less 10.00 for each it
+//                deletes; 401 when REQUIRE names a header the request lacks
 //   MODE=s3      S3, forwarded to UPSTREAM (floci:4566). HOLD_PATH holds the
 //                first two PUTs to that path until both arrived (or 60s
 //                passed), then sends them at once, so two writers race on
@@ -67,6 +71,26 @@ function sts(form) {
 function webhook(req) {
   if (req.method !== "POST") return [405, "only POST", "text/plain"];
   return [200, "ok", "text/plain"];
+}
+
+function cost(req, body) {
+  if (req.method !== "POST" || req.url !== "/estimate") return [404, { error: "not found" }];
+  const lacks = required(req);
+  if (lacks) return [401, { error: lacks }];
+  const changes = body?.resource_changes ?? [];
+  const count = (action) => changes.filter((c) => c.change?.actions?.includes(action)).length;
+  const after = count("create") * 10;
+  const before = count("delete") * 10;
+  const n = (x) => x.toFixed(10);
+  return [200, { version: "0.2", currency: "USD", totalMonthlyCost: n(after), pastTotalMonthlyCost: n(before), diffTotalMonthlyCost: n(after - before), projects: [] }];
+}
+
+/** Why a request lacks the header REQUIRE (name=value) names, or nothing. */
+function required(req) {
+  const need = process.env.REQUIRE;
+  if (!need) return "";
+  const [name, ...rest] = need.split("=");
+  return req.headers[name.toLowerCase()] === rest.join("=") ? "" : `${name} is missing or wrong`;
 }
 
 function otlp(req) {
@@ -152,7 +176,7 @@ http
         body = undefined;
       }
       const form = /x-www-form-urlencoded/.test(req.headers["content-type"] ?? "") ? Object.fromEntries(new URLSearchParams(raw)) : undefined;
-      const [status, out, type] = mode === "webhook" ? webhook(req) : mode === "otlp" ? otlp(req) : mode === "sts" ? sts(form ?? Object.fromEntries(new URL(req.url, "http://x").searchParams)) : decide(req, body);
+      const [status, out, type] = mode === "webhook" ? webhook(req) : mode === "cost" ? cost(req, body) : mode === "otlp" ? otlp(req) : mode === "sts" ? sts(form ?? Object.fromEntries(new URL(req.url, "http://x").searchParams)) : decide(req, body);
       seen.push({ method: req.method, path: req.url, status, headers: req.headers, body, form });
       answer(res, status, out, type);
     });

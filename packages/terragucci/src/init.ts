@@ -13,6 +13,7 @@ import { declaredGates } from "./approval";
 import { SIGNERS_PATH } from "./seal";
 import {
   ConfigError,
+  COST_KEY_SECRET,
   gitlabPrApplyProblems,
   findConfig,
   loadConfig,
@@ -121,6 +122,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
     const tgSettings = settings.terragrunt ?? {};
     if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; use terragrunt.exclude");
+    if (settings.cost) throw new ConfigError("cost estimates read each root's plan from tf-plan, and a Terragrunt repo plans its units with run --all; remove cost");
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
@@ -234,6 +236,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(settings.synth ? { synth: settings.synth } : {}),
     ...(settings.notify ? { notify: settings.notify } : {}),
+    ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command } } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
     ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),

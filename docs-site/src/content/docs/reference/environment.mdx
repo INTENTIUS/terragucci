@@ -72,6 +72,7 @@ Each names a secret in your forge's store.
 | `agent.comment.key_secret` | `ANTHROPIC_API_KEY` | the model's API key, given to the agent's step alone |
 | `agent.token_env` | none, required | the token the agent's change is pushed with |
 | `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto` | a token that may push to the default branch |
+| `cost.key_secret` | `INFRACOST_API_KEY` | the cost estimator's API key; the plan jobs get it as `INFRACOST_API_KEY` |
 | `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
 | `notify.slack` | none | a Slack incoming webhook address; the apply jobs get it as `TERRAGUCCI_SLACK_WEBHOOK` |
 | `notify.teams` | none | a Microsoft Teams incoming webhook address; the apply jobs get it as `TERRAGUCCI_TEAMS_WEBHOOK` |
@@ -173,6 +174,7 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
+| `TG_PLAN_JSON` |  | set for the `cost.command` estimator: the path of the root's stored plan, `show -json` with sensitive values redacted; `TG_ROOT` names the root |
 | `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `chant approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
 | `env:` in the config |  | variables every job gets; values only, never secrets |
 
