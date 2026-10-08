@@ -11,7 +11,7 @@ prompt: |
 
 | Command | What it does |
 |---|---|
-| `init` | finds roots, binary and forge, and writes the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
+| `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
 | `estate` | writes one page for every project, `estate.html` and `estate.json`, to the reports bucket, and prints a presigned link to it |
 | `plan` | plans every root and prints the result |

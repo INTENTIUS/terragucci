@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/add-to-a-repo/ and https://intentius.io/terragucci/getting-started/agents/.
   Set up terragucci in this repository for its forge.
   Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
-  Then run `npx terragucci init` and open a pull request with the pipeline files, chant.workspace.json, package.json and package-lock.json only.
+  Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
   List the token, OIDC roles and required status I must set in the forge settings.
   Do not create secrets, variables or branch protection yourself.
   Never run apply, `chant approve` or `--mode apply`, and never merge.
@@ -61,7 +61,6 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    ```text
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
    wrote .github/workflows/terragucci.yml
-   wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
@@ -72,7 +71,6 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
    wrote .gitlab/terragucci.yml
    wrote .gitlab-ci.yml
-   wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
@@ -94,7 +92,6 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    ```text
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge forgejo (the origin remote (codeberg.org))
    wrote .forgejo/workflows/terragucci.yml
-   wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
@@ -103,7 +100,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    </TabItem>
    </Tabs>
 
-   On a host the table does not list, pass `--forge` once and `init` records it in `terragucci.yml`. Commit [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) with the pipeline.
+   On a host the table does not list, pass `--forge` once and `init` records it in `terragucci.yml`.
 
 2. Give the pipeline a token.
 
@@ -160,7 +157,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
    ```bash
    git switch -c add-terragucci
-   git add .github chant.workspace.json package.json package-lock.json
+   git add .github package.json package-lock.json
    git commit -m "Add terragucci"
    git push -u origin add-terragucci
    ```
@@ -170,7 +167,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
    ```bash
    git switch -c add-terragucci
-   git add .gitlab .gitlab-ci.yml chant.workspace.json package.json package-lock.json
+   git add .gitlab .gitlab-ci.yml package.json package-lock.json
    git commit -m "Add terragucci"
    git push -u origin add-terragucci
    ```
@@ -180,7 +177,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
    ```bash
    git switch -c add-terragucci
-   git add .forgejo chant.workspace.json package.json package-lock.json
+   git add .forgejo package.json package-lock.json
    git commit -m "Add terragucci"
    git push -u origin add-terragucci
    ```
@@ -218,7 +215,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
    </TabItem>
    </Tabs>
 
-6. Make approval possible. A waiting wave needs [chant](/terragucci/concepts/glossary/#chant) installed where you approve, and under `approval: sealed` your key in `.chant/allowed_signers` on the default branch: [the steps](/terragucci/getting-started/#before-your-first-approval).
+6. Make approval possible. A wave that destroys something waits for a person, who approves it with [chant](/terragucci/concepts/glossary/#chant) (`npm i -D @intentius/chant`). Signed approvals also need a signers file: [before your first approval](/terragucci/getting-started/#before-your-first-approval).
 
 </Steps>
 

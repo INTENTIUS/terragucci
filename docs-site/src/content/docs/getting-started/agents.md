@@ -20,11 +20,11 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 ## Steps for the agent
 
-1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run --json`. It lists each finding with its reason and the files it would write: the pipeline, and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) only under `approval: sealed`. Show the user.
+1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run --json`. It lists each finding with its reason and the files it would write. Show the user.
 2. Check what it found. When the binary or the forge is wrong, pass `--binary` or `--forge`, or ask the user.
 3. Write a `terragucci.yml` only if the defaults are wrong, as small as possible; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
-5. Open a pull request with the config, the pipeline and any `chant.workspace.json`; check `git status` so the commit holds nothing else. The default branch, applying and approving are the user's, so run no `apply`, [`chant approve`](/terragucci/concepts/glossary/#chant) or `--mode apply`.
+5. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. The default branch, applying and approving are the user's, so run no `apply`, [`chant approve`](/terragucci/concepts/glossary/#chant) or `--mode apply`.
 6. Tell the user to install chant, and under `approval: sealed` to add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#before-your-first-approval)). Do not add a key yourself. The file must be on the default branch before the first merge that destroys something, because the apply reads it from before the merge.
 
 ## Rules for the agent
