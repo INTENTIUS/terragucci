@@ -1,15 +1,15 @@
 {
   "step": "report",
-  "source_hash": "8a15cedff46f7586",
+  "source_hash": "89523777c20d72d8",
   "commands": [],
   "shots": {
-    "top-light": "bdb9ad8669963f46",
-    "top-dark": "41f6b61b1f2624d4",
+    "top-light": "1f8e4e57231c7807",
+    "top-dark": "7ed89a862d54a3fb",
     "root-light": "c9280f90a80e8c3a",
     "root-dark": "8105eb3bed71c693",
     "plan-light": "0d29cb2b670d7640",
     "plan-dark": "066e5ad961e03283",
-    "index-light": "aacbfa45aca3bef7",
-    "index-dark": "45dbbc5e1af40afa"
+    "index-light": "539b22ff676a200f",
+    "index-dark": "fd7033d2de9c155e"
   }
 }
