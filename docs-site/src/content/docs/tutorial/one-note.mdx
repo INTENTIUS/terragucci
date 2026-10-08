@@ -10,7 +10,7 @@ claims: [affected, grouped, report, highlight]
 prompt: |
   Read https://intentius.io/terragucci/tutorial/one-note/.
   In the terragucci clone with the example booted, run the `just example` commands on the page. Summarize what the plan note says about the twelve roots, the outlier and any destroy.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Captured from '../../../components/Captured.astro';

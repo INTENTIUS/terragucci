@@ -6,7 +6,7 @@ prompt: |
   Read https://intentius.io/terragucci/guides/roll-out-a-module-version/.
   Run `npx terragucci rollout <module>` (the preview only), fix any pin it refuses
   in a pull request, and print the `--mode apply` command for me to run.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Shot from '../../../components/Shot.astro';

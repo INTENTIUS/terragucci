@@ -6,7 +6,8 @@ prompt: |
   Read https://intentius.io/terragucci/guides/apply-before-merge/.
   Add `apply.when: pull-request` to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with the result.
   List the merge token and the branch protection I must set; do not create tokens or change branch protection yourself.
-  Never comment `/terragucci apply`, `/terragucci lock` or `/terragucci unlock`, never run `chant approve` or `--mode apply`, and never merge.
+  Never comment `/terragucci apply`, `/terragucci lock` or `/terragucci unlock`.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
