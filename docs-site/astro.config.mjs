@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import rego from './src/rego-grammar.mjs';
 
 // expressive-code renders each code line as its own block element with no
 // newline between them, so text extracted from the page (an agent, a reader
@@ -49,7 +50,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'terragucci',
-			expressiveCode: { plugins: [newlinesBetweenLines] },
+			expressiveCode: { plugins: [newlinesBetweenLines], shiki: { langs: [rego] } },
 			customCss: ['./src/styles/terragucci.css'],
 			// The title gets a "Copy page as Markdown" button, an llms.txt pointer and
 			// the page's agent prompt.
@@ -129,6 +130,7 @@ export default defineConfig({
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
 						{ label: 'Tips', slug: 'reference/tips' },
 						{ label: 'Policy', slug: 'reference/policy' },
+						{ label: 'Threat model', slug: 'reference/threat-model' },
 						{ label: 'Responses to pipeline events', slug: 'reference/responses' },
 						{ label: 'Traces and metrics', slug: 'reference/observability' },
 						{ label: 'Where it runs', slug: 'reference/runtimes' },
@@ -144,6 +146,7 @@ export default defineConfig({
 					],
 				},
 				{ label: 'How terragucci compares', slug: 'compare' },
+				{ label: 'Coming from Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
 				{ label: 'Validation', slug: 'reference/validation' },
 			],
 		}),
