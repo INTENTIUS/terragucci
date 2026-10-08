@@ -33,6 +33,14 @@ export const RUNTIMES = ["forge"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
 export const POLICY_ENGINES = ["conftest", "opa"] as const;
 export const POLICY_INPUTS = ["plan", "hcp"] as const;
+/**
+ * When a pull request takes its root locks (`locks:`). `apply` (the default):
+ * when it applies before merge, or a writer comments `/terragucci lock`.
+ * `plan`: from its first plan, through the `pr-lock` job (GitHub and Forgejo;
+ * NO_GITLAB_PLAN_LOCKS), until it merges or closes, or a writer comments
+ * `/terragucci unlock`.
+ */
+export const LOCKS = ["apply", "plan"] as const;
 /** When a change applies: after it merges (default), or from its open pull request before it merges. */
 export const APPLY_WHEN = ["merge", "pull-request"] as const;
 /** With `apply.when: pull-request`, who merges once every wave applied: a person (default), or terragucci. */
@@ -56,6 +64,7 @@ export type Dependents = (typeof DEPENDENTS)[number];
 export type PolicyEngine = (typeof POLICY_ENGINES)[number];
 export type PolicyInput = (typeof POLICY_INPUTS)[number];
 export type ApplyWhen = (typeof APPLY_WHEN)[number];
+export type Locks = (typeof LOCKS)[number];
 export type ApplyMerge = (typeof APPLY_MERGE)[number];
 export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
 
@@ -247,6 +256,8 @@ export interface ProjectSettings {
   approval?: Approval;
   /** When a change applies; see ApplySettings. */
   apply?: ApplySettings;
+  /** When a pull request takes its root locks; see LOCKS. */
+  locks?: Locks;
   waves?: { canary?: string[] };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
@@ -354,7 +365,7 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "waves", "drift", "runtime",
+  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
 ]);
 
@@ -391,6 +402,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems);
   if (s.forge === "gitlab" && isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.apply.when: ${NO_GITLAB_PR_APPLY}`);
+  oneOf(s.locks, LOCKS, `${where}.locks`, problems);
+  if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
   else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
   for (const k of ["version", "url", "token_env"] as const) {
@@ -492,6 +505,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
  * role would have to trust every branch of the project.
  */
 export const NO_GITLAB_PR_APPLY = "pull-request is not supported on GitLab, where a merge request's pipeline is defined by the merge request itself, so nothing it runs can be trusted with the apply role; leave apply.when unset, and the change applies after it merges";
+
+/** Why GitLab has no plan-time locks: its applies run after merge, one at a time, and no merge request event runs a pipeline from the default branch. */
+export const NO_GITLAB_PLAN_LOCKS = "plan is not supported on GitLab, where every apply runs after merge, one at a time, and no merge request event runs a job from the default branch that could hold the lock; leave locks unset";
 
 function checkApply(a: unknown, where: string, problems: string[]): void {
   if (!isObject(a)) {

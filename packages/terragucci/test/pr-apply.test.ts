@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decideApplyComment, mergePullRequest, reachedUnits, type Git } from "../src/comment-apply";
+import { decideApplyComment, decidePlanLock, mergePullRequest, reachedUnits, type Git } from "../src/comment-apply";
 import type { Fetch } from "../src/forge";
 import { describeHeld, LOCKS_PATH, parseLocks, readLocks, releaseLocks, takeLocks } from "../src/locks";
 import { backend, git, tmp, write } from "./helpers";
@@ -381,6 +381,85 @@ describe("apply.when: pull-request in a Terragrunt repo", () => {
     const lock = setup("/terragucci lock", { pr: OPEN(r.head) });
     await decideApplyComment({ ...o, env: lock.env, fetch: lock.fetch });
     expect(replies(lock)[0]).toMatch(/^terragucci: pull request 7 locks every unit: .*\. locked `live\/canary\/one`, `live\/fleet\/three`, `live\/fleet\/two` for pull request 7/);
+  });
+});
+
+describe("locks: plan, the pr-lock job", () => {
+  /** setup's forge, with the event file swapped for a pull_request_target event. */
+  const target = (action: string, pr: any, f: Partial<Forge> = {}) => {
+    const s = setup("", { pr, ...f });
+    writeFileSync(s.env.GITHUB_EVENT_PATH!, JSON.stringify({ action, number: 7, pull_request: { number: 7, ...pr }, repository: { full_name: "acme/infra", default_branch: "main" } }));
+    return s;
+  };
+  const statuses = (s: { sent: Sent[] }) => s.sent.filter((x) => x.method === "POST" && x.path.includes("/statuses/")).map((x) => [x.body.state, x.body.context, x.body.description]);
+  const lock = (r: ReturnType<typeof repos>, s: ReturnType<typeof setup>, when?: "pull-request") => decidePlanLock({ layers, env: s.env, fetch: s.fetch, git: r.git, repo: r.work, ...(when ? { when } : {}) });
+
+  it("a pull request opened takes plan locks on the roots its head reaches, posts terragucci/lock success, and says nothing", async () => {
+    const r = repos();
+    const s = target("opened", OPEN(r.head));
+    expect((await lock(r, s)).go).toBe(false);
+    expect(readLocks(r.work).locks).toEqual({ network: expect.objectContaining({ pr: 7, by: "author", head: r.head, stage: "plan" }) });
+    expect(statuses(s)).toEqual([["success", "terragucci/lock", "holds network"]]);
+    expect(s.sent.find((x) => x.path.endsWith(`statuses/${r.head}`))).toBeDefined();
+    expect(replies(s)).toEqual([]);
+  });
+
+  it("a second pull request that reaches a held root fails terragucci/lock and is told who holds it, planned by its author, and how to plan again", async () => {
+    const r = repos();
+    await takeLocks(r.work, ["network"], { pr: 3, by: "erin", at: "2026-10-07T00:00:00.000Z", head: "c".repeat(40), stage: "plan" }, async () => true);
+    const s = target("synchronize", OPEN(r.head), { others: { 3: "open" } });
+    await lock(r, s);
+    expect(statuses(s)).toEqual([["failure", "terragucci/lock", "locked by pull request 3: network"]]);
+    expect(replies(s)[0]).toBe("terragucci: `network` is locked by pull request 3 (planned by erin), so pull request 7 is not locked. Comment `/terragucci plan` on it once that pull request merges or closes, or someone with write access comments `/terragucci unlock` on it");
+    expect(readLocks(r.work).locks.network?.pr).toBe(3);
+    // An apply on pull request 7 is refused the same way, naming the plan lock.
+    const apply = setup("/terragucci apply", { pr: OPEN(r.head), reviews: approved(r.head), statuses: GREEN, others: { 3: "open" } });
+    await decideApplyComment({ layers, env: apply.env, fetch: apply.fetch, git: r.git, repo: r.work, when: "pull-request", wait: async () => {} });
+    expect(replies(apply)[0]).toContain("`network` is locked by pull request 3 (planned by erin), so pull request 7 is not applied");
+  });
+
+  it("closing releases the locks with no reply; a push releases plan locks the head no longer reaches; a fork takes none", async () => {
+    const r = repos();
+    await takeLocks(r.work, ["app"], { pr: 7, by: "author", at: "2026-10-07T00:00:00.000Z", head: "a".repeat(40), stage: "plan" }, async () => true);
+    const push = target("synchronize", OPEN(r.head));
+    expect((await lock(r, push)).reason).toContain("released app, which its head no longer reaches");
+    expect(Object.keys(readLocks(r.work).locks)).toEqual(["network"]);
+    const closed = target("closed", { ...OPEN(r.head), state: "closed", merged: true });
+    expect((await lock(r, closed)).reason).toBe("pull request 7 closed, so its locks on network are released");
+    expect(readLocks(r.work).locks).toEqual({});
+    expect(replies(closed)).toEqual([]);
+    const fork = target("opened", OPEN(r.head, { head: { sha: r.head, ref: "feature", repo: { full_name: "evil/infra" } } }));
+    expect((await lock(r, fork)).reason).toContain("comes from a fork");
+    expect(readLocks(r.work).locks).toEqual({});
+    expect(statuses(fork)).toEqual([]);
+  });
+
+  it("a plan keeps the pull request's own apply lock, and the apply takes over its plan lock", async () => {
+    const r = repos();
+    await takeLocks(r.work, ["network"], { pr: 7, by: "dev", at: "2026-10-07T00:00:00.000Z", head: r.head }, async () => true);
+    await lock(r, target("synchronize", OPEN(r.head)));
+    expect(readLocks(r.work).locks.network?.stage).toBeUndefined();
+    const s = setup("/terragucci apply", { pr: OPEN(r.head), reviews: approved(r.head), statuses: GREEN });
+    await lock(r, target("opened", OPEN(r.head)));
+    expect((await decideApplyComment({ layers, env: s.env, fetch: s.fetch, git: r.git, repo: r.work, when: "pull-request", wait: async () => {} })).go).toBe(true);
+    expect(readLocks(r.work).locks.network).toEqual(expect.not.objectContaining({ stage: "plan" }));
+  });
+
+  it("comments: /terragucci plan locks for a writer, /terragucci unlock releases under apply.when merge, and under pull-request lock and unlock are another job's", async () => {
+    const r = repos();
+    const plan = setup("/terragucci plan", { pr: OPEN(r.head) });
+    await lock(r, plan);
+    expect(readLocks(r.work).locks.network).toEqual(expect.objectContaining({ pr: 7, by: "author", stage: "plan" }));
+    const stranger = setup("/terragucci unlock", { pr: OPEN(r.head), permission: { dev: "read" } });
+    expect((await lock(r, stranger)).reason).toContain("no write access");
+    expect(readLocks(r.work).locks.network).toBeDefined();
+    const unlock = setup("/terragucci unlock", { pr: OPEN(r.head) });
+    await lock(r, unlock);
+    expect(replies(unlock)[0]).toBe("terragucci: released the locks pull request 7 held on `network`, for dev");
+    expect(readLocks(r.work).locks).toEqual({});
+    const elsewhere = setup("/terragucci unlock", { pr: OPEN(r.head) });
+    expect((await lock(r, elsewhere, "pull-request")).reason).toBe("another job reads this comment");
+    expect((await lock(r, setup("/terragucci apply", { pr: OPEN(r.head) }))).reason).toBe("another job reads this comment");
   });
 });
 

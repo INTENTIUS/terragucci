@@ -58,7 +58,7 @@ Every comment command is checked before any credential is used. A failed check s
 | No other open pull request holds a lock on a root the change reaches | | | yes | yes | |
 | The ask is at most 2000 characters, with no control characters | | | | | yes |
 
-A cell that reads `apply.requires` is checked when [`apply.requires`](/terragucci/reference/config/#apply-before-merge) lists it, and it lists all four by default. A `plan` or `agent` comment from someone without write access gets no reply at all. `/terragucci unlock` needs only write access and `apply.when: pull-request`.
+A cell that reads `apply.requires` is checked when [`apply.requires`](/terragucci/reference/config/#apply-before-merge) lists it, and it lists all four by default. A `plan` or `agent` comment from someone without write access gets no reply at all. `/terragucci unlock` needs only write access, and `apply.when: pull-request` or `locks: plan`.
 
 No comment approves a wave. These verbs are refused by name: `approve`, `merge`, `destroy`, `import`, `state`, `force-unlock`.
 
@@ -83,6 +83,20 @@ Each wave reads its approval mode, gate rule, signers file and config from the d
 | `apply.merge: auto` with no merge token | `pr-merge` with the job's own token: Forgejo refuses it; on GitHub the merge starts no workflow, so the next push confirms it |
 
 In a Terragrunt repo, `apply-comment` runs the waves of units with `--terragrunt`, as the apply jobs do, and the locks are on units: [Locks](/terragucci/guides/apply-before-merge/#locks) says which. Locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A lock whose pull request merged or closed counts as released.
+
+## Plan locks
+
+With [`locks: plan`](/terragucci/reference/config/#plan-locks), `init` adds one job on GitHub and Forgejo:
+
+| Job | Runs on | Does |
+|---|---|---|
+| `pr-lock` | `pull_request_target` (opened, reopened, synchronize, closed); `/terragucci plan`; under `apply.when: merge` also `/terragucci lock` and `/terragucci unlock` | locks the roots the head reaches, releases its own plan locks on roots the head no longer reaches, and posts `terragucci/lock` on the head; on `closed` or `unlock`, releases the pull request's locks |
+
+| What it has | What it never has |
+|---|---|
+| the default branch's workflow and checkout; `contents: write` (to push `_locks/tf-apply.json` to `chant/lifecycle`), `statuses: write`, `pull-requests: write` | a checkout of the pull request, a cloud role, an OIDC token, a run of the binary or Terragrunt |
+
+It reads the change as data from git: the diff, and in a Terragrunt repo each unit's `terragrunt.hcl`. A fork's pull request takes no lock. Under `apply.when: merge` the lock gates nothing by itself: require `terragucci/lock` in branch protection to hold the merge.
 
 ### What the pull request's code can reach
 

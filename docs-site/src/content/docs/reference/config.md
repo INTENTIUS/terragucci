@@ -121,6 +121,7 @@ dashboards: true
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
 | `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any `chant approve` of its digest; `pr-review`, also the merged pull request's approval of its head when the wave plans what the review saw (on GitLab, an approval after the merge request's latest push); or `sealed`, only one sealed by a key the signers file lists. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge) |
+| `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1 |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
@@ -176,6 +177,19 @@ Leaving an entry out drops that check, and `requires: []` drops all four. Three 
 Gate, approval mode, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check an apply comment must pass.
 
 Unmerged pull request code runs with the apply role. Forks never apply; require reviews in branch protection. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
+
+## Plan locks
+
+```yaml
+locks: plan   # default: apply
+```
+
+| Setting | A pull request locks its roots | Allowed on |
+|---|---|---|
+| `locks: apply` | when it applies before merge, or a writer comments `/terragucci lock` | every forge; GitLab takes no pull request locks |
+| `locks: plan` | from its first plan, and again on each push or `/terragucci plan` | GitHub and Forgejo, with either `apply.when`; `init` and `config check` refuse it on GitLab, where every apply runs after merge, one at a time |
+
+With `locks: plan`, `init` adds the `pr-lock` job ([the generated pipeline](/terragucci/reference/pipeline/#plan-locks)). A second pull request that reaches a locked root gets a failing `terragucci/lock` status, and branch protection can require that status. [Locks](/terragucci/guides/apply-before-merge/#locks) lists what takes and releases a lock.
 
 ## A TypeScript file
 
