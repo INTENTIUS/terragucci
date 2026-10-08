@@ -119,12 +119,16 @@ describe("--json", () => {
     expect(JSON.parse(out).results.problems).toHaveLength(3);
   });
 
-  it("config check refuses apply before merge on GitLab, named in the config or detected from the repo", async () => {
+  it("config check asks apply before merge on GitLab for comments and a merge token, named in the config or detected from the repo", async () => {
     for (const files of [{ "terragucci.yml": "forge: gitlab\napply:\n  when: pull-request\n" }, { "terragucci.yml": "apply:\n  when: pull-request\n", ".gitlab-ci.yml": "# x\n" }] as Record<string, string>[]) {
       const { code, out } = await run(write(repo(), files), "config", "check", "--json");
       expect(code).toBe(2);
-      expect(JSON.parse(out).results.problems.join("\n")).toMatch(/apply\.when: pull-request is not supported on GitLab/);
+      const problems = JSON.parse(out).results.problems.join("\n");
+      expect(problems).toMatch(/apply\.when: pull-request on GitLab needs comments: <cron>/);
+      expect(problems).toMatch(/apply\.when: pull-request on GitLab needs apply\.merge_token_env/);
     }
+    const ok = await run(write(repo(), { "terragucci.yml": "forge: gitlab\ncomments: \"*/5 * * * *\"\napply:\n  when: pull-request\n  merge_token_env: MERGE_TOKEN\n" }), "config", "check", "--json");
+    expect(ok.code).toBe(0);
     const { code } = await run(write(repo(), { "terragucci.yml": "apply:\n  when: pull-request\n", ".forgejo/workflows/x.yml": "# x\n" }), "config", "check", "--json");
     expect(code).toBe(0);
   });

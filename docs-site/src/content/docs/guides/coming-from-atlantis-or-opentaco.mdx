@@ -66,7 +66,7 @@ A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-
 | | Atlantis | OpenTaco | terragucci |
 |---|---|---|---|
 | Default | before merge | before merge; `on_commit_to_default` applies after | after merge |
-| The other way | | `on_commit_to_default` | `apply.when: pull-request`, on GitHub and Forgejo |
+| The other way | | `on_commit_to_default` | `apply.when: pull-request`; on GitLab with `comments:` set |
 
 [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) sets it up. Under it, the open change's settings, gate and signers come from the default branch.
 

@@ -13,7 +13,7 @@ import { declaredGates } from "./approval";
 import { SIGNERS_PATH } from "./seal";
 import {
   ConfigError,
-  NO_GITLAB_PR_APPLY,
+  gitlabPrApplyProblems,
   findConfig,
   loadConfig,
   resolveRepo,
@@ -180,7 +180,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError("cannot tell which forge this repo is on; pass --forge github, gitlab or forgejo");
   }
 
-  if (forgeChoice.value === "gitlab" && settings.apply?.when === "pull-request") throw new ConfigError(`apply.when: ${NO_GITLAB_PR_APPLY}`);
+  if (forgeChoice.value === "gitlab") {
+    const missing = gitlabPrApplyProblems(settings as unknown as Record<string, unknown>, "config");
+    if (missing.length) throw new ConfigError(missing.join("; "));
+  }
 
   // The approval mode: the config's key, then --approval; a declaration that already seals its gates keeps them sealed.
   const declPath = join(repo, "chant.workspace.json");

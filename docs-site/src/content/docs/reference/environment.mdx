@@ -190,7 +190,8 @@ Internal; a value set in `env:` is overwritten.
 
 | Variable | Set for |
 |---|---|
-| `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; no job running pull request code has it |
+| `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; on GitLab also the `comments` job, which starts the `mr-apply` pipeline with it; no job running pull request code has it |
+| `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE`, `TERRAGUCCI_HEAD` | GitLab, `apply.when: pull-request`: the variables the `comments` job starts the `mr-apply` pipeline with, naming the merge request, its note and its head; `mr-apply` reads all three again from GitLab |
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME` | steps naming a pull request, wave or root |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
