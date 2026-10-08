@@ -220,7 +220,7 @@ const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: 
 const index = (reports: IndexEntry[]): string => JSON.stringify({ schema: "terragucci.report-index/v1", reports });
 
 describe("terragucci estate", () => {
-  it("in a single repo, reads the top index for the projects and each project's index.json, and nothing else", async () => {
+  it("in a single repo, reads the top index for the projects, each project's index.json and the audit summary, and nothing else", async () => {
     const objects = new Map<string, string>();
     const all = threeProjects();
     objects.set("acme-reports:reports/index.json", index(all.flatMap((p) => p.reports!)));
@@ -234,6 +234,7 @@ describe("terragucci estate", () => {
       "GET acme-reports:reports/github.com/acme/data/index.json",
       "GET acme-reports:reports/github.com/acme/web/index.json",
       "GET acme-reports:reports/gitlab.example.com/platform/network/index.json",
+      "GET acme-reports:reports/audit.json",
     ]);
     for (const g of gets) expect(g).not.toMatch(/plan\.(txt|json)$|report\.json$/);
     expect(requests.filter((q) => q.startsWith("PUT "))).toEqual(["PUT acme-reports:reports/estate.json", "PUT acme-reports:reports/estate.html"]);
@@ -272,6 +273,7 @@ describe("terragucci estate", () => {
       `GET other:x/${data.project}/index.json`,
       "GET locked:github.com/acme/locked/index.json",
       "GET central:r/github.com/acme/fresh/index.json",
+      "GET central:r/audit.json",
     ]);
     expect(r.estate.projects.map((p) => [p.project, p.status])).toEqual([[web.project, "ok"], [data.project, "ok"], ["github.com/acme/locked", "error"], ["github.com/acme/fresh", "no-index"]]);
     // Another bucket's runs link through its own address; one with no address is not linked.
