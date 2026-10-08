@@ -38,8 +38,8 @@ Every comment command is checked before any credential is used. A failed check s
 | The comment is new; an edit does not run it again | yes | yes | yes | yes | yes | yes |
 | The comment is one line in a [form the job accepts](/terragucci/guides/re-plan-from-a-comment/#comment-forms) | yes | yes | yes | yes | yes | yes |
 | The head is in this repository, not a fork | yes | yes | yes | yes | yes | yes |
-| The pull request is open | yes | merged instead | yes | yes | yes | `plan`; merged instead for `apply` |
-| `apply.when` is `pull-request` | | | yes | yes | | |
+| The pull request is open | yes | merged instead | yes | yes | yes | `plan`; merged instead for `apply`; open for `apply`, `lock` and `unlock` with `apply.when: pull-request` |
+| `apply.when` is `pull-request` | | | yes | yes | | `lock`, `unlock`, and `apply` on an open merge request |
 | `agent.comment` is set | | | | | yes | |
 | The base is the default branch | | yes | yes | yes | | `apply` |
 | The head is not the default branch | | | | | yes | |
@@ -48,14 +48,14 @@ Every comment command is checked before any credential is used. A failed check s
 | The merge commit is still on the default branch | | yes | | | | |
 | At most 50 commits reached the default branch after the merge commit | | yes | | | | |
 | No later commit on the default branch has an apply of its own (the reply links it) | | yes | | | | `apply` |
-| `approved`: a reviewer other than the author approved the head, and no reviewer's last review asks for changes | | | `apply.requires` | | | |
-| `checks`: no status or check on the head failed or is running | | | `apply.requires` | | | |
-| `terragucci/plan` passed on the head | | | yes | | | |
-| `mergeable`: the forge reports no conflicts, and on GitHub no branch protection blocks the merge | | | `apply.requires` | | | |
-| The head did not move while the comment was read | | | yes | yes | | |
-| `undiverged`: the head contains the default branch as it is now | | | `apply.requires` | | | |
-| The pull request does not change the pipeline file | | | yes | | | |
-| No other open pull request holds a lock on a root the change reaches | | | yes | yes | | |
+| `approved`: a reviewer other than the author approved the head, and no reviewer's last review asks for changes | | | `apply.requires` | | | open `apply`: after the latest push |
+| `checks`: no status or check on the head failed or is running | | | `apply.requires` | | | open `apply` |
+| `terragucci/plan` passed on the head | | | yes | | | open `apply` |
+| `mergeable`: the forge reports no conflicts, and on GitHub no branch protection blocks the merge | | | `apply.requires` | | | open `apply`: `detailed_merge_status` is `mergeable` |
+| The head did not move while the comment was read | | | yes | yes | | open `apply`, `lock`: `mr-apply` refuses a `TERRAGUCCI_HEAD` that is not the head |
+| `undiverged`: the head contains the default branch as it is now | | | `apply.requires` | | | open `apply` |
+| The pull request does not change the pipeline file | | | yes | | | open `apply`: `.gitlab-ci.yml` and `.gitlab/terragucci.yml` |
+| No other open pull request holds a lock on a root the change reaches | | | yes | yes | | open `apply`, `lock`, in `mr-apply` |
 | The ask is at most 2000 characters, with no control characters | | | | | yes | |
 
 A cell that reads `apply.requires` is checked when [`apply.requires`](/terragucci/reference/config/#apply-before-merge) lists it, and it lists all four by default. A `plan` or `agent` comment from someone without write access gets no reply at all. `/terragucci unlock` needs only write access, and `apply.when: pull-request` or `locks: plan`.
@@ -72,7 +72,16 @@ With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-mer
 | `pr-merge` | with `apply.merge: auto`, after `apply-comment` applied every wave | merges while the head is still the applied commit and approved by a reviewer other than its author, then releases the locks |
 | `confirm` | each push to the default branch | plans every root (every unit, after the Terragrunt caches and plan roles) and applies nothing; its `terragucci/apply` status fails naming roots that plan a change |
 
-`init` and `config check` refuse `apply.when: pull-request` on GitLab, which builds a merge request's pipeline from its own `.gitlab-ci.yml`.
+On GitLab a merge request's pipeline is built from its own `.gitlab-ci.yml`, so the apply runs in a pipeline of the default branch that the [`comments`](/terragucci/guides/re-plan-from-a-comment/) job starts. `init` writes these jobs there:
+
+| Job | Runs on | Does |
+|---|---|---|
+| `comments` | the comments schedule | for `/terragucci apply` on an open merge request, checks the open-PR column; then, for `apply`, `lock` or `unlock`, starts a pipeline on the default branch with the merge token and `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE` and `TERRAGUCCI_HEAD` |
+| `mr-apply` | that pipeline alone | reads the note, its author, the merge request and its head from GitLab, refuses a head other than the variable's, checks the open-PR column again, locks, and applies the head wave by wave under the apply group; posts no status on the head |
+| `pr-merge` | with `apply.merge: auto`, after `mr-apply` | merges once `mr-apply`'s reply says every wave of that head applied in this pipeline, and the head is still approved; it takes no artifact from `mr-apply` |
+| `confirm` | each push to the default branch | as above |
+
+`init` and `config check` refuse it on GitLab without `comments` and `apply.merge_token_env` ([GitLab](/terragucci/reference/config/#apply-before-merge-on-gitlab)).
 
 Each wave reads its approval mode, gate rule, signers file and config from the default branch. A run that stopped at a wave never merges.
 
@@ -80,9 +89,9 @@ Each wave reads its approval mode, gate rule, signers file and config from the d
 |---|---|
 | `apply.merge: manual` (default) | a person |
 | `apply.merge: auto` with `apply.merge_token_env` | `pr-merge`, the only job given that token; it runs no pull request code |
-| `apply.merge: auto` with no merge token | `pr-merge` with the job's own token: Forgejo refuses it; on GitHub the merge starts no workflow, so the next push confirms it |
+| `apply.merge: auto` with no merge token | `pr-merge` with the job's own token: Forgejo refuses it; on GitHub the merge starts no workflow, so the next push confirms it; GitLab needs the token |
 
-In a Terragrunt repo, `apply-comment` runs the waves of units with `--terragrunt`, as the apply jobs do, and the locks are on units: [Locks](/terragucci/guides/apply-before-merge/#locks) says which. Locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A lock whose pull request merged or closed counts as released.
+In a Terragrunt repo, `apply-comment` (on GitLab, `mr-apply`) runs the waves of units with `--terragrunt`, as the apply jobs do, and the locks are on units: [Locks](/terragucci/guides/apply-before-merge/#locks) says which. Locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A lock whose pull request merged or closed counts as released.
 
 ## Plan locks
 

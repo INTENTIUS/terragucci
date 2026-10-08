@@ -144,7 +144,7 @@ describe("pollGitLabComments: plan", () => {
     expect(posts(api.calls, /./)).toEqual([]);
   });
 
-  it("answers refused commands with the reason, and unlock, lock and agent as unsupported on GitLab", async () => {
+  it("answers refused commands with the reason, and, applying after merge, unlock, lock and agent as unsupported", async () => {
     const { api, run } = poll({
       mrs: [openMr()],
       notes: { 3: [note(101, "/terragucci approve"), note(102, "/terragucci unlock", dev, "2026-10-07T11:58:01Z"), note(103, "/terragucci lock", dev, "2026-10-07T11:58:02Z"), note(104, "/terragucci agent rename it", dev, "2026-10-07T11:58:03Z")] },
@@ -153,8 +153,8 @@ describe("pollGitLabComments: plan", () => {
     await run();
     const r = replies(api.calls);
     expect(r[0]).toMatch(/a comment never runs `approve`/);
-    expect(r[1]).toMatch(/`\/terragucci unlock` does not run on GitLab/);
-    expect(r[2]).toMatch(/`\/terragucci lock` does not run on GitLab/);
+    expect(r[1]).toMatch(/`\/terragucci unlock` does not run here: this project applies after merge/);
+    expect(r[2]).toMatch(/`\/terragucci lock` does not run here/);
     expect(r[3]).toMatch(/`\/terragucci agent` does not run on GitLab/);
     expect(posts(api.calls, /\/pipelines$|\/retry$/)).toEqual([]);
   });
