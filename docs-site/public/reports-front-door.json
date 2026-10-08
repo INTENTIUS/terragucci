@@ -1,0 +1,528 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Conditions": {
+    "doorCreateCertificate": {
+      "Fn::Equals": [
+        {
+          "Ref": "CertificateArn"
+        },
+        ""
+      ]
+    },
+    "doorWriteBucketPolicy": {
+      "Fn::Equals": [
+        {
+          "Ref": "WriteBucketPolicy"
+        },
+        "true"
+      ]
+    },
+    "doorWriteDns": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "HostedZoneId"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Outputs": {
+    "BucketPolicyStatement": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "{\"Sid\":\"TerragucciReportsFrontDoor\",\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"cloudfront.amazonaws.com\"},\"Action\":\"s3:GetObject\",\"Resource\":\"arn:",
+            {
+              "Ref": "AWS::Partition"
+            },
+            ":s3:::",
+            {
+              "Ref": "ReportsBucket"
+            },
+            "/*\",\"Condition\":{\"StringEquals\":{\"AWS:SourceArn\":\"",
+            {
+              "Fn::Join": [
+                "",
+                [
+                  "arn:",
+                  {
+                    "Ref": "AWS::Partition"
+                  },
+                  ":cloudfront::",
+                  {
+                    "Ref": "AWS::AccountId"
+                  },
+                  ":distribution/",
+                  {
+                    "Fn::GetAtt": [
+                      "doorDistribution",
+                      "Id"
+                    ]
+                  }
+                ]
+              ]
+            },
+            "\"}}}"
+          ]
+        ]
+      }
+    },
+    "DistributionDomainName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "doorDistribution",
+          "DomainName"
+        ]
+      }
+    },
+    "DistributionId": {
+      "Value": {
+        "Fn::GetAtt": [
+          "doorDistribution",
+          "Id"
+        ]
+      }
+    },
+    "Url": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "https://",
+            {
+              "Ref": "DomainName"
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "AllowedEmailDomain": {
+      "Default": "",
+      "Description": "Only email addresses at this domain sign in; empty lets in anyone the issuer signs in",
+      "Type": "String"
+    },
+    "CertificateArn": {
+      "Default": "",
+      "Description": "An ACM certificate in us-east-1 for DomainName; empty requests one, validated in HostedZoneId",
+      "Type": "String"
+    },
+    "DomainName": {
+      "Description": "The DNS name people open, such as reports.acme.example; reports.url is https:// and this name",
+      "Type": "String"
+    },
+    "HostedZoneId": {
+      "Default": "",
+      "Description": "The Route 53 hosted zone of DomainName, for its alias records and the certificate's validation; empty writes no DNS record",
+      "Type": "String"
+    },
+    "OidcClientId": {
+      "Description": "The client id of the web application registered with the issuer",
+      "Type": "String"
+    },
+    "OidcClientSecretName": {
+      "Description": "The name of a Secrets Manager secret in us-east-1 whose value is the client secret",
+      "Type": "String"
+    },
+    "OidcIssuer": {
+      "Description": "The OpenID Connect issuer, such as https://accounts.google.com",
+      "Type": "String"
+    },
+    "ReportsBucket": {
+      "Description": "The reports bucket: reports.bucket without s3://",
+      "Type": "String"
+    },
+    "ReportsBucketRegion": {
+      "Default": "us-east-1",
+      "Description": "The region of the reports bucket",
+      "Type": "String"
+    },
+    "SessionHours": {
+      "Default": "12",
+      "Description": "How long a sign-in lasts, in hours",
+      "Type": "String"
+    },
+    "WriteBucketPolicy": {
+      "Default": "false",
+      "Description": "true writes the bucket policy; false leaves it to you, with the statement in the BucketPolicyStatement output",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "doorAccess": {
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Description": "The reports bucket answers only this distribution",
+          "Name": {
+            "Ref": "AWS::StackName"
+          },
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      },
+      "Type": "AWS::CloudFront::OriginAccessControl"
+    },
+    "doorBucketPolicy": {
+      "Condition": "doorWriteBucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "ReportsBucket"
+        },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:GetObject",
+              "Condition": {
+                "StringEquals": {
+                  "AWS:SourceArn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition"
+                        },
+                        ":cloudfront::",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":distribution/",
+                        {
+                          "Fn::GetAtt": [
+                            "doorDistribution",
+                            "Id"
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudfront.amazonaws.com"
+              },
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":s3:::",
+                    {
+                      "Ref": "ReportsBucket"
+                    },
+                    "/*"
+                  ]
+                ]
+              },
+              "Sid": "TerragucciReportsFrontDoor"
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
+    },
+    "doorCertificate": {
+      "Condition": "doorCreateCertificate",
+      "Properties": {
+        "DomainName": {
+          "Ref": "DomainName"
+        },
+        "DomainValidationOptions": [
+          {
+            "DomainName": {
+              "Ref": "DomainName"
+            },
+            "HostedZoneId": {
+              "Ref": "HostedZoneId"
+            }
+          }
+        ],
+        "ValidationMethod": "DNS"
+      },
+      "Type": "AWS::CertificateManager::Certificate"
+    },
+    "doorDistribution": {
+      "Properties": {
+        "DistributionConfig": {
+          "Aliases": [
+            {
+              "Ref": "DomainName"
+            }
+          ],
+          "Comment": "terragucci reports",
+          "DefaultCacheBehavior": {
+            "AllowedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachedMethods": [
+              "GET",
+              "HEAD"
+            ],
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "Compress": true,
+            "LambdaFunctionAssociations": [
+              {
+                "EventType": "viewer-request",
+                "LambdaFunctionARN": {
+                  "Ref": "doorEdgeVersion"
+                }
+              }
+            ],
+            "TargetOriginId": "reports",
+            "ViewerProtocolPolicy": "redirect-to-https"
+          },
+          "DefaultRootObject": "index.html",
+          "Enabled": true,
+          "HttpVersion": "http2and3",
+          "Origins": [
+            {
+              "DomainName": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Ref": "ReportsBucket"
+                    },
+                    ".s3.",
+                    {
+                      "Ref": "ReportsBucketRegion"
+                    },
+                    ".amazonaws.com"
+                  ]
+                ]
+              },
+              "Id": "reports",
+              "OriginAccessControlId": {
+                "Fn::GetAtt": [
+                  "doorAccess",
+                  "Id"
+                ]
+              },
+              "S3OriginConfig": {
+                "OriginAccessIdentity": ""
+              }
+            }
+          ],
+          "PriceClass": "PriceClass_100",
+          "ViewerCertificate": {
+            "AcmCertificateArn": {
+              "Fn::If": [
+                "doorCreateCertificate",
+                {
+                  "Ref": "doorCertificate"
+                },
+                {
+                  "Ref": "CertificateArn"
+                }
+              ]
+            },
+            "MinimumProtocolVersion": "TLSv1.2_2021",
+            "SslSupportMethod": "sni-only"
+          }
+        }
+      },
+      "Type": "AWS::CloudFront::Distribution"
+    },
+    "doorDnsA": {
+      "Condition": "doorWriteDns",
+      "Properties": {
+        "AliasTarget": {
+          "DNSName": {
+            "Fn::GetAtt": [
+              "doorDistribution",
+              "DomainName"
+            ]
+          },
+          "EvaluateTargetHealth": false,
+          "HostedZoneId": "Z2FDTNDATAQYW2"
+        },
+        "HostedZoneId": {
+          "Ref": "HostedZoneId"
+        },
+        "Name": {
+          "Ref": "DomainName"
+        },
+        "Type": "A"
+      },
+      "Type": "AWS::Route53::RecordSet"
+    },
+    "doorDnsAAAA": {
+      "Condition": "doorWriteDns",
+      "Properties": {
+        "AliasTarget": {
+          "DNSName": {
+            "Fn::GetAtt": [
+              "doorDistribution",
+              "DomainName"
+            ]
+          },
+          "EvaluateTargetHealth": false,
+          "HostedZoneId": "Z2FDTNDATAQYW2"
+        },
+        "HostedZoneId": {
+          "Ref": "HostedZoneId"
+        },
+        "Name": {
+          "Ref": "DomainName"
+        },
+        "Type": "AAAA"
+      },
+      "Type": "AWS::Route53::RecordSet"
+    },
+    "doorEdge": {
+      "Properties": {
+        "Code": {
+          "ZipFile": "\"use strict\";const m=require(\"node:crypto\"),w=\"/_terragucci/\",_=w+\"callback\",T=w+\"logout\",d=\"tg_session\",h=\"tg_login\",b=600,P=3e5;function L(e,t,i){return m.createHmac(\"sha256\",i).update(e+\".\"+t).digest(\"base64url\")}function N(e,t,i){const s=Buffer.from(JSON.stringify(t)).toString(\"base64url\");return s+\".\"+L(e,s,i)}function I(e,t,i,s){const o=(t||\"\").split(\".\");if(o.length!==2)return null;const n=Buffer.from(L(e,o[0],i)),r=Buffer.from(o[1]);if(n.length!==r.length||!m.timingSafeEqual(n,r))return null;try{const c=JSON.parse(Buffer.from(o[0],\"base64url\").toString());return typeof c.x==\"number\"&&c.x>s?c:null}catch{return null}}function j(e){const t={};for(const i of e.cookie||[])for(const s of i.value.split(\";\")){const o=s.indexOf(\"=\");o>0&&(t[s.slice(0,o).trim()]=s.slice(o+1).trim())}return t}function k(e,t,i,s){return e+\"=\"+t+\"; Path=\"+s+\"; Max-Age=\"+i+\"; Secure; HttpOnly; SameSite=Lax\"}function x(e,t,i,s){const o={\"cache-control\":[{key:\"Cache-Control\",value:\"no-store\"}]};for(const[n,r]of Object.entries(t))o[n.toLowerCase()]=[{key:n,value:r}];return i.length&&(o[\"set-cookie\"]=i.map(n=>({key:\"Set-Cookie\",value:n}))),s===void 0?{status:e,headers:o}:{status:e,headers:o,body:s}}const q=(e,t)=>x(\"302\",{Location:e},t),C=e=>x(\"403\",{\"Content-Type\":\"text/plain; charset=utf-8\"},[],e+`\n`);function D(e,t,i,s,o){return!e||e.iss!==i.issuer||e.nonce!==s||!(typeof e.exp==\"number\"&&e.exp>o)||![].concat(e.aud).includes(t.clientId)||t.allowedDomain&&(!String(e.email||\"\").toLowerCase().endsWith(\"@\"+t.allowedDomain.toLowerCase())||e.email_verified===!1)?null:e.email||e.sub}function E(e){try{return JSON.parse(Buffer.from(String(e).split(\".\")[1],\"base64url\").toString())}catch{return null}}async function G(e){const{SecretsManagerClient:t,GetSecretValueCommand:i}=require(\"@aws-sdk/client-secrets-manager\");return(await new t({region:\"us-east-1\"}).send(new i({SecretId:e}))).SecretString}function v(e){let t;async function i(o){if(t&&e.now()-t.at<P)return t;const n=JSON.parse(await e.secret(o.replace(/^us-east-1\\./,\"\")));n.clientSecret=await e.secret(n.clientSecretName);const r=await e.fetch(n.issuer.replace(/\\/$/,\"\")+\"/.well-known/openid-configuration\");if(!r.ok)throw new Error(\"OpenID discovery answered \"+r.status);return t={at:e.now(),cfg:n,idp:await r.json()},t}async function s(o,n,r,c,u){const l=new URLSearchParams(o.querystring),a=I(h,c[h],n.sessionKey,u);if(!a||!l.get(\"code\")||l.get(\"state\")!==a.s)return C(\"This sign-in did not start here. Open the report again.\");const p=\"https://\"+n.domain+_,S=new URLSearchParams({grant_type:\"authorization_code\",code:l.get(\"code\"),redirect_uri:p,client_id:n.clientId,client_secret:n.clientSecret}),O={\"Content-Type\":\"application/x-www-form-urlencoded\"},f=await e.fetch(r.token_endpoint,{method:\"POST\",headers:O,body:S.toString()});if(!f.ok)return C(\"The identity provider refused the sign-in.\");const g=D(E((await f.json()).id_token),n,r,a.n,u);if(!g)return C(\"This account may not open these reports.\");const y=Math.round(Number(n.sessionHours||12)*3600),B=/^\\/(?![/\\\\])/.test(a.r)?a.r:\"/\";return q(B,[k(d,N(d,{e:g,x:u+y},n.sessionKey),y,\"/\"),k(h,\"\",0,w)])}return async(o,n)=>{const r=o.Records[0].cf.request,{cfg:c,idp:u}=await i(n.functionName),l=j(r.headers),a=Math.floor(e.now()/1e3);if(r.uri===_)return s(r,c,u,l,a);if(r.uri===T)return x(\"200\",{\"Content-Type\":\"text/plain; charset=utf-8\"},[k(d,\"\",0,\"/\")],`Signed out.\n`);if(I(d,l[d],c.sessionKey,a))return r.uri.endsWith(\"/\")&&(r.uri+=\"index.html\"),delete r.headers.cookie,r;const p=m.randomBytes(16).toString(\"hex\"),S=m.randomBytes(16).toString(\"hex\"),O=r.uri+(r.querystring?\"?\"+r.querystring:\"\"),f=new URL(u.authorization_endpoint);for(const[g,y]of Object.entries({response_type:\"code\",client_id:c.clientId,redirect_uri:\"https://\"+c.domain+_,scope:\"openid email\",state:p,nonce:S}))f.searchParams.set(g,y);return q(f.toString(),[k(h,N(h,{s:p,n:S,r:O,x:a+b},c.sessionKey),b,w)])}}exports.makeHandler=v,exports.handler=v({fetch:(e,t)=>fetch(e,t),secret:G,now:Date.now});\n"
+        },
+        "Description": "terragucci reports front door: OpenID Connect sign-in on every viewer request",
+        "FunctionName": {
+          "Ref": "AWS::StackName"
+        },
+        "Handler": "index.handler",
+        "MemorySize": 128,
+        "Role": {
+          "Fn::GetAtt": [
+            "doorRole",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs22.x",
+        "Timeout": 5
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "doorEdgeVersion": {
+      "Properties": {
+        "Description": "edge code sha256 67df8b4bd4241bea",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "doorEdge",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::Lambda::Version"
+    },
+    "doorRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com",
+                  "edgelambda.amazonaws.com"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": "secretsmanager:GetSecretValue",
+                  "Effect": "Allow",
+                  "Resource": [
+                    {
+                      "Ref": "doorSettings"
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:",
+                          {
+                            "Ref": "AWS::Partition"
+                          },
+                          ":secretsmanager:us-east-1:",
+                          {
+                            "Ref": "AWS::AccountId"
+                          },
+                          ":secret:",
+                          {
+                            "Ref": "OidcClientSecretName"
+                          },
+                          "-*"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "read-settings"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "doorSettings": {
+      "Properties": {
+        "Description": "Settings and session key of the terragucci reports front door",
+        "GenerateSecretString": {
+          "ExcludePunctuation": true,
+          "GenerateStringKey": "sessionKey",
+          "PasswordLength": 64,
+          "SecretStringTemplate": {
+            "Fn::Join": [
+              "",
+              [
+                "{\"issuer\":\"",
+                {
+                  "Ref": "OidcIssuer"
+                },
+                "\",\"clientId\":\"",
+                {
+                  "Ref": "OidcClientId"
+                },
+                "\",\"clientSecretName\":\"",
+                {
+                  "Ref": "OidcClientSecretName"
+                },
+                "\",\"domain\":\"",
+                {
+                  "Ref": "DomainName"
+                },
+                "\",\"allowedDomain\":\"",
+                {
+                  "Ref": "AllowedEmailDomain"
+                },
+                "\",\"sessionHours\":\"",
+                {
+                  "Ref": "SessionHours"
+                },
+                "\"}"
+              ]
+            ]
+          }
+        },
+        "Name": {
+          "Ref": "AWS::StackName"
+        }
+      },
+      "Type": "AWS::SecretsManager::Secret"
+    }
+  }
+}
