@@ -56,7 +56,7 @@ export default defineConfig({
 			// The title gets a "Copy page as Markdown" button, an llms.txt pointer and
 			// the page's agent prompt.
 			components: { PageTitle: './src/components/PageTitle.astro' },
-			description: 'CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check.',
+			description: 'Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],

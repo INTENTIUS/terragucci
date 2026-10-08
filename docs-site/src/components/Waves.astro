@@ -1,8 +1,8 @@
 ---
-// A rollout in waves: a gated wave's approval is bound to the digest of that wave's plans.
+// A rollout in waves: a gated wave's approval covers exactly the plans it was shown, by their digest.
 const waves = [
 	{ label: 'wave 1', roots: 3, digest: 'set:4f1a…c09e', state: 'applied', note: 'the canary roots, approved by alex' },
-	{ label: 'wave 2', roots: 97, digest: 'set:b77d…12a4', state: 'waiting', note: 'chant approve tf-apply wave-2 --plan <digest> --sign' },
+	{ label: 'wave 2', roots: 97, digest: 'set:b77d…12a4', state: 'waiting', note: 'npx terragucci approve wave-2' },
 	{ label: 'wave 3', roots: 100, digest: 'planned when wave 2 applies', state: 'next', note: 'planned once wave 2 has applied' },
 ];
 ---
@@ -20,7 +20,7 @@ const waves = [
 	</ol>
 	<p class="refusal">
 		<span>refused</span>
-		A root in wave 2 changed after approval, so wave 2 applied nothing and named both digests.
+		A plan in wave 2 changed after the approval, so wave 2 applied nothing and named both digests.
 	</p>
 </div>
 

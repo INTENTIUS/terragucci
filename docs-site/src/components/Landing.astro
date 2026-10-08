@@ -1,10 +1,10 @@
 ---
 // The home page's two ends. `part="top"` (the default) is the wordmark, the
-// tagline and where it runs, then what it does; the cards that route by goal follow it in
-// index.mdx. `part="agent"` is the prompt to hand a coding agent, further down
-// the page: the setup prompt from src/prompts.ts, which the agents page and the
-// README carry too. The tagline is the one the README and the site description
-// use.
+// tagline, the one-sentence position, the proof line and the three pillars;
+// index.mdx follows it with the plan note. `part="agent"` is the prompt to hand
+// a coding agent, last on the page: the setup prompt from src/prompts.ts, which
+// the agents page and the README carry too. The tagline is the one the README
+// and the site description use.
 import AgentPrompt from './AgentPrompt.astro';
 import { setupPrompt } from '../prompts';
 
@@ -13,24 +13,60 @@ interface Props {
 }
 const { part = 'top' } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const pillars = [
+	{
+		title: 'No server to host',
+		text: 'Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket.',
+		links: [
+			{ label: 'What runs where', href: '/concepts/how-it-works/#what-runs-where' },
+			{ label: 'The lifecycle', href: '/concepts/how-it-works/' },
+		],
+	},
+	{
+		title: 'Built for many roots',
+		text: 'One grouped note for 200 plans. Canary roots apply first, then the rest in waves. An approval covers exactly the plans it was shown, and a plan that changed after it is refused.',
+		links: [
+			{ label: 'Grouped plans', href: '/concepts/why-plans-are-grouped/' },
+			{ label: 'Waves and approvals', href: '/concepts/waves-and-approvals/' },
+		],
+	},
+	{
+		title: 'A trace of every run',
+		text: 'One OpenTelemetry trace per stage run, with a span per root and the binary\'s own spans inside it. With choudoufu those show lock waits and slow provider calls. Metrics and dashboards come with it.',
+		links: [
+			{ label: 'Send traces and metrics', href: '/guides/send-traces-and-metrics/' },
+			{ label: 'What a trace holds', href: '/reference/observability/#the-trace' },
+		],
+	},
+];
 ---
 {part === 'top' ? (
 	<section class="tg-landing not-content">
 		<p class="wordmark">TERRAGUCCI</p>
 
-		<h1 class="claim">CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check</h1>
+		<h1 class="claim">Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.</h1>
 
 		<p class="lede">
-			CI does this: every job runs in your <a href={`${base}/concepts/glossary/#forge`}>forge's</a> CI and lands in your git and your
-			bucket. No account, no sign-in, no platform. Each pull request gets one grouped plan note,
-			<a href={`${base}/concepts/glossary/#root`}>roots</a> apply in waves with a destroy waiting for an approval bound to its
-			<a href={`${base}/concepts/glossary/#set-digest`}>set digest</a>, and drift is reported on a schedule.
-			Every stage run is one OpenTelemetry <a href={`${base}/guides/send-traces-and-metrics/`}>trace</a>, with a span per root
-			and the binary's own spans inside it (provider calls and state lock waits with choudoufu), sent over OTLP to your
-			collector with the pipeline's metrics and the Grafana dashboards <code>init</code> can write.
-			<a href={`${base}/concepts/how-it-works/`}>How it works</a>.
+			CI does this: each job runs in your GitHub, GitLab or Forgejo CI and lands in your git and your bucket, with no account
+			to create and no platform to sign in to.
+		</p>
+
+		<p class="proof">
+			Every pipeline feature on this site is proven by a recorded claim that fails when broken
+			(<a href={`${base}/reference/validation/`}>validation</a>). Apache-2.0, nothing to buy.
 		</p>
 	</section>
+	<ul class="tg-pillars not-content">
+		{pillars.map((p) => (
+			<li>
+				<h2>{p.title}</h2>
+				<p>{p.text}</p>
+				<span class="links">
+					{p.links.map((l) => <a href={`${base}${l.href}`}>{l.label}</a>)}
+				</span>
+			</li>
+		))}
+	</ul>
 ) : (
 	<section class="tg-landing tg-agent not-content">
 		<AgentPrompt text={setupPrompt} label="Optional: hand the setup to your coding agent" note="Setup works by hand too: install terragucci and run init, as the getting started page shows." />
@@ -58,7 +94,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 	}
 	.claim {
 		margin: 0;
-		max-width: 34rem;
+		max-width: 46rem;
 		font-family: var(--tg-display);
 		font-weight: 500;
 		font-size: clamp(1.25rem, 3vw, 1.7rem);
@@ -77,9 +113,59 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 		line-height: 1.6;
 		text-wrap: pretty;
 	}
+	.proof {
+		margin: 0;
+		max-width: 40rem;
+		font-size: 0.9rem;
+		color: var(--sl-color-gray-3);
+	}
+	.proof a,
 	.lede a {
 		color: var(--sl-color-accent-high);
 		font-weight: 500;
 		white-space: nowrap;
+	}
+	.tg-pillars {
+		list-style: none;
+		margin: 1rem 0 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+		gap: 1rem;
+	}
+	.tg-pillars li {
+		margin: 0;
+		padding: 1.5rem;
+		display: grid;
+		gap: 0.75rem;
+		align-content: start;
+		border: 1px solid var(--tg-rule);
+		border-top: 3px solid var(--tg-accent);
+		border-radius: 0.5rem;
+		background: var(--tg-panel);
+		min-width: 0;
+	}
+	.tg-pillars h2 {
+		margin: 0;
+		font-family: var(--tg-display);
+		font-size: clamp(1.3rem, 2.5vw, 1.6rem);
+		font-weight: 600;
+		line-height: 1.2;
+		color: var(--sl-color-white);
+	}
+	.tg-pillars p {
+		margin: 0;
+		color: var(--sl-color-gray-2);
+		line-height: 1.55;
+	}
+	.tg-pillars .links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem 1rem;
+		font-size: 0.9rem;
+	}
+	.tg-pillars a {
+		color: var(--sl-color-accent-high);
+		font-weight: 500;
 	}
 </style>
