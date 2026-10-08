@@ -1911,26 +1911,38 @@ claim_tg_mock_trap() {
   # Merge new-service to main. Wave 1 applies ledger with the dev platform;
   # billing reads ledger, so it is in wave 2 and plans once ledger applied, and
   # its state holds ledger's real bucket and no mock value. BREAK: wave 1 of the
-  # pushed pipeline applies billing and ledger with -auto-approve in place of
-  # the stage, ignoring Terragrunt's order, so billing takes the mock.
+  # pushed pipeline applies billing alone in place of the stage, before ledger
+  # exists, so billing takes the mock; ledger applies after it, and wave 2 does
+  # nothing, so no stage plans billing again before the claim reads its state.
+  # The mock bucket is made first, so billing's apply on the mock completes.
   log() { echo "[smoke tg-mock-trap] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local repo="$USER/$TG_REPO_NAME" work sha rc=0 state
+  local repo="$USER/$TG_REPO_NAME" work sha rc=0 state u
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
     || { log "no example repo; run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
   git -C "$work/tree" apply "$TG_EXAMPLE/changes/new-service.patch" || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && sed -i.bak "s#TG_OUTCOME=\"\$outcome\" terragucci stage tf-apply --wave 1 #terragrunt run --all --no-color --no-filters-file --queue-ignore-dag-order --filter '{./live/dev/billing}' --filter '{./live/dev/ledger}' -- apply -auto-approve -input=false; exit 0 \\#&#" "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+  if [ -n "${BREAK:-}" ]; then
+    curl -fsS -o /dev/null -X PUT "$FLOCI/mock-ledger-bucket" || { drop_work "$work"; return 1; }
+    sed -i.bak \
+      -e 's|TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 |for u in billing ledger; do terragrunt run --no-color --working-dir "live/dev/$u" -- apply -auto-approve -input=false; done; exit 0 #|' \
+      -e 's|TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 |exit 0 #|' \
+      "$work/tree/.forgejo/workflows/terragucci.yml" && rm -f "$work/tree/.forgejo/workflows/terragucci.yml.bak"
+  fi
   sha="$(push_tree "$work/tree" "$repo" main "smoke tg-mock-trap: add billing and its ledger $(date +%s)")"
   wait_run "$repo" "$sha"
   [ "$RUN_STATUS" = success ] || { log "the apply ended '$RUN_STATUS'"; rc=1; }
   state="$(curl -fsS "$FLOCI/shop-terraform-state/terragrunt/live/dev/billing/terraform.tfstate" || true)"
+  grep -q 'mock-' <<<"$state" && { log "billing applied on the mock: its state holds $(grep -o 'mock-[a-z-]*' <<<"$state" | sort -u | paste -sd ' ' -)"; rc=1; }
   grep -q '"shop-tg-dev-ledger"' <<<"$state" || { log "billing's state does not name the ledger bucket"; rc=1; }
-  grep -q 'mock-' <<<"$state" && { log "billing's state holds a mock value"; rc=1; }
   # Put the estate back: billing and ledger destroyed, their state gone, main as committed.
   TG_TREE="$work/tree" "$HERE/example-terragrunt.sh" tg run --all --no-filters-file --filter '{./live/dev/billing}' --filter '{./live/dev/ledger}' -- destroy -auto-approve >&2 || true
   for u in billing ledger; do curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/terragrunt/live/dev/$u/terraform.tfstate" || true; done
+  if [ -n "${BREAK:-}" ]; then
+    curl -s -o /dev/null -X DELETE "$FLOCI/mock-ledger-bucket/services/billing.json" || true
+    curl -s -o /dev/null -X DELETE "$FLOCI/mock-ledger-bucket" || true
+  fi
   tg_restore_main || true
   drop_work "$work"
   [ $rc = 0 ] && log "ledger applied before billing; billing's state names shop-tg-dev-ledger and holds no mock"
