@@ -24,7 +24,7 @@ A wave whose commit is no longer the branch tip stands down on GitHub and Forgej
 
 On GitHub and Forgejo, `/terragucci apply` on a merged pull request runs `apply-comment` from the default branch's workflow. It runs `tf-apply` on the merge commit with the apply role, under the push lock. Forgejo's job also skips a merge commit that a later apply superseded.
 
-The comment approves nothing; a gated wave still needs its sealed record. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) has the steps.
+The comment approves nothing; a gated wave still needs its approval record, sealed under `approval: sealed`. [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) has the steps.
 
 <Shot step="statuses" view="reply" alt="A merged pull request's conversation in Forgejo: the reply that wave 1 waits for an approval of its set digest with the chant approve --sign command, the refusal of a commenter with no write access, and, once the wave is sealed, the reply linking the run that applied it" optional />
 
@@ -74,7 +74,7 @@ With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-mer
 
 `init` and `config check` refuse `apply.when: pull-request` on GitLab, which builds a merge request's pipeline from its own `.gitlab-ci.yml`.
 
-Each wave reads its gate rule, signers file and config from the default branch. A run that stopped at a wave never merges.
+Each wave reads its approval mode, gate rule, signers file and config from the default branch. A run that stopped at a wave never merges.
 
 | Merge setting | Who merges |
 |---|---|

@@ -19,7 +19,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 |---|---|---|
 | Anyone with write access | run CI jobs, and the plan role through a pull request | the plan role is read-only; its trust names your repo |
 | Reviewers | decide what reaches the default branch | branch protection |
-| Approvers listed in `.chant/allowed_signers` | release a gated wave | the seal and the plan digest it names |
+| Approvers: under `approval: ledger` anyone who can push to `chant/lifecycle`, under `sealed` the people `.chant/allowed_signers` lists | release a gated wave | the plan digest the approval names, and under `sealed` its seal |
 | The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone |
 | A fork's author | nothing | forks get no plan job and never apply |
 
@@ -85,15 +85,15 @@ With `reports.bucket` and no `reports.role`, the plan, re-plan and drift jobs al
 
 ## What each approval mode stops
 
-The gate policy decides when a wave waits: `always`, `on-destroy` (the default) or `never`. When it waits, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base decides which approvals count. Base is the applied commit's first parent.
+The gate policy decides when a wave waits: `always`, `on-destroy` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent.
 
 | Mode | Set by | An approval counts when | Stops | Does not stop |
 |---|---|---|---|---|
 | No gate | `gate: never` | no wave waits | nothing past review and branch protection | any merged change applying |
-| Unsigned | `chant.workspace.json` at base lists no gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a line on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) approves the wave's set digest, newer than its pending fact | a wave whose plans moved after approval | anyone who can push to `chant/lifecycle` writing that line: every writer, and the apply jobs' token |
-| Sealed, `init`'s default | `identity.gates` lists gates at base; then every wave gate needs a seal | as above, and [`chant approve --sign`](/terragucci/concepts/glossary/#chant) sealed it with a key the signers file at base lists for that approver | forged lines from writers and job tokens; a change editing the signers file, `.chant/trust.json` or `chant.workspace.json` to pass itself; signed fields edited later; moved plans | a listed approver's stolen key; an approver releasing their own change; a rebase merge of several commits, whose base is the change's own commit |
+| `ledger`, the default | `approval: ledger` at base, or no key and no gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a line on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) approves the wave's set digest, newer than its pending fact | a wave whose plans moved after approval | anyone who can push to `chant/lifecycle` writing that line: every writer, and the apply jobs' token |
+| `sealed` | `approval: sealed` at base, or no key and `identity.gates` listing gates at base; then every wave gate needs a seal | as above, and [`chant approve --sign`](/terragucci/concepts/glossary/#chant) sealed it with a key the signers file at base lists for that approver | forged lines from writers and job tokens; a change editing the `approval` key, the signers file, `.chant/trust.json` or `chant.workspace.json` to pass itself; signed fields edited later; moved plans | a listed approver's stolen key; an approver releasing their own change; a rebase merge of several commits, whose base is the change's own commit |
 
-With sealing on and no signers file at base, no approval counts. A reviewed change that empties `identity.gates` turns sealing off for the merges after it. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
+With sealing on and no signers file at base, no approval counts. A reviewed change that sets `approval: ledger`, or with no key empties `identity.gates`, turns sealing off for the merges after it. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
 
 ## Apply before merge
 

@@ -29,7 +29,8 @@ describe("init", () => {
   ])("a repo whose origin is %s gets %s", async (remote, path) => {
     const dir = withRemote(remote);
     const r = await init(dir, { binary: "tofu" });
-    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"], ["chant.workspace.json", "created"]]);
+    // approval: ledger is the default, and it needs no chant.workspace.json.
+    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"]]);
     const text = readFileSync(join(dir, path), "utf-8");
     expect(text.startsWith(MARKER)).toBe(true);
     const parsed = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, unknown>;
@@ -109,8 +110,8 @@ describe("init", () => {
     expect(text).not.toContain("apply-wave-3:");
   });
 
-  it("chant.workspace.json lists every wave gate under identity.gates, so each needs a sealed approval", async () => {
-    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'waves:\n  canary: ["app"]\n' });
+  it("under approval: sealed, chant.workspace.json lists every wave gate under identity.gates, so each needs a sealed approval", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'approval: sealed\nwaves:\n  canary: ["app"]\n' });
     await init(dir, { binary: "tofu" });
     expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toEqual({
       name: "infra",
@@ -132,6 +133,47 @@ describe("init", () => {
       identity: { gates: { "wave-1": { class: "human" }, "wave-2": {} } },
     });
     expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+  });
+
+  it("under approval: ledger, the default, init writes no chant.workspace.json and the pipeline carries no --approval", async () => {
+    const dir = withRemote("https://github.com/acme/infra.git");
+    const r = await init(dir, { binary: "tofu" });
+    expect(existsSync(join(dir, "chant.workspace.json"))).toBe(false);
+    expect(readFileSync(r.files[0].path, "utf-8")).not.toContain("--approval");
+  });
+
+  it("approval: ledger drops the wave gates an earlier init listed and keeps the rest of the declaration", async () => {
+    const mine = { name: "shop", schema: 1, minReader: "0.102.0", members: [], identity: { attribution: "identified", gates: { "wave-1": {}, "wave-2": {}, "deploy-prod": {} } } };
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "approval: ledger\n", "chant.workspace.json": JSON.stringify(mine) });
+    const r = await init(dir, { binary: "tofu" });
+    expect(r.files.map((f) => f.status)).toEqual(["created", "updated"]);
+    expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toEqual({ ...mine, identity: { attribution: "identified", gates: { "deploy-prod": {} } } });
+    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+  });
+
+  it("with no approval key, a declaration that lists wave gates stays sealed, and --approval ledger is saved and drops them", async () => {
+    const mine = { name: "shop", schema: 1, minReader: "0.102.0", members: [], identity: { gates: { "wave-1": {}, "wave-2": {} } } };
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "chant.workspace.json": JSON.stringify(mine) });
+    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["created", "unchanged"]);
+    const r = await init(dir, { binary: "tofu", approval: "ledger" });
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("approval: ledger\n");
+    expect(r.configNote).toMatch(/records approval/);
+    expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toEqual({ name: "shop", schema: 1, minReader: "0.102.0", members: [] });
+  });
+
+  it("--approval sealed is saved to terragucci.yml and lists the wave gates", async () => {
+    const dir = withRemote("https://github.com/acme/infra.git");
+    await init(dir, { binary: "tofu", approval: "sealed" });
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("approval: sealed\n");
+    expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8")).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
+  });
+
+  it("a control repo's project carries its approval in the pipeline, which has no config of its own to read at base", async () => {
+    const dir = withRemote("https://github.com/acme/infra.git");
+    const r = await init(dir, { settings: { gate: "on-destroy", drift: false, runtime: "forge", tips: true, env: {}, binary: "tofu", approval: "sealed" } });
+    const text = readFileSync(r.files[0].path, "utf-8");
+    expect(text).toContain("--gate on-destroy --approval sealed");
+    expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8")).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
   });
 
   it("a repo with no roots is an error that says what a root is", async () => {

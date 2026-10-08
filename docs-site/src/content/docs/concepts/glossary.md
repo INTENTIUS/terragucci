@@ -57,11 +57,11 @@ A branch that holds the apply job's records and the approvals, each approval a c
 
 ### chant.workspace.json
 
-chant's file at the repository root, written by `init`, listing the wave gates under `identity.gates`. It has nothing to do with Terraform workspaces.
+chant's file at the repository root, written by `init` under `approval: sealed`, listing the wave gates under `identity.gates`. It has nothing to do with Terraform workspaces.
 
 ### identity.gates
 
-The gates in `chant.workspace.json` (`init` lists all) whose approvals count only with a seal that verifies against `.chant/allowed_signers` as of the parent commit.
+The gates in `chant.workspace.json` (`init` lists all under `approval: sealed`) whose approvals count only with a seal that verifies against `.chant/allowed_signers` as of the parent commit. With no `approval` key, any gate listed here keeps the repo sealed.
 
 ### .chant/allowed_signers
 
@@ -69,7 +69,7 @@ The signers file: one ssh public key per approver, in ssh-keygen's allowed_signe
 
 ### seal
 
-The ssh signature `chant approve --sign` puts on an approval. An unverified or edited record counts for nothing.
+The ssh signature `chant approve --sign` puts on an approval. Under `approval: sealed` an unverified or edited record counts for nothing; under `ledger`, the default, no seal is needed.
 
 ## Other tools
 
@@ -96,7 +96,7 @@ The OpenTofu fork from the team behind terragucci. It keeps no state file: each 
 | `chant.workspace.json` | chant's file that lists the gates | a Terraform or HCP Terraform workspace; each root plans in `default` unless `TF_WORKSPACE` says otherwise |
 | `--mode apply` on `rollout`, `respond` and `reconcile` | push the commit or open the pull request that the dry run described | `terraform apply`, which none of the three runs |
 | layer | a step of the dependency order | a wave, an apply batch built from layers |
-| `/terragucci apply` | rerun `tf-apply` on a merged pull request, or an open one with `apply.when: pull-request`; gated waves still need a sealed approval | Atlantis `apply`, which applies its stored plan; here each wave plans again |
+| `/terragucci apply` | rerun `tf-apply` on a merged pull request, or an open one with `apply.when: pull-request`; gated waves still need an approval of their digest | Atlantis `apply`, which applies its stored plan; here each wave plans again |
 | `/terragucci lock` | with `apply.when: pull-request`, lock the roots a pull request reaches without applying it | the lock Atlantis takes on every plan; a plan here locks nothing |
 | `/terragucci unlock` | with `apply.when: pull-request`, release the root locks a pull request took when it applied or locked | Atlantis `unlock`, which also discards plans; none are kept here |
 | run | a forge pipeline run, with its jobs | an HCP Terraform run, which is one plan and apply in one workspace |

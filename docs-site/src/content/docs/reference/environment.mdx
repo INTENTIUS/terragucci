@@ -149,7 +149,7 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
-| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `chant approve` without `--actor`; must be in `.chant/allowed_signers` |
+| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `chant approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
 | `env:` in the config |  | variables every job gets; values only, never secrets |
 
 ## Variables the forge provides

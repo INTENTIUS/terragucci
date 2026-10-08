@@ -72,7 +72,7 @@ An open change's apply reads its settings from the default branch. Edits to `ter
 |---|---|
 | Waves, `binary`, `gate`, `canary`, the apply role | the default branch's pipeline |
 | `policy` and the policy directory | the default branch; if it has no `policy` key, a change adding one is checked against its own |
-| The gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
+| `approval`, the gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
 | `reports`, `telemetry`, `parallelism` and every other key of `terragucci.yml` | the default branch |
 | `respond` | the default branch; if unreadable, no response |
 | The roots, modules and code that plan and apply | the change's head |
