@@ -203,7 +203,10 @@ policy-override|a tf-apply wave the policy denies applies once an approver liste
 policy-override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
 policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|
 blob-azure|with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it|
-blob-gcs|with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed|'
+blob-gcs|with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed|
+note-diff|the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block|
+note-split|a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays|
+note-report-link|with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -6601,6 +6604,157 @@ JS
   return $rc
 }
 
+# ── the plan note's diff ──────────────────────────────────────────────────
+
+claim_note_diff() {
+  # A pull request on the example with one-root, which raises the job
+  # retention of dev orders to 604800 seconds. Its plan note must show the
+  # change as the binary prints it, before the whole plans: a diff block whose
+  # line for message_retention_seconds holds the value before and 604800
+  # after it. BREAK: the pushed pipeline deletes every line holding "->"
+  # from the note before it posts it, as a note that names only the
+  # attributes reads.
+  log() { echo "[smoke note-diff] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local repo="$USER/example" branch=smoke/note-diff work wf sha pr rc=0 deadline state notes body groups line before
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/tree" 2>/dev/null \
+    || { log "no example repo; run 'just example up' first"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  # The pipeline this tree renders, so the pull request runs it whatever main carries.
+  cp "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$wf"
+  git -C "$work/tree" apply "$EXAMPLE/changes/one-root.patch" || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    # shellcheck disable=SC2016 # written into the workflow, expanded by the job
+    sed -i.bak 's#tg note "\$note"#sed -i -e "/->/d" "$note"; tg note "$note"#' "$wf" && rm -f "$wf.bak"
+    grep -q 'sed -i -e "/->/d"' "$wf" || { log "BREAK found no tg note line to cut"; drop_work "$work"; return 1; }
+  fi
+  sha="$(push_tree "$work/tree" "$repo" "$branch" "smoke note-diff: one-root $(date +%s)")"
+  pr="$(open_pr "$repo" "$branch")"
+  [ -n "$pr" ] || pr="$(api -H 'content-type: application/json' -X POST \
+    -d "$(jq -n --arg h "$branch" '{head: $h, base: "main", title: "smoke note-diff: one-root"}')" "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  [ -n "$pr" ] && [ "$pr" != null ] || { log "no pull request"; drop_work "$work"; return 1; }
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  state=pending
+  while [ "$state" = pending ] && [ "$(date +%s)" -lt "$deadline" ]; do
+    sleep 5
+    state="$(api "$URL/api/v1/repos/$repo/commits/$sha/statuses" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // "pending"')"
+  done
+  log "terragucci/plan on ${sha:0:8}: $state"
+  notes="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq '[.[] | select(.body | startswith("<!-- terragucci:plan"))]')"
+  if [ "$(jq length <<<"$notes")" != 1 ]; then
+    log "pull request $pr has $(jq length <<<"$notes") plan notes, not one"; rc=1
+  else
+    body="$(jq -r '.[0].body' <<<"$notes")"
+    # The groups, before the whole plans.
+    groups="$(sed '/^\*\*Each root/q' <<<"$body")"
+    grep -q '^```diff$' <<<"$groups" || { log "no group in the note shows a diff"; rc=1; }
+    line="$(grep -E '^~ +message_retention_seconds += [0-9]+ -> 604800$' <<<"$groups" | head -1)"
+    if [ -z "$line" ]; then log "no diff line shows message_retention_seconds before and after"; rc=1
+    else
+      before="$(sed -E 's/.*= ([0-9]+) -> 604800$/\1/' <<<"$line")"
+      [ "$before" != 604800 ] || { log "the line shows no change: $line"; rc=1; }
+    fi
+    grep -q '^<details><summary><code>envs/dev/orders</code>' <<<"$body" || { log "the note holds no whole plan of envs/dev/orders"; rc=1; }
+  fi
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/pulls/$pr" || true
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branches/smoke%2Fnote-diff" || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the note on pull request $pr shows message_retention_seconds $before -> 604800 in a diff block"
+  return $rc
+}
+
+# A repo of two terraform_data roots, as the CI image plans them: big holds
+# 3000 lines, so its whole plan is over GitHub's 65,536 characters; small holds one.
+note_repo() { # dir, reports config or nothing
+  local dir="$1"
+  mkdir -p "$dir/big" "$dir/small"
+  # shellcheck disable=SC2016 # HCL interpolation
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "big" {\n  input = flatten([for a in range(30) : [for b in range(100) : "line ${a * 100 + b} of a plan too long for one GitHub comment"]])\n}\n' > "$dir/big/main.tf"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "small" {\n  input = "small"\n}\n' > "$dir/small/main.tf"
+  [ -z "${2:-}" ] || printf '%s\n' "$2" > "$dir/terragucci.yml"
+  git -C "$dir" init -q -b main
+  git -C "$dir" add -A && git -C "$dir" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke note"
+}
+
+note_stage() { # dir, stage args...
+  local dir="$1" image rc=0
+  shift
+  image="$(image_tag tofu)"
+  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan "$@" >&2 || rc=$?
+  clean_mounted "$dir" "$image"
+  return $rc
+}
+
+claim_note_split() {
+  # The two roots of note_repo plan with --forge github. The note keeps to
+  # GitHub's limit as one comment: it leaves out the whole plan of big, the
+  # largest, with a Cut line naming it and linking its plan.txt, keeps the
+  # whole plan of small, and plan.txt keeps all 3000 lines. BREAK: the stage
+  # runs with --forge gitlab, whose limit is 1,000,000, so the note is over
+  # the limit of GitHub.
+  log() { echo "[smoke note-split] $*" >&2; }
+  local work forge=github rc=0 dir chars
+  [ -n "${BREAK:-}" ] && forge=gitlab
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  note_repo "$work/repo"
+  note_stage "$work/repo" --layers 'big,small' --forge "$forge" || { log "the plan run failed"; rc=1; }
+  dir="$work/repo/terragucci-report"
+  [ -f "$dir/note.md" ] || { log "the plan wrote no note"; drop_work "$work"; return 1; }
+  chars="$(jq -Rs length <"$dir/note.md")"
+  [ "$chars" -le 65536 ] || { log "the note is $chars characters, over the 65536 of GitHub"; rc=1; }
+  grep -qF 'this note leaves out the whole plans of 1 root ([`big`](roots/big/plan.txt))' "$dir/note.md" || { log "no Cut line names the whole plan of big"; rc=1; }
+  grep -qF '<details><summary><code>small</code>' "$dir/note.md" || { log "the whole plan of small is not in the note"; rc=1; }
+  grep -q 'line 2999 of a plan' "$dir/roots/big/plan.txt" || { log "plan.txt of big does not hold its last line"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "a $chars-character note leaves out the whole plan of big, names it in its Cut line, and keeps small"
+  return $rc
+}
+
+claim_note_report_link() {
+  # A plan run with reports.bucket on floci and no reports.url. The note links
+  # report.html in the bucket by a presigned link, which opens the report the
+  # run wrote, and the plan.txt of small the same way, the same text as the
+  # file the run kept. BREAK: the config names a bucket that does not exist,
+  # so the link opens nothing.
+  log() { echo "[smoke note-report-link] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work bucket="$REPORT_BUCKET" prefix rc=0 dir url plan hostport
+  [ -n "${BREAK:-}" ] && bucket="$REPORT_BUCKET-gone"
+  prefix="note-link-$(date +%s)$$"
+  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  note_repo "$work/repo" "$(printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s' "$bucket" "$prefix")"
+  note_stage "$work/repo" --layers 'big,small' --forge github || log "the plan run exited non-zero"
+  dir="$work/repo/terragucci-report"
+  [ -f "$dir/note.md" ] || { log "the plan wrote no note"; drop_work "$work"; return 1; }
+  url="$(grep -o '\[Full report\]([^)]*)' "$dir/note.md" | head -1 | sed -E 's/^\[Full report\]\((.*)\)$/\1/')"
+  plan="$(grep -A40 '<summary><code>small</code>' "$dir/note.md" | grep -o '\[plan.txt\]([^)]*)' | head -1 | sed -E 's/^\[plan.txt\]\((.*)\)$/\1/')"
+  case "$url" in *"/$prefix/"*report.html\?*X-Amz-Signature=*) ;; *) log "the note links '$url', not a presigned report.html under $prefix"; rc=1 ;; esac
+  # The link names floci as the job sees it; reach it from here with the same Host, which the signature covers.
+  hostport="${FLOCI#*://}"; hostport="${hostport%%/*}"
+  if [ $rc = 0 ]; then
+    curl -fsS --connect-to "floci:4566:$hostport" -o "$work/opened.html" "$url" || { log "the link to report.html does not open"; rc=1; }
+  fi
+  [ $rc = 0 ] && { grep -q 'id="terragucci-report"' "$work/opened.html" || { log "the link opens no report"; rc=1; }; }
+  if [ $rc = 0 ]; then
+    [ -n "$plan" ] && curl -fsS --connect-to "floci:4566:$hostport" -o "$work/plan.txt" "$plan" || { log "the link to plan.txt of small does not open"; rc=1; }
+    [ $rc = 0 ] && { cmp -s "$work/plan.txt" "$dir/roots/small/plan.txt" || { log "the linked plan.txt is not the one the run kept"; rc=1; }; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the note links report.html and plan.txt in $REPORT_BUCKET/$prefix presigned, and both open from floci"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -6752,6 +6906,9 @@ policy-override-moved     weight=150
 policy-override-unlisted  weight=150
 blob-azure           azurite! weight=120
 blob-gcs             gcs! weight=120
+note-diff            ex runner self! after=boot weight=200
+note-split           weight=60
+note-report-link     weight=60
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

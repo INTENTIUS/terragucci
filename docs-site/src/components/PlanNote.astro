@@ -18,6 +18,15 @@ import Taco from './Taco.astro';
 				<tr><td class="n">5</td><td>different changes, listed one by one below</td></tr>
 			</tbody>
 		</table>
+		<pre class="diff" aria-label="The group's diff as the binary prints it"><span class="c">  # aws_iam_role.app will be updated in-place</span>
+<span class="u">~   resource "aws_iam_role" "app" &#123;</span>
+<span class="u">~       tags = &#123;</span>
+<span class="r">-           "team" = "payments"</span>
+<span class="a">+           "team" = "platform"</span>
+        &#125;
+        # (12 unchanged attributes hidden)
+    &#125;</pre>
+		<details class="plans"><summary><code>prod-eu/db</code>: Plan: 0 to add, 1 to change, 1 to destroy.</summary><p>The root's whole plan, as the binary printed it.</p></details>
 		<p class="destroy"><span>destroy</span><code>prod-eu/db · aws_db_instance.main</code></p>
 		<table class="waves">
 			<thead><tr><th>Wave</th><th>Roots</th><th>Approval</th></tr></thead>
@@ -128,6 +137,38 @@ import Taco from './Taco.astro';
 	}
 	.destroy code {
 		color: var(--tg-warn);
+	}
+	.diff {
+		margin: 0;
+		padding: 0.6rem 0.75rem;
+		border: 1px solid var(--tg-rule);
+		border-radius: 0.35rem;
+		font-family: var(--sl-font-mono);
+		font-size: 0.78rem;
+		line-height: 1.45;
+		color: var(--sl-color-gray-2);
+		background: none;
+		overflow-x: auto;
+	}
+	.diff .c {
+		color: var(--sl-color-gray-3);
+	}
+	.diff .u {
+		color: var(--sl-color-white);
+	}
+	.diff .r {
+		color: var(--tg-warn);
+	}
+	.diff .a {
+		color: var(--tg-accent);
+	}
+	.plans {
+		margin: 0;
+		color: var(--sl-color-gray-3);
+		font-size: 0.82rem;
+	}
+	.plans p {
+		margin: 0.4rem 0 0;
 	}
 	.waves th {
 		text-align: left;
