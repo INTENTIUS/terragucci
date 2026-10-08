@@ -6,8 +6,8 @@ prompt: |
   Read https://intentius.io/terragucci/getting-started/ and https://intentius.io/terragucci/getting-started/agents/.
   Set up terragucci in this repository.
   Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
-  Then run `npx terragucci init` and open a pull request with the pipeline file, chant.workspace.json, package.json and package-lock.json only.
-  Do not create secrets or touch .chant/allowed_signers.
+  Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
+  Do not create secrets.
   Never run apply, `chant approve` or `--mode apply`, and never merge.
 ---
 
@@ -56,16 +56,15 @@ A pull request with one plan note that groups the roots a change reaches and nam
    ```text
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
    would write .github/workflows/terragucci.yml
-   would write chant.workspace.json
    no terragucci.yml needed (defaults fit)
    dry run: nothing was written
    ```
 
    | Found | Means | If wrong |
    |---|---|---|
-   | [roots](/terragucci/concepts/glossary/#root) | directories with a backend, `cloud` block or provider | `--json` says why |
+   | [roots](/terragucci/concepts/glossary/#root) | directories with a backend, `cloud` block or provider; in a Terragrunt repo, the units `terragrunt find` lists | `--json` says why |
    | layers | dependency order, the [waves](/terragucci/concepts/glossary/#wave) | |
-   | [binary](/terragucci/guides/use-a-binary/) | `tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) | `--binary` |
+   | [binary](/terragucci/guides/use-a-binary/) | `tofu` or `terraform` and its version; Terragrunt runs it underneath | `--binary` |
    | forge | the `origin` remote | `--forge` |
 
 3. Write the pipeline.
@@ -80,7 +79,6 @@ A pull request with one plan note that groups the roots a change reaches and nam
    ```text
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
    wrote .github/workflows/terragucci.yml
-   wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
@@ -91,7 +89,6 @@ A pull request with one plan note that groups the roots a change reaches and nam
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
    wrote .gitlab/terragucci.yml
    wrote .gitlab-ci.yml
-   wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
@@ -103,14 +100,13 @@ A pull request with one plan note that groups the roots a change reaches and nam
    ```text
    found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge forgejo (the origin remote (codeberg.org))
    wrote .forgejo/workflows/terragucci.yml
-   wrote chant.workspace.json
    no terragucci.yml needed (defaults fit)
    ```
 
    </TabItem>
    </Tabs>
 
-   Commit [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) with the pipeline, since it holds each wave's approval gate. [Your config file](/terragucci/reference/config/) lists every `terragucci.yml` key.
+   With the defaults there is no `terragucci.yml` to write; [terragucci.yml keys](/terragucci/reference/config/) lists every key for when you need one.
 
 4. Give the pipeline a token.
 
@@ -144,7 +140,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
    git push -u origin add-terragucci
    ```
 
-   `git status` should list the pipeline, `chant.workspace.json` and the two package files. Put `node_modules` in `.gitignore`. Open the pull request, then change a line in one root, since a change that touches no root has nothing to plan.
+   `git status` should list the pipeline files `init` wrote and the two package files. Put `node_modules` in `.gitignore`. Open the pull request, then change a line in one root, since a change that touches no root has nothing to plan.
 
 6. Read the plan note. The plan job leaves one comment and a `terragucci/plan` status:
 
@@ -174,15 +170,12 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
 ## Before your first approval
 
-Only approving needs this.
+With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a person only when its plan destroys or replaces something. You approve it from your machine with [chant](/terragucci/concepts/glossary/#chant), the tool terragucci's stages are written in.
 
-<Steps>
-
-1. Install [chant](/terragucci/concepts/glossary/#chant) where you approve: `npm i -D @intentius/chant`. With the default `approval: ledger`, that is all.
-
-2. Only with `approval: sealed`: add your public key to `.chant/allowed_signers` in a reviewed pull request to the default branch ([format](/terragucci/guides/approve-a-wave/#set-up-the-signers-file)), and merge it before the first change that destroys something. A merge counts only keys listed before it.
-
-</Steps>
+| Approval mode | Set up once |
+|---|---|
+| `ledger`, the default | `npm i -D @intentius/chant` where you approve |
+| `sealed`, signed approvals | the same, and your ssh public key in `.chant/allowed_signers` on the default branch before the first change that destroys something: [set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) |
 
 ## Next
 
