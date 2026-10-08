@@ -46,7 +46,7 @@ Each wave is one dependency layer, the dev canary's first. Its job plans with on
 | 4 | the staging and prod services, but prod search | `apply-wave-4` |
 | 5 | prod search, which goes out after prod orders | `apply-wave-5` |
 
-With the default `on-destroy`, a wave that destroys or replaces something waits for a sealed approval of its set digest. `init` also writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), which lists the five gates.
+With the default `on-destroy`, a wave that destroys or replaces something waits for an approval of its set digest. The example's [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists the five gates, so it runs `approval: sealed` and each approval must be sealed.
 
 A service plans only after its platform applied, so it reads the platform's real outputs.
 

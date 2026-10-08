@@ -346,6 +346,67 @@ describe("a wave behind its gate", () => {
     });
   });
 
+  describe("the approval mode", () => {
+    const alice = sshKey();
+    const approval = (digest: string, at: number) => ({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(at), planDigest: digest });
+    const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} });
+    const digestOf = (origin: string) => parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+
+    it("under ledger, the default, the wave says so, prints the command without --sign, and an unsigned approval applies it", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, bin, log } = setup();
+      expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+      const digest = digestOf(origin);
+      expect(lines.join("\n")).toContain("approval ledger (the default)");
+      expect(lines).toContain(`  chant approve tf-apply wave-1 --plan ${digest}`);
+      approve(origin, approval(digest, 2));
+      expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+    });
+
+    it("approval: sealed in the config at base seals the wave with no identity.gates", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, bin, log } = setup({ "terragucci.yml": "approval: sealed\n", ".chant/allowed_signers": `${signerLine("alice", alice)}\n` });
+      expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+      const digest = digestOf(origin);
+      expect(lines).toContain(`  chant approve tf-apply wave-1 --plan ${digest} --sign`);
+      approve(origin, approval(digest, 2));
+      expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(3);
+      expect(lines.join("\n")).toMatch(/not signed/);
+      const a = approval(digest, 4);
+      approve(origin, { ...a, seal: { signer: "alice", key: "SHA256:test", signature: sshsig(alice, gateSealPayload(a), "chant-gate") } });
+      expect(await applyWave(work, { ...opts(bin), now: T(5) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+    });
+
+    it("a merge that switches approval: sealed to ledger is judged by the sealed rule at base, and the next commit by ledger", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, bin, log } = setup({ "terragucci.yml": "approval: sealed\n", ".chant/allowed_signers": `${signerLine("alice", alice)}\n` });
+      write(work, { "terragucci.yml": "approval: ledger\n" });
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "switch to ledger");
+      expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+      expect(lines.join("\n")).toContain("approval sealed (approval: sealed in the config at base)");
+      approve(origin, approval(digestOf(origin), 2));
+      expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "the next merge");
+      expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+    });
+
+    it("the pipeline's --approval sealed holds when the config names no mode", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { work, origin, bin, log } = setup({ ".chant/allowed_signers": `${signerLine("alice", alice)}\n` });
+      expect(await applyWave(work, { ...opts(bin), approval: "sealed", now: T(1) })).toBe(3);
+      approve(origin, approval(digestOf(origin), 2));
+      expect(await applyWave(work, { ...opts(bin), approval: "sealed", now: T(3) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+    });
+  });
+
   it("gate never applies the wave's plans without reading the ledger", async () => {
     const { work, origin, bin, log } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});

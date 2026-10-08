@@ -9,12 +9,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { emitYAML } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
+import { declaredGates } from "./approval";
 import {
   ConfigError,
   NO_GITLAB_PR_APPLY,
   findConfig,
   loadConfig,
   resolveRepo,
+  type Approval,
   type Binary,
   type ForgeName,
   type PolicySettings,
@@ -35,6 +37,8 @@ export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
   forge?: ForgeName;
   binary?: Binary;
+  /** `--approval`: what counts as a waiting wave's approval. */
+  approval?: Approval;
   /** Overwrite a pipeline file terragucci did not write. */
   force?: boolean;
   /** Settings to use instead of reading terragucci.yml: a control repo's project. */
@@ -174,6 +178,16 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
 
   if (forgeChoice.value === "gitlab" && settings.apply?.when === "pull-request") throw new ConfigError(`apply.when: ${NO_GITLAB_PR_APPLY}`);
 
+  // The approval mode: the config's key, then --approval; a declaration that already seals its gates keeps them sealed.
+  const declPath = join(repo, "chant.workspace.json");
+  const declared = declaredGates(existsSync(declPath) ? readFileSync(declPath, "utf-8") : undefined) > 0;
+  const detectedApproval: Approval = declared ? "sealed" : "ledger";
+  const approval: { value: Approval; explicit: boolean } = settings.approval
+    ? { value: settings.approval, explicit: true }
+    : options.approval
+      ? { value: options.approval, explicit: true }
+      : { value: detectedApproval, explicit: false };
+
   let ref: ImageRef;
   let tgInput: PipelineInput["terragrunt"];
   if (terragrunt) {
@@ -210,6 +224,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     gate: settings.gate,
+    // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
+    ...(options.settings?.approval ? { approval: options.settings.approval } : {}),
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
@@ -233,8 +249,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
 
-  // Every tf-apply wave gate needs a sealed approval (chant approve --sign). A Terragrunt repo's layers are its waves.
-  files.push(declaration(repo, tgMode ? layers.length : applyWaves(layers, settings.waves?.canary).length, options.name));
+  // Under approval: sealed every tf-apply wave gate is listed, so chant approve asks for --sign. A Terragrunt repo's layers are its waves.
+  const decl = declaration(repo, tgMode ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
+  if (decl) files.push(decl);
 
   // A control repo's project reads policy from its own terragucci.yml at the base, so the control repo's key is written there.
   if (options.settings) {
@@ -248,12 +265,14 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // A key the config sets decides; say so when a flag disagrees, rather than ignore it.
     if (options.forge && settings.forge && options.forge !== settings.forge) notes.push(`--forge ${options.forge} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets forge: ${settings.forge}`);
     if (options.binary && settings.binary && options.binary !== settings.binary) notes.push(`--binary ${options.binary} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets binary: ${settings.binary}`);
+    if (options.approval && settings.approval && options.approval !== settings.approval) notes.push(`--approval ${options.approval} is ignored: ${relative(repo, configPath ?? "terragucci.yml")} sets approval: ${settings.approval}`);
   }
   let configNote = configPath ? `using ${relative(repo, configPath)}` : "no terragucci.yml needed (defaults fit)";
   if (!options.settings) {
     const save: ProjectSettings = {};
     if (options.forge && !settings.forge && options.forge !== detectedForge?.value) save.forge = options.forge;
     if (options.binary && !settings.binary && options.binary !== detectedBinary.value) save.binary = options.binary;
+    if (options.approval && !settings.approval && options.approval !== detectedApproval) save.approval = options.approval;
     if (Object.keys(save).length) {
       if (configPath) {
         throw new ConfigError(`${relative(repo, configPath)} exists and init does not edit it; add ${Object.entries(save).map(([k, v]) => `${k}: ${v}`).join(", ")} to it`);
@@ -315,15 +334,34 @@ async function projectPolicyFile(repo: string, policy: PolicySettings | undefine
 const IDENTITY_READER = "0.102.0";
 
 /**
- * chant.workspace.json with each wave gate under `identity.gates`, so chant
- * and the apply job count only an approval sealed by a key the signers file
- * at base lists. An existing declaration keeps everything it has; init only
- * adds the gates it lacks.
+ * chant.workspace.json under `approval: sealed` (`seal`): each wave gate under
+ * `identity.gates`, so chant and the apply job count only an approval sealed
+ * by a key the signers file at base lists. An existing declaration keeps
+ * everything it has; init only adds the gates it lacks. Under `approval:
+ * ledger` set in the config or by --approval (`unseal`), init drops the wave
+ * gates an earlier init listed, since chant approve refuses an unsigned
+ * approval of a listed gate; with no key and no gates (`leave`) it writes no
+ * declaration at all. Undefined: nothing to write.
  */
-function declaration(repo: string, waves: number, name?: string): FileChange {
+function declaration(repo: string, waves: number, want: "seal" | "unseal" | "leave", name?: string): FileChange | undefined {
   const path = join(repo, "chant.workspace.json");
   let decl: Record<string, unknown>;
   const before = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+  if (want !== "seal") {
+    if (want === "leave" || before === undefined) return undefined;
+    try {
+      decl = JSON.parse(before);
+    } catch {
+      throw new ConfigError("chant.workspace.json is not valid JSON, so init cannot drop the tf-apply gates from it");
+    }
+    const identity = decl.identity as { gates?: Record<string, unknown> } | undefined;
+    const waveGates = Object.keys(identity?.gates ?? {}).filter((g) => /^wave-\d+$/.test(g));
+    if (waveGates.length === 0) return plan(path, before);
+    for (const g of waveGates) delete identity!.gates![g];
+    if (Object.keys(identity!.gates!).length === 0) delete identity!.gates;
+    if (Object.keys(identity!).length === 0) delete decl.identity;
+    return plan(path, `${JSON.stringify(decl, null, 2)}\n`);
+  }
   if (before !== undefined) {
     try {
       decl = JSON.parse(before);

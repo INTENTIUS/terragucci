@@ -47,7 +47,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, NO_GITLAB_PR_APPLY, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
@@ -102,6 +102,8 @@ export interface PipelineInput {
   canary?: string[];
   /** When a wave waits for an approval. Default on-destroy. */
   gate?: Gate;
+  /** A control repo's `approval:`, which the project's repo has no config to carry: the waves' `--approval`. */
+  approval?: Approval;
   /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
   respond?: Partial<Record<RespondEvent, string>>;
   /** `policy:` is set; the check job then runs the policy's tests, which read the policy from the default branch, so it clones with full history. */
@@ -505,6 +507,8 @@ export interface ApplyWaveInput {
   /** Globs for wave 1, from `waves.canary`. */
   canary?: string[];
   gate?: Gate;
+  /** The waves' `--approval`, when the pipeline carries one (PipelineInput.approval). */
+  approval?: Approval;
   /** The response to each event; apply-failed and wave-refused are called from the wave's exit code. */
   respond?: PipelineInput["respond"];
   /** A Terragrunt repo: the layers are its waves of units, and the stage runs Terragrunt after this shell (credentials, caches). */
@@ -543,6 +547,7 @@ export function applyScript(
     ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []),
     "--binary", binary,
     "--gate", gate,
+    ...(input.approval ? ["--approval", input.approval] : []),
     ...(tg ? ["--terragrunt"] : []),
     ...(tg && last ? ["--rest"] : []),
   ];
@@ -592,6 +597,8 @@ const COMMENT_AGAIN = "A comment approves nothing: approve the plans with \\\`$c
 export interface CommentApplyInput {
   canary?: string[];
   gate?: Gate;
+  /** The waves' `--approval`, when the pipeline carries one. */
+  approval?: Approval;
   respond?: PipelineInput["respond"];
   /** `apply.when`. With `pull-request` an open pull request applies from its head. */
   when?: ApplyWhen;
@@ -606,7 +613,7 @@ export interface CommentApplyInput {
 /**
  * The waves of an apply a comment started, from wave 1 to
  * `$last`, as a re-run does: a wave already applied plans no change, a gated
- * wave counts only the sealed approval of the plans it makes now, and the
+ * wave counts only an approval of the plans it makes now, and the
  * first wave that does not apply stops the run, with a reply that says why.
  * In a Terragrunt repo a comment that asks for every wave runs the last one
  * with `--rest`, so the waves past the pipeline's jobs apply too.
@@ -615,7 +622,7 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
   const triage = responds(input.respond, "apply-failed");
   const refused = responds(input.respond, "wave-refused");
   const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.terragrunt ? ["--terragrunt"] : []), ...(base ? [base] : [])];
+  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(base ? [base] : [])];
   return [
     'outcome="$(mktemp)"',
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -1073,7 +1080,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
     name: `apply-wave-${i + 1}`,
-    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, respond: input.respond, ...tgApply }),
+    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply }),
   }));
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
@@ -1084,7 +1091,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch.
   const writesLedger = gate !== "never";
   const what = tg ? "unit" : "root";

@@ -56,7 +56,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
    npx terragucci init
    ```
 
-   Commit the pipeline and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) and open a pull request. Before the first wave waits, set up the signers file as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes.
+   Commit the pipeline, and under `approval: sealed` [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), and open a pull request. Under `sealed`, set up the signers file before the first wave waits, as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) describes.
 
 </Steps>
 

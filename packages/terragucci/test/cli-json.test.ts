@@ -112,7 +112,7 @@ describe("--json", () => {
     const dir = write(repo(), { "terragucci.yml": "binary: tofu\n" });
     const { code, out } = await run(dir, "config", "check");
     expect(code).toBe(0);
-    expect(out).toBe("terragucci.yml: ok");
+    expect(out).toBe("terragucci.yml: ok\napproval: ledger (the default)");
   });
 
   it("config check names itself in the envelope when it cannot run", async () => {

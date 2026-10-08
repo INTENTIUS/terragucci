@@ -1,12 +1,12 @@
 /**
  * The terragucci command.
  *
- *   terragucci init [--forge f] [--binary b] [--force] [--dry-run]
+ *   terragucci init [--forge f] [--binary b] [--approval ledger|sealed] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
- *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
+ *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
  *   terragucci check-root <dir> [--binary <b>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu <version>   (Linux builds, for a CI job)
@@ -32,7 +32,8 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APPLY_REQUIRES, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, NO_GITLAB_PR_APPLY, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, NO_GITLAB_PR_APPLY, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { decideApplyComment, mergePullRequest } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
@@ -55,12 +56,12 @@ import { respond } from "./respond";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
-  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--force] [--dry-run]
+  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|sealed] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket s3://<b>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>]
-  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
+  terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>]
@@ -81,6 +82,12 @@ Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config 
 init, reconcile, plan, stage, rollout, respond and config check take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
+
+/** `--approval`: one of APPROVALS, or undefined when not given. */
+function approvalFlag(v: string | undefined): Approval | undefined {
+  if (v !== undefined && !(APPROVALS as readonly string[]).includes(v)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
+  return v as Approval | undefined;
+}
 
 /** `--parallelism`: a whole number of 1 or more. */
 function parallelismFlag(v: string): number {
@@ -140,7 +147,8 @@ export async function main(argv: string[]): Promise<number> {
         const binary = str(flags, "binary");
         if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
         if (binary && !BINARIES.includes(binary as Binary)) throw new ConfigError(`--binary must be one of ${BINARIES.join(", ")}`);
-        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, force: flags.force === true, dryRun: flags["dry-run"] === true });
+        const approval = approvalFlag(str(flags, "approval"));
+        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, ...(approval ? { approval } : {}), force: flags.force === true, dryRun: flags["dry-run"] === true });
         if (json) return emit(envelope("init", 0, initJson(cwd, result, flags["dry-run"] === true)));
         console.log(describeInit(cwd, result, flags["dry-run"] === true));
         if (flags["dry-run"] === true) console.log("dry run: nothing was written");
@@ -172,6 +180,7 @@ export async function main(argv: string[]): Promise<number> {
             canary: (str(flags, "canary") ?? "").split(",").filter(Boolean),
             binary: str(flags, "binary") ?? "tofu",
             gate: (str(flags, "gate") ?? "on-destroy") as Gate,
+            ...(str(flags, "approval") ? { approval: approvalFlag(str(flags, "approval")) } : {}),
             ...(str(flags, "config") ? { config: str(flags, "config") } : {}),
             ...(str(flags, "parallelism") ? { parallelism: parallelismFlag(str(flags, "parallelism")!) } : {}),
             ...(flags.terragrunt === true ? { terragrunt: true } : {}),
@@ -336,8 +345,11 @@ export async function main(argv: string[]): Promise<number> {
         const path = str(flags, "config") ?? findConfig(cwd);
         if (!path) throw new ConfigError("no terragucci config here; pass --config <file>");
         let problems: string[] = [];
+        let approval: ApprovalMode | undefined;
         try {
           const config = await loadConfig(resolve(path), "check");
+          // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
+          approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.
           if (config.apply?.when === "pull-request" && !config.forge && detectForge(dirname(resolve(path)))?.value === "gitlab") {
             problems.push(`apply.when: ${NO_GITLAB_PR_APPLY}`);
@@ -347,9 +359,11 @@ export async function main(argv: string[]): Promise<number> {
           problems = e.problems ?? [e.message];
         }
         const file = relative(cwd, resolve(path)) || path;
-        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems }));
-        if (problems.length === 0) console.log(`${file}: ok`);
-        else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
+        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(approval && problems.length === 0 ? { approval } : {}) }));
+        if (problems.length === 0) {
+          console.log(`${file}: ok`);
+          if (approval) console.log(`approval: ${approval.mode} (${approval.source})${approval.note ? `\nnote: ${approval.note}` : ""}`);
+        } else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
         return problems.length ? 2 : 0;
       }
       case "":

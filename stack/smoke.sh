@@ -118,7 +118,7 @@ report|the report is JSON and HTML, and links every root to its full plan|
 highlight|destroys and outliers are open, identical groups are folded|
 waves|each wave goes out only once approved|
 refuse|a wave whose plans changed after approval applies nothing|
-sealed|a wave counts only an approval sealed by a key the signers file lists|
+sealed|under approval: sealed a wave counts only an approval sealed by a key the signers file lists|
 drift|drift is reported by root|
 rollout|a module version rolls out one pull request per wave|
 publish|changed modules are published at a new version|
@@ -163,26 +163,29 @@ drift-attribute|with respond.drift: attribute, tf-drift lists who changed each d
 version-bump-job|with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service|
 tg-spans|the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock|
 oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
-comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
+comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
 comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|
 wave-report|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|
 policy-delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|
 report-oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
 tg-gate-wait|a Terragrunt wave waits for an approval of its set digest, and once approved applies its saved plans while the next wave waits at its own gate|
 tg-gate-refuse|a Terragrunt wave whose plans changed after approval applies nothing and names the unit that moved|
-tg-sealed|a Terragrunt wave counts only an approval sealed by a key the signers file lists|
+tg-sealed|under approval: sealed a Terragrunt wave counts only an approval sealed by a key the signers file lists|
 pr-apply|with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto, and with apply.when: merge it applies nothing|
 pr-apply-lock|a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock|
 pr-apply-stale|a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies|
-tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave only once its approval is sealed, and refuses an open pull request|
+tg-comment-apply|a comment on a merged pull request in a Terragrunt repo re-runs its waves of units from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request|
 provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
 summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
 foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
-tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for a sealed approval of its own set digest before it applies|
+tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 pr-requires|with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable|
 pr-lock|/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named|
-front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|'
+front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|
+ledger-default|with no approval key a wave counts an unsigned approval of its set digest, init declares no gate, and the waiting wave prints the approval command without --sign|
+approval-at-base|a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger|
+sealed-migrate|a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -408,8 +411,8 @@ TF
 
 CHANT="$HERE/../node_modules/.bin/chant"
 
-gated_repo() { # name [fixture] -> a fresh repo $USER/<name>, the fixture (default gated-waves) in $work/tree with its pipeline, no state under <name>/
-  local name="$1" fixture="${2:-gated-waves}" key
+gated_repo() { # name [fixture] [approval] -> a fresh repo $USER/<name>, the fixture (default gated-waves) in $work/tree with its pipeline, no state under <name>/
+  local name="$1" fixture="${2:-gated-waves}" approval="${3:-}" key
   answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
   settle() { local n; for n in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
   api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/$name" 2>/dev/null || true
@@ -426,10 +429,12 @@ gated_repo() { # name [fixture] -> a fresh repo $USER/<name>, the fixture (defau
   cp -R "$HERE/fixtures/$fixture/." "$work/tree/"
   find "$work/tree" \( -name main.tf -o -name root.hcl \) -exec sed -i.bak "s#@PREFIX@#$name#" {} \;
   find "$work/tree" -name '*.bak' -delete
+  # With approval: sealed, init lists every wave gate under identity.gates, and
+  # an approval counts only when its seal verifies against the signers file at
+  # base. Without it (ledger, the default) any approval of the digest counts.
+  [ -z "$approval" ] || echo "approval: $approval" >> "$work/tree/terragucci.yml"
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
-  # init lists every wave gate under identity.gates, so an approval counts only
-  # when its seal verifies against the signers file at base. The approver's key
-  # goes in it; an agent's never does.
+  # The approver's key goes in the signers file; an agent's never does.
   ssh-keygen -q -t ed25519 -N "" -C smoke-approver -f "$work/approver" || return 1
   mkdir -p "$work/tree/.chant"
   echo "smoke-approver $(cut -d' ' -f1,2 "$work/approver.pub")" > "$work/tree/.chant/allowed_signers"
@@ -441,13 +446,15 @@ gated_applied() { # name -> the roots with state under <name>/, space-separated
 }
 
 # The smoke stands in for the person who approves: it reads nothing and
-# approves wave 1's standing plan, as `chant approve` would be run by hand.
-gated_approve() { # name, wave
-  local clone="$work/approve-$2"
+# approves the wave's standing plan, as `chant approve` would be run by hand,
+# unsigned, or with "sign" sealed with the approver's key.
+gated_approve() { # name, wave, [sign]
+  local clone="$work/approve-$2-$RANDOM" sign=()
+  [ "${3:-}" = sign ] && sign=(--sign "$work/approver")
   git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$1.git" "$clone" || return 1
   git -C "$clone" config user.name smoke-approver
   git -C "$clone" config user.email smoke-approver@terragucci.local
-  (cd "$clone" && "$CHANT" approve tf-apply "wave-$2" --approver smoke-approver --sign "$work/approver") >&2 || { log "chant approve tf-apply wave-$2 failed"; return 1; }
+  (cd "$clone" && "$CHANT" approve tf-apply "wave-$2" --approver smoke-approver ${sign[@]+"${sign[@]}"}) >&2 || { log "chant approve tf-apply wave-$2 failed"; return 1; }
 }
 
 claim_waves() {
@@ -474,6 +481,7 @@ claim_waves() {
   [ -z "$applied" ] || { log "a root applied before any wave was approved"; rc=1; }
   if [ $rc = 0 ]; then
     print_logs "$repo" "$RUN_ID" | grep "chant approve tf-apply wave-1" >/dev/null || { log "wave 1 did not print its approval command"; rc=1; }
+    print_logs "$repo" "$RUN_ID" | grep -E "chant approve tf-apply wave-1 .*--sign" >/dev/null && { log "under approval: ledger the command asks for --sign"; rc=1; }
   fi
   if [ $rc = 0 ]; then
     gated_approve waves 1 || rc=1
@@ -510,21 +518,27 @@ gated_forge() { # name, wave, "unsealed" | key file
   git -C "$clone" push -q origin chant/lifecycle || return 1
 }
 
+# The BREAK of the sealed claims: the tree goes back to ledger, the default.
+unseal_tree() {
+  sed -i.bak '/^approval:/d' "$work/tree/terragucci.yml"
+  rm -f "$work/tree/terragucci.yml.bak" "$work/tree/chant.workspace.json"
+}
+
 claim_sealed() {
   # Push the fixture; wave 1 waits. Write an unsealed approval of its plan, and
   # one sealed with an agent's key the signers file does not list, both in the
   # approver's name, and push again: nothing applies, and the run says the
   # approvals do not count. Then the approver runs chant approve --sign with
-  # the listed key, and canary/one applies.
-  # BREAK: chant.workspace.json is left out of the pushed tree, so no gate needs
-  # a seal and the unsealed approval lets wave 1 apply.
+  # the listed key, and canary/one applies. The repo sets approval: sealed.
+  # BREAK: the approval key and chant.workspace.json are left out of the pushed
+  # tree, so approval is ledger and the unsealed approval lets wave 1 apply.
   log() { echo "[smoke sealed] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/sealed" sha applied logs rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo sealed || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  gated_repo sealed gated-waves sealed || { drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && unseal_tree
   ssh-keygen -q -t ed25519 -N "" -C agent -f "$work/agent" || rc=1
   sha="$(push_tree "$work/tree" "$repo" main "sealed: first")"
   wait_run "$repo" "$sha"
@@ -546,7 +560,7 @@ claim_sealed() {
     grep -q -- "--sign" <<<"$logs" || { log "the approval command the run printed has no --sign"; rc=1; }
   fi
   if [ $rc = 0 ]; then
-    gated_approve sealed 1 || rc=1
+    gated_approve sealed 1 sign || rc=1
   fi
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "sealed: after a sealed approval")"
@@ -3781,17 +3795,18 @@ claim_comment_apply() {
   # and from a user with no write access, must each be refused with a reply,
   # and apply nothing. The approver approves wave 1 with a sealed record, and
   # `/terragucci apply` again must apply canary/one (wave 2 waits at its own
-  # gate) and reply with a link to the run.
-  # BREAK: chant.workspace.json is left out of the pushed tree, so no gate needs
-  # a seal, and the unsealed approval lets the first comment apply wave 1.
+  # gate) and reply with a link to the run. The repo sets approval: sealed.
+  # BREAK: the approval key and chant.workspace.json are left out of the pushed
+  # tree, so approval is ledger, and the unsealed approval lets the first
+  # comment apply wave 1.
   log() { echo "[smoke comment-apply] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/comment-apply" sha merge pr open_pr applied reply rc=0
   local stranger="smoke-stranger" pass stoken
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo comment-apply || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  gated_repo comment-apply gated-waves sealed || { drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && unseal_tree
   grep -q '^  apply-comment:' "$work/tree/.forgejo/workflows/terragucci.yml" || { log "the pipeline has no apply-comment job"; drop_work "$work"; return 1; }
   sha="$(push_tree "$work/tree" "$repo" main "comment-apply: first")" || { drop_work "$work"; return 1; }
   wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
@@ -3860,7 +3875,7 @@ claim_comment_apply() {
 
   # Approved with a sealed record: the comment applies wave 1 and links the run.
   if [ $rc = 0 ]; then
-    gated_approve comment-apply 1 || rc=1
+    gated_approve comment-apply 1 sign || rc=1
   fi
   if [ $rc = 0 ]; then
     reply="$(comment_as "$TOKEN" "$pr" "/terragucci apply")"
@@ -4672,16 +4687,16 @@ claim_tg_sealed() {
   # and one sealed with an agent key the signers file does not list, both in
   # the approver name, and push again: nothing applies, and the run says the
   # approvals do not count. Then the approver runs chant approve --sign with
-  # the listed key, and live/canary/one applies.
-  # BREAK: chant.workspace.json is left out of the pushed tree, so no gate
-  # needs a seal and the unsealed approval lets wave 1 apply.
+  # the listed key, and live/canary/one applies. The repo sets approval: sealed.
+  # BREAK: the approval key and chant.workspace.json are left out of the pushed
+  # tree, so approval is ledger and the unsealed approval lets wave 1 apply.
   log() { echo "[smoke tg-sealed] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/tg-sealed" sha applied logs rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo tg-sealed tg-gated-waves || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  gated_repo tg-sealed tg-gated-waves sealed || { drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && unseal_tree
   ssh-keygen -q -t ed25519 -N "" -C agent -f "$work/agent" || rc=1
   sha="$(push_tree "$work/tree" "$repo" main "tg-sealed: first")"
   wait_run "$repo" "$sha"
@@ -4701,7 +4716,7 @@ claim_tg_sealed() {
     grep -q "an approval does not count: the approval by smoke-approver is not signed" <<<"$logs" || { log "the run did not say the unsealed approval does not count"; rc=1; }
     grep -q "an approval does not count: the seal by smoke-approver does not verify" <<<"$logs" || { log "the run did not say the agent seal does not verify"; rc=1; }
   fi
-  [ $rc = 0 ] && { gated_approve tg-sealed 1 || rc=1; }
+  [ $rc = 0 ] && { gated_approve tg-sealed 1 sign || rc=1; }
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "tg-sealed: after a sealed approval")"
     wait_run "$repo" "$sha"
@@ -4716,10 +4731,11 @@ claim_tg_sealed() {
 
 claim_tg_layers() {
   # stack/fixtures/tg-three-layers: live/net, live/app after it and live/edge
-  # after app, gate: always. init writes three wave jobs and three gates. Push,
-  # then approve each wave with a sealed approval and push again: every push
+  # after app, gate: always. init writes three wave jobs. Push, then approve
+  # each wave and push again: every push
   # applies exactly one more layer, and the wave after it waits at its own
-  # gate, until all three have state and the run succeeds.
+  # gate, until all three have state and the run succeeds. The approvals are
+  # unsigned: approval is ledger, the default.
   # BREAK: edge no longer names app, so the repo has two layers and edge goes
   # out with app.
   log() { echo "[smoke tg-layers] $*" >&2; }
@@ -4766,7 +4782,7 @@ claim_tg_layers() {
     grep -q "^  apply-wave-$k:" "$wf" || { log "init wrote no apply-wave-$k job"; rc=1; }
   done
   drop_work "$work"
-  [ $rc = 0 ] && log "live/net, live/app and live/edge went out in three waves, each after a sealed approval of its own digest"
+  [ $rc = 0 ] && log "live/net, live/app and live/edge went out in three waves, each after an approval of its own digest"
   return $rc
 }
 
@@ -4780,16 +4796,17 @@ claim_tg_comment_apply() {
   # pull request is refused. The approver approves wave 1 with a sealed record,
   # and `/terragucci apply` again must apply live/canary/one through the
   # Terragrunt path (wave 2 waits at its own gate) and reply with a link to the
-  # run.
-  # BREAK: chant.workspace.json is left out of the pushed tree, so no gate
-  # needs a seal, and the unsealed approval lets the first comment apply wave 1.
+  # run. The repo sets approval: sealed.
+  # BREAK: the approval key and chant.workspace.json are left out of the pushed
+  # tree, so approval is ledger, and the unsealed approval lets the first
+  # comment apply wave 1.
   log() { echo "[smoke tg-comment-apply] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/tg-comment-apply" wf sha merge pr open_pr applied reply rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
-  gated_repo tg-comment-apply tg-gated-waves || { drop_work "$work"; return 1; }
-  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  gated_repo tg-comment-apply tg-gated-waves sealed || { drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && unseal_tree
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
   grep -q '^  apply-comment:' "$wf" || { log "the Terragrunt pipeline has no apply-comment job"; drop_work "$work"; return 1; }
   grep -q 'tf-apply --wave "\$wave".* --terragrunt' "$wf" || { log "the apply-comment job does not run tf-apply with --terragrunt"; drop_work "$work"; return 1; }
@@ -4838,7 +4855,7 @@ claim_tg_comment_apply() {
     applied="$(tg_gated_applied tg-comment-apply)"
     [ -z "$applied" ] || { log "a refused comment applied: $applied"; rc=1; }
   fi
-  [ $rc = 0 ] && { gated_approve tg-comment-apply 1 || rc=1; }
+  [ $rc = 0 ] && { gated_approve tg-comment-apply 1 sign || rc=1; }
   if [ $rc = 0 ]; then
     reply="$(tg_reply "$pr" "/terragucci apply")"
     applied="$(tg_gated_applied tg-comment-apply)"
@@ -4942,6 +4959,143 @@ claim_front_door() {
   curl -s -o /dev/null -X DELETE "$floci/$bucket?policy" || true
   curl -s -o /dev/null -X DELETE "$floci/$bucket" || true
   drop_work "$work"
+  return $rc
+}
+
+# ── approval modes ────────────────────────────────────────────────────────
+# Each claim runs on the gated fixture in a repo of its own (gated_repo).
+
+claim_ledger_default() {
+  # No approval key: init declares no gate in chant.workspace.json, and wave 1
+  # waits, saying approval ledger and printing its command without --sign. An
+  # unsigned chant approve of its digest, and a push, let canary/one apply.
+  # BREAK: terragucci.yml sets approval: sealed after init, so the config at
+  # base seals the gate and the unsigned approval counts for nothing.
+  log() { echo "[smoke ledger-default] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/ledger-default" sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo ledger-default || { drop_work "$work"; return 1; }
+  if [ -f "$work/tree/chant.workspace.json" ] && ! jq -e '(.identity.gates // {}) | length == 0' "$work/tree/chant.workspace.json" >/dev/null; then
+    log "init declared gates under identity.gates with no approval key"; rc=1
+  fi
+  [ -n "${BREAK:-}" ] && echo "approval: sealed" >> "$work/tree/terragucci.yml"
+  sha="$(push_tree "$work/tree" "$repo" main "ledger-default: first")"
+  wait_run "$repo" "$sha"
+  logs="$(print_logs "$repo" "$RUN_ID")"
+  if [ $rc = 0 ]; then
+    grep -q "wave 1 of 2: approval ledger (the default)" <<<"$logs" || { log "wave 1 did not say approval ledger (the default)"; rc=1; }
+    grep -Eq "chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+" <<<"$logs" || { log "wave 1 did not print its approval command"; rc=1; }
+    grep -E "chant approve tf-apply wave-1 --plan" <<<"$logs" | grep -q -- "--sign" && { log "the approval command asks for --sign under ledger"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve ledger-default 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "ledger-default: after an unsigned approval")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied ledger-default)"
+    log "after the unsigned approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply on the unsigned approval"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "no gate declared, the command had no --sign, and an unsigned approval of the digest let wave 1 apply"
+  return $rc
+}
+
+claim_approval_at_base() {
+  # The repo sets approval: sealed; wave 1 waits, and an unsigned approval of
+  # its plan is written. One commit then sets approval: ledger and drops
+  # chant.workspace.json: its run reads the rule at base, the commit before
+  # it, so it says approval sealed and applies nothing. The commit after it is
+  # judged by ledger, and the same unsigned approval lets canary/one apply.
+  # BREAK: the switch goes out as two commits in one push, so the run of the
+  # head already reads ledger at base and the unsigned approval applies wave 1.
+  log() { echo "[smoke approval-at-base] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/approval-at-base" sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo approval-at-base gated-waves sealed || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "approval-at-base: first, sealed")"
+  wait_run "$repo" "$sha"
+  gated_approve approval-at-base 1 || rc=1
+  if [ $rc = 0 ]; then
+    sed -i.bak 's/^approval: sealed$/approval: ledger/' "$work/tree/terragucci.yml"
+    rm -f "$work/tree/terragucci.yml.bak" "$work/tree/chant.workspace.json"
+    if [ -n "${BREAK:-}" ]; then
+      git -C "$work/tree" add -A
+      git -C "$work/tree" -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -q -m "approval-at-base: switch to ledger"
+    fi
+    sha="$(push_tree "$work/tree" "$repo" main "approval-at-base: switch to ledger")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied approval-at-base)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "the switch: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "the merge that switched to ledger applied on an unsigned approval"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "approval sealed (approval: sealed in the config at base)" <<<"$logs" || { log "the switch was not judged sealed at base"; rc=1; }
+    grep -q "an approval does not count: the approval by smoke-approver is not signed" <<<"$logs" || { log "the run did not say the unsigned approval does not count"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "approval-at-base: the next merge")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied approval-at-base)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "the next merge: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply once ledger held at base"; rc=1; }
+    grep -q "approval ledger (approval: ledger in the config at base)" <<<"$logs" || { log "the next merge did not read ledger at base"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the switch to ledger was judged sealed and applied nothing; the next merge read ledger and applied wave 1"
+  return $rc
+}
+
+claim_sealed_migrate() {
+  # A repo set up before the approval key: init lists the wave gates under
+  # identity.gates, and terragucci.yml names no approval mode. Wave 1 waits;
+  # an unsigned approval of its plan is written and pushed on: nothing
+  # applies, the run says approval sealed from identity.gates with a note, and
+  # config check says the same. A sealed approval then lets canary/one apply.
+  # BREAK: chant.workspace.json is dropped too, so approval is ledger and the
+  # unsigned approval applies wave 1.
+  log() { echo "[smoke sealed-migrate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/sealed-migrate" sha applied logs checked rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo sealed-migrate gated-waves sealed || { drop_work "$work"; return 1; }
+  sed -i.bak '/^approval:/d' "$work/tree/terragucci.yml"
+  rm -f "$work/tree/terragucci.yml.bak"
+  [ -n "${BREAK:-}" ] && rm -f "$work/tree/chant.workspace.json"
+  sha="$(push_tree "$work/tree" "$repo" main "sealed-migrate: first")"
+  wait_run "$repo" "$sha"
+  gated_forge sealed-migrate 1 unsealed || rc=1
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "sealed-migrate: after an unsigned approval")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied sealed-migrate)"
+    logs="$(print_logs "$repo" "$RUN_ID")"
+    log "after the unsigned approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a root applied on an unsigned approval in a repo whose gates are declared"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q "approval sealed (identity.gates in chant.workspace.json at base, with no approval key)" <<<"$logs" || { log "the run did not say sealed from identity.gates"; rc=1; }
+    grep -q "note: set approval: sealed in terragucci.yml" <<<"$logs" || { log "the run gave no note on choosing a mode"; rc=1; }
+    checked="$(cd "$work/tree" && "$TERRAGUCCI" config check 2>&1)" || true
+    log "config check: $checked"
+    grep -q "approval: sealed (identity.gates in chant.workspace.json here, with no approval key)" <<<"$checked" || { log "config check did not report sealed from identity.gates"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve sealed-migrate 1 sign || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "sealed-migrate: after a sealed approval")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied sealed-migrate)"
+    log "after the sealed approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply on the sealed approval"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "with gates declared and no key, the unsigned approval counted for nothing and the sealed one let wave 1 apply"
   return $rc
 }
 
@@ -5075,6 +5229,9 @@ policy-source        self! weight=150
 pr-requires          runner self! weight=300
 pr-lock              runner self! weight=200
 front-door           self! weight=40
+ledger-default       runner self! weight=200
+approval-at-base     runner self! weight=250
+sealed-migrate       runner self! weight=250
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

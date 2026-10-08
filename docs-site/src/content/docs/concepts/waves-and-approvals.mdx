@@ -22,9 +22,9 @@ Terragrunt units split the same way: the canary units' layers first, then the la
 
 ## What an approval binds
 
-An approval binds the wave's set digest: these exact plans are fine. It counts only when its ssh seal verifies against the signers file.
+An approval binds the wave's set digest: these exact plans are fine. Under `approval: ledger`, the default, that is all it takes, so anyone who can push to `chant/lifecycle` can approve in anyone's name. Under `approval: sealed` it counts only when its ssh seal verifies against the signers file.
 
-Signers and gates in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) come from the applied commit's first parent (the default branch before an applying pull request), so a change cannot loosen its own rule, except a multi-commit rebase: [merge or squash such changes](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
+The `approval` key, the signers and the gates in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) come from the applied commit's first parent (the default branch before an applying pull request), so a change cannot loosen its own rule, except a multi-commit rebase: [merge or squash such changes](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
 
 A gated wave whose plan changed after approval applies nothing. Under `on-destroy` a re-plan with no destroy applies; under `never` nothing is refused.
 

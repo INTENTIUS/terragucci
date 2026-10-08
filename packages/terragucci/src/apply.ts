@@ -20,11 +20,11 @@
  * that moved. With no approval the wave records a pending fact for its digest,
  * so `chant approve tf-apply wave-<k>` has the plan to approve, and stops.
  *
- * When `chant.workspace.json` at base names any gate under `identity.gates`
- * (terragucci init lists every wave there), every wave gate counts only a
- * sealed approval: one made with `chant approve --sign` whose seal verifies
- * against the signers file at base (./seal.ts). Any other approval is
- * ignored. Base is the commit before the one being applied.
+ * Which approvals count is the `approval:` mode at base (./approval.ts):
+ * under `ledger`, the default, any approval of the digest; under `sealed`,
+ * only one made with `chant approve --sign` whose seal verifies against the
+ * signers file at base (./seal.ts). Base is the commit before the one being
+ * applied.
  *
  * Nothing here records an approval. A person does, with `chant approve`.
  *
@@ -59,7 +59,7 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Gate, type ResolvedSettings } from "./config";
+import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
 import { globMatch } from "./detect";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
@@ -71,7 +71,8 @@ import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
-import { sealRefusal, sealRule } from "./seal";
+import { approvalRule } from "./approval";
+import { sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
 import { binaryEnv, terragruntExec } from "./binary-env";
@@ -80,8 +81,9 @@ import { binaryEnv, terragruntExec } from "./binary-env";
 export const APPLY_OP = "tf-apply";
 /** The gate wave `k` waits on. */
 export const waveGate = (wave: number): string => `wave-${wave}`;
-/** The approval command a waiting wave prints, bound to the digest it planned and sealed with the approver's key. */
-export const approveLine = (wave: number, digest: string): string => `chant approve ${APPLY_OP} ${waveGate(wave)} --plan ${digest} --sign`;
+/** The approval command a waiting wave prints, bound to the digest it planned, and under `approval: sealed` sealed with the approver's key. */
+export const approveLine = (wave: number, digest: string, mode: Approval = "ledger"): string =>
+  `chant approve ${APPLY_OP} ${waveGate(wave)} --plan ${digest}${mode === "sealed" ? " --sign" : ""}`;
 
 /** Exit codes of `stage tf-apply`. */
 export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
@@ -379,6 +381,8 @@ export interface ApplyWaveOptions {
   canary?: string[];
   binary: string;
   gate: Gate;
+  /** The pipeline's `--approval`: the mode when the config at base names none and no gate is sealed there. */
+  approval?: Approval;
   env?: NodeJS.ProcessEnv;
   now?: string;
   /** How many roots of the wave plan at once. Default: the config's `parallelism`, then from the state backend. */
@@ -522,6 +526,7 @@ async function waveSettings(repo: string, options: ApplyWaveOptions, configPath:
 async function runWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun, facts: WaveFacts = {}): Promise<number> {
   const { wave, binary, gate } = options;
   if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
+  if (options.approval !== undefined && !APPROVALS.includes(options.approval)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
   if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("--wave must be a wave number from 1");
   if (options.terragrunt) return runTerragruntWave(repo, options, work, w, facts);
   const waves = applyWaves(options.layers, options.canary);
@@ -647,6 +652,7 @@ async function gateWave(
 ): Promise<number | undefined> {
   const { wave, binary, gate } = options;
   const { label, roots, planned, members, digest, changes, destroys } = ctx;
+  let mode: Approval = "ledger";
   // A wave with nothing to change has nothing to approve.
   const gated = changes > 0 && (gate === "always" || (gate === "on-destroy" && destroys > 0));
   w.approval = gated ? "waiting" : "not-required";
@@ -656,10 +662,14 @@ async function gateWave(
     const now = options.now ?? new Date().toISOString();
     const ledger = readLedger(repo);
     // A pull request applied before it merges names its base (apply.when: pull-request): the rule is the default branch's, never the pull request's own.
-    const rule = sealRule(repo, options.base);
-    // Once identity.gates names any gate, every wave gate needs a seal: a wave added after init is never left open.
-    if (rule.gates.size > 0) {
-      if (!rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
+    const configPath = options.config ?? findConfig(repo);
+    const rule = await approvalRule(repo, { ...(options.base ? { at: options.base } : {}), ...(configPath ? { config: configPath } : {}), ...(options.approval ? { flag: options.approval } : {}) });
+    console.log(`${label}: approval ${rule.mode} (${rule.source})`);
+    if (rule.note) console.log(`${label}: note: ${rule.note}`);
+    mode = rule.mode;
+    // Under sealed every wave gate needs a seal: a wave added after init is never left open.
+    if (rule.mode === "sealed") {
+      if (rule.gates.size > 0 && !rule.gates.has(name)) console.log(`${label}: chant.workspace.json at base does not list ${name} under identity.gates, so it counts only a sealed approval, like the gates it lists`);
       ledger.resolutions = ledger.resolutions.filter((r) => {
         if (r.gate !== name) return true;
         const why = sealRefusal(rule.signers, rule.signersPath, r);
@@ -715,11 +725,13 @@ async function gateWave(
         return EXIT.refused;
       }
       console.log(`${label} waits for an approval of digest ${digest}. Read its plans above, then approve it with:`);
-      console.log(`  ${approveLine(wave, digest)}`);
+      console.log(`  ${approveLine(wave, digest, mode)}`);
       // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
-      console.log("chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>.");
+      console.log(mode === "sealed"
+        ? "chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>."
+        : "chant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER; add --actor <name> to name yourself. Under approval: ledger the approval binds these plans, not the person.");
       console.log("Then run this job again.");
-      writeOutcome(options.env, `wave ${wave} waits: ${approveLine(wave, digest)}`);
+      writeOutcome(options.env, `wave ${wave} waits: ${approveLine(wave, digest, mode)}`);
       return EXIT.waiting;
     }
   }

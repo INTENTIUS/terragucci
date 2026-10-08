@@ -3,14 +3,14 @@
  * `identity.gates` rule (chant#3163) a wave needs, small enough for the
  * bundle.
  *
- * A gate the declaration at base (`chant.workspace.json`, `identity.gates`)
- * names counts only an approval whose seal, made by `chant approve --sign`,
- * verifies for its approver against the signers file at base
- * (`.chant/allowed_signers`, or the path `.chant/trust.json` names). An
- * unsigned approval, one signed by a key the file does not list for the
- * approver, or one whose signed fields were edited after sealing, does not
- * count. With no signers file at base, no approval of such a gate counts.
- * Base is the commit before the one being applied (`sealRule`).
+ * Under `approval: sealed` (./approval.ts) a wave gate counts only an
+ * approval whose seal, made by `chant approve --sign`, verifies for its
+ * approver against the signers file at base (`.chant/allowed_signers`, or the
+ * path `.chant/trust.json` names). An unsigned approval, one signed by a key
+ * the file does not list for the approver, or one whose signed fields were
+ * edited after sealing, does not count. With no signers file at base, no
+ * approval counts. Base is the commit before the one being applied
+ * (`sealRule`).
  *
  * A seal is an ssh signature (the SSHSIG format `ssh-keygen -Y sign` makes)
  * in the `chant-gate` namespace, over the lines chant's `gateSealPayload`
@@ -48,7 +48,7 @@ export interface Signer {
   namespaces?: string[];
 }
 
-/** The rule at base: the gates that need a seal, and the signers to check one against (null: no signers file). */
+/** The rule at base: the gates `identity.gates` names, and the signers to check a seal against (null: no signers file). */
 export interface SealRule {
   gates: Set<string>;
   signers: Signer[] | null;
@@ -180,7 +180,7 @@ const firstParent = (commit: string): string | undefined => /^parent ([0-9a-f]{4
  */
 export function sealRule(repo: string, at?: string): SealRule {
   const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf-8" });
-  const base = at ?? baseBefore(repo, git);
+  const base = at ?? baseCommit(repo);
   const show = (path: string): string | undefined => {
     const r = git(["show", `${base}:${path}`]);
     return r.status === 0 ? r.stdout : undefined;
@@ -196,12 +196,13 @@ export function sealRule(repo: string, at?: string): SealRule {
   const gates = new Set(Object.keys(json("chant.workspace.json").identity?.gates ?? {}));
   const named = json(".chant/trust.json").signers;
   const signersPath = typeof named === "string" ? named : SIGNERS_PATH;
-  const text = gates.size > 0 ? show(signersPath) : undefined;
+  const text = show(signersPath);
   return { gates, signers: text === undefined ? null : parseSigners(text), signersPath };
 }
 
 /** The first parent of HEAD, fetched when the checkout is shallow; HEAD itself when it has none. Throws when it cannot be read. */
-function baseBefore(repo: string, git: (args: string[]) => { status: number | null; stdout: string }): string {
+export function baseCommit(repo: string): string {
+  const git = (args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf-8" });
   const head = git(["rev-parse", "--verify", "-q", "HEAD^{commit}"]);
   const sha = head.stdout.trim();
   if (head.status !== 0 || !sha) throw new ConfigError(`${repo} has no commit checked out, so the gate cannot be decided`);
