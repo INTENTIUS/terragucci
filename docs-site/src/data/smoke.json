@@ -573,9 +573,9 @@
     {
       "claim": "cdf-concurrency",
       "says": "with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object",
-      "needs": "418",
-      "verdict": "pending",
-      "break": null
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "cdf-write-race",
@@ -657,6 +657,27 @@
     {
       "claim": "blob-gcs",
       "says": "with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "note-diff",
+      "says": "the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "note-split",
+      "says": "a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "note-report-link",
+      "says": "with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci",
       "needs": null,
       "verdict": "pass",
       "break": "caught"

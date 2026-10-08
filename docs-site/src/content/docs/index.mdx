@@ -112,6 +112,8 @@ Set `binary: choudoufu` in `terragucci.yml` and the stages gain these. [The glos
 | How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
 | Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
 | Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
+| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner, named | [use a binary](/terragucci/guides/use-a-binary/#choudoufu) |
+| A role scoped to one estate by its ownership tag, refused on another estate's resources | [use a binary](/terragucci/guides/use-a-binary/#choudoufu) |
 
 ## Hand the setup to your agent
 

@@ -1,7 +1,7 @@
 ---
 title: Choose Terraform, OpenTofu, Terragrunt or choudoufu
 description: Pick the binary your roots run with, and see what each one gives the pipeline.
-claims: [check-diagnostics]
+claims: [check-diagnostics, cdf-concurrency, cdf-write-race, cdf-iam]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-a-binary/.
   Run `npx terragucci init --dry-run --json` and tell me which binary it picked and why.
@@ -64,7 +64,7 @@ A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. U
 binary: choudoufu
 ```
 
-[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Five things come with it:
+[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Seven things come with it:
 
 | You get | Where you see it |
 |---|---|
@@ -73,11 +73,12 @@ binary: choudoufu
 | How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
 | Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
 | Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
+| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner and a write conflict naming it | your applies; the loser's re-plan shows the value that landed |
+| A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | your cloud's IAM (proven on EC2) |
 
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
 A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
-
 </TabItem>
 </Tabs>
 
