@@ -301,7 +301,7 @@ tree_image() { # work, image, repos
 # Fail the run when a phase's run did not succeed: the next phase would only measure the wreck.
 phase_ok() { # phase, runs file
   local bad
-  bad="$(awk -F'\t' -v p="$1" '$1 == p' "$2" | grep -v '"status":"success"' | cut -f2 | sort -u | tr '\n' ' ')"
+  bad="$(awk -F'\t' -v p="$1" '$1 == p' "$2" | grep -v '"status":"success"' | cut -f2 | sort -u | tr '\n' ' ' || true)"
   [ -z "$bad" ] || die "$1: the runs of ${bad}did not succeed; Forgejo has their logs at $URL"
 }
 

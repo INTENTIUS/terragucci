@@ -169,6 +169,7 @@ export default defineConfig({
 				},
 				{ label: 'Coming from Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
 				{ label: 'Validation', slug: 'reference/validation' },
+				{ label: 'Scale', slug: 'reference/scale' },
 				{ label: 'What is new in 0.4.0', slug: 'reference/whats-new' },
 			],
 		}),
