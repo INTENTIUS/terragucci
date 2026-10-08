@@ -110,6 +110,8 @@ export interface PipelineInput {
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
+  /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
+  synth?: string;
   env: Record<string, string>;
   /** Cloud identities the jobs take over OIDC (AWS roles, GCP service accounts, Azure clients): plan reads, apply writes. */
   oidc?: OidcSettings;
@@ -252,10 +254,30 @@ export function awsCliScript(forge: ForgeName): string {
   ].join("\n");
 }
 
-export function checkScript(binary: Binary, roots: string[]): string {
+/**
+ * `synth`: the roots are written by a command (CDK Terrain's `npx cdktn
+ * synth`), not committed, so each job that reads them runs it on its own
+ * checkout first: after the commit to plan or apply is checked out, and
+ * before any cloud credential is asked for. A command that fails ends the
+ * job, with the status the job posts when one is given.
+ */
+export function synthScript(command: string, status?: string): string {
+  return [
+    "# synth in terragucci.yml: write the roots before reading them.",
+    `( set -e; ${command} ) || { ${status ? `tg status ${status} failure "the synth command failed"; ` : ""}echo "terragucci: the synth command failed" >&2; exit 1; }`,
+  ].join("\n");
+}
+
+export function checkScript(binary: Binary, roots: string[], synth?: string): string {
   return [
     "set -eu",
-    `${binary} fmt -check -recursive -diff .`,
+    ...(synth
+      ? [
+          synthScript(synth),
+          // The files git tracks, one directory at a time: what synth installs (node_modules) carries .tf files of its own.
+          `git ls-files '*.tf' '*.tofu' '*.tfvars' | sed 's#/[^/]*$##; s#^[^/]*$#.#' | sort -u | while IFS= read -r d; do ${binary} fmt -check -diff "$d" || exit 1; done`,
+        ]
+      : [`${binary} fmt -check -recursive -diff .`]),
     "failed=0",
     `for dir in ${roots.map(sh).join(" ")}; do`,
     `  ${binary} -chdir="$dir" init -backend=false -input=false -no-color >/dev/null`,
@@ -559,6 +581,8 @@ export interface ApplyWaveInput {
   respond?: PipelineInput["respond"];
   /** A Terragrunt repo: the layers are its waves of units, and the stage runs Terragrunt after this shell (credentials, caches). */
   terragrunt?: { prelude: string };
+  /** `synth`: the command that writes the roots, run before the credentials. */
+  synth?: string;
 }
 
 /**
@@ -602,6 +626,7 @@ export function applyScript(
   return [
     READS_EXIT,
     forgeApi(forge),
+    ...(input.synth ? [synthScript(input.synth, first ? "terragucci/apply" : undefined)] : []),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...(tg ? [tg.prelude] : []),
     ...(first
@@ -654,6 +679,8 @@ export interface CommentApplyInput {
   requires?: ApplyRequire[];
   /** A Terragrunt repo: the layers are its waves of units, and each wave runs Terragrunt after this shell (credentials, caches). */
   terragrunt?: { prelude: string };
+  /** `synth`: the command that writes the roots, run on the checked-out commit before the credentials. */
+  synth?: string;
 }
 
 /**
@@ -829,6 +856,7 @@ export function gitlabApplyScript(binary: Binary, layers: string[][], oidc?: Pip
     'run_url="$CI_JOB_URL"',
     'tf_base="--base origin/$TG_BASE"',
     'git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the head ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }',
+    ...(input.synth ? [synthScript(input.synth)] : []),
     ...cloudScripts("gitlab", oidc, "apply", "terragucci-apply"),
     ...(input.terragrunt ? [input.terragrunt.prelude] : []),
     ...waveLoop(binary, layers, input, "$tf_base", COMMENT_AGAIN, false),
@@ -901,6 +929,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
           'git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out $what ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }',
         ]
       : ['git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the merge commit ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }']),
+    ...(input.synth ? [synthScript(input.synth)] : []),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...(input.terragrunt ? [input.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "applying on a comment"',
@@ -951,6 +980,8 @@ export interface PlanReportInput {
   agentComment?: boolean;
   /** `approval: pr-review`: after the note, post `terragucci/approval` on the head (review.ts). */
   prReview?: boolean;
+  /** `synth`: the command that writes the roots, run on the checkout before the credentials. */
+  synth?: string;
 }
 
 /**
@@ -1023,6 +1054,7 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     READS_EXIT,
     forgeApi(forge),
     ...(replan ? [replanPrelude(layers, forge, report.agentComment)] : []),
+    ...(report.synth ? [synthScript(report.synth, "terragucci/plan")] : []),
     ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     // A re-plan of one named root may find the change does not reach it, and then leaves the status as it was.
@@ -1082,6 +1114,7 @@ export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oi
   return [
     READS_EXIT,
     gitlabTokenCheck(tokenEnv),
+    ...(report.synth ? [synthScript(report.synth)] : []),
     ...cloudScripts("gitlab", oidc, "plan", "terragucci-plan"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-plan ${args.join(" ")}`,
@@ -1197,6 +1230,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
   return [
     READS_EXIT,
     // The stage keeps the issue itself; the forge calls here are only for the OIDC token.
+    ...(report.synth ? [synthScript(report.synth)] : []),
     ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
@@ -1236,6 +1270,7 @@ export function confirmScript(binary: Binary, layers: string[][], forge: ForgeNa
   return [
     READS_EXIT,
     forgeApi(forge),
+    ...(report.synth ? [synthScript(report.synth, "terragucci/apply")] : []),
     ...cloudScripts(forge, oidc, "plan", "terragucci-confirm"),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "confirming the merge applied"',
@@ -1287,6 +1322,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(responds(input.respond, "description") ? { description: true } : {}),
     ...(tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n") } } : {}),
     ...(prReview ? { prReview: true } : {}),
+    ...(input.synth ? { synth: input.synth } : {}),
   };
   const drift = input.drift;
   const roots = layers.flat().sort();
@@ -1304,7 +1340,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth);
+  const synth = input.synth ? { synth: input.synth } : {};
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destroy";
@@ -1312,7 +1349,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
     name: `apply-wave-${i + 1}`,
-    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply }),
+    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth }),
   }));
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
@@ -1326,7 +1363,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch.
   const writesLedger = gate !== "never";
   const what = tg ? "unit" : "root";

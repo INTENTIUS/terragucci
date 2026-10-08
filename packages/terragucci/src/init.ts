@@ -121,6 +121,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
     const tgSettings = settings.terragrunt ?? {};
     if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; use terragrunt.exclude");
+    if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {
@@ -151,9 +152,11 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     rootReasons = findRootsWithReasons(repo, settings.roots);
     if (rootReasons.length === 0) {
       throw new ConfigError(
-        settings.roots
+        (settings.roots
           ? `no directory matches roots ${JSON.stringify(settings.roots)}`
-          : "found no roots: no directory has Terraform files with a backend or a provider block",
+          : "found no roots: no directory has Terraform files with a backend or a provider block") +
+          // The pipeline names the roots init finds, so a synthesized root must be on disk when init runs.
+          (settings.synth ? `; run the synth command (${settings.synth}) first, then init` : ""),
       );
     }
     layers = applyLayers(repo, rootReasons.map((r) => r.root));
@@ -229,6 +232,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.modules?.publish ? { publish: true } : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
+    ...(settings.synth ? { synth: settings.synth } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
     ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),

@@ -1,0 +1,4 @@
+binary: tofu
+forge: forgejo
+gate: never
+synth: npm ci --no-audit --no-fund && npx cdktn synth

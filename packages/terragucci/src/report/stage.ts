@@ -656,9 +656,15 @@ export async function runStage(stage: string, repo: string, options: StageOption
     .map((l) => (options.root ? l.filter((r) => globMatch(options.root!, r)) : l))
     .filter((l) => l.length > 0);
   if (layers.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
+  // The pipeline names the roots init found. When none is on disk they are written by a command that has not run here.
+  if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)))) {
+    throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${settings.synth ? `; the synth command (${settings.synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
+  }
   // A pull request plans only the roots its change reaches, and their dependents. Drift reads every root.
   const base = drift ? undefined : (options.base ?? baseRef(env));
-  const selected = base ? affectedRoots(repo, base, all, layers.flat(), log) : undefined;
+  // Roots a synth command writes are not in git, so no diff names them: every one plans, and a stack the change leaves alone plans no change.
+  if (base && settings.synth) log(`every root: synth writes them (${settings.synth}), so a change to the app can reach any of them`);
+  const selected = base && !settings.synth ? affectedRoots(repo, base, all, layers.flat(), log) : undefined;
   const planLayers = selected ? layers.map((l) => l.filter((r) => selected.has(r))).filter((l) => l.length > 0) : layers;
   const roots = planLayers.flat();
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
