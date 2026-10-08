@@ -161,7 +161,8 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | The wave or comment | Outcome |
    |---|---|
    | a wave without an approval that counts in its mode | waits, with the command in the reply |
-   | a wave whose plans changed after the approval | refused |
+   | a wave whose plans changed after the approval, before they applied | refused |
+   | a wave planning anew after its approved plans applied | waits for an approval of the new plans |
    | an approved wave | applies, resuming where it stopped |
    | a comment that fails a check | runs nothing; the reply names the check ([the checks](/terragucci/reference/pipeline/#when-a-comment-runs-nothing)) |
 
@@ -252,7 +253,7 @@ Protection keeps history from being rewritten.
 
 ## If the wave refuses instead
 
-When any root's plan changed after you approved, the wave applies nothing. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) covers that.
+When any root's plan changed after you approved and before the wave applied, the wave applies nothing. Once it has applied, the next change waits for a new approval instead. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) covers that.
 
 <Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, and the roots whose plans moved" optional />
 

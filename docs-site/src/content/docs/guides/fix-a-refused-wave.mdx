@@ -31,7 +31,7 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
 1. Understand why it refused.
 
-   An approval binds a wave's set digest, so any root's plan changing after it means the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value.
+   An approval binds a wave's set digest, so any root's plan changing after it, before the wave applied, means the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
 
    In the example, approve the waiting wave, then merge the module bump. Its job stops and names the roots that moved:
 

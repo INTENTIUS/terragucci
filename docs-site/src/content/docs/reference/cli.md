@@ -359,14 +359,14 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | 1 | one or more projects or roots failed |
 | 2 | a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
-| 4 | a wave's plans changed after its approval or its policy override, so `stage tf-apply` applied nothing |
+| 4 | a wave's plans changed after an approval no run applied, or after its policy override, so `stage tf-apply` applied nothing |
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
 | `init` | done | | an existing config file needs a line added | | |
 | `reconcile` | done | a project failed | | | |
 | `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
-| `stage tf-apply` | wave applied | a root failed, or the policy denied one | `--json` | waits for an approval | plans changed after the approval, or after a policy override |
+| `stage tf-apply` | wave applied | a root failed, or the policy denied one | `--json` | waits for an approval | plans changed after an approval no run applied, or after a policy override |
 | `publish` | done | | OCI tag exists already; git tag exists with different content | | |
 | `rollout` | complete | stopped | | waiting | |
 | `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |

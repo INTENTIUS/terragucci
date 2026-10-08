@@ -1070,7 +1070,11 @@ prove_merge() {
     verdict apply-serial fail "no orders-note pull request, or change module-bump failed"
   fi
 
-  # gate-wait: the destroy's wave waits, and applies once approved.
+  # gate-wait: the destroy's wave waits, and applies once approved. Its
+  # approval is held, not applied, so the next merge in wave 4 meets a stale
+  # approval (explain-refusal); the re-run that applies wave 4 comes with
+  # approve-command, and gate-wait's verdict waits for it.
+  gw_waited=""
   if step change destroy && step merge destroy && [ -f "$DIR/waiting" ]; then
     IFS=$'\t' read -r run wave _ < "$DIR/waiting"
     waited="$(grep -m1 'chant approve tf-apply' "$DIR/logs/waiting.log" | sed 's/^[[:space:]]*//' || true)"
@@ -1085,10 +1089,10 @@ prove_merge() {
       fi
       ca_seen="$ca_seen; merged pull request $dp while wave 4 waits: reply ${r:-none}"
     fi
-    if step approve; then
-      verdict gate-wait pass "run $run stopped $wave with: $waited; approved and re-run, it applied"
+    if step approve --hold; then
+      gw_waited="run $run stopped $wave with: $waited"
     else
-      verdict gate-wait fail "run $run stopped $wave; the re-run after the approval did not succeed"
+      verdict gate-wait fail "run $run stopped $wave; chant approve did not record the approval"
     fi
   else
     verdict gate-wait fail "the merged destroy left no wave waiting"
@@ -1099,9 +1103,10 @@ prove_merge() {
     verdict comment-apply fail "${ca_seen#; }"
   fi
 
-  # explain-refusal: refuse destroys in wave 4 after its last approval, so
-  # the wave is refused, and the guide's job runs on the refusal and prints
-  # what moved.
+  # explain-refusal: refuse destroys in wave 4 after the destroy's approval,
+  # which no run has applied yet, so the wave is refused, and the guide's job
+  # runs on the refusal and prints what moved. Once an approval has applied
+  # its plans, the next merge waits instead (the Forgejo claim approval-used).
   refused_run=""
   if step change refuse; then
     step merge refuse || true
@@ -1135,11 +1140,15 @@ prove_merge() {
     if grep -q 'chant approve tf-apply wave-4 --plan ' <<<"$dry" && [ "$before" = "$kept" ] && [ -n "$ran" ] && [ "$again" = success ]; then
       verdict approve-command pass "run $refused_run: --dry-run printed the command and the ledger kept $kept lines; terragucci approve ${ran#running: }; the re-run applied wave 4"
       ( record_state ) || log "could not record the state after the approval"
+      [ -z "$gw_waited" ] || verdict gate-wait pass "$gw_waited; approved with --sign and re-run, it applied (run $refused_run)"
     else
       verdict approve-command fail "run $refused_run: dry run: $(tr '\n' ' ' <<<"$dry" | cut -c1-200); ledger $before then $kept lines; approve: $(tr '\n' ' ' <<<"$out" | cut -c1-200); re-run $again"
     fi
   else
     verdict approve-command fail "no refused wave to approve"
+  fi
+  if [ -n "$gw_waited" ] && [ "${again:-}" != success ]; then
+    verdict gate-wait fail "$gw_waited; the re-run after the sealed approval did not succeed"
   fi
 
   # drift-issue: the drift job opens the drift issue, a second run updates

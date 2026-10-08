@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, applyWaves, approvedPath, decideGate, lockTimeoutArgs, movedMembers, parseLedger, type GateLedger, type PendingRecord } from "../src/apply";
+import { APPLIED_PATH, applyWave, applyWaves, approvedPath, decideGate, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
 import { noteMarker } from "../src/review";
@@ -37,7 +37,7 @@ describe("decideGate", () => {
 
   it("an approval of this digest, newer than the pending fact, lets the wave apply", () => {
     const l = ledger({ pending: [pending("wave-1", "d1", 1)], resolutions: [resolution("wave-1", "d1", 2)] });
-    expect(decideGate(l, "wave-1", "d1", T(3))).toEqual({ status: "approved", by: "alice" });
+    expect(decideGate(l, "wave-1", "d1", T(3))).toEqual({ status: "approved", by: "alice", at: T(2) });
   });
 
   it("an approval of another digest is the changed-set refusal, and the new digest is not yet standing", () => {
@@ -54,6 +54,42 @@ describe("decideGate", () => {
     const p2 = pending("wave-1", "d2", 3);
     const l = ledger({ pending: [pending("wave-1", "d1", 1), p2], resolutions: [resolution("wave-1", "d1", 2)] });
     expect(decideGate(l, "wave-1", "d2", T(4))).toEqual({ status: "waiting", standing: p2 });
+  });
+
+  const applied = (gate: string, digest: string, approvedAt: number): AppliedRecord => ({
+    version: 1, kind: "applied", op: "tf-apply", gate, planDigest: digest, approvedAt: T(approvedAt), approvedBy: "alice", timestamp: T(approvedAt + 1),
+  });
+
+  it("an approval of another digest that a wave applied under is spent: the wave waits, and nothing new is standing", () => {
+    const l = ledger({ pending: [pending("wave-1", "d1", 1)], resolutions: [resolution("wave-1", "d1", 2)], applied: [applied("wave-1", "d1", 2)] });
+    expect(decideGate(l, "wave-1", "d2", T(4))).toEqual({ status: "waiting", spent: { approved: "d1", by: "alice" } });
+  });
+
+  it("a spent approval still lets the wave apply its own digest again, as a re-run after a failed apply does", () => {
+    const l = ledger({ pending: [pending("wave-1", "d1", 1)], resolutions: [resolution("wave-1", "d1", 2)], applied: [applied("wave-1", "d1", 2)] });
+    expect(decideGate(l, "wave-1", "d1", T(4))).toEqual({ status: "approved", by: "alice", at: T(2) });
+  });
+
+  it("an approval made after the apply of its digest is stale again, and refuses", () => {
+    const l = ledger({ pending: [pending("wave-1", "d1", 1)], resolutions: [resolution("wave-1", "d1", 2), resolution("wave-1", "d1", 5)], applied: [applied("wave-1", "d1", 2)] });
+    expect(decideGate(l, "wave-1", "d2", T(6))).toEqual({ status: "refused", approved: "d1", by: "alice" });
+  });
+
+  it("an apply of another wave, or of another digest, spends nothing", () => {
+    const base = { pending: [pending("wave-1", "d1", 1)], resolutions: [resolution("wave-1", "d1", 2)] };
+    expect(decideGate(ledger({ ...base, applied: [applied("wave-2", "d1", 2)] }), "wave-1", "d2", T(4)).status).toBe("refused");
+    expect(decideGate(ledger({ ...base, applied: [applied("wave-1", "d3", 2)] }), "wave-1", "d2", T(4)).status).toBe("refused");
+  });
+
+  it("an approval that names no digest is never spent", () => {
+    const { planDigest: _d, ...bare } = resolution("wave-1", "d1", 2);
+    const l = ledger({ resolutions: [bare], applied: [applied("wave-1", "d1", 2)] });
+    expect(decideGate(l, "wave-1", "d2", T(4))).toMatchObject({ status: "refused", by: "alice" });
+  });
+
+  it("a spent approval and a stale one: the stale one refuses", () => {
+    const l = ledger({ resolutions: [resolution("wave-1", "d1", 2), resolution("wave-1", "d3", 3)], applied: [applied("wave-1", "d1", 2)] });
+    expect(decideGate(l, "wave-1", "d2", T(4))).toEqual({ status: "refused", approved: "d3", by: "alice" });
   });
 
   it("an expired pending fact does not stand", () => {
@@ -440,6 +476,108 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), approval: "sealed", now: T(1) })).toBe(3);
       approve(origin, approval(digestOf(origin), 2));
       expect(await applyWave(work, { ...opts(bin), approval: "sealed", now: T(3) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+    });
+  });
+
+  describe("an approval a wave applied under", () => {
+    const alice = sshKey();
+    const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} });
+    const pendingOf = (origin: string) => parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending;
+    const appliedOf = (origin: string) => parseApplied(git(origin, "show", `chant/lifecycle:${APPLIED_PATH}`));
+    const approval = (digest: string, at: number) => ({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(at), planDigest: digest });
+    const sealedApproval = (digest: string, at: number) => {
+      const a = approval(digest, at);
+      return { ...a, seal: { signer: "alice", key: "SHA256:test", signature: sshsig(alice, gateSealPayload(a), "chant-gate") } };
+    };
+    /** The next merge: root a plans another value. */
+    const moveA = (work: string) =>
+      writeFileSync(join(work, "..", "plans", "a.json"), JSON.stringify({ resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["create"], before: null, after: { input: "2" }, after_unknown: {} } }] }));
+
+    for (const mode of ["ledger", "sealed"] as const) {
+      const files: Record<string, string> = mode === "sealed" ? { "terragucci.yml": "approval: sealed\n", ".chant/allowed_signers": `${signerLine("alice", alice)}\n` } : {};
+      const approveAs = mode === "sealed" ? sealedApproval : approval;
+
+      it(`under ${mode}, once the approved plans applied, the next plans of the wave wait with their approve command`, async () => {
+        const lines: string[] = [];
+        vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+        const { work, origin, bin, log } = setup(files);
+        expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+        const first = pendingOf(origin)[0]!.planDigest!;
+        approve(origin, approveAs(first, 2));
+        expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
+        expect(existsSync(log)).toBe(true);
+        expect(appliedOf(origin)).toEqual([expect.objectContaining({ gate: "wave-1", planDigest: first, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) })]);
+        moveA(work);
+        lines.length = 0;
+        expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(3);
+        const second = pendingOf(origin).at(-1)!.planDigest!;
+        expect(second).not.toBe(first);
+        expect(lines.join("\n")).toContain(`the approval of ${first} by alice was used by the apply of those plans`);
+        expect(lines.join("\n")).not.toContain("planned differently since");
+        expect(lines).toContain(`  chant approve tf-apply wave-1 --plan ${second}${mode === "sealed" ? " --sign" : ""}`);
+        // The approval of the new plans applies them, and is recorded as used in turn.
+        approve(origin, approveAs(second, 5));
+        expect(await applyWave(work, { ...opts(bin), now: T(6) })).toBe(0);
+        expect(appliedOf(origin).map((a) => a.planDigest)).toEqual([first, second]);
+      });
+
+      it(`under ${mode}, an approval of plans that never applied is stale: the moved plans are refused`, async () => {
+        const lines: string[] = [];
+        vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+        const { work, origin, bin, log } = setup(files);
+        expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+        const first = pendingOf(origin)[0]!.planDigest!;
+        approve(origin, approveAs(first, 2));
+        moveA(work);
+        expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(4);
+        expect(existsSync(log)).toBe(false);
+        expect(lines.join("\n")).toContain("approved by alice, but these roots planned differently since: a");
+        expect(() => git(origin, "show", `chant/lifecycle:${APPLIED_PATH}`)).toThrow();
+      });
+    }
+
+    it("under pr-review, after a reviewed wave applied, the next merge waits for its own review instead of being refused", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      const { work, origin, bin, log } = setup({ "terragucci.yml": "approval: pr-review\n" });
+      const head = "a".repeat(40);
+      const merge = "b".repeat(40);
+      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t", TG_SHA: merge };
+      const forge = (reviews: unknown[], digest: string | null): Fetch => async (url) => {
+        const path = url.replace("https://api.test/", "").split("?")[0];
+        const body: Record<string, unknown> = {
+          [`repos/acme/infra/commits/${merge}/pulls`]: [{ number: 7, head: { sha: head }, user: { login: "author" }, merge_commit_sha: merge, merged_at: "x" }],
+          "repos/acme/infra/pulls/7/reviews": reviews,
+          "repos/acme/infra/collaborators/alice/permission": { permission: "write" },
+          "repos/acme/infra/issues/7/comments": [{ body: noteMarker({ head, waves: [{ number: 1, digest, waits: true }] }) }],
+        };
+        return (path! in body ? { ok: true, status: 200, json: async () => body[path!] } : { ok: false, status: 404, json: async () => ({}) }) as never;
+      };
+      const review = { user: { login: "alice" }, state: "APPROVED", commit_id: head };
+      // The first merge waits, then applies once its review covers these plans: the ledger records the review and its use.
+      expect(await applyWave(work, { ...opts(bin), env, fetch: forge([], null), now: T(1) })).toBe(3);
+      const first = pendingOf(origin)[0]!.planDigest!;
+      expect(await applyWave(work, { ...opts(bin), env, fetch: forge([review], first), now: T(2) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+      expect(appliedOf(origin)).toEqual([expect.objectContaining({ planDigest: first, approvedAt: T(2), approvedBy: "alice" })]);
+      // The next merge, not reviewed yet, plans other values: it waits and asks for a review, and the reviewed approval refuses nothing.
+      moveA(work);
+      lines.length = 0;
+      expect(await applyWave(work, { ...opts(bin), env, fetch: forge([], null), now: T(3) })).toBe(3);
+      expect(lines.join("\n")).toMatch(/no review approves this wave/);
+      expect(lines.join("\n")).not.toContain("planned differently since");
+    });
+
+    it("under pr-review, a chant approve of plans that never applied is stale: the moved plans are refused", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const { work, origin, bin, log } = setup({ "terragucci.yml": "approval: pr-review\n" });
+      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t", TG_SHA: "b".repeat(40) };
+      const none: Fetch = async () => ({ ok: true, status: 200, json: async () => [] }) as never;
+      expect(await applyWave(work, { ...opts(bin), env, fetch: none, now: T(1) })).toBe(3);
+      approve(origin, approval(pendingOf(origin)[0]!.planDigest!, 2));
+      moveA(work);
+      expect(await applyWave(work, { ...opts(bin), env, fetch: none, now: T(3) })).toBe(4);
       expect(existsSync(log)).toBe(false);
     });
   });
