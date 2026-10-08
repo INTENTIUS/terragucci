@@ -28,7 +28,7 @@ The config names variables and never holds a value. Put secrets in your forge's 
 | Variable | Used by | Needs |
 |---|---|---|
 | the run's own token (`github.token` on GitHub and Forgejo) | the generated plan and apply jobs | comments and statuses; apply also writes [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
-| `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable; with `comments:` set it also needs the Developer role |
+| `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable; with `comments:` set it also needs the Developer role; with `gitlab.token: protected` it is also a protected variable, and only default-branch jobs get it |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | `reconcile`, `rollout` and `respond --mode apply`, by the project's forge | push branches and open pull requests in the projects they touch |
 | `TG_TOKEN` | the comment, status and respond steps | set by the job; set it yourself outside a pipeline |
 | `GITEA_TOKEN` | nothing | the agent's job clears it with the other runner tokens, so it never reaches the agent |
@@ -41,8 +41,8 @@ The check job is the exception. It runs `fmt`, `init -backend=false`, `validate`
 
 | The check job's environment holds | When |
 |---|---|
-| `TG_TOKEN`, so the job can push the formatting | `respond.fmt` is `commit` (the default), outside a Terragrunt repo |
-| `CI_JOB_TOKEN` and the project's variables, `GITLAB_TOKEN` among them | on GitLab |
+| `TG_TOKEN`, so the job can push the formatting | `respond.fmt` is `commit` (the default), outside a Terragrunt repo, except on GitLab with `gitlab.token: protected` |
+| `CI_JOB_TOKEN` and the project's variables | on GitLab; `GITLAB_TOKEN` among them unless `gitlab.token: protected` makes it a protected variable |
 
 ## Reports
 

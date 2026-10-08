@@ -155,6 +155,11 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
 
    Add `GITLAB_TOKEN` under Settings, CI/CD, Variables: a masked project access token with the `api` scope.
 
+   | `terragucci.yml` | Plan job | Plan note | `GITLAB_TOKEN` |
+   |---|---|---|---|
+   | no `gitlab` key (the default) | holds the token, so a merge request's code can use it as the project's bot | posted by the plan job at once | a masked variable |
+   | `gitlab: { token: protected }`, with `comments:` set | holds no token | posted by the comments schedule's job | a masked and protected variable, on a protected default branch |
+
    </TabItem>
    <TabItem label="Forgejo">
 

@@ -7,7 +7,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, mergeScript, movedRoots, planScript, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planScript, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -1183,6 +1183,48 @@ describe("the plan stage", () => {
     } finally {
       api.close();
     }
+  });
+
+  it("gitlab: by default the plan job holds the project token and posts its note and status itself", () => {
+    const doc = body(render("gitlab"));
+    expect(doc.plan.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
+    expect(doc.plan.script.join("\n")).toContain('tg note "$note"');
+    expect(doc.check.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
+    expect(doc.comments).toBeUndefined();
+  });
+
+  it("gitlab.token: protected: the plan job holds no forge token, calls no API, and writes the note and the status into the report for the comments job", async () => {
+    const { repo, env } = await planRepo();
+    const api = await stubApi(() => []);
+    try {
+      const r = await run(`cd ${JSON.stringify(repo)}\n${gitlabProtectedPlanScript("tofu", [["network"], ["app", "cache"]])}`, {
+        ...env, TG_SHA: "abc123", TG_PR: "7", CI_API_V4_URL: api.url, CI_PROJECT_ID: "9", CI_JOB_URL: "http://gitlab/acme/infra/-/jobs/5",
+      });
+      expect(r.status, r.out).toBe(0);
+      expect(api.hits).toEqual([]);
+      const note = readFileSync(join(repo, "terragucci-report/plan-note.md"), "utf-8");
+      expect(note).toBe(`<!-- terragucci:plan roots=app,cache,network -->\n${readFileSync(join(repo, "terragucci-report/note.md"), "utf-8")}`);
+      expect(readFileSync(join(repo, "terragucci-report/plan-status.txt"), "utf-8")).toBe("success 3 roots, 2 groups, 2 destroys\n");
+      // A token that reaches the job means the variable is not protected: the job stops before it plans.
+      const seen = await run(`cd ${JSON.stringify(repo)}\n${gitlabProtectedPlanScript("tofu", [["network"]])}`, { ...env, GITLAB_TOKEN: "leaked" });
+      expect(seen.status).toBe(1);
+      expect(seen.out).toContain("GITLAB_TOKEN reaches this merge request's pipeline");
+    } finally {
+      api.close();
+    }
+    const strict = (extra: Record<string, unknown> = {}) => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gitlabToken: "protected", comments: "*/5 * * * *", ...extra }).content;
+    const doc = body(strict());
+    expect(doc.plan.variables.TG_TOKEN).toBeUndefined();
+    expect(Object.values(doc.plan.variables)).not.toContain("$GITLAB_TOKEN");
+    expect(doc.plan.script.join("\n")).not.toMatch(/tg (note|status)/);
+    expect(doc.plan.script.join("\n")).toContain(gitlabTokenCheck());
+    // A branch's pipeline is the branch's own too: the check job gets no token and commits no formatting.
+    expect(doc.check.variables.TG_TOKEN).toBeUndefined();
+    expect(doc.check.after_script).toBeUndefined();
+    expect(doc.comments.script.join("\n")).toContain("--plan-notes");
+    expect(body(strict({ tokenEnv: "FORGE_TOKEN" })).plan.script.join("\n")).toContain('if [ -n "${FORGE_TOKEN:-}" ]; then');
+    // The comments job posts the note, so the setting needs it.
+    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gitlabToken: "protected" })).toThrow(/gitlab.token: protected needs comments:/);
   });
 
   it("a root that fails to plan fails the stage and its status, and the note still goes up, in the step's own shell", async () => {

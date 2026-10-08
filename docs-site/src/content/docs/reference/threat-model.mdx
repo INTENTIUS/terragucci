@@ -54,12 +54,12 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 
 | Job | Runs on | Code | Forge token | Cloud identity |
 |---|---|---|---|---|
-| `check` | a push to any branch | the pushed branch | `GITLAB_TOKEN`, `api` scope | none |
-| `plan` | a merge request from the project | the change | `GITLAB_TOKEN`, `api` scope | plan role |
+| `check` | a push to any branch | the pushed branch | `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` | none |
+| `plan` | a merge request from the project | the change | `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` | plan role |
 | `apply-wave-<k>` | a push to the default branch | merged code | `GITLAB_TOKEN` | apply role |
 | `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
 | `tips` | a push to the default branch | merged code | `GITLAB_TOKEN` | none |
-| `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked | `GITLAB_TOKEN`, to reply and start or retry pipelines; with `apply.when: pull-request` also the merge token | none |
+| `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked; with `gitlab.token: protected`, the plan job's note and status read as data | `GITLAB_TOKEN`, to reply, post plan notes, and start or retry pipelines; with `apply.when: pull-request` also the merge token | none |
 | `mr-apply` | a default-branch pipeline `comments` starts, with `apply.when: pull-request` | the default branch's pipeline file, then the open change's head | `GITLAB_TOKEN` | apply role |
 | `pr-merge` | after `mr-apply`, with `apply.merge: auto` | none of the change's, and none of `mr-apply`'s artifacts | the merge token | none |
 | `confirm` | a push, with `apply.when: pull-request` | merged code | `GITLAB_TOKEN` | plan role |
@@ -70,7 +70,10 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | a merge request's own pipeline never applies | with `apply.when: pull-request` the apply runs in a pipeline of the default branch, so its OIDC subject is the default branch's and the apply role keeps trusting that alone |
 | the `comments` job starts that pipeline with the merge token | the one token that may run a pipeline on the protected default branch; protected and scoped to the `terragucci-merge` environment, which only `comments` and `pr-merge` name |
 | the pipeline's variables name the merge request, the note and the head | they are pointers: `mr-apply` reads the note, its author's role, the merge request and its head from GitLab before any credential, and refuses a head that differs |
-| `GITLAB_TOKEN` cannot be a protected variable | the merge request's plan job posts its note with it, so any branch's pipeline can read it |
+| by default a merge request's code runs with `GITLAB_TOKEN` | its author can edit any job in the merge request's pipeline, and the token acts as the project's bot: it posts notes and statuses and pushes branches, `chant/lifecycle` included, so under `approval: ledger` it can write an approval line |
+| `gitlab: { token: protected }` | `GITLAB_TOKEN` is a protected variable, which no merge request or branch pipeline gets; the plan job writes its note and status into its report and stops if it sees the token, and the comments job posts them |
+| a pipeline on any protected branch gets protected variables | with `gitlab.token: protected`, whoever may push to a protected branch, `chant/lifecycle` among them, can read the token there |
+| the bot's approval never counts | under `approval: pr-review` and in `apply.requires`, an approval by the user the token acts as is the pipeline's, so it releases nothing |
 | the OIDC subject carries the pipeline's branch | a merge request's plan job has its source branch, so the plan role trusts every branch |
 
 </TabItem>
@@ -105,8 +108,8 @@ The gate policy decides when a wave waits: `always`, `on-destroy` (the default) 
 | Mode | Set by | An approval counts when | Stops | Does not stop |
 |---|---|---|---|---|
 | No gate | `gate: never` | no wave waits | nothing past review and branch protection | any merged change applying |
-| `ledger`, the default | `approval: ledger` at base, or no key and no gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a line on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) approves the wave's set digest, newer than its pending fact | a wave whose plans moved after approval | anyone who can push to `chant/lifecycle` writing that line: every writer, and the apply jobs' token |
-| `pr-review` | `approval: pr-review` at base | as under `ledger`, or the merged pull request's head was approved by a writer other than its author (on GitLab, an approval by a Developer or higher after the merge request's latest push) and the wave plans the digest its plan note recorded | as under `ledger`, and a review standing for plans that moved after it | as under `ledger`; anyone who can edit the plan note's comment can change the digest it records |
+| `ledger`, the default | `approval: ledger` at base, or no key and no gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a line on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) approves the wave's set digest, newer than its pending fact | a wave whose plans moved after approval | anyone who can push to `chant/lifecycle` writing that line: every writer, and the apply jobs' token; on GitLab without `gitlab.token: protected`, a merge request's code through that token |
+| `pr-review` | `approval: pr-review` at base | as under `ledger`, or the merged pull request's head was approved by a writer other than its author (on GitLab, an approval by a Developer or higher after the merge request's latest push) and the wave plans the digest its plan note recorded | as under `ledger`, a review standing for plans that moved after it, and an approval by the pipeline token's own user | as under `ledger`; anyone who can edit the plan note's comment can change the digest it records |
 | `sealed` | `approval: sealed` at base, or no key and `identity.gates` listing gates at base; then every wave gate needs a seal | as above, and [`chant approve --sign`](/terragucci/concepts/glossary/#chant) sealed it with a key the signers file at base lists for that approver | forged lines from writers and job tokens; a change editing the `approval` key, the signers file, `.chant/trust.json` or `chant.workspace.json` to pass itself; signed fields edited later; moved plans | a listed approver's stolen key; an approver releasing their own change; a rebase merge of several commits, whose base is the change's own commit |
 
 With sealing on and no signers file at base, no approval counts. A reviewed change that sets `approval: ledger`, or with no key empties `identity.gates`, turns sealing off for the merges after it. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
@@ -148,7 +151,7 @@ terragucci starts the binary and Terragrunt without forge tokens, by name and by
 | The `check` job: `fmt` and `init -backend=false` from its shell, `validate` from `terragucci check-root` | yes: `TG_TOKEN` is in their environment |
 | The checkout's git config | yes on GitHub and Forgejo, except the agent jobs; on GitLab, the runner's job token in the remote |
 | The parent processes' environments | yes: the job's shell and terragucci hold the token |
-| GitLab's `plan` job | yes: `GITLAB_TOKEN`, `api` scope |
+| GitLab's `plan` and `check` jobs | yes: `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` |
 | A change that edits its own pipeline file | whatever that pipeline asks for |
 
 Each of these is a writer's own code in a job the forge gives a token to. Branch protection is what keeps that token from reaching the default branch.
@@ -179,9 +182,10 @@ Each of these is a writer's own code in a job the forge gives a token to. Branch
 | Merge requests | Merge commit; with fast-forward merges, squash commits set to Require | a fast-forward of several commits makes base the change's own commit |
 | `chant/lifecycle` | Protected: push and merge for a role your approvers and `GITLAB_TOKEN` both hold, force push off | approval history stays |
 | `apply.merge_token_env` variable | Protected, masked, environment scope `terragucci-merge`; a token whose role may merge into the default branch | only `comments` and `pr-merge` read it, and neither runs a change's code |
+| `GITLAB_TOKEN` variable, with `gitlab.token: protected` | Protected and masked | no merge request or branch pipeline reads it |
 | Apply role | Trust only `project_path:<group>/<project>:ref_type:branch:ref:<default branch>`, never `ref:*` | no branch assumes it |
 
-`GITLAB_TOKEN` reaches every branch's pipeline: give it a role with no more than posting notes and statuses and pushing `chant/lifecycle` needs.
+By default `GITLAB_TOKEN` reaches every branch's pipeline, so give it a role with no more than posting notes and statuses and pushing `chant/lifecycle` needs. `gitlab.token: protected` keeps it to protected branches.
 
 </TabItem>
 <TabItem label="Forgejo">

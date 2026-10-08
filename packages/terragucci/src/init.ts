@@ -230,6 +230,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
+    ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     gate: settings.gate,
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
@@ -315,6 +316,11 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
   if (settings.comments && forgeChoice.value === "gitlab") {
     notes.push(`comments is set: add a pipeline schedule with the cron ${settings.comments} and the variable TERRAGUCCI_SCHEDULE set to comments under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope and the Developer role so the comments job can answer notes and start pipelines`);
+  }
+  if (settings.gitlab?.token === "protected" && forgeChoice.value === "gitlab") {
+    // A pipeline is built from its branch's own files, so any variable that is not protected reaches a merge request's code.
+    const token = settings.token_env ?? "GITLAB_TOKEN";
+    notes.push(`gitlab.token is protected: under Settings > CI/CD > Variables, edit ${token} and tick Protect variable and Mask variable, and keep the default branch protected; merge request and branch pipelines then never see the token, the plan job stops if it does, the comments job posts the plan notes, and the check job commits no formatting`);
   }
   if (settings.waves?.canary?.length && terragrunt) {
     notes.push("waves.canary is set; the canary units' layers apply first, then the layers of the rest, each wave behind its gate");
