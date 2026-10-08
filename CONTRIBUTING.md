@@ -101,6 +101,7 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `image-ci/pipeline.ts` | `.github/workflows/images.yml` |
 | `publish/pipeline.ts` | `.github/workflows/publish.yml` |
 | `images/images.ts` | `images/Dockerfile.*` |
+| `front-door/stack.ts` (the `ReportsFrontDoor` composite in `front-door/front-door.ts`, with the edge code `front-door/edge.cjs` minified into it) | `docs-site/public/reports-front-door.json`, the CloudFormation template the Keep reports in S3 guide deploys; `test/front-door.test.ts` runs that inlined code |
 | `workflows/shared.ts` | the pins they share |
 | `observability/collector.ts`, `observability/prometheus.ts` | `stack/observability/collector.yaml` and `prometheus.yml` |
 | `packages/terragucci/src/dashboards/index.ts` (through `scripts/render-dashboards.ts`) | `packages/terragucci/src/dashboards/rendered.json`, the template `init` fills, and `stack/observability/terragucci/`, the dashboards and rules the stack's Grafana and Prometheus load, rendered with the stack's reports address (`http://localhost:4580/terragucci-reports`, prefix `reports`) so the Runs and Estate links resolve in the `drill-down` claim, and `stack/observability/grafana-datasources.yaml` |
