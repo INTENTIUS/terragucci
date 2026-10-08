@@ -244,6 +244,14 @@ sandbox *args:
 see-runs:
     stack/see-runs.sh
 
+[doc("Run the named smoke claims, plain and under BREAK=1, in parallel, and write their rows into smoke.json. The way to run claims for a change you name.")]
+claims +names:
+    stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
+
+[doc("Run the smoke claims the change since base can affect (stack/claims-affected.sh says why each), plain and under BREAK=1, in parallel, and write their rows into smoke.json. The way to prove a change.")]
+claims-affected base="origin/main":
+    stack/smoke.sh --affected {{base}} --record docs-site/src/data/smoke.json
+
 [doc("Run every smoke claim, or one. BREAK=1 breaks the property and the claim must print caught.")]
 smoke claim="":
     stack/smoke.sh {{claim}}
