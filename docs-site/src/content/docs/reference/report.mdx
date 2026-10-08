@@ -45,7 +45,7 @@ With no base it plans every root. On a pull request, or with `--base <ref>` or `
 | `note.md` | the plan note |
 | `summary.txt` | the grouped summary, as the job log shows it |
 | `gitlab-terraform.json` | the counts for GitLab's merge-request widget |
-| `roots/<root>/plan.txt` | the root's full plan, as the binary printed it |
+| `roots/<root>/plan.txt` | the root's full plan, as the binary printed it, with every value the plan marks sensitive masked |
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 
 [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the body of the drift issue; see [Drift](/terragucci/reference/stages/#drift).
@@ -54,12 +54,63 @@ With no base it plans every root. On a pull request, or with `--base <ref>` or `
 
 | View | Where | What it shows |
 |---|---|---|
-| Plan note | the pull request or merge request | groups, every destroy by name, the wave plan, the approval command, a link to the full report, and a last line with the terragucci taco, an image the docs site serves |
+| Plan note | the pull request or merge request | each group's diff, every destroy by name, the wave plan, the approval command, each root's whole plan collapsed, links to the full report and each plan, and a last line with the terragucci taco, an image the docs site serves |
 | HTML report | wherever the report is kept | every group, root and wave, with filters, and where the run spent its time |
 | Merge-request widget | GitLab | create, update and delete counts, from a `reports:terraform` artifact |
 | Text summary | the job log | the grouped summary |
 
-The plan note stays under your forge's comment limit however many roots change. The detail lives in the HTML report.
+## The plan note
+
+The note comments the plan back to the pull request, as Atlantis does, grouped. A group of two roots shows one diff:
+
+```diff
+  # terraform_data.cfg will be updated in-place
+~   resource "terraform_data" "cfg" {
+        id     = "9167c516-893b-56eb-9652-6061b49febdd"
+~       input  = {
+~           greeting = "hi" -> "hello"
+            # (2 unchanged attributes hidden)
+        }
+    }
+```
+
+| Part | What it holds |
+|---|---|
+| Group | the diff of its first root (or instance) as the binary printed it: each attribute that changes with its value before and after, nested blocks, `(known after apply)`; once per group, then the roots that make the same change |
+| Values that differ | the attributes whose values differ between the group's roots, by name |
+| Each root's plan | the root's whole plan in a collapsed block, with its `Plan:` line as the title and a link to its `plan.txt` |
+| Diff colours | each line's `+`, `-`, `~` or `-/+` moved to the first column, so the forge colours additions and removals |
+
+A Terragrunt unit's plan is kept as JSON only, so its group shows the attribute names.
+
+### Comment limits
+
+| Forge | Limit the note keeps to |
+|---|---|
+| GitHub | 65,536 characters, what the API accepts |
+| GitLab | 1,000,000 characters, GitLab's documented limit |
+| Forgejo | 1,000,000 characters; Forgejo sets none |
+
+The pipeline's first line and the line an apply adds to a stale note come off the limit. A note over it stays one comment and cuts, in this order, until it fits:
+
+| Order | Cut | Kept |
+|---|---|---|
+| 1 | roots' whole plans and groups' diffs, whichever is largest first | each cut root named and linked to its `plan.txt`; each cut group by attribute name |
+| 2 | whole groups, from the last | destroys, replacements and refusals, dropped only after every group |
+
+A `Cut:` line names what went and links the full report.
+
+### Where the note links
+
+| The run | The note links |
+|---|---|
+| `reports.url` set | the bucket's `report.html`, and each root's `plan.txt` beside it |
+| `reports.bucket` without `reports.url` | `report.html` and each `plan.txt` in the bucket, presigned, with the time the links stop working |
+| GitLab, no bucket | the job's artifact `report.html`, and each `plan.txt` beside it |
+| GitHub or Forgejo, no bucket | the run, whose `terragucci-report` artifact holds the report |
+| a runner that keeps no forge artifact, no bucket | the run, and no report |
+
+Presigned links live 7 days at most. An S3 link signed with a role's session stops when the session ends.
 
 ## What the report opens and folds
 
@@ -122,6 +173,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 | Value | In the report |
 |---|---|
 | sensitive value, default of a sensitive variable | `(sensitive, redacted by terragucci)` |
+| the same value in `plan.txt` and the note | `(sensitive value)`, as the binary prints it, wherever the value appears, including an attribute the plan does not mark |
 | policy denial or warning | redacted before it reaches the report, note or log; the [policy](/terragucci/reference/policy/) itself reads the unredacted plan |
 | write-only attribute | its version (`*_wo_version`), labelled as such; the value is never in the plan |
 | ephemeral value | not reported |
@@ -169,7 +221,7 @@ reports:
   role: arn:aws:iam::123456789012:role/terragucci-reports
 ```
 
-`url` is the address that serves the bucket to a browser; terragucci never derives it from the bucket name. With it the note links the bucket's `report.html` and `report.json` records it as `run.report_url`. Without it the note links the CI run.
+`url` is the address that serves the bucket to a browser; terragucci never derives it from the bucket name. With it the note links the bucket's `report.html` and `report.json` records it as `run.report_url`. Without it the note links the bucket's copy presigned; see [Where the note links](#where-the-note-links).
 
 A run's report and plans land under one path holding the full commit SHA, so links are relative and work in the bucket:
 

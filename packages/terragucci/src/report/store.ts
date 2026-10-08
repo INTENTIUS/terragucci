@@ -18,7 +18,7 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { esc, renderHtml } from "./html";
-import { StoreConflict, StoreError, type ObjectStore } from "./object-store";
+import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
 import type { Report } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
@@ -28,7 +28,8 @@ export function writeReportDir(dir: string, report: Report, plans: Map<string, {
   const files: Record<string, string> = {
     "report.json": JSON.stringify(report, null, 2) + "\n",
     "report.html": renderHtml(report),
-    "note.md": renderNote(report, note),
+    // The note shows each root's rendered plan: the same text as its plan.txt.
+    "note.md": renderNote(report, { plans: new Map([...plans].flatMap(([root, p]) => (p.text !== undefined ? [[root, p.text] as const] : []))), ...note }),
     "summary.txt": renderText(report),
     "gitlab-terraform.json": JSON.stringify(renderGitLabTerraform(report)) + "\n",
   };
@@ -77,6 +78,30 @@ export function reportsBase(reports: ReportsAddress | undefined): string | undef
 export function bucketReportUrl(report: Report, reports: ReportsAddress | undefined): string | undefined {
   const base = reports?.url?.replace(/\/+$/, "");
   return base ? `${base}/${runKey(report, reports?.prefix)}/report.html` : undefined;
+}
+
+/**
+ * Presigned links to the run's report.html and to each root's plan.txt in the
+ * bucket, for a bucket no `reports.url` serves: what the note links. They
+ * are made before the objects are written, which a presigned link allows,
+ * and live PRESIGN_MAX_SECONDS, the longest the stores allow.
+ */
+export async function presignedLinks(
+  store: ObjectStore,
+  report: Report,
+  prefix: string | undefined,
+  roots: string[],
+  seconds = PRESIGN_MAX_SECONDS,
+  now = new Date(),
+): Promise<{ reportUrl: string; planUrls: Map<string, string>; expires: string }> {
+  const key = runKey(report, prefix);
+  const html = await store.presign(`${key}/report.html`, seconds, now);
+  const planUrls = new Map<string, string>();
+  for (const root of roots) {
+    const rel = report.roots.find((r) => r.path === root)?.plan.text;
+    if (rel) planUrls.set(root, (await store.presign(`${key}/${rel}`, seconds, now)).url);
+  }
+  return { reportUrl: html.url, planUrls, expires: html.expires.toISOString() };
 }
 
 /** The key of the page that sends a trace's reader on to its run's report. */

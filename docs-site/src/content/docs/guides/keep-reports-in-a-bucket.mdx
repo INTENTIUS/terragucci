@@ -72,7 +72,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
      </TabItem>
    </Tabs>
 
-   `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` there instead of the CI run. On GitHub and Forgejo that run's artifact is a download.
+   `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` and each root's `plan.txt` there. Without `url` the note links them in the bucket, presigned for up to 7 days.
 
 2. Write the pipeline again, and commit the result.
 
@@ -181,7 +181,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
    | You deploy | nothing | one CloudFormation stack in your account, in `us-east-1`; AWS only |
    | Who can open it | anyone holding the link, until it expires | whoever your identity provider signs in |
    | What opens | one object; its links to other reports need links of their own | every report and index, with their links |
-   | `reports.url` | not set: the plan note links the CI run | `https://<DomainName>` |
+   | `reports.url` | not set: the plan note links `report.html` and each `plan.txt`, presigned | `https://<DomainName>` |
 
    <Tabs syncKey="open-reports">
      <TabItem label="Presigned link">
