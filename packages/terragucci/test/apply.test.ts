@@ -2,13 +2,13 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APPLIED_PATH, applyWave, applyWaves, approvedPath, decideGate, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, approvedPath, decideGate, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
 import { noteMarker } from "../src/review";
 import { refusedDiff } from "../src/respond/refused";
 import { gateSealPayload } from "../src/seal";
-import { OVERRIDE_LEDGER, OVERRIDE_OP, overrideDigest } from "../src/override";
+import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideDigest, type OverrideRule } from "../src/override";
 import { git, tmp, write } from "./helpers";
 import { signerLine, sshsig, sshKey } from "./sshsig";
 
@@ -95,6 +95,39 @@ describe("decideGate", () => {
   it("an expired pending fact does not stand", () => {
     const l = ledger({ pending: [pending("wave-1", "d1", 1, 1)] });
     expect(decideGate(l, "wave-1", "d1", T(5))).toEqual({ status: "waiting" });
+  });
+});
+
+describe("decideOverride", () => {
+  const rule: OverrideRule = { mode: "ledger", overriders: ["alice"], signers: null, signersPath: ".chant/allowed_signers" };
+  const d1 = overrideDigest("a", "sha256:1", ["main.r"]);
+  const d2 = overrideDigest("a", "sha256:2", ["main.r"]);
+  const fact = (digest: string, h: number): PendingRecord => ({ ...pending("a", digest, h), op: OVERRIDE_OP });
+  const ov = (digest: string, h: number) => ({ ...resolution("a", digest, h), op: OVERRIDE_OP, note: "why" });
+  const used = (digest: string, approvedAt: number, gate = "a"): AppliedRecord => ({ version: 1, kind: "applied", op: OVERRIDE_OP, gate, planDigest: digest, approvedAt: T(approvedAt), approvedBy: "alice", timestamp: T(approvedAt + 1) });
+  const decide = (l: GateLedger) => decideOverride(l, rule, "a", "sha256:2", ["main.r"], T(5));
+
+  it("an override of another plan that no wave applied is the moved refusal", () => {
+    expect(decide({ pending: [fact(d1, 1)], resolutions: [ov(d1, 2)] })).toMatchObject({ status: "moved", by: "alice", was: d1 });
+  });
+
+  it("an override a wave applied under refuses nothing and is named as spent", () => {
+    const r = decide({ pending: [fact(d1, 1)], resolutions: [ov(d1, 2)], applied: [used(d1, 2)] });
+    expect(r).toMatchObject({ status: "none", spent: { digest: d1, by: "alice" } });
+  });
+
+  it("an applied record of another root or an earlier override does not spend it", () => {
+    expect(decide({ pending: [fact(d1, 1)], resolutions: [ov(d1, 2)], applied: [used(d1, 2, "b")] }).status).toBe("moved");
+    expect(decide({ pending: [fact(d1, 1)], resolutions: [ov(d1, 3)], applied: [used(d1, 2)] }).status).toBe("moved");
+  });
+
+  it("a spent override and a stale one: the stale one still refuses", () => {
+    const d3 = overrideDigest("a", "sha256:3", ["main.r"]);
+    expect(decide({ pending: [fact(d1, 1)], resolutions: [ov(d1, 2), ov(d3, 3)], applied: [used(d1, 2)] })).toMatchObject({ status: "moved", was: d3 });
+  });
+
+  it("an override of this digest still counts after an earlier one was spent", () => {
+    expect(decide({ pending: [fact(d1, 1)], resolutions: [ov(d1, 2), ov(d2, 4)], applied: [used(d1, 2)] }).status).toBe("overridden");
   });
 });
 
@@ -658,6 +691,31 @@ describe("a wave behind its gate", () => {
       expect(facts).toHaveLength(2);
       expect(facts[1]!.planDigest).not.toBe(pendingFact.planDigest);
       expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(1);
+    });
+
+    it("an override a wave applied is spent: once the root plans again, the new denial is recorded and waits for its own override", async () => {
+      const { work, origin, bin, log, lines, pendingFact } = await denied();
+      record(origin, override(pendingFact.planDigest!));
+      expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+      const usedOf = () => parseApplied(git(origin, "show", `chant/lifecycle:${appliedPathFor(OVERRIDE_LEDGER)}`));
+      expect(usedOf()).toEqual([expect.objectContaining({ op: OVERRIDE_OP, gate: "a", planDigest: pendingFact.planDigest, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) })]);
+      const plans = process.env.PLANS!;
+      writeFileSync(join(plans, "a.json"), readFileSync(join(plans, "a.json"), "utf-8").replace('"input":"1"', '"input":"2"'));
+      lines.length = 0;
+      expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(1);
+      const text = lines.join("\n");
+      expect(text).toContain(`the override of ${pendingFact.planDigest} by alice was used by the apply of that plan`);
+      expect(text).not.toContain("overrode an earlier plan or other rules");
+      expect(text).toContain('terragucci override a --rule main.deny_data --reason "<why>"');
+      const facts = ledger(origin).pending;
+      expect(facts).toHaveLength(2);
+      const fresh = facts[1]!.planDigest!;
+      expect(fresh).not.toBe(pendingFact.planDigest);
+      // The new denial's own override applies it, and is recorded as used in turn.
+      record(origin, override(fresh, "alice", 5));
+      expect(await applyWave(work, { ...opts(bin), now: T(6) })).toBe(0);
+      expect(usedOf().map((u) => u.planDigest)).toEqual([pendingFact.planDigest, fresh]);
     });
 
     it("a commit that adds its author to policy.override is judged by the list at base, so nothing is recorded or counted", async () => {

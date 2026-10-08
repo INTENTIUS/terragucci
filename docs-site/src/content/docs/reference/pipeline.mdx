@@ -18,7 +18,7 @@ Pushes apply one at a time in the order they arrived; none cancels another.
 
 A wave whose commit is no longer the branch tip stands down on GitHub and Forgejo. Pull requests take no locks under the defaults `apply.when: merge` and `locks: apply`; with [`locks: plan`](#plan-locks) a pull request locks its roots from its first plan, and under `apply.when: pull-request`, an applying pull request, or one a writer comments `/terragucci lock` on, locks the roots it reaches (in a Terragrunt repo, the units).
 
-`tf-plan`, `tf-drift` and `tf-apply` plan a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 16 otherwise. `tf-apply` applies them up to the same number at once. A stage's roots share one provider cache, the job's `TF_PLUGIN_CACHE_DIR` or one of the stage's own, and their inits take turns, so each provider downloads once per job.
+`tf-plan`, `tf-drift` and `tf-apply` plan a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 4 otherwise. `tf-apply` applies them up to the same number at once. A stage's roots share one provider cache, the job's `TF_PLUGIN_CACHE_DIR` or one of the stage's own, and their inits take turns, so each provider downloads once per job.
 
 ## Apply from a comment
 
