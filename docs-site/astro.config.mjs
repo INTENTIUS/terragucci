@@ -70,7 +70,7 @@ export default defineConfig({
 			// The title gets a "Copy page as Markdown" button, an llms.txt pointer and
 			// the page's agent prompt. The footer adds the tutorial step and a small taco.
 			components: { PageTitle: './src/components/PageTitle.astro', Footer: './src/components/Footer.astro' },
-			description: 'Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.',
+			description: 'One workflow and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],
