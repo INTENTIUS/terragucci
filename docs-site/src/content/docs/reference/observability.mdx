@@ -75,12 +75,14 @@ Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where t
 
 Past a span budget (`CHOUDOUFU_TRACE_DETAIL`, `CHOUDOUFU_TRACE_SPAN_BUDGET`) choudoufu sums timings by resource type or provider method, and the report says so.
 
-With `binary: choudoufu` the report also gets these two:
+The report can also list these two:
 
 | Timing | Sent by | Spans | In `report.json` |
 |---|---|---|---|
 | provider calls | choudoufu | `tfplugin5.Provider/<method>` and `tfplugin6.Provider/<method>`, with `rpc.method` | `roots[].timings.provider_calls` |
 | summed timings | choudoufu, once a walk passes its span budget (2000 by default) | `Aggregate: <span name>` | `roots[].timings.aggregates` |
+
+<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci. <a href="/terragucci/guides/use-a-binary/#choudoufu">Set it up</a>.</small>
 
 ### Timings by binary
 
@@ -93,7 +95,7 @@ With `binary: choudoufu` the report also gets these two:
 
 ### State lock waits
 
-With `binary: choudoufu` on a root whose backend locks (S3 with `use_lockfile`, say), each wait shows as a `State lock wait` span with its attempts. The report lists it and `terragucci_lock_wait_seconds` carries it.
+On a root whose backend locks (S3 with `use_lockfile`, say), each wait shows as a `State lock wait` span with its attempts. The report lists it and `terragucci_lock_wait_seconds` carries it.
 
 | Run | State lock wait |
 |---|---|
@@ -101,6 +103,8 @@ With `binary: choudoufu` on a root whose backend locks (S3 with `use_lockfile`, 
 | a `tf-apply` wave's plan and apply | up to five minutes (`-lock-timeout=5m`) |
 
 `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` set a different wait. A wave writes its report to `terragucci-report/` and the `reports` bucket when set.
+
+<small>Lock-wait spans come from choudoufu on a root whose backend locks; <a href="/terragucci/guides/use-a-binary/#choudoufu">Choose your binary</a> sets it up.</small>
 
 The HTML report shows them under "Where the time went", and `report.json` carries `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 

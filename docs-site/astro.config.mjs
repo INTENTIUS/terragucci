@@ -160,6 +160,7 @@ export default defineConfig({
 						{ label: 'How waves and approvals work', slug: 'concepts/waves-and-approvals' },
 						{ label: 'Why plans are grouped', slug: 'concepts/why-plans-are-grouped' },
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
+						{ label: 'Locking per resource', slug: 'concepts/locking-per-resource' },
 						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},
