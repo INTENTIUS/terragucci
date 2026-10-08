@@ -4,8 +4,9 @@ description: Give an agent the diff between an approved plan and the current one
 claims: []
 prompt: |
   Read https://intentius.io/terragucci/guides/agent-refused-wave/.
-  Add the explain-refusal job for wave <k> to the apply workflow, using a token
-  that can only comment, and open a pull request. Give the job no other permission.
+  Add the explain-refusal job for wave <k> to the apply workflow as the guide's
+  tab for this forge shows it, with no permission beyond what that tab gives,
+  and open a pull request.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
