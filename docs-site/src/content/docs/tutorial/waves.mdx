@@ -15,6 +15,7 @@ prompt: |
 
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
+import { Steps } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
@@ -37,22 +38,37 @@ That pull request drops the records table of staging email. Its note names the d
 
 <Shot step="wave-waiting" view="pull" alt="The destroy pull request in Forgejo. The plan note lists the records table of staging email under destroys and replacements, shows wave 4 with one root and approval not requested. Below it the apply-wave jobs show as skipped on the pull request" optional />
 
-Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key and commits it to `.chant/allowed_signers` on main, the file that says who may approve. Wave 4 plans the destroy and stops: its job exits with code 3 and prints the approve command:
+<Steps>
 
-<Captured step="wave-waiting" cmd="just example merge destroy" optional />
+1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key and commits it to `.chant/allowed_signers` on main, the file that says who may approve.
 
-<Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing chant approve tf-apply wave-4 with the plan's digest" optional />
+   <Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
-Read the wave's plans in the report first. The [`chant approve`](/terragucci/concepts/glossary/#chant) command carries the digest the wave planned, so the approval covers those plans and no others. The example's [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists its wave gates, so it runs `approval: sealed` and the approval needs a key listed in `.chant/allowed_signers`. In your own repo the default is `approval: ledger`, which needs no key; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows both.
+2. Wave 4 plans the destroy and stops. Its job exits with code 3 and prints the approve command:
 
-In the example, use the generated key:
+   <Shot step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing chant approve tf-apply wave-4 with the plan's digest" optional />
 
-```bash
-just example approve
-```
+3. Read the wave's plans in the report. The [`chant approve`](/terragucci/concepts/glossary/#chant) command carries the digest the wave planned, so the approval covers those plans and no others.
 
-It runs `chant approve tf-apply wave-4` with that key. The wave counts the approval only when the key is listed in `.chant/allowed_signers` on the default branch as it was before the merge being applied.
+4. Approve with the example's generated key:
 
-Run the wave's job again and wave 4 applies. A plan that changes afterwards is not covered, as the next page shows.
+   ```bash
+   just example approve
+   ```
+
+   It runs `chant approve tf-apply wave-4` with that key.
+
+5. Run the wave's job again, and wave 4 applies. A plan that changes afterwards is not covered, as the next page shows.
+
+</Steps>
+
+Which approvals count depends on `approval`:
+
+| `approval` | Where | An approval counts when |
+|---|---|---|
+| `sealed` | the example, whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists its wave gates | it is sealed by a key listed in `.chant/allowed_signers` on the default branch as it was before the merge being applied |
+| `ledger` | your own repo, by default | it approves the wave's digest; no key needed |
+
+[Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows both, and `pr-review`.
 
 To make every wave wait, set `gate: always` in `terragucci.yml`.
