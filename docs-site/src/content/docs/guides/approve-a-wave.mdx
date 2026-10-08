@@ -144,6 +144,10 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
 
    <Captured step="wave-refused" cmd="just example approve" optional />
 
+   The approval is one line appended to `_gates/tf-apply.jsonl` on `chant/lifecycle`, in a commit of its own:
+
+   <Shot step="approved" view="record" alt="The approval commit on chant/lifecycle in Forgejo, Gate resolution record: it appends one line to _gates/tf-apply.jsonl, a human approval of wave 4 resolved by terragucci-admin, binding the plan digest of the pending line above it and sealed with an ssh signature" />
+
 4. Run the stage again.
 
    | Situation | How to re-run |
@@ -162,6 +166,12 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | a comment that fails a check | runs nothing; the reply names the check ([the checks](/terragucci/reference/pipeline/#when-a-comment-runs-nothing)) |
 
    [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
+
+   In the example, after the module bump's wave 4 was refused and its new plans approved, `/terragucci apply` on the merged pull request resumed the waves and wave 4 applied:
+
+   <Shot step="approved" view="reply" alt="terragucci's reply to /terragucci apply on the merged module bump pull request in Forgejo: it applied waves 1, 2, 3 and 4 of the pull request at its merge commit, and links the run" />
+
+   <Shot step="approved" view="log" alt="The apply-comment job's log: wave 4 of 4 plans eight roots with 11 changes and 1 destroy, its approval mode is sealed, it is approved by terragucci-admin for this digest, each root applies, and wave 4 of 4 applied" />
 
    The report then shows the wave as approved, linked to its record.
 
