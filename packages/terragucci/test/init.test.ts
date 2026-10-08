@@ -15,6 +15,16 @@ function withRemote(remote: string): string {
 }
 
 describe("init", () => {
+  it("comments on GitLab: the pipeline gets the comments job, and the note names the schedule and its variable", async () => {
+    const dir = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "comments: \"*/5 * * * *\"\n" });
+    const r = await init(dir, { binary: "tofu", dryRun: true });
+    const pipeline = r.files.find((f) => f.path.endsWith(".gitlab/terragucci.yml"))!;
+    expect(parseYAML(pipeline.content.split("\n").filter((l) => !l.startsWith("#")).join("\n")).comments).toBeDefined();
+    expect(r.notes.join("\n")).toMatch(/comments is set: add a pipeline schedule with the cron \*\/5 \* \* \* \* and the variable TERRAGUCCI_SCHEDULE set to comments/);
+    const gh = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "comments: \"*/5 * * * *\"\n" });
+    await expect(init(gh, { binary: "tofu", dryRun: true })).rejects.toThrow(/comments is for GitLab/);
+  });
+
   it("refuses apply.when pull-request on GitLab, where a merge request's pipeline is its own", async () => {
     const dir = withRemote("git@gitlab.com:acme/infra.git");
     write(dir, { "terragucci.yml": "apply:\n  when: pull-request\n" });
