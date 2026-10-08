@@ -45,11 +45,7 @@ gitlab|pr-review|with approval: pr-review a merge request approval given before 
 gitlab|approve|terragucci approve in a clone finds the waiting wave and approves its digest, and the next push applies it
 gitlab|gl-comment-plan|a /terragucci plan note from a Developer starts a merge request pipeline on the next play of the comments schedule; a root that is not one is refused, a Reporter gets no reply, and a second play answers nothing again
 gitlab|gl-comment-apply|/terragucci apply on a merged merge request retries its waiting wave at the merge commit, which waits again with no approval and applies with one; an open merge request is refused
-gitlab|gl-comment-drift-schedule|a drift schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone, and the comments schedule the comments job alone
-gitlab|pr-apply|with apply.when: pull-request a /terragucci apply note on an approved merge request starts a pipeline on main that applies its head in waves and then merges it with apply.merge: auto
-gitlab|pr-apply-stale|a /terragucci apply note on an approved merge request whose head is behind main is refused as not up to date, and no pipeline starts
-gitlab|pr-apply-lock|a second merge request that reaches a root an open merge request applied is refused by its mr-apply job with the root and the holder named
-gitlab|pr-apply-trust|a pipeline on main whose TERRAGUCCI_HEAD names another commit than the merge request head is refused by mr-apply, and nothing applies'
+gitlab|gl-comment-drift-schedule|a drift schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone, and the comments schedule the comments job alone'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }

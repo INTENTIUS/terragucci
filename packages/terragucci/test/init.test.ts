@@ -25,16 +25,11 @@ describe("init", () => {
     await expect(init(gh, { binary: "tofu", dryRun: true })).rejects.toThrow(/comments is for GitLab/);
   });
 
-  it("on GitLab, apply.when pull-request needs comments and a merge token, and then writes the mr-apply job", async () => {
+  it("refuses apply.when pull-request on GitLab, where a merge request's pipeline is its own", async () => {
     const dir = withRemote("git@gitlab.com:acme/infra.git");
     write(dir, { "terragucci.yml": "apply:\n  when: pull-request\n" });
-    await expect(init(dir, { binary: "tofu" })).rejects.toThrow(/pull-request on GitLab needs comments: <cron>.*needs apply\.merge_token_env/);
+    await expect(init(dir, { binary: "tofu" })).rejects.toThrow(/apply\.when: pull-request is not supported on GitLab/);
     expect(existsSync(join(dir, ".gitlab-ci.yml"))).toBe(false);
-    write(dir, { "terragucci.yml": "comments: \"*/5 * * * *\"\napply:\n  when: pull-request\n  merge: auto\n  merge_token_env: MERGE_TOKEN\n" });
-    const r = await init(dir, { binary: "tofu", dryRun: true });
-    const doc = parseYAML(r.files.find((f) => f.path.endsWith(".gitlab/terragucci.yml"))!.content.split("\n").filter((l) => !l.startsWith("#")).join("\n"));
-    expect(Object.keys(doc)).toEqual(expect.arrayContaining(["mr-apply", "pr-merge", "confirm", "comments"]));
-    expect(doc["apply-wave-1"]).toBeUndefined();
   });
 
   it.each([

@@ -171,9 +171,9 @@ export function releaseLocks(repo: string, pr: number): string[] {
   throw new ConfigError(`could not push the root locks to ${LIFECYCLE}; check that the job may push to it`);
 }
 
-/** One line naming the roots others hold, for a reply. `name` says how the forge names a holder (GitLab: `merge request !7`). */
-export function describeHeld(held: readonly HeldLock[], name: (pr: number) => string = (pr) => `pull request ${pr}`): string {
+/** One line naming the roots others hold, for a reply. */
+export function describeHeld(held: readonly HeldLock[]): string {
   const byPr = new Map<number, HeldLock[]>();
   for (const h of held) byPr.set(h.pr, [...(byPr.get(h.pr) ?? []), h]);
-  return [...byPr].map(([pr, hs]) => `${hs.map((h) => `\`${h.root}\``).join(", ")} ${hs.length === 1 ? "is" : "are"} locked by ${name(pr)} (${hs[0]!.stage === "plan" ? "planned" : hs[0]!.via === "lock" ? "locked with `/terragucci lock`" : "applied"} by ${hs[0]!.by})`).join("; ");
+  return [...byPr].map(([pr, hs]) => `${hs.map((h) => `\`${h.root}\``).join(", ")} ${hs.length === 1 ? "is" : "are"} locked by pull request ${pr} (${hs[0]!.stage === "plan" ? "planned" : hs[0]!.via === "lock" ? "locked with `/terragucci lock`" : "applied"} by ${hs[0]!.by})`).join("; ");
 }

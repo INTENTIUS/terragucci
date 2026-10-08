@@ -131,9 +131,15 @@ Digests are taken before redaction, so an approval binds the plan as planned.
 
 ## Where reports are kept
 
-By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. To keep them longer, name a bucket in `terragucci.yml`, then run `npx terragucci init` again. Any S3-compatible store works.
+By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. To keep them longer, name a bucket in `terragucci.yml`, then run `npx terragucci init` again.
 
-The job takes the first identity that applies:
+| `reports.bucket` | Store | API |
+|---|---|---|
+| `s3://<bucket>` | S3, or any S3-compatible store | S3, Signature Version 4 |
+| `gs://<bucket>` | Google Cloud Storage | the JSON API |
+| `az://<account>/<container>` | Azure Blob Storage | the Blob REST API |
+
+On S3 the job takes the first identity that applies:
 
 | Order | Identity | Used when |
 |---|---|---|
@@ -146,7 +152,14 @@ The job takes the first identity that applies:
 | store endpoint | `endpoint` | `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL` | AWS |
 | region the requests are signed for | none | `AWS_REGION`, `AWS_DEFAULT_REGION` | `us-east-1` |
 
-`reports.endpoint` wins over the variables. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#3-give-the-job-an-identity-that-writes-only-reports) says why reports get their own identity.
+`reports.endpoint` wins over the variables.
+
+| Store | Identity, first that applies | Link |
+|---|---|---|
+| GCS | `GOOGLE_APPLICATION_CREDENTIALS`: an `external_account` file (what `oidc.gcp` writes) or a `service_account` key | V4 signed URL, signed through IAM `signBlob` or with the key |
+| Azure Blob | `AZURE_STORAGE_KEY`; then `ARM_TENANT_ID`, `ARM_CLIENT_ID` and the token in `ARM_OIDC_TOKEN_FILE_PATH` (what `oidc.azure` sets), traded at `AZURE_AUTHORITY_HOST` | service SAS with the key; user delegation SAS with OIDC |
+
+`reports.role` is for S3 only. [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/#3-give-the-job-an-identity-that-writes-only-reports) says why reports get their own identity.
 
 ```yaml
 reports:
@@ -188,7 +201,7 @@ Every upload rewrites `index.html` and `index.json`.
 | Retention | your bucket's lifecycle rule |
 
 :::caution
-Served as a static site, the index publishes every report in the bucket: put the site behind your identity provider and keep the bucket private. [Keep reports in S3](/terragucci/guides/keep-reports-in-s3/#5-serve-the-index) has the choices.
+Served as a static site, the index publishes every report in the bucket: put the site behind your identity provider and keep the bucket private. [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index) has the choices.
 :::
 
 <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />

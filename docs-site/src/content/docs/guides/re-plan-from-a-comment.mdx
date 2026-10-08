@@ -72,10 +72,10 @@ The text is untrusted and never reaches a script; `terragucci comment` reads it 
 |---|---|---|---|
 | `/terragucci plan` | a re-plan | every GitHub and Forgejo pipeline | a new merge request pipeline |
 | `/terragucci plan <root>` | a re-plan of that root, which must be exactly a root the pipeline knows | every GitHub and Forgejo pipeline | the root is checked, and the whole merge request is planned |
-| `/terragucci apply` | the approved waves | merged pull requests; open ones with `apply.when: pull-request` | merged merge requests: a retry of the merge commit's first apply job that did not succeed; with `apply.when: pull-request`, open ones: an `mr-apply` pipeline on the default branch |
-| `/terragucci apply wave-<n>` | the approved waves up to wave n | as above | an open merge request with `apply.when: pull-request`; otherwise refused, since GitLab runs the waves after a retried job by itself |
-| `/terragucci lock` | locks on the roots (in a Terragrunt repo, the units) this pull request reaches, with no apply | `apply.when: pull-request` or `locks: plan` | `apply.when: pull-request`, through `mr-apply`; otherwise answered as unsupported |
-| `/terragucci unlock` | a release of this pull request's locks | `apply.when: pull-request` or `locks: plan` | as `lock` |
+| `/terragucci apply` | the approved waves | merged pull requests; open ones with `apply.when: pull-request` | merged merge requests: a retry of the merge commit's first apply job that did not succeed |
+| `/terragucci apply wave-<n>` | the approved waves up to wave n | as above | refused: GitLab runs the waves after a retried job by itself |
+| `/terragucci lock` | locks on the roots (in a Terragrunt repo, the units) this pull request reaches, with no apply | `apply.when: pull-request` or `locks: plan` | answered as unsupported |
+| `/terragucci unlock` | a release of this pull request's locks | `apply.when: pull-request` or `locks: plan` | answered as unsupported |
 | `/terragucci agent <ask>` | a coding agent's change | `agent.comment` set; see [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) | answered as unsupported |
 
 No comment approves, and a re-plan cannot change what an approval binds. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check each command must pass. A refusal is a reply that starts with `terragucci:`.

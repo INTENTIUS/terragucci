@@ -46,7 +46,7 @@ The check job is the exception. It runs `fmt`, `init -backend=false`, `validate`
 
 ## Reports
 
-Set these on the plan job when `reports.bucket` is set.
+Set these on the plan job when `reports.bucket` is set. `AWS_` variables are read for an `s3://` bucket only.
 
 | Variable | Meaning |
 |---|---|
@@ -58,6 +58,10 @@ Set these on the plan job when `reports.bucket` is set.
 | `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL` | a store that is not AWS; `reports.endpoint` takes precedence |
 | `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL` | the STS that answers `AssumeRoleWithWebIdentity`; `https://sts.<region>.amazonaws.com` when neither is set |
 | `AWS_REGION`, `AWS_DEFAULT_REGION` | the bucket's region, in that order; `us-east-1` by default |
+| `GOOGLE_APPLICATION_CREDENTIALS` | a `gs://` bucket: the credentials file, which a job with `oidc.gcp` writes |
+| `AZURE_STORAGE_KEY` | an `az://` container: the account key, from the same-named secret; it wins over the job's OIDC identity |
+| `ARM_TENANT_ID`, `ARM_CLIENT_ID`, `ARM_OIDC_TOKEN_FILE_PATH` | an `az://` container without a key: the identity and token a job with `oidc.azure` gets |
+| `AZURE_AUTHORITY_HOST` | Entra ID's address for that token; `https://login.microsoftonline.com` when not set |
 
 ## Secrets the config names
 
@@ -186,8 +190,7 @@ Internal; a value set in `env:` is overwritten.
 
 | Variable | Set for |
 |---|---|
-| `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; on GitLab also the `comments` job, which starts the `mr-apply` pipeline with it; no job running pull request code has it |
-| `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE`, `TERRAGUCCI_HEAD` | GitLab, `apply.when: pull-request`: the variables the `comments` job starts the `mr-apply` pipeline with, naming the merge request, its note and its head; `mr-apply` reads all three again from GitLab |
+| `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; no job running pull request code has it |
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME` | steps naming a pull request, wave or root |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |

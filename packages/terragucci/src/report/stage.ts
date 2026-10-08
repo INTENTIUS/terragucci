@@ -40,7 +40,8 @@ import { checkDriftSchedule } from "./drift-schedule";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { checkPlans, governingPolicy, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
-import { S3Client, s3FromEnv, type S3Fetch } from "./s3";
+import { storeFromEnv } from "./bucket";
+import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
@@ -1074,8 +1075,7 @@ async function finish(
   writeReportDir(dir, report, plans, { ...links.note, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
   let uploaded: Uploaded | undefined;
   if (reports?.bucket) {
-    const s3 = new S3Client(s3FromEnv(reports, env), options.fetch);
-    uploaded = await uploadReport(s3, dir, report, reports.prefix);
+    uploaded = await uploadReport(storeFromEnv(reports, env, options.fetch), dir, report, reports.prefix);
   }
   let issue: StageResult["issue"];
   if (drift) {

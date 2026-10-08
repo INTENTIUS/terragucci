@@ -1,12 +1,12 @@
 ---
-title: Keep reports in S3
-description: Copy every plan report to a bucket, so they outlive your CI's artifact retention and share one index.
+title: Keep reports in a bucket
+description: Copy every plan report to an S3 bucket, a GCS bucket or an Azure Blob container, so they outlive your CI's artifact retention and share one index.
 claims: [report, drill-down, report-oidc]
 prompt: |
-  Read https://intentius.io/terragucci/guides/keep-reports-in-s3/.
+  Read https://intentius.io/terragucci/guides/keep-reports-in-a-bucket/.
   Add the `reports:` block for bucket <bucket>, rerun `npx terragucci init`, write
-  the IAM policy the page gives as a file for me to review, and open a pull request.
-  Do not create the role, the bucket, any secret or the front door stack.
+  the access policy the page gives for my cloud as a file for me to review, and open a pull request.
+  Do not create the role, the bucket, the container, any secret or the front door stack.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -19,8 +19,13 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
 ## Before you start
 
-- An S3-compatible bucket. Google Cloud Storage and MinIO work too.
-- An identity the plan job writes with: an AWS role (OIDC) or keys in your forge's secrets. Step 3 has both.
+| Cloud | Store | Identity the plan job writes with |
+|---|---|---|
+| AWS | an S3 bucket, or an S3-compatible store such as R2 or MinIO | `reports.role` over OIDC, or keys |
+| GCP | a Cloud Storage bucket, through its JSON API | the plan service account of `oidc.gcp` |
+| Azure | a Blob Storage container | the plan client of `oidc.azure`, or the account key |
+
+[OIDC](/terragucci/reference/pipeline/#credentials) sets up the GCP and Azure identities.
 
 ## Steps
 
@@ -28,6 +33,8 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
 1. Name the bucket in `terragucci.yml`.
 
+   <Tabs syncKey="cloud">
+     <TabItem label="AWS">
    ```yaml
    reports:
      bucket: s3://acme-terragucci
@@ -44,6 +51,26 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
    env:
      AWS_REGION: eu-west-2
    ```
+     </TabItem>
+     <TabItem label="GCP">
+   ```yaml
+   reports:
+     bucket: gs://acme-terragucci
+     prefix: reports
+   ```
+
+   An emulator sets `endpoint`; the default is `https://storage.googleapis.com`.
+     </TabItem>
+     <TabItem label="Azure">
+   ```yaml
+   reports:
+     bucket: az://acmeterragucci/reports
+     prefix: reports
+   ```
+
+   The bucket is `az://<storage account>/<container>`. A sovereign cloud or an emulator sets `endpoint`; the default is `https://<account>.blob.core.windows.net`.
+     </TabItem>
+   </Tabs>
 
    `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` there instead of the CI run. On GitHub and Forgejo that run's artifact is a download.
 
@@ -55,31 +82,21 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
 3. <span id="3-give-the-job-an-identity-that-writes-only-reports"></span>Give the job an identity that writes only reports.
 
-   The plan job runs the pull request's code, which can read its credentials. Write reports with an identity allowed only `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::acme-terragucci/reports/*`.
+   The plan job runs the pull request's code, which can read its credentials. Give the identity that writes reports nothing but read and write under the prefix.
+
+   <Tabs syncKey="cloud">
+     <TabItem label="AWS">
+   Allow only `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::acme-terragucci/reports/*`.
 
    With `oidc` set, `reports.role` is that identity, assumed through STS `AssumeRoleWithWebIdentity` under a trust policy like your plan role's. `config check` refuses a `reports.role` that is the plan or apply role.
 
-   Without `oidc`, give an IAM user the same policy and store its keys as below. `init` passes them to the plan, re-plan and drift jobs only, where OpenTofu sees them too.
+   Without `oidc`, give an IAM user the same policy and store its keys as secrets. `init` passes them only to the jobs that plan, where OpenTofu sees them too.
 
-   <Tabs syncKey="forge">
-     <TabItem label="GitHub">
-       Repository secrets.
-     </TabItem>
-     <TabItem label="GitLab">
-       Unprotected CI/CD variables.
-     </TabItem>
-     <TabItem label="Forgejo">
-       Repository secrets, as on GitHub.
-     </TabItem>
-   </Tabs>
-
-   | Variable | Needed |
+   | Secret | Needed |
    |---|---|
    | `AWS_ACCESS_KEY_ID` | always |
    | `AWS_SECRET_ACCESS_KEY` | always |
    | `AWS_SESSION_TOKEN` | when the keys are temporary |
-
-   The job uses the first of these that is set:
 
    | Order | Identity |
    |---|---|
@@ -88,8 +105,42 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
    | 3 | `AWS_ROLE_ARN`, which a job with `oidc` sets to its own role; that role then needs write access to the reports |
 
    A role is assumed with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`; `AWS_ENDPOINT_URL_STS` or `AWS_ENDPOINT_URL` sets the STS address. When STS refuses it, the job fails with STS's error.
+     </TabItem>
+     <TabItem label="GCP">
+   The job writes as `oidc.gcp.plan_service_account`, through the `external_account` file in `GOOGLE_APPLICATION_CREDENTIALS`.
 
-   Even so, a pull request's plan can overwrite any object under the prefix, including other reports and the index. The apply job's CI artifact is the record of what was applied.
+   | Grant to the plan service account | On | For |
+   |---|---|---|
+   | `roles/storage.objectUser`, with an IAM condition on the `reports/` prefix | the bucket | reading and writing reports |
+   | `roles/iam.serviceAccountTokenCreator` | the service account itself | signing the estate page's link through IAM `signBlob` |
+
+   A `service_account` key file in `GOOGLE_APPLICATION_CREDENTIALS` works too: requests carry a JWT it signs, and links are signed with the key.
+     </TabItem>
+     <TabItem label="Azure">
+   The job writes as `oidc.azure.plan_client_id`, trading its token in `ARM_OIDC_TOKEN_FILE_PATH` at Entra ID for a storage token.
+
+   | Assign to the plan client | Scope | For |
+   |---|---|---|
+   | Storage Blob Data Contributor | the container | reading and writing reports |
+   | Storage Blob Delegator | the storage account | the user delegation key that signs a link |
+
+   `AZURE_AUTHORITY_HOST` names Entra ID outside the public cloud, such as `https://login.microsoftonline.us`. Without `oidc.azure`, store the account key as the secret `AZURE_STORAGE_KEY`; `init` maps it to the jobs that plan. An account key reaches every container in the account.
+     </TabItem>
+   </Tabs>
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+   Store them as repository secrets.
+     </TabItem>
+     <TabItem label="GitLab">
+   Use unprotected CI/CD variables.
+     </TabItem>
+     <TabItem label="Forgejo">
+   Repository secrets, as on GitHub.
+     </TabItem>
+   </Tabs>
+
+   Even so, a pull request's plan can overwrite any object under the prefix, the index included. The apply job's CI artifact is the record of what was applied.
 
 4. Open a pull request. When the plan job finishes, its log says where the report went:
 
@@ -118,36 +169,39 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
    | Store | Index write |
    |---|---|
-   | Returns an ETag | conditional: `If-Match`, or `If-None-Match: *` |
-   | No ETag | plain write, last run wins |
-   | `501 Not Implemented` | the condition is dropped |
+   | S3, Azure Blob | conditional: `If-Match` the ETag read, or `If-None-Match: *` |
+   | GCS | conditional: `ifGenerationMatch` the generation read, or `0` |
+   | An S3-compatible store with no ETag | plain write, last run wins |
+   | An S3-compatible store that answers `501 Not Implemented` | the condition is dropped |
 
    The bucket holds every plan, including each attribute value not marked sensitive. Keep it private and open it one of two ways:
 
    | | Presigned link | Front door |
    |---|---|---|
-   | You deploy | nothing | one CloudFormation stack in your account, in `us-east-1` |
+   | You deploy | nothing | one CloudFormation stack in your account, in `us-east-1`; AWS only |
    | Who can open it | anyone holding the link, until it expires | whoever your identity provider signs in |
    | What opens | one object; its links to other reports need links of their own | every report and index, with their links |
    | `reports.url` | not set: the plan note links the CI run | `https://<DomainName>` |
 
    <Tabs syncKey="open-reports">
      <TabItem label="Presigned link">
-       Sign one object for an hour:
+   Sign one object for an hour:
 
-       ```bash
-       aws s3 presign s3://acme-terragucci/reports/github.com/acme/infra/index.html --expires-in 3600
-       ```
+   | Cloud | Command | Longest life |
+   |---|---|---|
+   | AWS | `aws s3 presign s3://acme-terragucci/reports/github.com/acme/infra/index.html --expires-in 3600` | 7 days with an IAM user's keys; a role's session ends sooner |
+   | GCP | `gcloud storage sign-url gs://acme-terragucci/reports/github.com/acme/infra/index.html --duration 1h --impersonate-service-account <service account>` | 7 days |
+   | Azure | `az storage blob generate-sas --account-name acmeterragucci --container-name reports --name reports/github.com/acme/infra/index.html --permissions r --expiry <time> --auth-mode login --as-user --full-uri` | 7 days |
 
-       A link made with an IAM user's keys lasts up to 7 days. A link made with a role's credentials stops working when that session ends.
+   [`terragucci estate`](/terragucci/guides/see-every-project/) prints such a link to its page on each cloud.
      </TabItem>
      <TabItem label="Front door">
-       Deploy the template in [The front door](#the-front-door) below, then set `url` to its address:
+   Deploy the template in [The front door](#the-front-door) below, then set `url` to its address:
 
-       ```yaml
-       reports:
-         url: https://reports.acme.example
-       ```
+   ```yaml
+   reports:
+     url: https://reports.acme.example
+   ```
      </TabItem>
    </Tabs>
 
@@ -181,9 +235,9 @@ Register a web application with your identity provider first, with the redirect 
    aws cloudformation deploy --region us-east-1 --stack-name terragucci-reports \
      --template-file reports-front-door.json --capabilities CAPABILITY_IAM \
      --parameter-overrides ReportsBucket=acme-terragucci ReportsBucketRegion=us-east-1 \
-       DomainName=reports.acme.example HostedZoneId=Z0123456789ABCDEFGHIJ \
-       OidcIssuer=https://accounts.google.com OidcClientId=<client id> \
-       OidcClientSecretName=terragucci-reports-client AllowedEmailDomain=acme.example
+   DomainName=reports.acme.example HostedZoneId=Z0123456789ABCDEFGHIJ \
+   OidcIssuer=https://accounts.google.com OidcClientId=<client id> \
+   OidcClientSecretName=terragucci-reports-client AllowedEmailDomain=acme.example
    ```
 
 3. Let the distribution read the bucket. Add the statement in the stack's `BucketPolicyStatement` output to the bucket's policy:
