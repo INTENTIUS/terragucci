@@ -25,6 +25,18 @@ describe("init", () => {
     await expect(init(gh, { binary: "tofu", dryRun: true })).rejects.toThrow(/comments is for GitLab/);
   });
 
+  it("gitlab.token: protected says how to protect the variable, writes the plan job with no token, and needs comments", async () => {
+    const dir = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "comments: \"*/5 * * * *\"\ngitlab:\n  token: protected\n" });
+    const r = await init(dir, { binary: "tofu", dryRun: true });
+    const doc = parseYAML(r.files.find((f) => f.path.endsWith(".gitlab/terragucci.yml"))!.content.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+    expect(doc.plan.variables.TG_TOKEN).toBeUndefined();
+    expect(r.notes.join("\n")).toMatch(/gitlab\.token is protected: under Settings > CI\/CD > Variables, edit GITLAB_TOKEN and tick Protect variable and Mask variable/);
+    const bare = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "gitlab:\n  token: protected\n" });
+    await expect(init(bare, { binary: "tofu", dryRun: true })).rejects.toThrow(/gitlab\.token: protected needs comments/);
+    // The default names no protection: the plan job holds the token.
+    expect((await init(withRemote("git@gitlab.com:acme/infra.git"), { binary: "tofu", dryRun: true })).notes.join("\n")).not.toMatch(/gitlab\.token/);
+  });
+
   it("on GitLab, apply.when pull-request needs comments and a merge token, and then writes the mr-apply job", async () => {
     const dir = withRemote("git@gitlab.com:acme/infra.git");
     write(dir, { "terragucci.yml": "apply:\n  when: pull-request\n" });

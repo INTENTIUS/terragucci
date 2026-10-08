@@ -49,7 +49,9 @@ gitlab|gl-comment-drift-schedule|a drift schedule with no TERRAGUCCI_SCHEDULE ru
 gitlab|pr-apply|with apply.when: pull-request a /terragucci apply note on an approved merge request starts a pipeline on main that applies its head in waves and then merges it with apply.merge: auto
 gitlab|pr-apply-stale|a /terragucci apply note on an approved merge request whose head is behind main is refused as not up to date, and no pipeline starts
 gitlab|pr-apply-lock|a second merge request that reaches a root an open merge request applied is refused by its mr-apply job with the root and the holder named
-gitlab|pr-apply-trust|a pipeline on main whose TERRAGUCCI_HEAD names another commit than the merge request head is refused by mr-apply, and nothing applies'
+gitlab|pr-apply-trust|a pipeline on main whose TERRAGUCCI_HEAD names another commit than the merge request head is refused by mr-apply, and nothing applies
+gitlab|gl-token-protected|with gitlab.token: protected a job the merge request adds to its own pipeline finds GITLAB_TOKEN empty, and the comments schedule posts the plan note and terragucci/plan
+gitlab|gl-review-bot|under approval: pr-review an approval by the user the pipeline token acts as leaves the wave waiting, and nothing applies'
 ALL_FORGES="aws forgejo github gitlab"
 
 claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }

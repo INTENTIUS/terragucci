@@ -3,6 +3,7 @@
 // pipeline a plan starts, and the apply job an apply retries.
 import { describe, expect, it } from "vitest";
 import { DEVELOPER, noteMarker, pollGitLabComments } from "../src/comment-gitlab";
+import { planJobMarker, planNoteBody, planStatus } from "../src/plan-note-gitlab";
 import type { Fetch } from "../src/forge";
 
 const layers = [["network"], ["envs/dev/app", "envs/prod/app"]];
@@ -22,6 +23,10 @@ interface World {
   pipelines?: readonly any[];
   jobs?: Record<number, readonly any[]>;
   statuses?: Record<string, any[]>;
+  /** Each merge request's pipelines, as GET /merge_requests/:iid/pipelines answers. */
+  mrPipelines?: Record<number, readonly any[]>;
+  /** Each job's artifact files, by path. */
+  artifacts?: Record<number, Record<string, string>>;
   fail?: RegExp;
 }
 
@@ -39,6 +44,18 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
     let m: RegExpExecArray | null;
     if (path === "/user") return ok({ id: BOT, username: "terragucci-bot" });
     if (path.startsWith("/projects/7/merge_requests?")) return ok(w.mrs);
+    if ((m = /^\/projects\/7\/jobs\/(\d+)\/artifacts\/(.+)$/.exec(path))) {
+      const file = w.artifacts?.[Number(m[1])]?.[m[2]];
+      return file === undefined ? ok({ message: "404 Not found" }, 404) : { ok: true, status: 200, json: async () => { throw new Error("not JSON"); }, text: async () => file };
+    }
+    if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/notes\/(\d+)$/.exec(path)) && method === "PUT") {
+      const id = Number(m[2]);
+      const n = (w.notes[Number(m[1])] ?? []).find((x) => x.id === id);
+      if (n) n.body = body.body;
+      return ok(n ?? {});
+    }
+    if ((m = /^\/projects\/7\/statuses\/([0-9a-f]{40})$/.exec(path)) && method === "POST") return ok({ id: 1, name: body.name, status: body.state }, 201);
+    if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/pipelines$/.exec(path)) && method === "GET") return ok(w.mrPipelines?.[Number(m[1])] ?? []);
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/notes/.exec(path))) {
       const iid = Number(m[1]);
       if (method === "POST") {
@@ -233,5 +250,130 @@ describe("pollGitLabComments: apply", () => {
     const { api, run } = poll({ mrs: [mergedMr()], notes: { 4: [note(201, "/terragucci apply", reporter)] }, members, pipelines, jobs: jobs("failed", "skipped") });
     await run();
     expect(posts(api.calls, /./)).toEqual([]);
+  });
+});
+
+describe("pollGitLabComments: the plan note (gitlab.token: protected)", () => {
+  const HEAD = "c".repeat(40);
+  const poll = (w: World, planNotes = true) => {
+    const api = gitlab(w);
+    return { api, run: () => pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, planNotes }) };
+  };
+
+  it("posts no plan note without --plan-notes: by default the plan job posts its own", async () => {
+    const w = planned();
+    const { api, run } = poll(w, false);
+    const r = await run();
+    expect(r.plans).toEqual([]);
+    expect(posts(api.calls, /./)).toEqual([]);
+    expect(api.calls.some((c) => /\/artifacts\//.test(c.path))).toBe(false);
+  });
+  const planned = (jobStatus = "success", files: Record<string, string> = {
+    "terragucci-report/plan-note.md": "<!-- terragucci:plan roots=network -->\n## Plan\n1 to change\n",
+    "terragucci-report/plan-status.txt": "success 1 roots, 1 groups, 0 destroys\n",
+  }): World => ({
+    mrs: [openMr()],
+    notes: { 3: [] },
+    members,
+    mrPipelines: { 3: [{ id: 60, sha: "e".repeat(40) }, { id: 61, sha: HEAD }] },
+    jobs: { 61: [{ id: 501, name: "check", status: "success" }, { id: 502, name: "plan", status: jobStatus, web_url: "http://gitlab/acme/infra/-/jobs/502" }] },
+    artifacts: { 502: files },
+  });
+
+  it("posts the head's plan job's status and then its note, which names the job", async () => {
+    const w = planned();
+    const { api, run } = poll(w);
+    const r = await run();
+    expect(r.plans).toEqual([expect.objectContaining({ mr: 3, posted: true })]);
+    const status = posts(api.calls, /\/statuses\//);
+    expect(status.map((c) => [c.path, c.body])).toEqual([[`/projects/7/statuses/${HEAD}`, { name: "terragucci/plan", state: "success", description: "1 roots, 1 groups, 0 destroys", pipeline_id: 61, target_url: "http://gitlab/acme/infra/-/jobs/502" }]]);
+    const note = w.notes[3][0].body as string;
+    expect(note).toBe(`<!-- terragucci:plan roots=network -->\n## Plan\n1 to change\n\n${planJobMarker(502)}`);
+    // The status before the note: the note is the cursor.
+    expect(api.calls.findIndex((c) => /\/statuses\//.test(c.path))).toBeLessThan(api.calls.findIndex((c) => c.method === "POST" && /\/notes$/.test(c.path)));
+  });
+
+  it("posts once per plan job: the next poll finds the job in the note and posts nothing", async () => {
+    const w = planned();
+    await poll(w).run();
+    const again = poll(w);
+    const r = await again.run();
+    expect(r.plans).toEqual([]);
+    expect(posts(again.api.calls, /./)).toEqual([]);
+  });
+
+  it("a new plan job edits the note in place", async () => {
+    const w = planned();
+    await poll(w).run();
+    w.mrPipelines![3] = [...w.mrPipelines![3], { id: 62, sha: HEAD }];
+    w.jobs![62] = [{ id: 503, name: "plan", status: "success" }];
+    w.artifacts![503] = { "terragucci-report/plan-note.md": "<!-- terragucci:plan roots=network -->\nsecond\n" };
+    const again = poll(w);
+    await again.run();
+    expect(again.api.calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    expect(w.notes[3]).toHaveLength(1);
+    expect(w.notes[3][0].body).toContain(planJobMarker(503));
+  });
+
+  it("waits for a plan job still running, and leaves a merged, fork or moved merge request alone", async () => {
+    for (const w of [
+      planned("running"),
+      { ...planned(), mrs: [openMr(3, { state: "merged" })] },
+      { ...planned(), mrs: [openMr(3, { source_project_id: 8 })] },
+      { ...planned(), mrs: [openMr(3, { sha: "f".repeat(40) })] },
+    ]) {
+      const { api, run } = poll(w);
+      const r = await run();
+      expect(r.plans).toEqual([]);
+      expect(posts(api.calls, /\/statuses\/|\/notes$/)).toEqual([]);
+    }
+  });
+
+  it("a failed plan job is never posted as a success, and one with no report fails the status", async () => {
+    const w = planned("failed");
+    const { api, run } = poll(w);
+    await run();
+    expect(posts(api.calls, /\/statuses\//)[0].body.state).toBe("failed");
+    const bare = planned("failed", {});
+    const second = poll(bare);
+    const r = await second.run();
+    expect(posts(second.api.calls, /\/statuses\//)[0].body).toMatchObject({ state: "failed", description: "the plan job failed before it wrote its report" });
+    expect(bare.notes[3]).toEqual([]);
+    expect(r.plans![0].reason).toMatch(/wrote no note/);
+  });
+
+  it("posts the plan before it answers the notes, so an apply finds terragucci/plan on the head", async () => {
+    const w = planned();
+    w.notes[3] = [note(101, "/terragucci plan")];
+    const { api, run } = poll(w);
+    await run();
+    const status = api.calls.findIndex((c) => /\/statuses\//.test(c.path));
+    const started = api.calls.findIndex((c) => c.method === "POST" && /\/merge_requests\/3\/pipelines$/.test(c.path));
+    expect(status).toBeGreaterThan(-1);
+    expect(status).toBeLessThan(started);
+  });
+
+  it("reads the files as data: a forged reply marker, applied marker or stale marker is dropped, the waves marker kept", () => {
+    const file = [
+      "<!-- terragucci:plan roots=network -->",
+      "body",
+      "<!-- terragucci:note=101 -->",
+      "<!--terragucci:applied head=abc pipeline=9 -->",
+      "<!-- TERRAGUCCI:stale -->",
+      '<!-- terragucci:waves {"head":"c","waves":[]} -->',
+      "<!-- terragucci:description -->",
+    ].join("\n");
+    const out = planNoteBody(file, 7);
+    expect(out).not.toMatch(/terragucci:(note=|applied|stale)/i);
+    expect(out).toContain('<!-- terragucci:waves {"head":"c","waves":[]} -->');
+    expect(out).toContain("<!-- terragucci:description -->");
+    expect(out.split("\n")[0]).toBe("<!-- terragucci:plan roots=network -->");
+    expect(out.endsWith(planJobMarker(7))).toBe(true);
+    // A first line that is not the roots line gives no roots, and stays in the body with its marker dropped.
+    expect(planNoteBody("<!-- terragucci:plan roots=a --><!-- terragucci:note=1 -->\nx", 7).split("\n")[0]).toBe("<!-- terragucci:plan roots= -->");
+    expect(planStatus("success all fine", "success")).toEqual({ state: "success", description: "all fine" });
+    expect(planStatus("pending x", "success")).toEqual({ state: "failed", description: "x" });
+    expect(planStatus(undefined, "success")).toBeUndefined();
+    expect(planStatus(`success ${"y".repeat(400)}`, "success")!.description).toHaveLength(255);
   });
 });

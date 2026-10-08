@@ -339,18 +339,25 @@ export interface Review {
 }
 
 /**
+ * The users the run's own token acts as on GitHub and Forgejo. A review by one
+ * of them is the pipeline's, never a reviewer's, so it never counts.
+ */
+export const TOKEN_USERS: ReadonlySet<string> = new Set(["github-actions[bot]", "gitea-actions", "forgejo-actions"]);
+
+/**
  * Whether the head has an approval, by the forge's reviews: each reviewer's
  * latest review counts, the author's never does, and an approval counts only
  * on the commit it was given on, so a push after the review needs a fresh
  * one. A reviewer whose latest review asks for changes holds the apply back.
  * On GitHub an approver needs write access; on Forgejo the review is
- * official, which says the same.
+ * official, which says the same. A review by the run's own token (TOKEN_USERS)
+ * never counts.
  */
 export async function approvalOf(reviews: Review[], author: string | undefined, head: string, mayWrite: (login: string) => Promise<boolean>): Promise<{ by: string[]; changes: string[] }> {
   const latest = new Map<string, Review>();
   for (const r of reviews) {
     const login = r?.user?.login;
-    if (typeof login !== "string" || login === author || r.dismissed === true) continue;
+    if (typeof login !== "string" || login === author || TOKEN_USERS.has(login) || r.dismissed === true) continue;
     if (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED" || r.state === "REQUEST_CHANGES") latest.set(login, r);
   }
   const by: string[] = [];

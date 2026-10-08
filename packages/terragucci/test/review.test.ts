@@ -96,6 +96,8 @@ describe("reviewWave", () => {
       [[approve("reader")], [note("jcs1-sha256:aa")], /no reviewer other than its author/],
       [[approve("alice", "c".repeat(40))], [note("jcs1-sha256:aa")], /no reviewer other than its author/],
       [[approve("alice"), { user: { login: "bob" }, state: "CHANGES_REQUESTED", commit_id: HEAD }], [note("jcs1-sha256:aa")], /bob asked for changes/],
+      // The run's own token is the pipeline's, never a reviewer's.
+      [[approve("github-actions[bot]")], [note("jcs1-sha256:aa")], /no reviewer other than its author/],
       [[approve("alice")], [note("jcs1-sha256:aa", "c".repeat(40))], /has no digest for wave 1/],
     ];
     for (const [reviews, comments, why] of cases) {
@@ -150,12 +152,14 @@ describe("pr-review on GitLab", () => {
   const mr = { iid: 3, state: "merged", merge_commit_sha: MERGE, sha: HEAD, author: { username: "author" } };
   const system = (who: string, id: number, body: string, at: string) => ({ system: true, author: { username: who, id }, body, created_at: at });
   const routes = (notes: unknown[]) => ({
+    "GET user": { id: 900, username: "project_9_bot" },
     [`GET projects/9/repository/commits/${MERGE}/merge_requests`]: [mr],
     "GET projects/9/merge_requests/3/versions": [{ id: 2, head_commit_sha: HEAD, created_at: "2026-10-01T10:00:00Z" }, { id: 1, head_commit_sha: "c".repeat(40), created_at: "2026-10-01T09:00:00Z" }],
     "GET projects/9/merge_requests/3/notes": [{ system: false, body: noteMarker({ head: HEAD, waves: [{ number: 1, digest: "jcs1-sha256:aa", waits: true }] }) }, ...notes],
     "GET projects/9/members/all/1": { access_level: 30 },
     "GET projects/9/members/all/2": { access_level: 20 },
     "GET projects/9/members/all/3": { access_level: 40 },
+    "GET projects/9/members/all/900": { access_level: 40 },
   });
 
   it("an approval after the latest push by a developer other than the author approves the wave", async () => {
@@ -172,6 +176,24 @@ describe("pr-review on GitLab", () => {
       const { fetch } = forge(routes(notes));
       expect((await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).kind).toBe("none");
     }
+  });
+
+  it("an approval by the user the job's token acts as never counts, and the wave says so", async () => {
+    const { fetch } = forge(routes([system("project_9_bot", 900, "approved this merge request", "2026-10-01T11:00:00Z")]));
+    const r = await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" });
+    expect(r.kind).toBe("none");
+    expect((r as { why: string }).why).toMatch(/the approval by project_9_bot, the user the job's token acts as, never counts/);
+    // Beside a person's approval it adds nothing, and the person's still counts.
+    const both = forge(routes([system("project_9_bot", 900, "approved this merge request", "2026-10-01T11:00:00Z"), system("alice", 1, "approved this merge request", "2026-10-01T11:00:00Z")]));
+    expect(await reviewWave({ env: glEnv, fetch: both.fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toEqual({ kind: "approved", pr: 3, head: HEAD, by: ["alice"] });
+  });
+
+  it("when GitLab does not say who the token is, no approval counts", async () => {
+    const r = routes([system("alice", 1, "approved this merge request", "2026-10-01T11:00:00Z")]) as Record<string, unknown>;
+    delete r["GET user"];
+    const { fetch } = forge(r);
+    const out = await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" });
+    expect(out).toMatchObject({ kind: "none", why: expect.stringMatching(/could not read which user the job's token acts as/) });
   });
 
   it("plans that moved after the approval are refused, as on the other forges", async () => {

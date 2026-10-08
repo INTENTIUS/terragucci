@@ -60,6 +60,16 @@ export type Binary = (typeof BINARIES)[number];
 export type ForgeName = (typeof FORGES)[number];
 export type Gate = (typeof GATES)[number];
 export type Approval = (typeof APPROVALS)[number];
+
+/**
+ * `gitlab.token`: how a GitLab project keeps its forge token. `unprotected`
+ * (the default): the plan job posts its note with the token at once, so a
+ * merge request's code, which can rewrite the job, can use the token too.
+ * `protected`: the token is a protected variable that no merge request or
+ * branch pipeline sees, and the comments schedule's job posts the plan notes.
+ */
+export const TOKEN_PROTECTIONS = ["unprotected", "protected"] as const;
+export type GitLabToken = (typeof TOKEN_PROTECTIONS)[number];
 export type Runtime = (typeof RUNTIMES)[number];
 export type Dependents = (typeof DEPENDENTS)[number];
 export type PolicyEngine = (typeof POLICY_ENGINES)[number];
@@ -278,6 +288,8 @@ export interface ProjectSettings {
    * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
    */
   comments?: string | false;
+  /** GitLab only: how the project keeps its forge token; see TOKEN_PROTECTIONS. */
+  gitlab?: { token?: GitLabToken };
   runtime?: Runtime;
   /**
    * A bucket for plan reports: `s3://<bucket>`, `gs://<bucket>` or
@@ -383,7 +395,7 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "runtime",
+  "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
   "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards",
 ]);
 
@@ -437,6 +449,14 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.comments must be a cron schedule or false`);
   }
   if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${COMMENTS_GITLAB_ONLY}`);
+  if (s.gitlab !== undefined) {
+    if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
+    else {
+      for (const k of Object.keys(s.gitlab)) if (k !== "token") problems.push(`${where}.gitlab.${k} is not a setting (settings: token)`);
+      oneOf(s.gitlab.token, TOKEN_PROTECTIONS, `${where}.gitlab.token`, problems);
+    }
+    if (s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.gitlab is for GitLab projects; leave it unset on ${String(s.forge)}`);
+  }
   if (s.tips !== undefined && typeof s.tips !== "boolean") problems.push(`${where}.tips must be true or false`);
   if (s.waves !== undefined) {
     if (!isObject(s.waves)) problems.push(`${where}.waves must be a map`);
@@ -544,11 +564,20 @@ export const PR_APPLY_NEEDS_ON_GITLAB = {
   token: "pull-request on GitLab needs apply.merge_token_env: the comments job starts the apply pipeline on the default branch with that variable's token, which must be allowed to merge there, so name a protected, masked variable holding one",
 };
 
-/** The problems with a GitLab project's `apply.when: pull-request`, when it has any. */
+/**
+ * Why `gitlab.token: protected` needs `comments:`: no merge request pipeline
+ * then holds a token that may post the plan note, so the comments schedule's
+ * job posts it.
+ */
+export const PROTECTED_TOKEN_NEEDS_COMMENTS = "protected needs comments: <cron>: a merge request's pipeline then holds no token that may post the plan note, so the comments schedule's job posts it";
+
+/** The problems with a GitLab project's `apply.when: pull-request` and `gitlab.token: protected`, when it has any. */
 export function gitlabPrApplyProblems(s: Record<string, unknown>, where: string): string[] {
+  const token = isObject(s.gitlab) && s.gitlab.token === "protected" && !s.comments ? [`${where}.gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`] : [];
   const a = s.apply;
-  if (!isObject(a) || a.when !== "pull-request") return [];
+  if (!isObject(a) || a.when !== "pull-request") return token;
   return [
+    ...token,
     ...(s.comments ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.comments}`]),
     ...(a.merge_token_env ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.token}`]),
   ];

@@ -114,6 +114,11 @@ describe("validation", () => {
     [{ forge: "gitlab", comments: "*/5 * * * *", apply: { when: "pull-request" } }, /config\.apply\.when: pull-request on GitLab needs apply\.merge_token_env/],
     [{ locks: "always" }, /config\.locks is "always"; use one of apply, plan/],
     [{ forge: "gitlab", locks: "plan" }, /config\.locks: plan is not supported on GitLab, where no merge request event runs a job from the default branch/],
+    [{ forge: "gitlab", gitlab: { token: "protected" } }, /config\.gitlab\.token: protected needs comments: <cron>/],
+    [{ gitlab: { token: "hidden" } }, /config\.gitlab\.token is "hidden"; use one of unprotected, protected/],
+    [{ gitlab: "protected" }, /config\.gitlab must be a map \(settings: token\)/],
+    [{ gitlab: { tokn: "protected" } }, /config\.gitlab\.tokn is not a setting/],
+    [{ forge: "github", gitlab: { token: "protected" } }, /config\.gitlab is for GitLab projects/],
   ])("%j is refused", (raw, message) => {
     expect(() => validateConfig(raw, "t")).toThrow(message);
   });
@@ -132,6 +137,8 @@ describe("validation", () => {
     [{ locks: "plan" }],
     [{ policy: { path: "policy", override: ["github:alice", "bob"] } }],
     [{ locks: "apply", forge: "gitlab" }],
+    [{ forge: "gitlab", comments: "*/5 * * * *", gitlab: { token: "protected" } }],
+    [{ forge: "gitlab", gitlab: { token: "unprotected" } }],
     [{ locks: "plan", apply: { when: "pull-request" }, forge: "forgejo" }],
     [{ binary: "tofu", terragrunt: { credentials: { "live/prod/**": { plan: "arn:aws:iam::111:role/plan", apply: "arn:aws:iam::111:role/apply" } } } }],
   ])("%j is accepted as written", (raw) => {

@@ -9,7 +9,9 @@
  *        report, kept as the job's artifact (and in a bucket when one is
  *        named). Its note, chant's grouped summary across those roots, is the
  *        one plan note and its counts the one terragucci/plan status.
- *        Read-only role.
+ *        Read-only role. On GitLab with `gitlab.token: protected` it holds no
+ *        forge token: it writes the note and the status into its report, and
+ *        the comments job posts them.
  * apply  pushes to the default branch: one job per wave, canary first, each
  *        needing the one before. `terragucci stage tf-apply` plans the wave,
  *        and a wave the gate policy holds waits for a person's approval of
@@ -36,7 +38,9 @@
  *        other than the comments schedule's.
  * comments  GitLab only, when `comments:` is set: the comments schedule's
  *        pipelines (TERRAGUCCI_SCHEDULE=comments) poll merge request notes
- *        and start a merge request pipeline for `/terragucci plan`, or retry
+ *        (and with `gitlab.token: protected` post each merge request's plan
+ *        note and status from its plan job's report), and start a merge
+ *        request pipeline for `/terragucci plan`, or retry
  *        the merge commit's apply jobs for `/terragucci apply` (with
  *        `apply.when: pull-request`, start the `mr-apply` pipeline).
  *
@@ -58,9 +62,10 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, PR_APPLY_NEEDS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { MR_VAR } from "./comment-apply-gitlab";
+import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
 import { applyWaves } from "./apply";
@@ -122,6 +127,8 @@ export interface PipelineInput {
   drift?: string;
   /** GitLab only: the comments schedule's cron. The pipeline gets a `comments` job for the pipelines that schedule starts. */
   comments?: string;
+  /** GitLab only, `gitlab.token`: with `protected`, no merge request pipeline holds the token, and the comments job posts the plan notes. */
+  gitlabToken?: GitLabToken;
   /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
   canary?: string[];
   /** When a wave waits for an approval. Default on-destroy. */
@@ -1050,6 +1057,60 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
   ].join("\n");
 }
 
+/**
+ * GitLab's plan job with `gitlab.token: protected`: the same stage, with no
+ * forge token. The note and the status go into the report directory
+ * (plan-note-gitlab.ts), which the job keeps as its artifact, and the
+ * comments job posts them from there. It stops first when the token reaches
+ * it anyway, since then the variable is not protected and the merge
+ * request's code holds it.
+ */
+export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, tokenEnv = "GITLAB_TOKEN"): string {
+  const args = [
+    "--out", REPORT_DIR,
+    "--binary", binary,
+    "--layers", sh(layers.map((l) => l.join(",")).join(";")),
+    "--report-url", reportUrl("gitlab"),
+    ...(report.canary?.length ? ["--canary", sh(report.canary.join(","))] : []),
+    ...(report.terragrunt ? ["--terragrunt"] : []),
+    ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
+    ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
+    ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
+    ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
+  ];
+  const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
+  return [
+    READS_EXIT,
+    gitlabTokenCheck(tokenEnv),
+    ...cloudScripts("gitlab", oidc, "plan", "terragucci-plan"),
+    ...(report.terragrunt ? [report.terragrunt.prelude] : []),
+    `terragucci stage tf-plan ${args.join(" ")}`,
+    "rc=$?",
+    `if [ ! -f ${REPORT_DIR}/report.json ]; then`,
+    `  mkdir -p ${REPORT_DIR} && echo "failure the plan report was not written" >${status}`,
+    "  exit 1",
+    "fi",
+    `counts="$(node -e '${COUNTS_JS}' ${REPORT_DIR}/report.json)"`,
+    'if [ -n "${TG_PR:-}" ]; then',
+    ...(report.description ? [`  terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
+    "  # The first line says which roots the note covers, so an apply can mark it stale.",
+    `  { echo "<!-- terragucci:plan roots=$(node -e '${PLANNED_JS}' ${REPORT_DIR}/report.json) -->"; cat ${REPORT_DIR}/note.md; } >${REPORT_DIR}/${PLAN_NOTE_FILE}`,
+    "fi",
+    `if [ "$rc" -ne 0 ]; then echo "failure $counts" >${status}; exit 1; fi`,
+    `echo "success $counts" >${status}`,
+  ].join("\n");
+}
+
+/**
+ * The protected plan job's first check: with `gitlab.token: protected` the
+ * forge token is a protected variable, which a merge request's pipeline never
+ * sees. When the job sees it, the merge request's code can too, so the job
+ * plans nothing and says why.
+ */
+export function gitlabTokenCheck(tokenEnv = "GITLAB_TOKEN"): string {
+  return `if [ -n "\${${tokenEnv}:-}" ]; then echo "terragucci: ${tokenEnv} reaches this merge request's pipeline, so its code can use the token; gitlab.token is protected, so mark the variable Protected" >&2; exit 1; fi`;
+}
+
 /** Reads the decision file `terragucci comment` wrote. */
 const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")';
 
@@ -1087,12 +1148,14 @@ export const MERGE_ENVIRONMENT = "terragucci-merge";
 /**
  * The comments job's script (GitLab). `terragucci comment --poll` reads the
  * merge request notes since the last polls, answers each `/terragucci` note
- * once, and starts or retries pipelines through the API. It runs nothing
- * itself: no plan, no apply and no cloud credentials.
+ * once, and starts or retries pipelines through the API; with `--plan-notes`
+ * (`gitlab.token: protected`) it first posts the plan notes from the plan
+ * jobs' reports. It runs nothing itself: no plan, no apply and no cloud
+ * credentials.
  */
-export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }): string {
+export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false): string {
   const requires = prApply?.requires && !APPLY_REQUIRES.every((r) => prApply.requires!.includes(r)) ? ` --requires ${prApply.requires.length ? prApply.requires.join(",") : "none"}` : "";
-  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}`;
+  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}`;
 }
 
 /**
@@ -1281,6 +1344,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   if (forge === "gitlab") {
     if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
+    // With gitlab.token: protected no merge request pipeline holds the token, and the comments job posts the plan notes.
+    const protectedToken = input.gitlabToken === "protected";
+    if (protectedToken && !input.comments) throw new RenderError(`gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`);
     const jobImage = new Image({ name: image });
     const script = (main: string): string[] => (installStep ? [installStep, main] : [main]);
     // The runner evals the job's script in a pipeline under errexit, where a command that fails ends the job with 1
@@ -1312,30 +1378,35 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const mrApplyRule = `$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${MR_VAR}`;
     // Only the jobs that run no merge request code see the merge token: GitLab gives a variable scoped to this environment to the jobs that name it.
     const mergeEnvironment = { environment: { name: MERGE_ENVIRONMENT, action: "access" } };
+    // A branch's pipeline is built from the branch's files too, and with gitlab.token: protected it never sees the
+    // token: then the check job holds none, and commits no formatting.
+    const glFmt = fmtOn && !protectedToken;
     const check = new GitLabJob({
       stage: "check",
       image: jobImage,
       // The policy tests read the policy from the default branch, so with `policy:` the job has its history.
-      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy ? { GIT_DEPTH: "0" } : {}), ...(fmtOn ? { TG_TOKEN: gitlabEnv.TG_TOKEN } : {}) },
+      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy ? { GIT_DEPTH: "0" } : {}), ...(glFmt ? { TG_TOKEN: gitlabEnv.TG_TOKEN } : {}) },
       ...notScheduled,
       script: script(checkBody),
       // The check report (validate's diagnostics, live-check's refusals, the policy tests) stays with the job.
       artifacts: { name: CHECK_DIR, when: "always", paths: [`${CHECK_DIR}/`] },
       // After a failing check on a branch, commit the formatting; the job's own result stands.
-      ...(fmtOn
+      ...(glFmt
         ? { after_script: [...(installStep ? [installStep] : []), bash("FMT", `if [ "$CI_JOB_STATUS" = failed ] && [ -n "$CI_COMMIT_BRANCH" ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then\n${fmtScript(binary, forge, tokenEnv)}\nfi`)] }
         : {}),
     } as never);
-    // Plan runs a merge request's code, so it gets the read-only role, and never
-    // runs for a merge request from a fork.
+    // Plan runs a merge request's code, so it gets the read-only role, and never runs for a merge request from a fork.
+    // By default it posts its note and status with the project token, which the merge request's code can read too;
+    // with gitlab.token: protected it gets no token, and the comments job posts them from its report.
+    const { TG_TOKEN: _planToken, ...planEnv } = gitlabEnv;
     const plan = new GitLabJob({
       stage: "plan",
       image: jobImage,
-      variables: { ...gitlabEnv, TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
+      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0" },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens,
       ...(tg ? forgeCache("gitlab") : {}),
-      script: script(bash("PLAN", planScript(binary, layers, forge, oidc, report))),
+      script: script(bash("PLAN", protectedToken ? gitlabProtectedPlanScript(binary, layers, oidc, report, tokenEnv) : planScript(binary, layers, forge, oidc, report))),
       // The report stays with the job; its counts feed the merge request's widget.
       artifacts: { name: REPORT_DIR, when: "always", paths: [`${REPORT_DIR}/`], reports: { terraform: `${REPORT_DIR}/gitlab-terraform.json` } },
     } as never);
@@ -1456,7 +1527,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
-        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined))],
+        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken))],
       } as never) as never);
     }
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {

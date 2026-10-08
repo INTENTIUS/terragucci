@@ -37,6 +37,11 @@
  * - Otherwise `/terragucci lock` and `/terragucci unlock` are answered as
  *   unsupported, and so is `/terragucci agent`.
  *
+ * With `gitlab.token: protected` (`--plan-notes`), before the notes of each
+ * open merge request the poll posts its plan note and `terragucci/plan`
+ * status from the report its head's plan job kept (plan-note-gitlab.ts): a
+ * merge request's own pipeline then holds no token that may post them.
+ *
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
@@ -44,6 +49,7 @@ import { allowRoot, LOGIN, parseComment, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
+import { postPlanNote, type PlanNoteOutcome } from "./plan-note-gitlab";
 
 /** How far back the poll reads: merge requests updated, and notes written, in this many minutes. */
 export const POLL_WINDOW_MINUTES = 24 * 60;
@@ -87,10 +93,16 @@ export interface GitLabPollOptions {
   requires?: readonly ApplyRequire[];
   /** How the checks wait between reads of a merge request GitLab has not finished checking. Default: a timer. */
   wait?: (ms: number) => Promise<void>;
+  /** `gitlab.token: protected`: post each open merge request's plan note and status from its plan job's report. */
+  planNotes?: boolean;
+  /** The directory the plan job keeps its report in. Default terragucci-report. */
+  reportDir?: string;
 }
 
 export interface GitLabPoll {
   outcomes: NoteOutcome[];
+  /** The plan notes and statuses posted, or that failed to post. */
+  plans?: PlanNoteOutcome[];
   /** Set when the poll could not list the merge requests or their notes. */
   fail?: string;
 }
@@ -127,6 +139,8 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
   if (!Array.isArray(mrs)) return { outcomes: [], fail: "GitLab answered the merge request list with something other than a list" };
 
   const outcomes: NoteOutcome[] = [];
+  const plans: PlanNoteOutcome[] = [];
+  const planContext = { api, id, me, apiUrl: t.api!, token: t.token, fetch: doFetch, reportDir: o.reportDir ?? "terragucci-report" };
   for (const mr of mrs) {
     const iid = mr?.iid;
     if (!Number.isInteger(iid) || iid < 1) continue;
@@ -134,9 +148,12 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
     try {
       notes = (await api("GET", `/projects/${id}/merge_requests/${iid}/notes?order_by=created_at&sort=desc&per_page=100`)) as any[];
     } catch (e) {
-      return { outcomes, fail: `could not read the notes of !${iid} (${(e as Error).message})` };
+      return { outcomes, plans, fail: `could not read the notes of !${iid} (${(e as Error).message})` };
     }
     if (!Array.isArray(notes)) continue;
+    // The plan first, so a `/terragucci apply` answered below finds terragucci/plan on the head.
+    const plan = o.planNotes ? await postPlanNote(planContext, mr, notes) : undefined;
+    if (plan) plans.push(plan);
     // Only the job's own replies mark a note answered: anyone else writing the marker answers nothing.
     const answered = new Set<number>();
     for (const n of notes) {
@@ -150,7 +167,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
     for (const note of asks) outcomes.push(await answer({ api, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}) }));
   }
-  return { outcomes };
+  return { outcomes, plans };
 }
 
 interface Ask {

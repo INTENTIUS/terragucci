@@ -81,6 +81,15 @@
 #              naming another commit than the merge request's head is refused
 #              by mr-apply, which reads the head from GitLab, and nothing
 #              applies.
+#   gl-token-protected  gitlab: gitlab.token: protected, with GITLAB_TOKEN a
+#              protected variable and main protected. A job the merge
+#              request adds to its own pipeline finds GITLAB_TOKEN empty, the
+#              plan job plans, and the comments schedule's play posts the
+#              plan note and terragucci/plan on the head.
+#   gl-review-bot  gitlab: approval: pr-review and gate: always. A Developer's
+#              merge request is approved after its last push by the user the
+#              pipeline's token acts as, and merged: wave 1 still waits, says
+#              that approval never counts, and nothing applies.
 #
 # init pins the images by the digest of the published release. `validation.sh
 # run` (the CI gate) tests this commit, so push_dir and the github forge_run
@@ -106,6 +115,9 @@
 # applies; pr-apply-stale leaves main where it was, so the head is up to date
 # and applies; pr-apply-lock unlocks A before B asks, so B applies;
 # pr-apply-trust names the merge request's own head, so it applies.
+# gl-token-protected leaves GITLAB_TOKEN unprotected, so the merge request's
+# job sees it; gl-review-bot has another Developer approve in place of the
+# token's user, so wave 1 applies.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,11 +136,12 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule|pr-apply|pr-apply-stale|pr-apply-lock|pr-apply-trust) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule|pr-apply|pr-apply-stale|pr-apply-lock|pr-apply-trust|gl-token-protected|gl-review-bot) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:pr-apply*) ;; *:pr-apply*) echo "$CLAIM is gitlab's here; the smoke claims of that name run it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:approve) ;; *:approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in forgejo:pr-review|gitlab:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:gl-token-protected|gitlab:gl-review-bot) ;; *:gl-token-protected|*:gl-review-bot) echo "$CLAIM is gitlab's: it checks GitLab's variables and approvals" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gl-comment-*) ;; *:gl-comment-*) echo "$CLAIM is gitlab's: it checks the comments schedule" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
@@ -850,6 +863,98 @@ run_pr_apply_trust_gitlab() {
   log "mr-apply refused TERRAGUCCI_HEAD=${named:0:8}, which is not !$iid's head ${head:0:8}, and nothing applied"
 }
 
+# ── GitLab's token: gitlab.token: protected, and the token's own approval ─────
+
+# A CI/CD variable on the project that only pipelines on protected branches see.
+gl_protected_var() { # repo key value
+  glapi -o /dev/null -X PUT "$URL/api/v4/projects/$(pid "$1")/variables/$2" --data-urlencode "value=$3" --data-urlencode "protected=true" 2>/dev/null \
+    || glapi -o /dev/null -X POST "$URL/api/v4/projects/$(pid "$1")/variables" --data-urlencode "key=$2" --data-urlencode "value=$3" --data-urlencode "protected=true" \
+    || fail "could not make $2 a protected variable"
+}
+
+# main protected, with force pushes allowed so the claim can still push it.
+gl_protect_main() { # repo
+  curl -s -o /dev/null -H "PRIVATE-TOKEN: $TOKEN" -X DELETE "$URL/api/v4/projects/$(pid "$1")/protected_branches/main"
+  glapi -o /dev/null -X POST "$URL/api/v4/projects/$(pid "$1")/protected_branches" --data-urlencode "name=main" \
+    --data-urlencode "push_access_level=40" --data-urlencode "merge_access_level=40" --data-urlencode "allow_force_push=true" \
+    || fail "could not protect main"
+}
+
+# gitlab.token: protected: a merge request's pipeline never sees the token,
+# and the comments schedule posts its plan note.
+run_token_protected() {
+  local repo=validate-token-protected sid head iid img f notes st
+  prepare_comments "$repo" "gitlab:" "  token: protected"
+  f="$CDIR/$PIPELINE_FILE"
+  grep -q -- '--plan-notes' "$f" || fail "the comments job does not post the plan notes"
+  if [ -n "$BREAK" ]; then forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"; else gl_protected_var "$repo" GITLAB_TOKEN "$TOKEN"; fi
+  gl_protect_main "$repo"
+  head="$(forge_push "$CDIR" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$head"
+  sid="$(gl_schedule "$repo" "terragucci comments" comments)"
+  # The merge request adds a job to its own pipeline, as its author can: it says whether the token reached it.
+  img="$(awk '/^plan:$/ { p = 1 } p && /^    name: / { print $2; exit }' "$f")"
+  [ -n "$img" ] || fail "could not read the plan job's image"
+  cat >> "$f" <<YML
+
+token-probe:
+  stage: plan
+  image:
+    name: $img
+  rules:
+    - if: \$CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - 'if [ -z "\${GITLAB_TOKEN:-}" ]; then echo "token-probe: GITLAB_TOKEN is empty"; else echo "token-probe: GITLAB_TOKEN is set"; fi'
+YML
+  iid="$(gl_change_mr "$repo" token-protected)"
+  head="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r .sha)"
+  forge_run "$repo" token-protected "$head" merge_request_event
+  grep -q "token-probe: GITLAB_TOKEN is empty" "$RUN_LOG" || { forge_logs; fail "the merge request's own job saw GITLAB_TOKEN"; }
+  grep -q "^----- job 'plan' -----" "$RUN_LOG" || { forge_logs; fail "the merge request pipeline ran no plan job"; }
+  log "the merge request's own job found GITLAB_TOKEN empty"
+  gl_play "$repo" "$sid"
+  [ "$PLAY_STATUS" = success ] || fail "the comments pipeline ended '${PLAY_STATUS:-none}'"
+  notes="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/notes?per_page=100" | jq -r '.[] | .body | gsub("\n"; " ")')"
+  grep -q "^<!-- terragucci:plan roots=infra -->.*<!-- terragucci:plan-job=[0-9]* -->" <<<"$notes" || { echo "$notes"; fail "the comments play posted no plan note on !$iid"; }
+  st="$(glapi "$URL/api/v4/projects/$(pid "$repo")/repository/commits/$head/statuses?name=terragucci%2Fplan" | jq -r '.[0].status // empty')"
+  [ "$st" = success ] || fail "terragucci/plan on ${head:0:8} is '${st:-absent}'; expected success"
+  log "the comments play posted !$iid's plan note and terragucci/plan success on ${head:0:8}"
+}
+
+# approval: pr-review: an approval by the user the pipeline's token acts as
+# never releases a wave.
+run_review_bot() {
+  local repo=validate-review-bot sha dev rtok head iid merge approver
+  forge_reset_repo "$repo"
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
+  curl -s -o /dev/null -X DELETE "$FLOCI/$BUCKET" || true
+  prepare "$WORK/main"
+  printf 'approval: pr-review\ngate: always\n' > "$WORK/main/terragucci.yml"
+  (cd "$WORK/main" && "$TERRAGUCCI" init --forge "$FORGE" --binary tofu >/dev/null) || fail "init failed with approval: pr-review"
+  sha="$(forge_push "$WORK/main" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  [ "$(bucket_code "$BUCKET")" = 404 ] || fail "wave 1 applied with no approval"
+  dev="$(gl_member "$repo" validate-dev 30)"; rtok="$(gl_member "$repo" validate-rev 30)"
+  [ -n "$dev" ] && [ -n "$rtok" ] || fail "no tokens for the developer and the reviewer"
+  printf 'resource "terraform_data" "bot" {\n  input = "bot"\n}\n' > "$WORK/main/infra/bot.tf"
+  head="$(forge_push "$WORK/main" "$repo" review-bot "$(msg)")"
+  # The developer opens it, so the token's user is not its author.
+  iid="$(curl -fsS -H "PRIVATE-TOKEN: $dev" -X POST "$URL/api/v4/projects/$(pid "$repo")/merge_requests" --data-urlencode "source_branch=review-bot" --data-urlencode "target_branch=main" --data-urlencode "title=validate review-bot" | jq -r '.iid // empty')"
+  [ -n "$iid" ] || fail "no merge request from review-bot"
+  forge_run "$repo" review-bot "$head" merge_request_event
+  sleep 2
+  approver="$TOKEN"; [ -n "$BREAK" ] && approver="$rtok"
+  curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $approver" -X POST "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid/approve" || fail "could not approve !$iid"
+  log "!$iid approved after its last push, ${head:0:8}, by $(curl -fsS -H "PRIVATE-TOKEN: $approver" "$URL/api/v4/user" | jq -r .username)"
+  forge_merge_pr "$repo" "$iid"
+  merge="$(glapi "$URL/api/v4/projects/$(pid "$repo")/merge_requests/$iid" | jq -r '.merge_commit_sha // .squash_commit_sha // empty')"
+  [ -n "$merge" ] || fail "!$iid has no merge commit"
+  forge_run "$repo" main "$merge"
+  [ "$(bucket_code "$BUCKET")" = 404 ] || { forge_logs; fail "wave 1 applied on the approval of the token's own user"; }
+  grep -q "the user the job's token acts as, never counts" "$RUN_LOG" || { forge_logs; fail "wave 1 did not say the token user's approval never counts"; }
+  log "the approval by the token's own user left wave 1 waiting, and $BUCKET does not exist"
+}
+
 started=$(date +%s)
 [ -n "$BREAK" ] && log "BREAK=1: breaking the property on purpose; this run must fail"
 
@@ -878,6 +983,8 @@ case "$CLAIM" in
   pr-apply-stale) run_pr_apply_stale_gitlab ;;
   pr-apply-lock) run_pr_apply_lock_gitlab ;;
   pr-apply-trust) run_pr_apply_trust_gitlab ;;
+  gl-token-protected) run_token_protected ;;
+  gl-review-bot) run_review_bot ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done
