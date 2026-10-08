@@ -4,7 +4,7 @@
 const stages = [
 	{ name: 'tf-check', when: 'every push', what: 'Format and validate, before anything plans.' },
 	{ name: 'tf-plan', when: 'every pull request', what: 'Only the roots the change touches, summarised in one note.' },
-	{ name: 'tf-apply', when: 'on merge, or before it on GitHub and Forgejo', what: 'Wave by wave; by default a wave that destroys or replaces waits for its approval.' },
+	{ name: 'tf-apply', when: 'on merge, or before it', what: 'Wave by wave; by default a wave that destroys or replaces waits for its approval.' },
 	{ name: 'tf-drift', when: 'on a schedule', what: 'Every root planned against live state, drift reported grouped.' },
 	{ name: 'tf-publish', when: 'on merge, with modules set', what: 'Each changed module published under its next version, as an OCI artifact or a git tag.' },
 	{ name: 'tf-rollout', when: 'each time you run it', what: 'One pull request per wave, moving the pins to the new version.' },

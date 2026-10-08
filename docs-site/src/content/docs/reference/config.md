@@ -161,16 +161,16 @@ apply:
 | Setting | Does | Allowed on |
 |---|---|---|
 | `when: merge` | only merged code applies, and the apply role never meets a pull request's code | every forge |
-| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; `/terragucci lock` takes the locks without applying; roots (units in a Terragrunt repo) stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | GitHub and Forgejo, plain roots and Terragrunt repos; `init` and `config check` refuse it on GitLab |
+| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; `/terragucci lock` takes the locks without applying; roots (units in a Terragrunt repo) stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | every forge, plain roots and Terragrunt repos; on GitLab it needs `comments` and `merge_token_env` ([GitLab](#apply-before-merge-on-gitlab)) |
 | `merge: manual` | a person merges | `when: pull-request` only; `config check` refuses `merge` without it |
 | `merge: auto` | `pr-merge` merges once every wave applied, never after a partial apply | `when: pull-request` only |
-| `merge_token_env` | the secret the merge is made with; only `pr-merge`, which runs no pull request code, gets it | required on Forgejo |
+| `merge_token_env` | the secret the merge is made with; only `pr-merge`, which runs no pull request code, gets it; on GitLab the `comments` job too, which starts the apply pipeline with it | required on Forgejo with `merge: auto`, and on GitLab with either `merge` |
 | `requires` | what an open pull request needs before `/terragucci apply` applies it; see the next table | `when: pull-request` only; with `merge: auto` it must list `approved` |
 
 | `requires` entry | The open pull request needs |
 |---|---|
-| `approved` | an approval of its head by a reviewer other than its author, and no reviewer whose last review asks for changes |
-| `mergeable` | the forge to say it merges: no conflicts with the default branch, and on GitHub no branch protection blocking it |
+| `approved` | an approval of its head by a reviewer other than its author, and no reviewer whose last review asks for changes; on GitLab, an approval by a Developer or above after its latest push |
+| `mergeable` | the forge to say it merges: no conflicts with the default branch, on GitHub no branch protection blocking it, on GitLab a `detailed_merge_status` of `mergeable` |
 | `undiverged` | its head to contain the default branch as it is now |
 | `checks` | every status and check on its head to have passed |
 
@@ -181,6 +181,27 @@ Leaving an entry out drops that check, and `requires: []` drops all four. These 
 | `terragucci/plan` | to have passed on its head; a policy denial fails it |
 | the pipeline file | to be left alone by the change |
 | locks | no other open pull request holding a lock on a root it reaches |
+
+### Apply before merge on GitLab
+
+A merge request note starts no pipeline, and a merge request's own pipeline runs its own `.gitlab-ci.yml`. So the `comments` job reads `/terragucci apply` and starts a pipeline on the default branch, whose `mr-apply` job applies the head.
+
+```yaml
+forge: gitlab
+comments: "*/5 * * * *"
+apply:
+  when: pull-request
+  merge: auto                               # or manual
+  merge_token_env: TERRAGUCCI_MERGE_TOKEN   # required on GitLab
+```
+
+| Setting | Why |
+|---|---|
+| `comments` | the schedule whose job reads the note |
+| `merge_token_env` | a CI/CD variable with a token whose role may merge into the default branch: only such a token may start a pipeline there, and with `merge: auto` it merges |
+| `forge: gitlab` | needed with `merge: manual`, so `config check` knows the token is not only for merging |
+
+`config check` and `init` refuse `when: pull-request` on GitLab without `comments` or `merge_token_env`. [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) has the variable's settings.
 
 :::caution
 On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status that only the apply posts, such as `terragucci/apply`, blocks every apply. Leave it out of branch protection.
@@ -198,8 +219,8 @@ locks: plan   # default: apply
 
 | Setting | A pull request locks its roots | Allowed on |
 |---|---|---|
-| `locks: apply` | when it applies before merge, or a writer comments `/terragucci lock` | every forge; GitLab takes no pull request locks |
-| `locks: plan` | from its first plan, and again on each push or `/terragucci plan` | GitHub and Forgejo, with either `apply.when`; `init` and `config check` refuse it on GitLab, where every apply runs after merge, one at a time |
+| `locks: apply` | when it applies before merge, or a writer comments `/terragucci lock` | every forge |
+| `locks: plan` | from its first plan, and again on each push or `/terragucci plan` | GitHub and Forgejo, with either `apply.when`; `init` and `config check` refuse it on GitLab, where no merge request event runs a job from the default branch |
 
 With `locks: plan`, `init` adds the `pr-lock` job ([the generated pipeline](/terragucci/reference/pipeline/#plan-locks)). A second pull request that reaches a locked root gets a failing `terragucci/lock` status, and branch protection can require that status. [Locks](/terragucci/guides/apply-before-merge/#locks) lists what takes and releases a lock.
 

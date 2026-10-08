@@ -1,6 +1,6 @@
 ---
 title: Apply a pull request before it merges
-description: Turn on apply.when pull-request, apply an approved change from a comment on GitHub or Forgejo, and merge it once every wave applied.
+description: Turn on apply.when pull-request, apply an approved change from a comment on GitHub, GitLab or Forgejo, and merge it once every wave applied.
 claims: [pr-apply, pr-apply-lock, pr-apply-stale]
 prompt: |
   Read https://intentius.io/terragucci/guides/apply-before-merge/.
@@ -20,7 +20,8 @@ An open change that applies from its head in the same waves and gates as a merge
 
 | You need | Why |
 |---|---|
-| Plain roots or a Terragrunt repo on GitHub or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/) or [Use Terragrunt](/terragucci/guides/use-terragrunt/) | GitLab applies after merge; `init` and `config check` refuse `apply.when: pull-request` there |
+| Plain roots or a Terragrunt repo on GitHub, GitLab or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/) or [Use Terragrunt](/terragucci/guides/use-terragrunt/) | the pipeline `init` writes holds the jobs below |
+| On GitLab, [`comments:`](/terragucci/guides/re-plan-from-a-comment/) and its pipeline schedule | a merge request note starts no pipeline; the `comments` job reads `/terragucci apply` |
 | Branch protection on the default branch that requires a review | the review is the guard: the applying job runs the change's code with the apply role |
 | The [trade](/terragucci/reference/config/#apply-before-merge) accepted | [what the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) with the apply role |
 
@@ -44,7 +45,16 @@ An open change that applies from its head in the same waves and gates as a merge
    The token is optional. Without it the merge uses the job's own token and starts no `confirm`; the next push confirms it.
    </TabItem>
    <TabItem label="GitLab">
-   `init` and `config check` refuse `apply.when: pull-request` on GitLab, because it builds a merge request's pipeline from its own `.gitlab-ci.yml`.
+   The token is required, with `merge: manual` too: the `comments` job starts the apply pipeline on the default branch with it, and only a token allowed to merge there may. Add `forge: gitlab` and `comments:` beside the block.
+
+   | Variable setting | Value |
+   |---|---|
+   | Key | the name `merge_token_env` gives, such as `TERRAGUCCI_MERGE_TOKEN` |
+   | Value | a project access token with the `api` scope and a role the default branch's protection allows to merge |
+   | Protected, Masked | on: only default-branch pipelines read it |
+   | Environment scope | `terragucci-merge`: only `comments` and `pr-merge` name that environment, and neither runs the change's code |
+
+   Under Settings, CI/CD, Variables, the minimum role allowed to use pipeline variables must include that token's role: the apply pipeline is started with variables naming the merge request.
    </TabItem>
    <TabItem label="Forgejo">
    The token is required. Forgejo refuses a merge made with the job's own token.
@@ -74,6 +84,20 @@ An open change that applies from its head in the same waves and gates as a merge
 
 </Steps>
 
+## On GitLab
+
+GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothing in it applies. The apply runs in a pipeline of the default branch.
+
+| Step | Job | What happens |
+|---|---|---|
+| 1 | `comments`, on its schedule | reads a Developer's `/terragucci apply`, `lock` or `unlock` note on an open merge request; for `apply`, checks `apply.requires` and refuses by name |
+| 2 | `comments` | starts a pipeline on the default branch with the merge token and `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE` and `TERRAGUCCI_HEAD` |
+| 3 | `mr-apply`, from the default branch's pipeline file | reads the merge request and the note again from GitLab, refuses a head other than the merge request's, checks every requirement again and takes the locks |
+| 4 | `mr-apply` | applies the head wave by wave with the apply role, behind the same gates, and replies |
+| 5 | `pr-merge`, with `merge: auto` | merges once the reply says every wave applied |
+
+`approved` counts an approval given after the merge request's latest push, by a Developer or above other than its author. `mr-apply` posts no status on the head; its replies say what happened. A note is answered on the schedule's next run.
+
 ## Which config applies
 
 An open change's apply reads its settings from the default branch. Edits to `terragucci.yml` in the change count once it merges.
@@ -94,7 +118,7 @@ An unreadable default-branch config fails the wave before anything applies.
 | Event | Lock |
 |---|---|
 | The change applies | each root it reaches is locked |
-| `/terragucci lock` on the change, by anyone with write access | each root it reaches is locked, and nothing applies; the reply names the roots |
+| `/terragucci lock` on the change, by anyone with write access (on GitLab, a Developer or above) | each root it reaches is locked, and nothing applies; the reply names the roots |
 | With [`locks: plan`](/terragucci/reference/config/#plan-locks), the change is opened, pushed to or re-planned with `/terragucci plan` | each root its head reaches is locked; roots it no longer reaches are released; `terragucci/lock` passes, naming them |
 | Another change reaches a locked root | refused; the reply names the root and the holder, and with `locks: plan` its `terragucci/lock` fails |
 | The holder merges or closes | released |

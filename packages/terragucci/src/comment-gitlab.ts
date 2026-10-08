@@ -25,14 +25,24 @@
  *   behind its own gate. A merge commit a later apply superseded is refused,
  *   as on GitHub. GitLab cannot stop the waves after a retried one, so
  *   `wave-<n>` is refused.
- * - `/terragucci lock`, `/terragucci unlock` and `/terragucci agent` are
- *   answered as unsupported on GitLab.
+ * - With `apply.when: pull-request`, `/terragucci apply [wave-<n>]` on an
+ *   open merge request is checked against `apply.requires` here, then starts
+ *   a pipeline on the default branch whose `mr-apply` job applies the head
+ *   (comment-apply-gitlab.ts); `/terragucci lock` and `/terragucci unlock`
+ *   start the same pipeline, which locks or releases the merge request's
+ *   roots. It is started with TG_MERGE_TOKEN (apply.merge_token_env), since
+ *   a pipeline on a protected default branch needs a token that may merge
+ *   there. A merged merge request has nothing to apply: it applied before it
+ *   merged.
+ * - Otherwise `/terragucci lock` and `/terragucci unlock` are answered as
+ *   unsupported, and so is `/terragucci agent`.
  *
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
 import { allowRoot, LOGIN, parseComment, SHA } from "./comment";
-import { ConfigError } from "./config";
+import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
+import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
 
 /** How far back the poll reads: merge requests updated, and notes written, in this many minutes. */
@@ -71,6 +81,12 @@ export interface GitLabPollOptions {
   fetch?: Fetch;
   /** The poll's clock. Default: now. */
   now?: Date;
+  /** `apply.when`. With `pull-request` an open merge request applies from its head. Default `merge`. */
+  when?: ApplyWhen;
+  /** `apply.requires`: what an open merge request needs before it applies. Default: every requirement. */
+  requires?: readonly ApplyRequire[];
+  /** How the checks wait between reads of a merge request GitLab has not finished checking. Default: a timer. */
+  wait?: (ms: number) => Promise<void>;
 }
 
 export interface GitLabPoll {
@@ -132,7 +148,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
       .filter((n) => typeof n.created_at === "string" && n.created_at >= since)
       .filter((n) => parseComment(n.body) !== undefined)
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
-    for (const note of asks) outcomes.push(await answer({ api, id, base, layers: o.layers, mr, note }));
+    for (const note of asks) outcomes.push(await answer({ api, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}) }));
   }
   return { outcomes };
 }
@@ -146,10 +162,16 @@ interface Ask {
   layers: string[][];
   mr: any;
   note: any;
+  env: NodeJS.ProcessEnv;
+  fetch: Fetch;
+  when?: ApplyWhen;
+  requires?: readonly ApplyRequire[];
+  wait?: (ms: number) => Promise<void>;
 }
 
 async function answer(ask: Ask): Promise<NoteOutcome> {
   const { api, id, base, layers, mr, note } = ask;
+  const prMode = ask.when === "pull-request";
   const iid: number = mr.iid;
   const at = { mr: iid, note: note.id as number };
   const reply = async (text: string, ran = false): Promise<NoteOutcome> => {
@@ -180,11 +202,53 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
 
   if (parsed.kind === "refused") return reply(parsed.reason);
   if (parsed.kind === "agent") return reply("`/terragucci agent` does not run on GitLab: a merge request note starts no job that could push to its branch");
-  if (parsed.kind === "lock" || parsed.kind === "unlock") {
-    return reply(`\`/terragucci ${parsed.kind}\` does not run on GitLab: a GitLab project applies after merge, so merge requests take no locks`);
+  if ((parsed.kind === "lock" || parsed.kind === "unlock") && !prMode) {
+    return reply(`\`/terragucci ${parsed.kind}\` does not run here: this project applies after merge, so merge requests take no locks`);
   }
 
   const fork = mr.source_project_id !== undefined && mr.target_project_id !== undefined && mr.source_project_id !== mr.target_project_id;
+
+  // apply.when: pull-request: an open merge request's apply, lock and unlock run in a pipeline of the default branch.
+  if (prMode && parsed.kind !== "plan") {
+    if (mr.state !== "opened") {
+      if (parsed.kind === "apply") {
+        return reply(mr.state === "merged"
+          ? `!${iid} is merged, and this project applies a merge request from its head before it merges, so there is nothing of it left to apply; the push after the merge ran \`confirm\``
+          : `!${iid} was closed without merging, so there is nothing of it to apply`);
+      }
+      return reply(`!${iid} is not open, so it holds no lock: the next merge request that reaches its roots takes them over`);
+    }
+    if (fork) return reply("a merge request from a fork is never applied: its code would run with this project's apply credentials");
+    if (mr.target_branch !== base) return reply(`!${iid} targets ${String(mr.target_branch)}, not the default branch ${base}, so it is not applied`);
+    const sha = mr.sha;
+    if (typeof sha !== "string" || !SHA.test(sha)) return broke(`!${iid}'s head is not a commit`);
+    if (parsed.kind === "apply") {
+      const verdict = await openChecks({ api, id, mr, base, ...(ask.requires ? { requires: ask.requires } : {}), ...(ask.wait ? { wait: ask.wait } : {}) });
+      if (verdict && "fail" in verdict) return broke(verdict.fail);
+      if (verdict) return reply(verdict.refuse);
+    }
+    // A pipeline on a protected default branch needs a token that may merge there; the comments job's own may not.
+    if (!ask.env.TG_MERGE_TOKEN) return broke(`the comments job has no TG_MERGE_TOKEN, the token apply.merge_token_env names, so it cannot start a pipeline on ${base} for !${iid}`);
+    let pipeline: any;
+    try {
+      const start = gitlabApi(ask.env, ask.env.TG_MERGE_TOKEN, ask.fetch);
+      pipeline = await start("POST", `/projects/${id}/pipeline`, {
+        ref: base,
+        variables: [
+          { key: MR_VAR, value: String(iid), variable_type: "env_var" },
+          { key: NOTE_VAR, value: String(note.id), variable_type: "env_var" },
+          { key: HEAD_VAR, value: sha, variable_type: "env_var" },
+        ],
+      });
+    } catch (e) {
+      return broke(`could not start a pipeline on ${base} for !${iid} (${(e as Error).message})`);
+    }
+    const link = typeof pipeline?.web_url === "string" && /^https?:\/\//.test(pipeline.web_url) ? ` ${pipeline.web_url}` : "";
+    const wave = parsed.kind === "apply" ? parsed.wave : undefined;
+    const through = wave !== undefined ? ` through wave ${wave}` : "";
+    const doing = parsed.kind === "apply" ? `apply !${iid}'s head ${short(sha)}${through}` : `${parsed.kind} the roots of !${iid}`;
+    return reply(`started pipeline${link} on ${base} to ${doing} for ${user}; its job reads !${iid} again before it ${parsed.kind === "apply" ? "applies" : parsed.kind + "s"}`, true);
+  }
 
   if (parsed.kind === "plan") {
     if (parsed.root !== undefined && !allowRoot(parsed.root, layers)) {
@@ -205,7 +269,8 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
     return reply(`started pipeline${link} to re-plan !${iid} for ${user}${whole}`, true);
   }
 
-  // apply
+  // apply (a lock or unlock got its answer above)
+  if (parsed.kind !== "apply") return reply(`\`/terragucci ${parsed.kind}\` does not run here`);
   if (parsed.wave !== undefined) {
     return reply(`GitLab runs the waves after a retried apply job by itself, so \`wave-${parsed.wave}\` cannot stop them; write \`/terragucci apply\`, and each wave still waits behind its own gate`);
   }
