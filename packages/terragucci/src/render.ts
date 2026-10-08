@@ -274,8 +274,12 @@ export function synthScript(command: string, status?: string): string {
 
 /** With `notify`, the line a wave's outcome runs: post it to the chat webhooks. A webhook that fails never fails the job. */
 function notifyLine(event: "waiting" | "refused" | "failed", wave: string): string {
-  return `terragucci notify ${event} --wave ${wave} --outcome "$outcome" || true; `;
+  return `terragucci notify ${event} --wave ${wave} --outcome "$outcome" --outcome-json "$outcome_json" || true; `;
 }
+
+/** With `notify`, the stage also writes its outcome as JSON (`TG_OUTCOME_JSON`), which notify reads. */
+const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
+const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
 export function checkScript(binary: Binary, roots: string[], synth?: string): string {
   return [
@@ -648,8 +652,9 @@ export function applyScript(
     // A waiting wave records what it planned on the chant/lifecycle branch, so the job's checkout must be able to push.
     ...(forge === "gitlab" && gate !== "never" ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
+    ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
-    `TG_OUTCOME="$outcome" terragucci stage tf-apply ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
+    `TG_OUTCOME="$outcome" ${outcomeEnv(input.notify)}terragucci stage tf-apply ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
     triage ? "rc=${PIPESTATUS[0]}" : "rc=$?",
     'case "$rc" in',
     "  0) ;;",
@@ -713,12 +718,13 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
   const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(base ? [base] : [])];
   return [
     'outcome="$(mktemp)"',
+    ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
     'done_waves=""',
     'for wave in $(seq 1 "$last"); do',
     '  : >"$outcome"',
     ...(input.terragrunt ? ['  rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi'] : []),
-    `  TG_OUTCOME="$outcome" terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${input.terragrunt ? " $rest" : ""}${triage ? ' 2>&1 | tee "$log"' : ""}`,
+    `  TG_OUTCOME="$outcome" ${outcomeEnv(input.notify)}terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${input.terragrunt ? " $rest" : ""}${triage ? ' 2>&1 | tee "$log"' : ""}`,
     triage ? "  rc=${PIPESTATUS[0]}" : "  rc=$?",
     // With --rest the wave that stopped may be a later one: its outcome line names it.
     ...(input.terragrunt ? [`  [ -s "$outcome" ] && wave="$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"`] : []),

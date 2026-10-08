@@ -14,6 +14,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { OUTCOME_SCHEMA, type WaveOutcome } from "./apply";
 
 /** What the wave did. */
 export const NOTIFY_EVENTS = ["waiting", "refused", "failed"] as const;
@@ -40,31 +41,43 @@ export interface WaveNotice {
   report?: string;
 }
 
-/** The pieces of a notice, from the stage's outcome line, the wave's report and the job's environment. */
-export function waveNotice(event: NotifyEvent, wave: number, opts: { outcome?: string; reportDir?: string; env?: NodeJS.ProcessEnv } = {}): WaveNotice {
+/** The stage's outcome as JSON (`TG_OUTCOME_JSON`), or undefined when the file is missing, empty or another schema. */
+export function readOutcome(file: string): WaveOutcome | undefined {
+  if (!existsSync(file)) return undefined;
+  try {
+    const o = JSON.parse(readFileSync(file, "utf-8")) as WaveOutcome;
+    return o?.schema === OUTCOME_SCHEMA ? o : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The pieces of a notice, from the stage's outcome (`result`, its JSON, and
+ * `outcome`, the line its status carries), the wave's report and the job's
+ * environment.
+ */
+export function waveNotice(event: NotifyEvent, wave: number, opts: { outcome?: string; result?: WaveOutcome; reportDir?: string; env?: NodeJS.ProcessEnv } = {}): WaveNotice {
   const env = opts.env ?? process.env;
-  const outcome = opts.outcome?.trim() || undefined;
+  const result = opts.result?.wave === wave ? opts.result : undefined;
+  const outcome = opts.outcome?.trim() || result?.line || undefined;
   const report = readReport(opts.reportDir);
-  const row = report?.waves?.find((w) => w.number === wave);
-  const fromReport = row?.roots ?? report?.roots?.map((r) => r.path) ?? [];
-  // A refused wave names the roots that moved; the report holds every root of the wave.
-  const named = outcome?.match(/: (.+)$/)?.[1];
-  const roots = fromReport.length > 0 ? fromReport : event === "refused" && named && !named.startsWith("chant ") ? named.split(", ") : [];
+  // A refused wave names the roots that moved or were denied; otherwise the wave's roots.
+  const named = event !== "waiting" ? (result?.refused?.roots ?? result?.failed_roots) : undefined;
+  const roots = named?.length ? named : result?.roots?.length ? result.roots : (report?.waves?.find((w) => w.number === wave)?.roots ?? report?.roots?.map((r) => r.path) ?? []);
   const project = report?.run?.project ?? env.GITHUB_REPOSITORY ?? env.CI_PROJECT_PATH ?? "this project";
-  const digest = event === "waiting" ? outcome?.match(/ --plan (\S+)/)?.[1] : undefined;
-  const review = event === "waiting" && row?.review && typeof row.review.url === "string" && Number.isInteger(row.review.pull_request) ? { pr: row.review.pull_request, url: row.review.url } : undefined;
+  const digest = event === "waiting" ? result?.set_digest : undefined;
+  const review = event === "waiting" && result?.review ? { pr: result.review.pull_request, url: result.review.url } : undefined;
   // A waiting wave's outcome is its approve command, said once.
-  return { event, wave, project, roots, approve: approveText(event, wave, outcome), ...(digest ? { digest } : {}), ...(review ? { review } : {}), ...(outcome && event !== "waiting" ? { outcome } : {}), ...(runUrl(env) ? { run: runUrl(env) } : {}), ...(report?.run?.report_url ? { report: report.run.report_url } : {}) };
+  return { event, wave, project, roots, approve: approveText(event, wave, result), ...(digest ? { digest } : {}), ...(review ? { review } : {}), ...(outcome && event !== "waiting" ? { outcome } : {}), ...(runUrl(env) ? { run: runUrl(env) } : {}), ...(report?.run?.report_url ? { report: report.run.report_url } : {}) };
 }
 
 /** The approval a person gives: the stage's own command for a waiting wave, `terragucci approve` for a refused one (it finds the new digest). */
-function approveText(event: NotifyEvent, wave: number, outcome?: string): string {
-  if (event === "waiting") {
-    const cmd = outcome?.match(/ waits: (.+)$/)?.[1];
-    return cmd ? `${cmd} (or npx terragucci approve wave-${wave})` : `npx terragucci approve wave-${wave}`;
-  }
+function approveText(event: NotifyEvent, wave: number, result?: WaveOutcome): string {
+  if (event === "waiting") return result?.approve_command ? `${result.approve_command} (or npx terragucci approve wave-${wave})` : `npx terragucci approve wave-${wave}`;
+  if (event === "refused" && result?.refused?.reason === "override") return "nothing to approve: the plans changed after the policy override; read the job log";
   if (event === "refused") return `read the plans that moved, then npx terragucci approve wave-${wave}, or revert`;
-  if (outcome?.includes("refused by policy")) return "nothing to approve: the policy denied it; an override command is in the job log";
+  if (result?.policy_denied?.length) return "nothing to approve: the policy denied it; an override command is in the job log";
   return "nothing to approve: the apply failed; read the job log";
 }
 
@@ -77,7 +90,7 @@ export function runUrl(env: NodeJS.ProcessEnv): string | undefined {
 
 interface ReportShape {
   run?: { project?: string; report_url?: string };
-  waves?: { number: number; roots: string[]; review?: { pull_request: number; url: string } }[];
+  waves?: { number: number; roots: string[] }[];
   roots?: { path: string }[];
 }
 

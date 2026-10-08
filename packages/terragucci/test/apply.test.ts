@@ -277,6 +277,41 @@ describe("a wave behind its gate", () => {
     expect(JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).waves[0].refused).toEqual({ reason: "approval", approved: digest, by: "alice", roots: ["a"] });
   });
 
+  it("writes how the wave ended as terragucci.outcome/v1 to TG_OUTCOME_JSON: waiting, refused, applied and denied", async () => {
+    const { work, origin, bin } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const file = join(tmp("tg-outcome-"), "outcome.json");
+    const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: { TG_OUTCOME_JSON: file } };
+    const read = () => JSON.parse(readFileSync(file, "utf-8"));
+    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    expect(read()).toEqual({
+      schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 1, roots: ["a"],
+      line: `wave 1 waits: chant approve tf-apply wave-1 --plan ${digest}`,
+      set_digest: digest, gate: { name: "wave-1", branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" },
+      approval: "waiting", approval_mode: "ledger", approve_command: `chant approve tf-apply wave-1 --plan ${digest}`, waiting_since: T(1),
+    });
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+    const plans = join(work, "..", "plans", "a.json");
+    const before = readFileSync(plans, "utf-8");
+    writeFileSync(plans, before.replace('"input":"1"', '"input":"2"'));
+    expect(await applyWave(work, { ...opts, now: T(3) })).toBe(4);
+    const refused = read();
+    expect(refused).toMatchObject({ status: "refused", exit: 4, line: "wave 1 changed after approval: a", refused: { reason: "approval", approved: digest, by: "alice", roots: ["a"] } });
+    expect(refused.approve_command).toMatch(/^chant approve tf-apply wave-1 --plan \S+$/);
+    expect(refused.set_digest).not.toBe(digest);
+    writeFileSync(plans, before);
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(4), planDigest: digest });
+    expect(await applyWave(work, { ...opts, now: T(5) })).toBe(0);
+    expect(read()).toMatchObject({ status: "applied", exit: 0, approval: "approved", set_digest: digest });
+    expect(read()).not.toHaveProperty("approve_command");
+    const deny: PolicyExec = async (_f, args) => (args[0] === "--version" ? { status: 0, stdout: "", stderr: "" } : { status: 1, stdout: JSON.stringify([{ failures: [{ msg: "no" }] }]), stderr: "" });
+    write(work, { "terragucci.yml": "policy:\n  path: policy\n", "policy/p.rego": "package main\n" });
+    expect(await applyWave(work, { ...opts, now: T(6), policy: { exec: deny } })).toBe(1);
+    expect(read()).toMatchObject({ status: "failed", exit: 1, policy_denied: ["a"], refused: { reason: "policy", roots: ["a"] } });
+    expect(read()).not.toHaveProperty("failed_roots");
+  });
+
   /** Append one resolution line to origin's ledger, as `chant approve` would from a person's machine. */
   function approve(origin: string, line: Record<string, unknown>): void {
     const clone = join(tmp("tg-approve-"), "l");

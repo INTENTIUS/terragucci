@@ -276,6 +276,7 @@ blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
 cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
+apply-outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
 audit|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
@@ -9170,6 +9171,70 @@ audit_unrecorded() { # origin.git, ledger file, entry kind, record -> each appro
     <(jq -r --arg k "$3" 'select(.kind == $k) | "\(.who) \(.digest) \(.at)"' "$4" | sort)
 }
 
+claim_apply_outcome() {
+  # A repo with one root, app, run by stage tf-apply in the CI image with
+  # TG_OUTCOME_JSON naming a file. Wave 1 waits (gate always): the file says
+  # terragucci.outcome/v1, waiting, exit 3, the set digest, the gate, mode
+  # ledger and the chant approve command for that digest. smoke-approver
+  # approves it and app moves in a new commit: the file says refused, exit 4,
+  # reason approval, the digest approved, by whom, app as the root that moved
+  # and the command for the new digest. app is then broken HCL: the file says
+  # failed, exit 1, with app among failed_roots.
+  # BREAK: TG_OUTCOME_JSON is not set, so no file is written.
+  log() { echo "[smoke apply-outcome] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="apply-outcome-$STAMP" out approved digest code
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  audit_repo "$work" "$prefix"
+  out="$work/wave/.outcome.json"
+  outcome_wave() { # -> code, and the outcome file as the run left it
+    local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" asked=(-e TG_OUTCOME_JSON=/repo/.outcome.json)
+    [ -z "${BREAK:-}" ] || asked=()
+    code=0
+    : > "$out"
+    run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
+      -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "${asked[@]}" \
+      "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate always > "$work/run.log" 2>&1 || code=$?
+    grep -E 'wave 1|FAILED' "$work/run.log" >&2 || true
+    clean_mounted "$work/wave" "$image"
+    log "exit $code; outcome: $(cat "$out" 2>/dev/null)"
+  }
+  outcome_wave
+  [ "$code" = 3 ] || { log "the first run exited $code, not 3: wave 1 did not wait"; rc=1; }
+  if [ $rc = 0 ]; then
+    digest="$(jq -r '.set_digest // empty' "$out" 2>/dev/null)"
+    jq -e --arg d "$digest" '.schema == "terragucci.outcome/v1" and .status == "waiting" and .exit == 3 and .wave == 1 and .roots == ["app"] and .gate.name == "wave-1" and .gate.branch == "chant/lifecycle" and .approval == "waiting" and .approval_mode == "ledger" and .approve_command == ("chant approve tf-apply wave-1 --plan " + $d) and (.waiting_since | length > 0)' "$out" >/dev/null 2>&1 \
+      || { log "the waiting outcome is not as expected"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    approved="$(jq -rs '[.[] | select(.kind == "resolution" and .gate == "wave-1")] | last | .planDigest' "$work/ledger/_gates/tf-apply.jsonl")"
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "moved"\n}\n' > "$work/wave/app/main.tf"
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app moves after its approval"
+    outcome_wave
+    [ "$code" = 4 ] || { log "the run after the approval exited $code, not 4"; rc=1; }
+    jq -e --arg a "$approved" '.status == "refused" and .exit == 4 and .refused.reason == "approval" and .refused.approved == $a and .refused.by == "smoke-approver" and .refused.roots == ["app"] and .set_digest != $a and .approve_command == ("chant approve tf-apply wave-1 --plan " + .set_digest) and (.line | startswith("wave 1 changed after approval"))' "$out" >/dev/null 2>&1 \
+      || { log "the refused outcome is not as expected"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    printf 'resource "terraform_data" "app" {\n' > "$work/wave/app/broken.tf"
+    outcome_wave
+    [ "$code" = 1 ] || { log "the run with broken HCL exited $code, not 1"; rc=1; }
+    jq -e '.status == "failed" and .exit == 1 and .failed_roots == ["app"] and (has("approve_command") | not)' "$out" >/dev/null 2>&1 \
+      || { log "the failed outcome is not as expected"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the outcome file said waiting with its digest and command, refused with the approval and the root that moved, and failed with the root"
+  return $rc
+}
+
 claim_audit() {
   # A repo whose reports go to the bucket: wave 1 waits, smoke-approver
   # approves its digest on chant/lifecycle, and the next run applies it.
@@ -9808,6 +9873,7 @@ index-writes         self! weight=90
 cdf-shared-bucket    weight=120
 cdktn-synth          runner self! weight=200
 audit                weight=150
+apply-outcome        self! weight=120
 audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150

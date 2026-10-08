@@ -131,7 +131,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 
 `stage tf-plan` and `stage tf-drift` still write the report when a root refuses to plan. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. It refuses `--json` with exit 2.
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. It refuses `--json` with exit 2. With `TG_OUTCOME_JSON` set it writes how the wave ended to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
 
 | Flag | Environment | Meaning |
 |---|---|---|
@@ -259,15 +259,16 @@ With `--forge gitlab` it first looks for the `mr-apply` reply, from `TG_TOKEN`'s
 ## notify
 
 ```text
-terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--report <dir>]
+terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
 ```
 
 Posts one wave's outcome to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK`, whichever are set. The generated apply jobs run it with `notify` set, on exit 3, 4 and any other failure.
 
 | Read from | For |
 |---|---|
-| `--outcome`, the stage's `TG_OUTCOME` line | the approve command and digest of a waiting wave, and the roots of a refused one |
-| `--report` (default `terragucci-report`) | the project, the wave's roots, and the wave's `review`: under `approval: pr-review`, the pull request whose review would approve a waiting wave |
+| `--outcome-json`, the stage's [outcome](/terragucci/reference/cli-json/#the-apply-outcome) (`TG_OUTCOME_JSON`) | the wave's roots, the digest and approve command of a waiting wave, the pull request to review under `approval: pr-review`, and the roots a refused or denied wave names |
+| `--outcome`, the stage's `TG_OUTCOME` line | the outcome line the message quotes |
+| `--report` (default `terragucci-report`) | the project, the report's link, and the wave's roots when there is no outcome |
 | `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`, or `CI_JOB_URL` | the run's link |
 
 A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.

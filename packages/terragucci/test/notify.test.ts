@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
-import { notify, runUrl, slackMessage, teamsMessage, waveNotice } from "../src/notify";
+import type { WaveOutcome } from "../src/apply";
+import { notify, readOutcome, runUrl, slackMessage, teamsMessage, waveNotice } from "../src/notify";
 import { applyScript, renderPipeline } from "../src/render";
 import { tmp, write } from "./helpers";
 
 const ENV = { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" };
+const waiting: WaveOutcome = { schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 2, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:ab", set_digest: "jcs1-sha256:ab", approval: "waiting", approval_mode: "ledger", approve_command: "chant approve tf-apply wave-2 --plan jcs1-sha256:ab" };
 const report = (): string => write(tmp(), { "report.json": JSON.stringify({ run: { project: "github.com/acme/infra" }, waves: [{ number: 2, roots: ["envs/prod/app", "envs/prod/db"] }] }) });
 
 describe("notify: chat webhooks for a wave", () => {
   it("names the wave, its roots, the approve command and the run of a waiting wave", () => {
-    const n = waveNotice("waiting", 2, { outcome: "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:ab", reportDir: report(), env: ENV });
-    expect(n).toMatchObject({ project: "github.com/acme/infra", roots: ["envs/prod/app", "envs/prod/db"], run: "https://github.com/acme/infra/actions/runs/42" });
+    const n = waveNotice("waiting", 2, { outcome: waiting.line, result: waiting, reportDir: report(), env: ENV });
+    expect(n).toMatchObject({ project: "github.com/acme/infra", roots: ["envs/prod/app", "envs/prod/db"], digest: "jcs1-sha256:ab", run: "https://github.com/acme/infra/actions/runs/42" });
     expect(n.approve).toBe("chant approve tf-apply wave-2 --plan jcs1-sha256:ab (or npx terragucci approve wave-2)");
     const slack = slackMessage(n).text;
     for (const want of ["wave 2 of github.com/acme/infra waits for an approval", "envs/prod/app, envs/prod/db", "chant approve tf-apply wave-2", "<https://github.com/acme/infra/actions/runs/42>"]) expect(slack).toContain(want);
@@ -22,8 +24,8 @@ describe("notify: chat webhooks for a wave", () => {
   });
 
   it("under pr-review, a waiting wave a review would approve links the pull request's review page first", () => {
-    const dir = write(tmp(), { "report.json": JSON.stringify({ run: { project: "github.com/acme/infra" }, waves: [{ number: 2, roots: ["envs/prod/app"], review: { pull_request: 7, url: "https://github.com/acme/infra/pull/7/files" } }] }) });
-    const n = waveNotice("waiting", 2, { outcome: "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:ab", reportDir: dir, env: ENV });
+    const result: WaveOutcome = { ...waiting, approval_mode: "pr-review", review: { pull_request: 7, url: "https://github.com/acme/infra/pull/7/files" } };
+    const n = waveNotice("waiting", 2, { outcome: waiting.line, result, reportDir: report(), env: ENV });
     expect(n).toMatchObject({ digest: "jcs1-sha256:ab", review: { pr: 7, url: "https://github.com/acme/infra/pull/7/files" } });
     const lines = slackMessage(n).text.split("\n");
     expect(lines[1]).toBe("Review and approve: <https://github.com/acme/infra/pull/7/files|pull request 7>, then run the wave again");
@@ -33,17 +35,25 @@ describe("notify: chat webhooks for a wave", () => {
     expect(card.actions[0]).toEqual({ type: "Action.OpenUrl", title: "Review and approve", url: "https://github.com/acme/infra/pull/7/files" });
     expect(card.body[1].facts).toContainEqual({ title: "Digest", value: "jcs1-sha256:ab" });
     // A refused wave is never linked: a new review of the merged head cannot approve plans it never saw.
-    expect(waveNotice("refused", 2, { reportDir: dir, env: ENV }).review).toBeUndefined();
-    // Without a review row (ledger, sealed, or a wave no review covers) the message is as before.
-    expect(slackMessage(waveNotice("waiting", 2, { reportDir: report(), env: ENV })).text).not.toContain("Review and approve");
+    expect(waveNotice("refused", 2, { result: { ...result, status: "refused", exit: 4 }, env: ENV }).review).toBeUndefined();
+    // Without a review (ledger, sealed, or a wave no review covers) the message is as before.
+    expect(slackMessage(waveNotice("waiting", 2, { result: waiting, reportDir: report(), env: ENV })).text).not.toContain("Review and approve");
   });
 
   it("says what a refused and a failed wave leave to a person", () => {
-    const refused = waveNotice("refused", 3, { outcome: "wave 3 changed after approval: envs/prod/app", env: ENV });
+    const refusal = { schema: "terragucci.outcome/v1", status: "refused", exit: 4, wave: 3, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 3 changed after approval: envs/prod/app", refused: { reason: "approval", approved: "jcs1-sha256:aa", by: "alice", roots: ["envs/prod/app"] } } as WaveOutcome;
+    const refused = waveNotice("refused", 3, { result: refusal, env: ENV });
     expect(refused.roots).toEqual(["envs/prod/app"]);
+    expect(refused.outcome).toBe("wave 3 changed after approval: envs/prod/app");
     expect(refused.approve).toContain("npx terragucci approve wave-3");
+    expect(waveNotice("refused", 3, { result: { ...refusal, refused: { reason: "override", roots: ["envs/prod/app"] } }, env: ENV }).approve).toContain("policy override");
     expect(waveNotice("failed", 1, { env: ENV }).approve).toBe("nothing to approve: the apply failed; read the job log");
-    expect(waveNotice("failed", 1, { outcome: "wave 1 refused by policy: envs/prod/app", env: ENV }).approve).toContain("override");
+    const denied = { schema: "terragucci.outcome/v1", status: "failed", exit: 1, wave: 1, roots: ["envs/prod/app", "envs/prod/db"], refused: { reason: "policy", roots: ["envs/prod/app"] }, policy_denied: ["envs/prod/app"] } as WaveOutcome;
+    expect(waveNotice("failed", 1, { result: denied, env: ENV })).toMatchObject({ roots: ["envs/prod/app"], approve: expect.stringContaining("override") });
+    // An outcome of another wave, or another schema, is not read.
+    expect(waveNotice("failed", 2, { result: denied, env: ENV }).roots).toEqual([]);
+    expect(readOutcome(write(tmp(), { "o.json": JSON.stringify({ schema: "other" }) }) + "/o.json")).toBeUndefined();
+    expect(readOutcome(write(tmp(), { "o.json": JSON.stringify(denied) }) + "/o.json")).toEqual(denied);
     expect(runUrl({ CI_JOB_URL: "https://gitlab.com/acme/infra/-/jobs/9" })).toBe("https://gitlab.com/acme/infra/-/jobs/9");
   });
 
@@ -79,7 +89,8 @@ describe("notify: chat webhooks for a wave", () => {
     const plan = forge === "gitlab" ? doc.plan.variables : doc.jobs.plan.env;
     expect(plan.TERRAGUCCI_SLACK_WEBHOOK).toBeUndefined();
     const script = applyScript("tofu", [["a"]], forge, undefined, { wave: 1, notify: true });
-    for (const e of ["waiting", "refused", "failed"]) expect(script).toContain(`terragucci notify ${e} --wave 1 --outcome "$outcome" || true`);
+    for (const e of ["waiting", "refused", "failed"]) expect(script).toContain(`terragucci notify ${e} --wave 1 --outcome "$outcome" --outcome-json "$outcome_json" || true`);
+    expect(script).toContain('TG_OUTCOME="$outcome" TG_OUTCOME_JSON="$outcome_json" terragucci stage tf-apply');
     expect(applyScript("tofu", [["a"]], forge, undefined, { wave: 1 })).not.toContain("terragucci notify");
   });
 });
