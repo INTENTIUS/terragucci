@@ -63,8 +63,14 @@ export interface ApplySettings {
 export interface PolicySettings {
   /** The engine. Default `conftest`, which terragucci installs on demand when it is not on the path. */
   engine?: PolicyEngine;
-  /** The directory of Rego policy, relative to the repo root. Default `policy`. */
+  /** The directory of Rego policy, relative to the repo root, or to the root of `source` when that is set. Default `policy`. */
   path?: string;
+  /**
+   * A shared policy repo, `git+https://<host>/<path>@<ref>`, read at that ref
+   * instead of the repo's own directory. The ref is a tag, a branch or a
+   * commit. Like the rest of the key, it is read at the base.
+   */
+  source?: string;
   /** The Rego package whose `deny`, `violation`, `deny_*` and `warn` rules count. conftest default: every namespace. opa default: `main`, or every package under `terraform.policies` with `input: hcp`. */
   namespace?: string;
   /** What `input` holds: `plan`, the bare plan JSON (default); `hcp`, `{plan, run}` as HCP Terraform's OPA policies read it. */
@@ -478,18 +484,47 @@ function checkApply(a: unknown, where: string, problems: string[]): void {
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {
-    problems.push(`${where} must be a map (settings: engine, path, namespace, input)`);
+    problems.push(`${where} must be a map (settings: engine, path, namespace, input, source)`);
     return;
   }
-  for (const k of Object.keys(p)) if (!["engine", "path", "namespace", "input"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace, input)`);
+  for (const k of Object.keys(p)) if (!["engine", "path", "namespace", "input", "source"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace, input, source)`);
   oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
   oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
   if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {
     problems.push(`${where}.path must be a directory inside the repo, such as policy`);
   }
+  if (p.source !== undefined && !(typeof p.source === "string" && parsePolicySource(p.source))) {
+    problems.push(`${where}.source must be a git repo and a ref, git+https://<host>/<path>@<ref>, such as git+https://github.com/acme/policy.git@v1`);
+  }
   if (p.namespace !== undefined && !(typeof p.namespace === "string" && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(p.namespace))) {
     problems.push(`${where}.namespace must be a Rego package name, such as terraform.plan`);
   }
+}
+
+/** Where a shared policy is fetched from: the git URL and the ref. */
+export interface PolicySource {
+  url: string;
+  ref: string;
+}
+
+/**
+ * Split `git+<scheme>://<host>/<path>@<ref>` into the URL git fetches and
+ * the ref. The ref is what follows the last `@` after the host, so a user
+ * name in the URL (`git+https://ci@host/...`) stays in the URL. https and
+ * http (a forge on a private network) and file (a repo on the job's disk).
+ * Undefined when it is not that shape.
+ */
+export function parsePolicySource(source: string): PolicySource | undefined {
+  const m = /^git\+(https?|file):\/\//.exec(source);
+  if (!m) return undefined;
+  const rest = source.slice(4);
+  const hostEnd = rest.indexOf("/", m[1].length + 3);
+  const at = rest.lastIndexOf("@");
+  if (hostEnd < 0 || at <= hostEnd) return undefined;
+  const url = rest.slice(0, at);
+  const ref = rest.slice(at + 1);
+  if (url.length <= hostEnd + 1 || !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(ref) || ref.includes("..") || /\s/.test(url)) return undefined;
+  return { url, ref };
 }
 
 const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

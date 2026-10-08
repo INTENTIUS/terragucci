@@ -35,6 +35,16 @@ projects:
 
 A repo you leave out is never touched. [terragucci.yml keys](/terragucci/reference/config/#keys) lists what a project can set.
 
+To check every project against one policy repo, put [`policy.source`](/terragucci/reference/policy/#a-shared-policy-source) under `defaults`:
+
+```yaml
+defaults:
+  policy:
+    source: git+https://github.com/acme/policy.git@v3
+```
+
+`reconcile` then also writes that `policy` key into each project's `terragucci.yml`, where the project's jobs read it.
+
 ### 2. Check the file
 
 ```bash

@@ -17,6 +17,7 @@ import {
   resolveRepo,
   type Binary,
   type ForgeName,
+  type PolicySettings,
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
@@ -235,6 +236,12 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // Every tf-apply wave gate needs a sealed approval (chant approve --sign). A Terragrunt repo's layers are its waves.
   files.push(declaration(repo, tgMode ? layers.length : applyWaves(layers, settings.waves?.canary).length, options.name));
 
+  // A control repo's project reads policy from its own terragucci.yml at the base, so the control repo's key is written there.
+  if (options.settings) {
+    const policyFile = await projectPolicyFile(repo, options.settings.policy);
+    if (policyFile) files.push(policyFile);
+  }
+
   // A command-line choice is saved when detection would not reach it on its own,
   // so the next run, and the next person, gets the same pipeline.
   if (!options.settings) {
@@ -272,6 +279,36 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
   return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
+}
+
+/** The first line of the terragucci.yml a control repo writes into a project, so a later run knows it may rewrite it. */
+export const PROJECT_CONFIG_HEADER = "# terragucci reconcile writes this file from the control repo's terragucci.yml; edit that file, not this one.";
+
+/** Two values as data, keys in any order. */
+function sameData(a: unknown, b: unknown): boolean {
+  const sorted = (v: unknown): unknown =>
+    v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted((v as Record<string, unknown>)[k])])) : v;
+  return JSON.stringify(sorted(a ?? null)) === JSON.stringify(sorted(b ?? null));
+}
+
+/**
+ * The project's terragucci.yml, for a control repo whose settings set
+ * `policy:`. The project's jobs read the key from the project's own config at
+ * the base, so the control repo's key is written there, and rewritten while
+ * the file is the one terragucci wrote. A config of the project's own must
+ * already carry the same key; otherwise the project fails with what to change.
+ */
+async function projectPolicyFile(repo: string, policy: PolicySettings | undefined): Promise<FileChange | undefined> {
+  const found = findConfig(repo);
+  const path = join(repo, "terragucci.yml");
+  const ours = found === path && readFileSync(path, "utf-8").startsWith(PROJECT_CONFIG_HEADER);
+  if (found && !ours) {
+    if (sameData((await loadConfig(found)).policy, policy)) return undefined;
+    const fix = policy ? `set its policy key to the control repo's (${JSON.stringify(policy)})` : "remove its policy key";
+    throw new ConfigError(`${relative(repo, found)} exists and terragucci did not write it, and the jobs read policy from it; ${fix}, or remove the file so the control repo writes it`);
+  }
+  if (!policy && !ours) return undefined;
+  return plan(path, `${PROJECT_CONFIG_HEADER}\n${policy ? emitYAML({ policy }, 0).trim() : "{}"}\n`);
 }
 
 /** The chant release that reads `identity`. */
