@@ -1,0 +1,53 @@
+{
+  "step": "github",
+  "source_hash": "8a15cedff46f7586",
+  "commands": [
+    {
+      "cmd": "just sandbox change one-root",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/16 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711563329 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711558592 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just sandbox plan-comment one-root",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/16 (the reply is in its conversation)\nRe-plan       https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711622516 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just sandbox change unformatted",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/17 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711679425 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711675352 (failure)",
+      "exit": 0
+    },
+    {
+      "cmd": "gh run view --log-failed  # the check job of change/unformatted",
+      "output": "envs/dev/orders/locals.tf\n--- old/envs/dev/orders/locals.tf\n+++ new/envs/dev/orders/locals.tf\n@@ -1,4 +1,4 @@\n locals {\n-    team   = \"orders\"\n+  team  = \"orders\"\n   owner = \"shop\"\n }\nProcess completed with exit code 3.",
+      "exit": 3
+    },
+    {
+      "cmd": "just sandbox change destroy",
+      "output": "Pull request  https://github.com/INTENTIUS/terragucci-sandbox/pull/18 (the plan note is in its conversation)\nPlan          https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711743244 (success)\nCheck         https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711739156 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just sandbox merge destroy",
+      "output": "Merged    pull request 18 into main\nPipeline  https://github.com/INTENTIUS/terragucci-sandbox/actions/runs/37711797268 (failure)\nStopped   apply-wave-4\nchant approve tf-apply wave-4 --plan jcs1-sha256:9ec9215a6a9167a3c06d8ddb632133d73744bbc27d2fd7191284b6019851123d --sign",
+      "exit": 0
+    },
+    {
+      "cmd": "gh run view --log-failed  # wave 4 on main",
+      "output": "wave 4 of 4: planning envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\nwave 4 of 4: planning up to 16 roots at once (the local, s3 backends)\nenvs/prod/email: No changes. Your infrastructure matches the configuration.\nenvs/prod/orders: No changes. Your infrastructure matches the configuration.\nenvs/prod/payments: No changes. Your infrastructure matches the configuration.\nenvs/prod/search: No changes. Your infrastructure matches the configuration.\nenvs/staging/email: Plan: 0 to add, 1 to change, 1 to destroy.\nenvs/staging/orders: No changes. Your infrastructure matches the configuration.\nenvs/staging/payments: No changes. Your infrastructure matches the configuration.\nenvs/staging/search: No changes. Your infrastructure matches the configuration.\nwave 4 of 4: set digest jcs1-sha256:9ec9215a6a9167a3c06d8ddb632133d73744bbc27d2fd7191284b6019851123d, 2 changes, 1 destroy\nwave 4 of 4 waits for an approval of digest jcs1-sha256:9ec9215a6a9167a3c06d8ddb632133d73744bbc27d2fd7191284b6019851123d. Read its plans above, then approve it with:\n  chant approve tf-apply wave-4 --plan jcs1-sha256:9ec9215a6a9167a3c06d8ddb632133d73744bbc27d2fd7191284b6019851123d --sign\nchant records you as $GITHUB_ACTOR, $GITLAB_USER_LOGIN or $USER. When none of them is your principal in .chant/allowed_signers, add --actor <principal>.\nThen run this job again.\nwave 4: report in terragucci-report/, slowest root envs/staging/payments (0.8s)\nProcess completed with exit code 3.",
+      "exit": 3
+    }
+  ],
+  "shots": {
+    "required-light": "26cd0ea027230b7d",
+    "required-dark": "e0eb38a1c50b1535",
+    "note-light": "2dc36d8675cf67a6",
+    "note-dark": "f0ffc4ce47a65a1f",
+    "reply-light": "42529276acb099a9",
+    "reply-dark": "4b2616daad8dff21",
+    "check-light": "324fd37e62f9fb0e",
+    "check-dark": "f04d9e77478e88a7",
+    "waiting-light": "7601a1d8e554a353",
+    "waiting-dark": "781eeea390c6ad0e"
+  }
+}

@@ -22,9 +22,15 @@
 #   stack/sandbox-github.sh plan-comment [s]  comment `/terragucci plan` on the
 #                                     scenario's pull request (default: the
 #                                     newest open one) and wait for the reply
-#   stack/sandbox-github.sh reset          close the pull requests, delete every
-#                                     other branch and put main back to its
-#                                     first commit
+#   stack/sandbox-github.sh drift          delete a file a root keeps outside
+#                                     the code, run the drift job and wait for
+#                                     its issue
+#   stack/sandbox-github.sh capture        from a reset sandbox: every scenario
+#                                     the docs show, screenshotted into
+#                                     docs-site as step `github`, then reset
+#   stack/sandbox-github.sh reset          close the pull requests and issues,
+#                                     delete every other branch and put main
+#                                     back to its first commit
 #   stack/sandbox-github.sh shot <view>|all|list
 #                                     screenshot a page a step recorded, logged
 #                                     out, light and dark
@@ -60,7 +66,7 @@ log()  { echo "[sandbox] $*" >&2; }
 fail() { log "FAIL: $*"; exit 1; }
 
 usage() { sed -n '3,/^set -/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
-case "$CMD" in up|change|merge|approve|plan-comment|reset|shot|minutes) ;; *) usage; exit 2 ;; esac
+case "$CMD" in up|change|merge|approve|plan-comment|drift|capture|reset|shot|minutes) ;; *) usage; exit 2 ;; esac
 
 command -v gh >/dev/null 2>&1 || fail "gh is not installed"
 command -v jq >/dev/null 2>&1 || fail "jq is not installed"
@@ -337,10 +343,11 @@ wait_run() { # event, since, [sha]
 
 # A view is a page a step leaves for `shot`: its URL, and optionally the CSS
 # selector of the element the picture starts at, a regex its text matches,
-# and a height (a number, or "fit" for the element's own height). The fields
-# are split by the unit separator, since a regex can hold a tab or a bar.
-record_view() { # name, url, [selector], [regex], [height]
-  printf '%s\037%s\037%s\037%s\n' "$2" "${3:-}" "${4:-}" "${5:-900}" > "$DIR/views/$1"
+# a height (a number, or "fit" for the element's own height) and the text of
+# a button to click first. The fields are split by the unit separator, since
+# a regex can hold a tab or a bar.
+record_view() { # name, url, [selector], [regex], [height], [click]
+  printf '%s\037%s\037%s\037%s\037%s\n' "$2" "${3:-}" "${4:-}" "${5:-900}" "${6:-}" > "$DIR/views/$1"
   log "view $1: $2"
 }
 
@@ -406,12 +413,35 @@ record_state() {
   log "recorded the state on main at ${sha:0:8}"
 }
 
+# The default branch requires terragucci/plan, as the docs' add-to page asks,
+# through a ruleset: unlike a classic protection rule, a logged-out reader can
+# open it, so it can be screenshotted. Repository admins (the script's token)
+# may bypass it, so reset and the state commits still push to main.
+RULESET="terragucci/plan required"
+ensure_ruleset() {
+  local id
+  id="$(gh api "repos/$REPO/rulesets" -q ".[] | select(.name == \"$RULESET\") | .id")"
+  if [ -z "$id" ]; then
+    id="$(jq -n --arg name "$RULESET" '{name: $name, target: "branch", enforcement: "active",
+      conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+      bypass_actors: [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}],
+      rules: [{type: "required_status_checks", parameters: {strict_required_status_checks_policy: false,
+        do_not_enforce_on_create: false, required_status_checks: [{context: "terragucci/plan"}]}}]}' \
+      | gh api -X POST "repos/$REPO/rulesets" --input - -q .id)" || fail "could not add the ruleset"
+    log "main requires terragucci/plan (ruleset $id)"
+  fi
+  record_view required "$WEB/rules/$id" "" "" 900 "Show additional settings"
+}
+
 # ── commands ─────────────────────────────────────────────────────────────────
 
 close_and_prune() {
   local n b
   for n in $(gh pr list -R "$REPO" --state open --json number -q '.[].number'); do
     gh pr close "$n" -R "$REPO" >/dev/null && log "closed pull request $n"
+  done
+  for n in $(gh issue list -R "$REPO" --state open --json number -q '.[].number'); do
+    gh issue close "$n" -R "$REPO" >/dev/null && log "closed issue $n"
   done
   for n in $(gh run list -R "$REPO" -L 50 --json databaseId,status -q '.[] | select(.status != "completed") | .databaseId'); do
     gh run cancel "$n" -R "$REPO" >/dev/null 2>&1 || true
@@ -442,6 +472,7 @@ case "$CMD" in
       record_view run "$RUN_URL"
       [ "$RUN_CONCLUSION" = success ] || fail "the first run ended $RUN_CONCLUSION: $RUN_URL"
     fi
+    ensure_ruleset
     new_key
     printf '\n  Sandbox  %s\n  Next     just sandbox change one-root\n' "$WEB"
     ;;
@@ -467,7 +498,14 @@ case "$CMD" in
     plan_url="$RUN_URL" plan_status="$RUN_CONCLUSION"
     record_view plan-run "$RUN_URL"
     wait_run push "$since" "$sha"
-    record_view note "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" 900
+    # The push's run: a failed check marks its job. The picture ends below the
+    # job graph.
+    record_view check "$RUN_URL" "" "" 640
+    if [ "$RUN_CONCLUSION" = failure ]; then
+      IFS=$'\t' read -r job _ < <(stopped_job "$RUN_ID")
+      [ -z "${job:-}" ] || save_job_log "$job" check
+    fi
+    record_view note "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" fit
     # Logged out, a pull request shows no merge box; its Checks tab lists the runs.
     record_view checks "$WEB/pull/$pr/checks"
     printf '\n  Pull request  %s/pull/%s (the plan note is in its conversation)\n  Plan          %s (%s)\n  Check         %s (%s)\n' \
@@ -480,7 +518,8 @@ case "$CMD" in
     [ -n "$pr" ] || fail "no open pull request for change/$name; run 'just sandbox change $name' first"
     ensure_signer
     since="$(now)"
-    gh pr merge "$pr" -R "$REPO" --squash --delete-branch >/dev/null 2>&1 || gh pr merge "$pr" -R "$REPO" --squash >/dev/null \
+    # --admin: the ruleset lets the sandbox's admin merge whatever the plan said.
+    gh pr merge "$pr" -R "$REPO" --squash --admin --delete-branch >/dev/null 2>&1 || gh pr merge "$pr" -R "$REPO" --squash --admin >/dev/null \
       || fail "could not merge pull request $pr"
     sha="$(gh pr view "$pr" -R "$REPO" --json mergeCommit -q .mergeCommit.oid)"
     log "merged pull request $pr into main at ${sha:0:8}"
@@ -498,7 +537,7 @@ case "$CMD" in
       if grep -qE 'changed after it was approved|planned differently since' <<<"$lines"; then view=refused; else view=waiting; fi
       cp "$DIR/logs/$RUN_ID-$job.log" "$DIR/logs/$view.log"
       record_view "$view" "$WEB/actions/runs/$RUN_ID/job/$job"
-      record_view "$view-run" "$RUN_URL"
+      record_view "$view-run" "$RUN_URL" "" "" 640
       # The run, and the wave and plan digest its approve command names.
       printf '%s\t%s\t%s\n' "$RUN_ID" \
         "$(grep -o 'chant approve tf-apply wave-[0-9]*' <<<"$lines" | head -1 | sed 's/.* //')" \
@@ -559,8 +598,113 @@ case "$CMD" in
     log "commented /terragucci plan on pull request $pr"
     wait_run issue_comment "$since"
     record_view replan-run "$RUN_URL"
-    record_view reply "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" 1400
+    # The re-plan edits the note in place; the picture ends below the comment.
+    record_view reply "$WEB/pull/$pr" ".timeline-comment" "terragucci tf-plan" 664
     printf '\n  Pull request  %s/pull/%s (the reply is in its conversation)\n  Re-plan       %s (%s)\n' "$WEB" "$pr" "$RUN_URL" "$RUN_CONCLUSION"
+    ;;
+
+  drift)
+    # terraform_data reads nothing back, so a refresh finds no drift in it. A
+    # local_file reads its file: staging orders keeps one, written by the state
+    # apply, and deleting it is the example's queue deleted in the console.
+    root=envs/staging/orders
+    clone_main "$WORK/tree"
+    if [ ! -f "$WORK/tree/$root/drift.tf" ]; then
+      cat > "$WORK/tree/$root/drift.tf" <<'EOF'
+# The sandbox's drift scenario: a file standing in for the jobs queue, which
+# stack/sandbox-github.sh drift deletes outside the code.
+resource "local_file" "jobs_queue" {
+  filename = "${path.module}/jobs-queue.txt"
+  content  = "shop-staging-orders-jobs\n"
+}
+EOF
+      apply_state "$WORK/tree"
+      commit "$WORK/tree" "Keep staging orders' jobs queue as a file the drift scenario can delete [skip ci]"
+      push "$WORK/tree" main >/dev/null
+    fi
+    git -C "$WORK/tree" rm -q "$root/jobs-queue.txt"
+    commit "$WORK/tree" "Delete staging orders' jobs queue outside the code [skip ci]"
+    push "$WORK/tree" main >/dev/null
+    log "deleted $root/jobs-queue.txt on main, outside the code"
+    since="$(now)"
+    gh workflow run terragucci.yml -R "$REPO" --ref main >/dev/null || fail "could not start the drift job"
+    wait_run workflow_dispatch "$since"
+    record_view drift-run "$RUN_URL"
+    issue="$(gh issue list -R "$REPO" --state open -L 1 --json number -q '.[0].number // empty')"
+    [ -n "$issue" ] || fail "the drift run ($RUN_CONCLUSION) opened no issue: $RUN_URL"
+    record_view drift "$WEB/issues/$issue" "" "" 1100
+    printf '\n  Drift run  %s (%s)\n  Issue      %s/issues/%s\n' "$RUN_URL" "$RUN_CONCLUSION" "$WEB" "$issue"
+    ;;
+
+  capture)
+    # Each step runs as its own command, so what it prints is what a reader of
+    # the docs would see, and each view is shot right after its step: the
+    # re-plan edits the note the `note` view shows.
+    ROOT="$(cd "$HERE/.." && pwd)"
+    DATA="$ROOT/docs-site/src/data/tutorial" SHOTS="$ROOT/docs-site/src/assets/tutorial"
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then fail "capture needs Docker, for the state and the screenshots"; fi
+    started="$(date +%s)"
+    "$0" reset
+    ensure_ruleset
+    : > "$WORK/commands"
+    step() { # command words...
+      local out rc=0
+      out="$("$0" "$@")" || rc=$?
+      [ "$rc" = 0 ] || return "$rc"
+      jq -n --arg cmd "just sandbox $*" --arg output "$(sed '/^$/d; s/^  //' <<<"$out")" '{cmd: $cmd, output: $output, exit: 0}' >> "$WORK/commands"
+    }
+    # A job's log, which a logged-out reader cannot open: its lines from the
+    # first that matches one regex to the first after it that matches another.
+    log_lines() { # command, log file, from regex, to regex
+      local out
+      out="$(awk -v a="$3" -v b="$4" '!on && $0 ~ a { on = 1 } on { sub(/^##\[error\]/, ""); sub(/[ \t]+$/, ""); print } on && $0 ~ b { exit }' "$2")"
+      [ -n "$out" ] || fail "no lines from /$3/ in $2"
+      jq -n --arg cmd "$1" --arg output "$out" '{cmd: $cmd, output: $output, exit: 3}' >> "$WORK/commands"
+    }
+    take() { # view...
+      local v
+      for v in "$@"; do "$0" shot "$v"; done
+    }
+    pairs="required:required note:note reply:reply check:check waiting-run:waiting"
+    take required
+    step change one-root || fail "change one-root failed"
+    take note
+    step plan-comment one-root || fail "plan-comment one-root failed"
+    take reply
+    step change unformatted || fail "change unformatted failed"
+    take check
+    log_lines "gh run view --log-failed  # the check job of change/unformatted" "$DIR/logs/check.log" '^envs/.*[.]tf$' 'Process completed'
+    step change destroy || fail "change destroy failed"
+    step merge destroy || fail "merge destroy failed"
+    take waiting-run
+    log_lines "gh run view --log-failed  # wave 4 on main" "$DIR/logs/waiting.log" '^wave [0-9]+ of [0-9]+:' 'Process completed'
+    # Drift comes last: the file it deletes would be planned back by any later
+    # merge. A release whose drift job cannot keep its issue on github.com
+    # leaves the drift view out, and any committed one stands.
+    if step drift; then
+      take drift
+      pairs="$pairs drift:drift"
+    else
+      log "no drift issue on $RELEASE; the drift view is left as it was"
+    fi
+    # The files the docs use: step `github`, beside the Forgejo steps.
+    hash="$(cd "$ROOT" && find example -type f ! -path '*/.terraform/*' | LC_ALL=C sort | while read -r f; do
+      printf '%s\0' "$f"; cat "$f"; done | shasum -a 256 | cut -c1-16)"
+    # A view this run left out keeps the hash the last capture recorded.
+    shots="$(jq -c '.shots // {}' "$DATA/github.json" 2>/dev/null || echo '{}')"
+    for pair in $pairs; do
+      from="${pair%%:*}" to="${pair#*:}"
+      for scheme in light dark; do
+        cp "$DIR/shots/$from-$scheme.png" "$SHOTS/github-$to-$scheme.png"
+        h="$(shasum -a 256 "$SHOTS/github-$to-$scheme.png" | cut -c1-16)"
+        shots="$(jq --arg k "$to-$scheme" --arg h "$h" '. + {($k): $h}' <<<"$shots")"
+      done
+    done
+    jq -s --arg h "$hash" --argjson shots "$shots" '{step: "github", source_hash: $h, commands: ., shots: $shots}' \
+      "$WORK/commands" > "$DATA/github.json"
+    "$0" reset
+    printf '\n  Wrote  docs-site/src/data/tutorial/github.json and docs-site/src/assets/tutorial/github-*.png\n  Took   %s minutes\n' \
+      "$(( ($(date +%s) - started + 59) / 60 ))"
     ;;
 
   reset)
@@ -569,11 +713,15 @@ case "$CMD" in
     first="$(git -C "$WORK/tree" rev-list --max-parents=0 HEAD | tail -1)"
     if [ "$(git -C "$WORK/tree" rev-parse HEAD)" != "$first" ]; then
       git -C "$WORK/tree" checkout -q "$first"
+      since="$(now)"
       push "$WORK/tree" main --force >/dev/null
-      # Moving main back is a push; its run would only re-apply what the state says.
-      sleep 5
-      for n in $(gh run list -R "$REPO" -L 10 --json databaseId,status -q '.[] | select(.status != "completed") | .databaseId'); do
-        gh run cancel "$n" -R "$REPO" >/dev/null 2>&1 || true
+      # Moving main back is a push; its run would only re-apply what the state
+      # says. GitHub can take a while to start it, so wait for it, then cancel.
+      for _ in $(seq 1 12); do
+        sleep 5
+        n="$(gh run list -R "$REPO" --commit "$first" --event push -L 5 --json databaseId,createdAt,status \
+          | jq -r --arg t "$since" '[.[] | select(.createdAt >= $t and .status != "completed")][0].databaseId // empty')"
+        [ -z "$n" ] || { gh run cancel "$n" -R "$REPO" >/dev/null 2>&1 || true; log "cancelled run $n, the push of main back"; break; }
       done
     fi
     rm -f "$DIR/waiting" "$DIR"/views/*
@@ -593,9 +741,10 @@ case "$CMD" in
     for f in "${views[@]}"; do
       [ -f "$f" ] || fail "no view '$(basename "$f")'; 'shot list' names them"
       name="$(basename "$f")"
-      IFS=$'\037' read -r url scroll match height < "$f"
+      IFS=$'\037' read -r url scroll match height click < "$f"
       for scheme in light dark; do
         hooks=()
+        [ -z "$click" ] || hooks+=(--click "$click")
         [ -z "$scroll" ] || hooks+=(--scroll "$scroll")
         [ -z "$match" ] || hooks+=(--match "$match")
         if [ "$height" = fit ]; then hooks+=(--fit 1); height=900; fi
