@@ -376,6 +376,31 @@ GitHub shows a job's log only to a signed-in reader. A logged-out job page lists
 
 The repo is public, so its Actions minutes on GitHub-hosted runners are free. A pull request costs two runs and a merge one run of seven jobs.
 
+## The scale bench
+
+`stack/scale/` runs the generated pipeline over a terralith carved into many roots across several repos, one control repo over them, and writes each run's record into `docs-site/src/data/scale.json`. It has its own compose project (`tgscale`): its own Forgejo on port 3410, floci on 4690, runner and job cache, so it runs beside the validation stack and touches nothing named `terragucci-*`. It calls no cloud. It needs Docker, Python 3, Go and `jq`.
+
+```bash
+just scale up                 # Forgejo, one runner, floci
+just scale run 1 4            # terralith scales: 1 is 79 resources, 136 is 10,069
+just scale record             # fold the runs into docs-site/src/data/scale.json
+just scale down               # its containers, network and volumes
+```
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `TGSCALE_RELEASE` | the newest on npm | the published release whose `reconcile` writes the pipelines and whose images the jobs run |
+| `TGSCALE_BUILD=tree` | unset | runs this tree instead: its bundle reconciles, and one more commit on each pipeline pull request points the jobs at `tgscale-tofu:<commit>`, the release's tofu image with the tree's bundle in it; commit first, since the tag is the commit |
+| `TGSCALE_CAPACITY` | 3 | jobs the runner runs at once (set at `up`) |
+| `TGSCALE_PARALLELISM` | 4 | `parallelism` in each repo's `terragucci.yml` |
+| `TGSCALE_ROOTS_PER_REPO` | 100 | identity roots per repo |
+| `TGSCALE_CHOUDOUFU_REF` | a pinned commit | the choudoufu commit `terralith-gen` is built from; `CHOUDOUFU_DIR` names a checkout, else the script clones one into `stack/scale/.state/` |
+| `TGSCALE_PHASE_TIMEOUT` | 14400 | seconds a phase may take before the run fails |
+
+`carve.py` splits the terralith and checks the carved roots declare exactly its resources. Each root gets `stack/scale/terraform.lock.hcl` as its lock file. `scale.sh` drives the phases (reconcile, create, plan, change) through Forgejo's API, fails the run on the first phase whose runs do not all succeed, and counts the resources in the state files. `summarize.py` writes the run's record to `stack/scale/.state/runs/scale-<resources>.json` and folds the records into the site's file, where a run replaces the one of its size. Job times come from each job log's first and last lines, since Forgejo's API leaves them empty.
+
+The scale workflow (`scale/pipeline.ts`) runs the 10,069-resource point on a GitHub-hosted runner when a release is published, and opens a pull request with the record. Dispatch it by hand for another scale or release.
+
 ## Design notes
 
 Designs waiting for review before any code live in `design/`, one file each. They are contributor material: the site does not describe them until the feature works.
