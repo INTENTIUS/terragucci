@@ -144,7 +144,7 @@ respond-fmt|fmt on request commits to the pull request branch and nowhere else|
 respond-notes|release notes come from the conventional commits that touched the module|
 fresh-plan|on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green|
 forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role|
-steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|
+steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
 policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
 lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|

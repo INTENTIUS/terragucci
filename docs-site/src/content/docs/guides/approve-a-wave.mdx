@@ -149,7 +149,7 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | Situation | How to re-run |
    |---|---|
    | `apply.when: merge` (the default), GitHub or Forgejo | Comment `/terragucci apply` on the merged pull request (add `wave-2` to stop after that wave), or re-run the job. Needs write access. |
-   | `apply.when: merge`, GitLab | Retry the job. |
+   | `apply.when: merge`, GitLab | With `comments:` set, comment `/terragucci apply` on the merged merge request; the comments job retries the first apply job that did not succeed on its next run. `wave-<n>` is refused, since GitLab runs the waves after a retried one. Needs Developer or above. Without `comments:`, retry the job. |
    | `apply.when: pull-request` | Comment `/terragucci apply` on the open pull request again. The mode and the signers come from the default branch, so the pull request cannot relax them or add its own approver. The forge's review is also required. |
 
    The comment approves nothing.
