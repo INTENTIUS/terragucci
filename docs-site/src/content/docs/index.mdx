@@ -15,13 +15,24 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <Landing />
 
+<CardGrid>
+<LinkCard title="No server to host" description="Every job runs in your forge's CI and writes to your repo and your bucket." href="/terragucci/concepts/how-it-works/#what-runs-where" />
+<LinkCard title="GitHub, GitLab or Forgejo" description="One init writes the pipeline in your forge's own format." href="/terragucci/guides/add-to-a-repo/#per-forge" />
+<LinkCard title="Object storage on AWS, GCP or Azure" description="State stays in your S3, GCS or Azure Blob backend, reached over OIDC with no stored keys." href="/terragucci/reference/pipeline/#credentials" />
+<LinkCard title="Tracing and metrics" description="One trace per stage run and the pipeline's numbers as metrics, over OTLP to your collector." href="/terragucci/reference/observability/" />
+<LinkCard title="Rich lifecycles" description="Check and plan on the pull request, apply on merge or before it, and drift on a schedule." href="/terragucci/concepts/how-it-works/" />
+<LinkCard title="Gated waves" description="A wave that destroys or replaces waits for an approval bound to its plans." href="/terragucci/concepts/waves-and-approvals/" />
+<LinkCard title="Aggregated plan output" description="One note groups the roots taking the same change and names every destroy." href="/terragucci/concepts/why-plans-are-grouped/" />
+<LinkCard title="Module publishing and pinned rollouts" description="Version modules on merge, then move each pin one wave of pull requests at a time." href="/terragucci/guides/publish-modules/" />
+</CardGrid>
+
 ## Start from what you want
 
 <CardGrid>
 <LinkCard title="See a plan note in about 10 minutes" description="A 15-root example on your laptop, with a local forge and an AWS stand-in. No cloud account." href="/terragucci/tutorial/" />
 <LinkCard title="Add terragucci to my repo" description="One page for GitHub, GitLab and Forgejo: install, run init, and read the plan note on your next pull request." href="/terragucci/guides/add-to-a-repo/" />
 <LinkCard title="Hand it to my agent" description="A prompt for Claude Code, Codex or Cursor. The agent opens a pull request and never applies, approves or merges." href="/terragucci/getting-started/agents/" />
-<LinkCard title="Coming from Atlantis, HCP Terraform, Spacelift or OpenTaco" description="Where terragucci is different, what every tool does, and where the others go further, each line sourced from its own docs." href="/terragucci/compare/" />
+<LinkCard title="Switching from Atlantis or OpenTaco" description="The commands and settings you use now, and the terragucci key or command for each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
 <LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
 <LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
 </CardGrid>
@@ -81,5 +92,3 @@ Paste this into Claude Code, Codex or Cursor in your Terraform repository. [The 
 <Landing part="agent" />
 
 When it has run, the [guides](/terragucci/guides/add-to-a-repo/) and the [reference](/terragucci/reference/config/) cover tasks and details. The [concepts](/terragucci/concepts/how-it-works/) and the [glossary](/terragucci/concepts/glossary/) explain the reasons and the words.
-
-[How terragucci compares](/terragucci/compare/) sets it beside Atlantis, HCP Terraform, Spacelift and OpenTaco.
