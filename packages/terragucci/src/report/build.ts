@@ -205,8 +205,10 @@ export function buildReport(input: BuildInput): Report {
       if (e.action === "no-op" && r?.importing === undefined) continue;
       const c = reportChange(e, r, src.preventDestroy ?? new Set());
       changes.push(c);
-      const action = c.importing !== undefined && c.action === "no-op" ? "import" : c.action;
-      if (action === "delete" || action === "replace" || action === "forget" || action === "import") {
+      // An import is named whether it leaves the object as found or also
+      // updates it; a destroy, replace or forget of it is named as that.
+      const action = c.action === "delete" || c.action === "replace" || c.action === "forget" ? c.action : c.importing !== undefined ? "import" : undefined;
+      if (action !== undefined) {
         named.push({
           root: m.member, address: c.address, type: c.type, action,
           ...(c.deposed !== undefined ? { deposed: c.deposed } : {}),

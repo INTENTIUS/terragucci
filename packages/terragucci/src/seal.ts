@@ -185,7 +185,7 @@ export function sealRule(repo: string, at?: string): SealRule {
     const r = git(["show", `${base}:${path}`]);
     return r.status === 0 ? r.stdout : undefined;
   };
-  const json = (path: string): { identity?: { gates?: Record<string, unknown> }; signers?: unknown } => {
+  const json = (path: string): { identity?: { gates?: Record<string, unknown> }; schema?: unknown; signers?: unknown } => {
     const text = show(path);
     try {
       return text === undefined ? {} : JSON.parse(text);
@@ -194,8 +194,13 @@ export function sealRule(repo: string, at?: string): SealRule {
     }
   };
   const gates = new Set(Object.keys(json("chant.workspace.json").identity?.gates ?? {}));
-  const named = json(".chant/trust.json").signers;
-  const signersPath = typeof named === "string" ? named : SIGNERS_PATH;
+  // chant reads trust.json only with "schema": 1, and otherwise checks seals
+  // against no signers at all; the apply job reads it the same way.
+  const trust = json(".chant/trust.json");
+  if (show(".chant/trust.json") !== undefined && trust.schema !== 1) {
+    return { gates, signers: null, signersPath: `.chant/trust.json, which needs "schema": 1 to name one` };
+  }
+  const signersPath = typeof trust.signers === "string" ? trust.signers : SIGNERS_PATH;
   const text = show(signersPath);
   return { gates, signers: text === undefined ? null : parseSigners(text), signersPath };
 }
