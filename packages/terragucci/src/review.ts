@@ -231,8 +231,21 @@ export type ReviewOutcome =
   | { kind: "approved"; pr: number; head: string; by: string[] }
   /** The reviewed digest differs from the one planned now. */
   | { kind: "moved"; pr: number; head: string; by: string[]; reviewed: string }
-  /** Nothing to go on: no pull request, no approval of its head, or no row for the wave in its note. */
-  | { kind: "none"; why: string };
+  /**
+   * Nothing to go on: no pull request, no approval of its head, or no row for
+   * the wave in its note. `review` names the pull request when an approving
+   * review of its head would still count: its note has a digest for the wave,
+   * and the forge takes a review of it (GitLab refuses an approval once a
+   * merge request merged).
+   */
+  | { kind: "none"; why: string; review?: { pr: number; url: string } };
+
+/** The page where a reviewer approves the pull request: GitHub's and Forgejo's Files changed tab, GitLab's merge request. */
+export function reviewUrl(env: NodeJS.ProcessEnv, forge: "github" | "forgejo" | "gitlab", pr: number): string | undefined {
+  if (forge === "gitlab") return env.CI_PROJECT_URL ? `${env.CI_PROJECT_URL}/-/merge_requests/${pr}` : undefined;
+  if (!env.GITHUB_SERVER_URL || !env.GITHUB_REPOSITORY) return undefined;
+  return `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/${forge === "github" ? "pull" : "pulls"}/${pr}/files`;
+}
 
 /** Decide one wave by the merged pull request's reviews. Never throws: a forge it cannot read leaves the wave waiting, with the reason. */
 export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo" | "gitlab"; sha: string; wave: number; digest: string | null }): Promise<ReviewOutcome> {
@@ -241,21 +254,24 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
     let by: string[];
     let changes: string[];
     let note: NoteWaves | undefined;
+    // A merge request named by TG_PR is open (applied before it merges); GitLab takes no approval of a merged one.
+    let reviewable = true;
     if (o.forge === "gitlab") {
       const got = await gitlabReviews(gitlabCalls(o.env, o.fetch), o.sha, o.env);
       if (!got) return { kind: "none", why: `no merged merge request made ${o.sha.slice(0, 8)}` };
       ({ pr, by, changes, note } = got);
+      reviewable = /^\d+$/.test((o.env.TG_PR ?? "").trim());
       const own = got.own ? `; the approval by ${got.own}, the user the job's token acts as, never counts` : "";
-      if (by.length === 0 && changes.length === 0) return { kind: "none", why: `no member other than its author approved merge request ${pr.number} after its latest push, ${pr.head.slice(0, 8)}${own}` };
+      if (by.length === 0 && changes.length === 0) return { kind: "none", why: `no member other than its author approved merge request ${pr.number} after its latest push, ${pr.head.slice(0, 8)}${own}`, ...reviewOf(o, pr.number, note, reviewable) };
     } else {
       const f = forgeCalls(o.env, o.fetch);
       pr = await pullOf(f, o.env, o.sha);
       if (!pr) return { kind: "none", why: `no merged pull request made ${o.sha.slice(0, 8)}` };
       ({ by, changes } = await reviewsOf(f, pr, o.forge));
-      if (changes.length === 0 && by.length > 0) note = await noteWavesOf(f, pr);
+      note = await noteWavesOf(f, pr);
     }
-    if (changes.length > 0) return { kind: "none", why: `${changes.join(", ")} asked for changes on pull request ${pr.number}` };
-    if (by.length === 0) return { kind: "none", why: `no reviewer other than its author approved head ${pr.head.slice(0, 8)} of pull request ${pr.number}` };
+    if (changes.length > 0) return { kind: "none", why: `${changes.join(", ")} asked for changes on pull request ${pr.number}`, ...reviewOf(o, pr.number, note, reviewable) };
+    if (by.length === 0) return { kind: "none", why: `no reviewer other than its author approved head ${pr.head.slice(0, 8)} of pull request ${pr.number}`, ...reviewOf(o, pr.number, note, reviewable) };
     const row = note?.waves.find((w) => w.number === o.wave);
     if (!row || !row.digest) return { kind: "none", why: `the plan note of head ${pr.head.slice(0, 8)} has no digest for wave ${o.wave}, so its review did not cover these plans` };
     if (o.digest !== null && row.digest === o.digest) return { kind: "approved", pr: pr.number, head: pr.head, by };
@@ -263,6 +279,13 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
   } catch (e) {
     return { kind: "none", why: `the reviews could not be read (${(e as Error).message})` };
   }
+}
+
+/** The review that would still approve the wave: its pull request's note has a digest for it, and the forge takes a review. */
+function reviewOf(o: { env: NodeJS.ProcessEnv; forge: "github" | "forgejo" | "gitlab"; wave: number }, pr: number, note: NoteWaves | undefined, reviewable: boolean): { review?: { pr: number; url: string } } {
+  if (!reviewable || !note?.waves.find((w) => w.number === o.wave)?.digest) return {};
+  const url = reviewUrl(o.env, o.forge, pr);
+  return url ? { review: { pr, url } } : {};
 }
 
 /**

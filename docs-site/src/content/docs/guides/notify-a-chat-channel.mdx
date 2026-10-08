@@ -14,11 +14,11 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
-A message in your channel each time an apply job stops at a wave. A message approves nothing; a person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+A message in your channel each time an apply job stops at a wave. A message approves nothing. A person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), or, under `approval: pr-review`, by approving the pull request on the forge.
 
 | The wave | Exit | The message says |
 |---|---|---|
-| waits for an approval | 3 | the wave, its roots, the [`chant approve`](/terragucci/concepts/glossary/#chant) command for its digest, and the run |
+| waits for an approval | 3 | the wave, its roots, its plan digest, the [`chant approve`](/terragucci/concepts/glossary/#chant) command for that digest, and the run; under `approval: pr-review`, first a link to review the pull request ([below](#approve-from-the-message-by-review)) |
 | is refused: its plans changed after approval | 4 | the wave, its roots, the outcome line, `npx terragucci approve wave-<k>` for the new digest, and the run |
 | fails, or the policy denies it | 1 | the wave, its roots, the outcome line, that there is nothing to approve, and the run |
 
@@ -101,6 +101,31 @@ A message in your channel each time an apply job stops at a wave. A message appr
 | answers an error, or not within 10 seconds | logs the status and goes on; the wave's own exit code stands |
 
 A comment that applies (`/terragucci apply`) posts the same messages from its job.
+
+## Approve from the message, by review
+
+With [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review), a waiting wave's message opens with a link to the pull request's review page, when an approving review of its head would approve the wave. The approval stays a person's own review on the forge, bound to the plans the pull request's note recorded; the chat app holds no key and approves nothing.
+
+```text
+terragucci: wave 2 of github.com/acme/infra waits for an approval
+Review and approve: pull request 12, then run the wave again
+Roots: envs/prod/app, envs/prod/db
+Digest: jcs1-sha256:9f2c...
+Or approve: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c... (or npx terragucci approve wave-2)
+Run: https://github.com/acme/infra/actions/runs/42
+```
+
+In Teams the card's first button, Review and approve, opens the same page.
+
+| Forge | The link opens | Given when |
+|---|---|---|
+| GitHub | the pull request's Files changed tab, where Review changes > Approve is | the wave's pull request has no approving review of its head, or a reviewer asked for changes, and its plan note has a digest for the wave |
+| Forgejo | the pull request's Files changed tab, where Review > Approve is | the same |
+| GitLab | the merge request, where Approve is | the same, and the merge request is still open (applied before it merges): GitLab takes no approval of a merged one |
+
+No link is given for a direct push, a wave the pull request's note has no digest for, or a refused wave: no review of that head can approve those plans. The message then offers the approve command alone.
+
+After the review, run the wave again: comment `/terragucci apply` on the pull request, or re-run the job ([Run the stage again](/terragucci/guides/approve-a-wave/#approve-with-chant)). The wave finds the approving review of the head, records it on `chant/lifecycle` with `via: pr-review`, and applies.
 
 ## Next
 

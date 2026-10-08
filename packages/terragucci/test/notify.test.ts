@@ -21,6 +21,23 @@ describe("notify: chat webhooks for a wave", () => {
     expect(card.attachments[0].content.actions).toEqual([{ type: "Action.OpenUrl", title: "Open the run", url: "https://github.com/acme/infra/actions/runs/42" }]);
   });
 
+  it("under pr-review, a waiting wave a review would approve links the pull request's review page first", () => {
+    const dir = write(tmp(), { "report.json": JSON.stringify({ run: { project: "github.com/acme/infra" }, waves: [{ number: 2, roots: ["envs/prod/app"], review: { pull_request: 7, url: "https://github.com/acme/infra/pull/7/files" } }] }) });
+    const n = waveNotice("waiting", 2, { outcome: "wave 2 waits: chant approve tf-apply wave-2 --plan jcs1-sha256:ab", reportDir: dir, env: ENV });
+    expect(n).toMatchObject({ digest: "jcs1-sha256:ab", review: { pr: 7, url: "https://github.com/acme/infra/pull/7/files" } });
+    const lines = slackMessage(n).text.split("\n");
+    expect(lines[1]).toBe("Review and approve: <https://github.com/acme/infra/pull/7/files|pull request 7>, then run the wave again");
+    expect(lines).toContain("Digest: `jcs1-sha256:ab`");
+    expect(lines.some((l) => l.startsWith("Or approve: `chant approve tf-apply wave-2"))).toBe(true);
+    const card = (teamsMessage(n) as any).attachments[0].content;
+    expect(card.actions[0]).toEqual({ type: "Action.OpenUrl", title: "Review and approve", url: "https://github.com/acme/infra/pull/7/files" });
+    expect(card.body[1].facts).toContainEqual({ title: "Digest", value: "jcs1-sha256:ab" });
+    // A refused wave is never linked: a new review of the merged head cannot approve plans it never saw.
+    expect(waveNotice("refused", 2, { reportDir: dir, env: ENV }).review).toBeUndefined();
+    // Without a review row (ledger, sealed, or a wave no review covers) the message is as before.
+    expect(slackMessage(waveNotice("waiting", 2, { reportDir: report(), env: ENV })).text).not.toContain("Review and approve");
+  });
+
   it("says what a refused and a failed wave leave to a person", () => {
     const refused = waveNotice("refused", 3, { outcome: "wave 3 changed after approval: envs/prod/app", env: ENV });
     expect(refused.roots).toEqual(["envs/prod/app"]);

@@ -201,6 +201,15 @@
               "by": { "type": "string" },
               "roots": { "type": "array", "items": { "type": "string" } }
             }
+          },
+          "review": {
+            "type": "object",
+            "description": "A waiting tf-apply wave under approval: pr-review: the pull request whose approving review of its head would approve the wave, and the page to review it on (minor 13).",
+            "required": ["pull_request", "url"],
+            "properties": {
+              "pull_request": { "type": "integer" },
+              "url": { "type": "string" }
+            }
           }
         }
       }

@@ -1,7 +1,7 @@
 ---
 title: Approve a waiting wave
 description: Read what a wave will do, record your approval, and let the apply carry on.
-claims: [waves, sealed, comment-apply, wave-report, ledger-default, approval-at-base, pr-review, pr-review-moved, pr-review-status, approve-command, signer-trust]
+claims: [waves, sealed, comment-apply, wave-report, ledger-default, approval-at-base, pr-review, pr-review-moved, pr-review-status, approve-command, signer-trust, notify-chat]
 prompt: |
   Read https://intentius.io/terragucci/guides/approve-a-wave/.
   Find the waiting wave with `npx terragucci approve --dry-run`, summarize its
@@ -86,6 +86,8 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | same digest | records the approval on `chant/lifecycle` (`via: pr-review`, the pull request, its head and the reviewers) and applies |
    | another digest (the plans moved after the review) | applies nothing, exits 4 and prints the `chant approve` command for the new digest |
    | no row for the wave in the note, no approving review, or a direct push | waits for a `chant approve`, as under `ledger` |
+
+5. A wave that waits for want of a review can still take one. On GitHub and Forgejo, approve the merged pull request on its head; on GitLab, approve the merge request while it is open, since GitLab takes no approval after the merge. Then run the wave again ([step 4 below](#approve-with-chant)): it finds the review and applies. With [`notify`](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) set, the waiting wave's chat message links the review page.
 
 </Steps>
 
