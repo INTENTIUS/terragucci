@@ -17,6 +17,8 @@ import Shot from '../../../components/Shot.astro';
 
 <Badge text="About 10 minutes" variant="note" size="medium" />
 
+CI does this: everything runs as jobs in your CI and lands in your git and your bucket. No account, no sign-in, no platform.
+
 | You get | Where it is shown |
 |---|---|
 | No server to host | [What runs where](/terragucci/concepts/how-it-works/#what-runs-where) |
@@ -27,8 +29,6 @@ import Shot from '../../../components/Shot.astro';
 | Gated waves | [How waves and approvals work](/terragucci/concepts/waves-and-approvals/) |
 | Aggregated plan output | [Why plans are grouped](/terragucci/concepts/why-plans-are-grouped/) |
 | Module publishing and pinned rollouts | [Publish your modules](/terragucci/guides/publish-modules/), [roll out a version](/terragucci/guides/roll-out-a-module-version/) |
-
-Everything runs as jobs in your CI and lands in your git and your bucket: no account, no sign-in.
 
 <CardGrid>
 <LinkCard title="Try it on an example first" description="A 15-root example on your laptop, with no cloud account." href="/terragucci/tutorial/" />
@@ -164,6 +164,8 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
    A pull request comment, with the status in the checks box.
 
+   <Shot step="github" view="note" alt="The plan note on a GitHub pull request: one group, its waves table with the set digest, and the change to the jobs queue" />
+
    </TabItem>
    <TabItem label="GitLab">
 
@@ -188,6 +190,7 @@ With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a
 | Approval mode | Set up once |
 |---|---|
 | `ledger`, the default | `npm i -D @intentius/chant` where you approve |
+| `pr-review`, a pull request review counts | `approval: pr-review` in `terragucci.yml`; to hold unreviewed changes, require `terragucci/approval` on GitHub or Forgejo, or an approval rule on GitLab: [approve by review](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review) |
 | `sealed`, signed approvals | the same, and your ssh public key in `.chant/allowed_signers` on the default branch before the first change that destroys something: [set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) |
 
 ## Next

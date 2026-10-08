@@ -1,6 +1,6 @@
 ---
 title: terragucci
-description: CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. Grouped plans on every pull request, applies in gated waves, and drift reports.
+description: CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. Runs as jobs in your own CI; no account, no sign-in. Grouped plans on every pull request, applies in gated waves, and drift reports.
 template: splash
 ---
 
@@ -18,9 +18,9 @@ import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 <CardGrid>
 <LinkCard title="No server to host" description="Every job runs in your forge's CI and writes to your repo and your bucket." href="/terragucci/concepts/how-it-works/#what-runs-where" />
 <LinkCard title="GitHub, GitLab or Forgejo" description="One init writes the pipeline in your forge's own format." href="/terragucci/guides/add-to-a-repo/#per-forge" />
-<LinkCard title="Object storage on AWS, GCP or Azure" description="State stays in your S3, GCS or Azure Blob backend, reached over OIDC with no stored keys." href="/terragucci/reference/pipeline/#credentials" />
+<LinkCard title="Object storage on AWS, GCP or Azure" description="State stays in your S3, GCS or Azure Blob backend; with oidc set, CI reaches it with no stored keys." href="/terragucci/reference/pipeline/#credentials" />
 <LinkCard title="Tracing and metrics" description="One trace per stage run and the pipeline's numbers as metrics, over OTLP to your collector." href="/terragucci/reference/observability/" />
-<LinkCard title="Rich lifecycles" description="Check and plan on the pull request, apply on merge or before it, and drift on a schedule." href="/terragucci/concepts/how-it-works/" />
+<LinkCard title="Rich lifecycles" description="Check on every push, plan on the pull request, apply on merge (or before it, on GitHub and Forgejo), and drift on a schedule." href="/terragucci/concepts/how-it-works/" />
 <LinkCard title="Gated waves" description="A wave that destroys or replaces waits for an approval bound to its plans." href="/terragucci/concepts/waves-and-approvals/" />
 <LinkCard title="Aggregated plan output" description="One note groups the roots taking the same change and names every destroy." href="/terragucci/concepts/why-plans-are-grouped/" />
 <LinkCard title="Module publishing and pinned rollouts" description="Version modules on merge, then move each pin one wave of pull requests at a time." href="/terragucci/guides/publish-modules/" />
@@ -75,7 +75,7 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 
 ## More with choudoufu
 
-[choudoufu](/terragucci/concepts/glossary/#choudoufu) is the OpenTofu fork from the team behind terragucci. Set `binary: choudoufu` in `terragucci.yml` and the same four stages gain these:
+Set `binary: choudoufu` in `terragucci.yml` and the stages gain these. [The glossary](/terragucci/concepts/glossary/#choudoufu) says what choudoufu is.
 
 | You get | Where you see it |
 |---|---|
@@ -87,7 +87,7 @@ terragucci reads your roots and runs your binary. It adds the steps around them 
 
 ## Hand the setup to your agent
 
-Paste this into Claude Code, Codex or Cursor in your Terraform repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.
+Paste this into Claude Code, Codex or Cursor in your Terraform, OpenTofu or Terragrunt repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.
 
 <Landing part="agent" />
 

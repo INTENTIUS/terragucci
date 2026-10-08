@@ -15,12 +15,37 @@ prompt: |
 
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
+import { Steps } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-An approval covers the plans you read and no others. Merge `just example change destroy` so wave 4 waits, then approve it with `just example approve` as on the previous page. Before you run the wave's job again, run `just example change module-bump` and `just example merge module-bump`, which changes the shared module so every root in wave 4 plans again.
+An approval covers the plans you read and no others.
+
+<Steps>
+
+1. Open the destroy change and merge it, so wave 4 waits:
+
+   ```bash
+   just example change destroy
+   just example merge destroy
+   ```
+
+2. Approve wave 4, as on the previous page:
+
+   ```bash
+   just example approve
+   ```
+
+3. Before you run the wave's job again, change the shared module, so every root in wave 4 plans again:
+
+   ```bash
+   just example change module-bump
+   just example merge module-bump
+   ```
+
+</Steps>
 
 <Captured step="wave-refused" optional />
 

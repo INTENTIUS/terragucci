@@ -1,8 +1,19 @@
 # terragucci
 
-CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. Every pull request gets one grouped plan note, and every merge goes out in approved waves while terragucci watches for drift.
+CI for Terraform, OpenTofu and Terragrunt, from the pull request to the drift check. CI does this: every job runs in your forge's CI and lands in your git and your bucket. No account, no sign-in, no platform.
 
-It runs whichever binary you already use; [Choose Terraform, OpenTofu, Terragrunt or choudoufu](https://intentius.io/terragucci/guides/use-a-binary/) compares them. Pipelines run on your forge's CI.
+| You get | How |
+|---|---|
+| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#what-runs-where) | every job runs in your forge's CI and writes to your repo and your bucket |
+| [GitHub, GitLab or Forgejo](https://intentius.io/terragucci/guides/add-to-a-repo/#per-forge) | one init writes the pipeline in your forge's own format |
+| [Object storage on AWS, GCP or Azure](https://intentius.io/terragucci/reference/pipeline/#credentials) | state stays in your S3, GCS or Azure Blob backend; with `oidc` set, CI reaches it with no stored keys |
+| [Tracing and metrics](https://intentius.io/terragucci/reference/observability/) | one trace per stage run and the pipeline's numbers as metrics, over OTLP to your collector |
+| [Rich lifecycles](https://intentius.io/terragucci/concepts/how-it-works/) | check on every push, plan on the pull request, apply on merge (or before it, on GitHub and Forgejo), and drift on a schedule |
+| [Gated waves](https://intentius.io/terragucci/concepts/waves-and-approvals/) | a wave that destroys or replaces waits for an approval bound to its plans |
+| [Aggregated plan output](https://intentius.io/terragucci/concepts/why-plans-are-grouped/) | one note groups the roots taking the same change and names every destroy |
+| [Module publishing and pinned rollouts](https://intentius.io/terragucci/guides/publish-modules/) | version modules on merge, then move each pin one wave of pull requests at a time |
+
+It runs whichever binary you already use; [Choose Terraform, OpenTofu, Terragrunt or choudoufu](https://intentius.io/terragucci/guides/use-a-binary/) compares them.
 
 ```bash
 npm i -D @intentius/terragucci

@@ -32,8 +32,7 @@ modules/service          the module every service uses; it reads policy.json wit
 There is no `roots:` setting. `init` sees `root.hcl`, asks Terragrunt for the units and writes the pipeline; the example already has it. In your own repo run `npx terragucci init` at the root, and it prints:
 
 ```
-found Terragrunt (root.hcl): 15 units in 5 waves from terragrunt find, terragrunt 1.1.6 (the image)
-calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
+found Terragrunt (root.hcl): 15 units in 5 waves from terragrunt find, terragrunt 1.1.6 (the image) calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
 ```
 
 Each wave is one dependency layer, the dev canary's first. Its job plans with one `terragrunt run --all`, and a second `run --all` applies the saved plans once the gate lets it.
@@ -43,7 +42,7 @@ Each wave is one dependency layer, the dev canary's first. Its job plans with on
 | 1 | dev platform | `apply-wave-1` |
 | 2 | the four dev services, which read it | `apply-wave-2` |
 | 3 | staging and prod platform | `apply-wave-3` |
-| 4 | the staging and prod services, but prod search | `apply-wave-4` |
+| 4 | the staging and prod services, except prod search | `apply-wave-4` |
 | 5 | prod search, which goes out after prod orders | `apply-wave-5` |
 
 With the default `on-destroy`, a wave that destroys or replaces something waits for an approval of its set digest. The example's [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists the five gates, so it runs `approval: sealed` and each approval must be sealed.
@@ -54,9 +53,10 @@ A service plans only after its platform applied, so it reads the platform's real
 
 The check job runs these, in order:
 
-1. `terragrunt hcl fmt --check`
-2. `tofu fmt`
+1. `tofu fmt -check -recursive -diff .`, for the modules the units call
+2. `terragrunt hcl fmt --check`
 3. `terragrunt hcl validate --inputs`
+4. `terragucci check-policy`, which runs the policy's tests when `policy` is set
 
 An unformatted `.hcl` file fails the job by name:
 

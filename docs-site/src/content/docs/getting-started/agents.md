@@ -4,7 +4,7 @@ description: How a coding agent adopts terragucci in a repository, and the promp
 prompt: setup
 ---
 
-This page is for a coding agent setting terragucci up, and the person handing it the task. Paste the prompt above into Claude Code, Codex, Cursor or any agent working in your Terraform repository.
+This page is for a coding agent setting terragucci up, and the person handing it the task. Run your coding agent in the repository and paste it the prompt above. The repository can hold Terraform, OpenTofu or Terragrunt roots.
 
 ## What the agent reads
 
