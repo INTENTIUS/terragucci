@@ -279,7 +279,8 @@ cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK T
 audit|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
-audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|'
+audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
+notify-chat|with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -9305,6 +9306,54 @@ YAML
   return $rc
 }
 
+claim_notify_chat() {
+  # The gated fixture (gate: always) with notify naming two secrets, which
+  # hold the addresses of a webhook stand-in: one path for Slack, one for
+  # Teams. The push to main stops at wave 1, waiting for its approval, and
+  # its job posts once to each: the Slack text and the Teams card both name
+  # the wave, its root canary/one, the chant approve command for its digest
+  # and the run.
+  # BREAK: terragucci.yml has no notify, so the pipeline maps no webhook and
+  # nothing is posted.
+  log() { echo "[smoke notify-chat] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/notify-chat" name="tgs-chat-$STAMP" wf sha reqs slack teams s rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo notify-chat || { drop_work "$work"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    printf 'notify:\n  slack: CHAT_SLACK\n  teams: CHAT_TEAMS\n' >> "$work/tree/terragucci.yml"
+    (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+    wf="$work/tree/.forgejo/workflows/terragucci.yml"
+    # shellcheck disable=SC2016 # the expression the forge expands
+    grep -qF 'TERRAGUCCI_SLACK_WEBHOOK: '"'"'${{ secrets.CHAT_SLACK }}'"'" "$wf" || { log "the apply jobs do not map CHAT_SLACK"; drop_work "$work"; return 1; }
+  fi
+  for s in CHAT_SLACK:"http://$name:8790/slack" CHAT_TEAMS:"http://$name:8790/teams"; do
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "${s#*:}" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/${s%%:*}" \
+      || { log "could not set the ${s%%:*} secret"; drop_work "$work"; return 1; }
+  done
+  stand_in_up "$work" "$name" 8790 MODE=webhook || { stand_in_down; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "notify-chat: two waves")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    print_logs "$repo" "$RUN_ID" | grep -E 'chant approve tf-apply wave-1|terragucci notify' >&2 || { log "wave 1 did not wait for its approval"; rc=1; }
+    reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
+    slack="$(jq -r '[.[] | select(.method == "POST" and .path == "/slack")] | last | .body.text // empty' <<<"$reqs")"
+    teams="$(jq -c '[.[] | select(.method == "POST" and .path == "/teams")] | last | .body // empty' <<<"$reqs")"
+    log "Slack got: ${slack:-nothing}"
+    log "Teams got: ${teams:-nothing}"
+    for want in "wave 1 of" "canary/one" "chant approve tf-apply wave-1 --plan" "/actions/runs/"; do
+      grep -qF -- "$want" <<<"$slack" || { log "the Slack message does not say $want"; rc=1; }
+      grep -qF -- "$want" <<<"$teams" || { log "the Teams card does not say $want"; rc=1; }
+    done
+    [ "$(jq -r '.attachments[0].contentType // empty' <<<"$teams")" = application/vnd.microsoft.card.adaptive ] || { log "the Teams body is not an Adaptive Card"; rc=1; }
+  fi
+  stand_in_down
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 1 waited, and Slack and Teams each got the wave, its root, the approve command and the run"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -9508,6 +9557,7 @@ audit                weight=150
 audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150
+notify-chat          runner self! weight=150
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

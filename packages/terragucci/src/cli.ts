@@ -30,6 +30,7 @@
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
+ *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -38,7 +39,7 @@
  * config error; 3 waiting on an approval; 4 a wave's plans changed after
  * its approval, so it applied nothing.
  */
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
@@ -68,6 +69,7 @@ import { parseLayers, runStage } from "./report/stage";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
+import { notify, NOTIFY_EVENTS, waveNotice, type NotifyEvent } from "./notify";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
@@ -94,6 +96,7 @@ const USAGE = `usage:
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
+  terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--report <dir>]
   terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
@@ -438,6 +441,17 @@ export async function main(argv: string[]): Promise<number> {
         if (rules.some((r) => r === "" || r.startsWith("--"))) throw new ConfigError("--rule needs a rule id, such as main.deny_public_bucket");
         const done = await overrideDenial(cwd, { root: args[0] ?? "", rules, reason: str(flags, "reason") ?? "", ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
+      }
+      case "notify": {
+        const event = args[0] as NotifyEvent;
+        if (!(NOTIFY_EVENTS as readonly string[]).includes(event)) throw new ConfigError(`terragucci notify takes one of ${NOTIFY_EVENTS.join(", ")}`);
+        const wave = Number(str(flags, "wave"));
+        if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("terragucci notify needs --wave <n>");
+        const file = str(flags, "outcome");
+        const outcome = file && existsSync(resolve(cwd, file)) ? readFileSync(resolve(cwd, file), "utf-8") : undefined;
+        const report = str(flags, "report");
+        for (const line of await notify(waveNotice(event, wave, { ...(outcome ? { outcome } : {}), reportDir: resolve(cwd, report ?? "terragucci-report") }))) console.log(`terragucci notify: ${line}`);
+        return 0;
       }
       case "approval-status": {
         const forge = str(flags, "forge") ?? "github";

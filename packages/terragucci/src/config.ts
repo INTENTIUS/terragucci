@@ -289,6 +289,12 @@ export interface ProjectSettings {
    */
   synth?: string;
   /**
+   * Chat notifications: the names of the secrets holding a Slack or Teams
+   * incoming webhook. An apply job whose wave waits, is refused or fails
+   * posts to each (notify.ts).
+   */
+  notify?: { slack?: string; teams?: string };
+  /**
    * GitLab only: the cron of the comments schedule, or false. The pipeline
    * gets a `comments` job that reads new merge request notes on that
    * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
@@ -402,7 +408,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -447,6 +453,16 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
+  }
+  if (s.notify !== undefined) {
+    const n = s.notify;
+    if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: slack, teams)`);
+    else {
+      for (const [k, v] of Object.entries(n)) {
+        if (k !== "slack" && k !== "teams") problems.push(`${where}.notify.${k} is not a setting (settings: slack, teams)`);
+        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address itself`);
+      }
+    }
   }
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
