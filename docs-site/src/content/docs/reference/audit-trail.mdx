@@ -1,0 +1,92 @@
+---
+title: The audit trail
+description: Who approved which plan digest and when, from the ledger on chant/lifecycle, and the report of every run in your bucket.
+prompt: |
+  Read https://intentius.io/terragucci/reference/audit-trail/.
+  Run the command under "Who approved which digest" with a read-only clone, and tell me each
+  approval with its wave, plan digest, approver and time, and where the apply report of that wave is.
+  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+terragucci keeps two records, both in places you own: the approval ledger in your repository and a report per run in your bucket, or in your CI's artifacts without one. No terragucci server holds a copy.
+
+## The records
+
+| Record | Where | What it says | Written by |
+|---|---|---|---|
+| A wave asking for approval | `_gates/tf-apply.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), a `"kind":"pending"` line | the wave, the plan digest it asks for, when, and when the request expires | the apply job, when the wave waits |
+| An approval | `_gates/tf-apply.jsonl`, any other line, in a commit of its own | the wave, the plan digest it binds, who (`resolvedBy`) and when (`timestamp`) | `chant approve` or `terragucci approve`; under `approval: pr-review`, the apply job |
+| A review counted as an approval | the same line, with `"via": "pr-review"` | the pull request, its head and the reviewers | the apply job, under `approval: pr-review` |
+| A policy override | `_gates/policy-override.jsonl` | the root, its plan digest, the rules it overrides, who, when and the reason | `terragucci override` |
+| A waiting wave's report | `_gates/tf-apply/wave-<k>/<digest>.json` (`:` written as `_`) | the plans the wave asked approval for | the apply job |
+| A run's report | the bucket, under one path per commit and stage | every root's plan digest and changes, each wave's set digest and approval state, the commit, the pull request and the job | every `tf-plan`, `tf-apply` wave and `tf-drift` run |
+| The index | `index.json` and `index.html` at the project's path and at the top of the prefix | one row per run: counts, failed and changed roots, a wave's gate, how long it waited, when it applied | every upload |
+
+A wave's report names its approval record's branch and path (`waves[].gate`) and never copies it. A root applied under an override carries it in `roots[].policy.override`. [Report JSON schema](/terragucci/reference/report-schema/) has every field.
+
+## Who approved which digest, and when
+
+```bash
+git fetch origin chant/lifecycle
+git show origin/chant/lifecycle:_gates/tf-apply.jsonl | jq -r '
+  select(.kind != "pending")
+  | [.timestamp, .gate, .planDigest, .resolvedBy, (.via // "chant approve")] | @tsv'
+```
+
+```bash
+git log --format='%h %an %aI %s' origin/chant/lifecycle -- _gates/tf-apply.jsonl
+```
+
+| The line says | What it proves, by mode |
+|---|---|
+| `planDigest` | every mode: the approval counts only for a wave that plans this digest |
+| `resolvedBy` | `ledger`: the name the approver gave; anyone who can push to `chant/lifecycle` can write any name, and the commit's pusher is in `git log` |
+| `resolvedBy` and `seal` | `sealed`: the seal verifies against `.chant/allowed_signers` at base |
+| `via`, `pr`, `head`, `reviewers` | `pr-review`: a writer other than the author approved this head, and the wave planned what the review saw |
+
+Removing a line revokes an approval before its wave runs. The commit that removed it stays in the branch's history; protect `chant/lifecycle` against force pushes and deletion ([per forge](/terragucci/guides/approve-a-wave/#who-can-push-to-chantlifecycle)).
+
+## What each run did
+
+<Tabs syncKey="reports-kept">
+  <TabItem label="With a bucket">
+    Each run writes under a path holding its full commit SHA:
+
+    ```text
+    reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.json
+    reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-apply-wave-2/report.json
+    ```
+
+    Read a wave's approval state and digest from its report:
+
+    ```bash
+    jq '.run.commit, (.waves[] | {number, set_digest, approval, gate})' report.json
+    ```
+
+    The index lists every run of a project, newest first; [`terragucci estate`](/terragucci/guides/see-every-project/) reads every project's index into one page. [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) sets it up.
+  </TabItem>
+  <TabItem label="Without a bucket">
+    Each report is a CI artifact of its job, kept as long as your forge keeps artifacts. The plan note and the job log name the run.
+  </TabItem>
+</Tabs>
+
+## Matching an apply to its approval
+
+| Step | Read | Match |
+|---|---|---|
+| 1 | the `tf-apply-wave-<k>` report: `waves[].set_digest` and `run.commit` | the digest the wave applied, and the commit it applied from |
+| 2 | `_gates/tf-apply.jsonl` | an approval line whose `gate` is `wave-<k>` and whose `planDigest` is that digest |
+| 3 | the plan report of the same pull request: `waves[].review_digest` | the digest the reviewers saw, when the plans did not move after the merge |
+
+A wave whose plans moved after approval applied nothing and exited 4; its report and the next pending line say so ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)).
+
+## How long the records last
+
+| Record | Kept |
+|---|---|
+| The ledger | as long as the `chant/lifecycle` branch; every change is a commit |
+| Reports and the index in a bucket | your bucket's lifecycle rule |
+| Reports as CI artifacts | your forge's artifact retention |
+| Traces and metrics | your telemetry backend's retention ([Traces and metrics](/terragucci/reference/observability/)) |
