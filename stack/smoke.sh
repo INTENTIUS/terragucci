@@ -4927,21 +4927,27 @@ claim_front_door() {
   # The reports front door template the site offers
   # (docs-site/public/reports-front-door.json) deploys through floci's
   # CloudFormation in front of a private bucket, with a hosted zone and a
-  # given certificate. The stack must reach CREATE_COMPLETE with its Url
-  # output; the distribution must answer at the domain over HTTPS only, read
-  # the bucket through an Origin Access Control and run the edge function's
-  # published version on every viewer request; the bucket policy must admit
-  # cloudfront.amazonaws.com for that distribution only; the alias record must
-  # point at the distribution; and the settings secret must hold the domain and
-  # a generated 64-character session key. Its limits: floci stubs the Origin
-  # Access Control and the certificate and runs no Lambda@Edge, so the sign-in
-  # itself is held by test/front-door.test.ts, which runs the deployed code.
+  # given certificate. The stack must reach CREATE_COMPLETE with its Url and
+  # DistributionId outputs, and list every resource its conditions select as
+  # CREATE_COMPLETE (the certificate left out, since one is given). The
+  # template floci accepted (GetTemplate) must answer at the domain over HTTPS
+  # only, read the bucket through the Origin Access Control and run the edge
+  # function's published version on every viewer request; its bucket policy
+  # must admit cloudfront.amazonaws.com for that distribution only, its alias
+  # records must point at the distribution, and its settings secret must
+  # generate the session key. Its limits: floci's CloudFormation stubs the
+  # distribution, the Origin Access Control, the bucket policy, the records and
+  # the secret (none reaches its service's API) and runs no Lambda@Edge, so
+  # the claim holds the stack floci accepted, not the deployed resources. Those
+  # are held by the manual check on AWS in the pull request that added the
+  # front door, and the sign-in by test/front-door.test.ts, which runs the
+  # inlined code.
   # BREAK: the template loses its viewer-request association, so a request
   # would reach the bucket with no sign-in.
   log() { echo "[smoke front-door] $*" >&2; }
   local floci="${TERRAGUCCI_FLOCI_URL:-http://localhost:${TERRAGUCCI_FLOCI_PORT:-4580}}"
-  local stack=terragucci-smoke-door bucket=terragucci-smoke-door domain=reports.door.test
-  local tpl="$HERE/../docs-site/public/reports-front-door.json" work status="" dist="" xml zone policy secret i rc=0
+  local stack=terragucci-smoke-door domain=reports.door.test
+  local tpl="$HERE/../docs-site/public/reports-front-door.json" work status="" xml dist got r i rc=0
   local auth='AWS4-HMAC-SHA256 Credential=test/20260101/us-east-1/cloudformation/aws4_request, SignedHeaders=host, Signature=0'
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
@@ -4954,21 +4960,11 @@ claim_front_door() {
   # A run before this one may have left its stack.
   cfn DeleteStack --data-urlencode "StackName=$stack" >/dev/null 2>&1 || true
   for i in $(seq 1 30); do [ -z "$(stack_status)" ] && break; sleep 2; done
-  curl -s -o /dev/null -X PUT "$floci/$bucket" || true
-  printf '<h1>index</h1>\n' | curl -fsS -o /dev/null -X PUT --data-binary @- "$floci/$bucket/index.html" \
-    || { log "floci at $floci made no bucket; run 'just stack-up aws' first"; drop_work "$work"; return 1; }
-  zone="$(curl -fsS "$floci/2013-04-01/hostedzonesbyname?dnsname=door.test" 2>/dev/null | grep -o '<Id>/hostedzone/[^<]*' | head -1 | sed 's#<Id>/hostedzone/##')" || true
-  if [ -z "$zone" ]; then
-    zone="$(curl -fsS -X POST "$floci/2013-04-01/hostedzone" -H 'Content-Type: application/xml' \
-      -d "<CreateHostedZoneRequest xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"><Name>door.test.</Name><CallerReference>terragucci-smoke-door-$(date +%s)</CallerReference></CreateHostedZoneRequest>" \
-      | grep -o '<Id>/hostedzone/[^<]*' | head -1 | sed 's#<Id>/hostedzone/##')" || true
-  fi
-  [ -n "$zone" ] || { log "floci made no hosted zone for door.test"; drop_work "$work"; return 1; }
   cfn CreateStack --data-urlencode "StackName=$stack" --data-urlencode "TemplateBody@$work/template.json" \
     --data-urlencode "Capabilities.member.1=CAPABILITY_IAM" \
-    --data-urlencode "Parameters.member.1.ParameterKey=ReportsBucket" --data-urlencode "Parameters.member.1.ParameterValue=$bucket" \
+    --data-urlencode "Parameters.member.1.ParameterKey=ReportsBucket" --data-urlencode "Parameters.member.1.ParameterValue=terragucci-smoke-door" \
     --data-urlencode "Parameters.member.2.ParameterKey=DomainName" --data-urlencode "Parameters.member.2.ParameterValue=$domain" \
-    --data-urlencode "Parameters.member.3.ParameterKey=HostedZoneId" --data-urlencode "Parameters.member.3.ParameterValue=$zone" \
+    --data-urlencode "Parameters.member.3.ParameterKey=HostedZoneId" --data-urlencode "Parameters.member.3.ParameterValue=Z0SMOKEDOOR" \
     --data-urlencode "Parameters.member.4.ParameterKey=CertificateArn" --data-urlencode "Parameters.member.4.ParameterValue=arn:aws:acm:us-east-1:000000000000:certificate/terragucci-smoke-door" \
     --data-urlencode "Parameters.member.5.ParameterKey=OidcIssuer" --data-urlencode "Parameters.member.5.ParameterValue=https://idp.door.test" \
     --data-urlencode "Parameters.member.6.ParameterKey=OidcClientId" --data-urlencode "Parameters.member.6.ParameterValue=terragucci-reports" \
@@ -4980,38 +4976,39 @@ claim_front_door() {
     case "$status" in *_COMPLETE|*_FAILED) break ;; esac
     sleep 2
   done
-  xml="$(cfn DescribeStacks --data-urlencode "StackName=$stack" 2>/dev/null || true)"
   if [ "$status" != CREATE_COMPLETE ]; then
     log "the stack ended '$status'"
     cfn DescribeStackEvents --data-urlencode "StackName=$stack" 2>/dev/null | grep -o '<ResourceStatusReason>[^<]*' | head -5 | sed 's/^/[smoke front-door]   /' >&2 || true
-    rc=1
-  else
-    grep -q "<OutputValue>https://$domain</OutputValue>" <<<"$xml" || { log "the Url output is not https://$domain"; rc=1; }
-    dist="$(tr -d '\n' <<<"$xml" | grep -o '<OutputKey>DistributionId</OutputKey>[^/]*<OutputValue>[^<]*' | sed 's/.*<OutputValue>//')"
+    cfn DeleteStack --data-urlencode "StackName=$stack" >/dev/null 2>&1 || true
+    drop_work "$work"; return 1
   fi
-  if [ -n "$dist" ]; then
-    curl -fsS "$floci/2020-05-31/distribution/$dist" > "$work/dist.xml" 2>/dev/null || true
-    grep -q "<CNAME>$domain</CNAME>" "$work/dist.xml" || { log "the distribution does not answer at $domain"; rc=1; }
-    grep -q '<ViewerProtocolPolicy>redirect-to-https</ViewerProtocolPolicy>' "$work/dist.xml" || { log "the distribution serves plain HTTP"; rc=1; }
-    grep -q '<OriginAccessControlId>[^<]' "$work/dist.xml" || { log "the origin has no Origin Access Control"; rc=1; }
-    grep -q "<DomainName>$bucket.s3.us-east-1.amazonaws.com</DomainName>" "$work/dist.xml" || { log "the origin is not the reports bucket"; rc=1; }
-    tr -d '\n ' < "$work/dist.xml" | grep -qE "<LambdaFunctionARN>arn:aws:lambda:us-east-1:[0-9]+:function:$stack:[0-9]+</LambdaFunctionARN>(<IncludeBody>[a-z]*</IncludeBody>)?<EventType>viewer-request</EventType>|<EventType>viewer-request</EventType><LambdaFunctionARN>arn:aws:lambda:us-east-1:[0-9]+:function:$stack:[0-9]+</LambdaFunctionARN>" \
-      || { log "no published version of the edge function runs on viewer requests"; rc=1; }
-    policy="$(curl -fsS "$floci/$bucket?policy" 2>/dev/null || true)"
-    jq -e --arg d "$dist" '[.Statement[] | select(.Principal.Service == "cloudfront.amazonaws.com" and .Action == "s3:GetObject" and (.Condition.StringEquals["AWS:SourceArn"] | endswith(":distribution/" + $d)))] | length == 1' <<<"$policy" >/dev/null 2>&1 \
-      || { log "the bucket policy does not admit the distribution alone: $policy"; rc=1; }
-    curl -fsS "$floci/2013-04-01/hostedzone/$zone/rrset" 2>/dev/null | tr -d '\n ' | grep -qi "<Name>$domain\.\?</Name><Type>A</Type><AliasTarget><HostedZoneId>Z2FDTNDATAQYW2</HostedZoneId><DNSName>$dist\.cloudfront\.net\.\?</DNSName>" \
-      || { log "no alias record points $domain at the distribution"; rc=1; }
-    secret="$(curl -fsS -X POST "$floci/" -H 'X-Amz-Target: secretsmanager.GetSecretValue' -H 'Content-Type: application/x-amz-json-1.1' -d "{\"SecretId\":\"$stack\"}" 2>/dev/null | jq -r '.SecretString // ""')"
-    jq -e --arg d "$domain" '.domain == $d and .issuer == "https://idp.door.test" and (.sessionKey | length) == 64' <<<"$secret" >/dev/null 2>&1 \
-      || { log "the settings secret does not hold the domain and a session key"; rc=1; }
-  elif [ $rc = 0 ]; then
-    log "the stack names no distribution"; rc=1
+  xml="$(cfn DescribeStacks --data-urlencode "StackName=$stack" 2>/dev/null | tr -d '\n' || true)"
+  grep -q "<OutputValue>https://$domain</OutputValue>" <<<"$xml" || { log "the Url output is not https://$domain"; rc=1; }
+  dist="$(grep -o '<OutputKey>DistributionId</OutputKey>[^/]*<OutputValue>[^<]*' <<<"$xml" | sed 's/.*<OutputValue>//')"
+  [ -n "$dist" ] || { log "the stack has no DistributionId output"; rc=1; }
+  # Every resource the conditions select is created, and the certificate (one was given) is not.
+  got="$(cfn ListStackResources --data-urlencode "StackName=$stack" 2>/dev/null | tr -d '\n' | grep -o '<LogicalResourceId>[^<]*</LogicalResourceId>\(<[^>]*>[^<]*</[^>]*>\)*' || true)"
+  for r in doorAccess doorBucketPolicy doorDistribution doorDnsA doorDnsAAAA doorEdge doorEdgeVersion doorRole doorSettings; do
+    grep "<LogicalResourceId>$r</LogicalResourceId>" <<<"$got" | grep -q CREATE_COMPLETE || { log "the stack did not create $r"; rc=1; }
+  done
+  ! grep -q '<LogicalResourceId>doorCertificate</LogicalResourceId>' <<<"$got" || { log "the stack requested a certificate though one was given"; rc=1; }
+  # The template floci accepted, as GetTemplate returns it.
+  cfn GetTemplate --data-urlencode "StackName=$stack" 2>/dev/null \
+    | python3 -c 'import sys, xml.etree.ElementTree as E; t = [e.text for e in E.fromstring(sys.stdin.read()).iter() if e.tag.endswith("TemplateBody")]; print(t[0] if t else "")' \
+    > "$work/accepted.json" 2>/dev/null || true
+  if ! jq -e . "$work/accepted.json" >/dev/null 2>&1; then
+    log "GetTemplate returned no template"; rc=1
+  else
+    held() { jq -e "$2" "$work/accepted.json" >/dev/null 2>&1 || { log "$1"; rc=1; }; }
+    held "the distribution does not answer at DomainName" '.Resources.doorDistribution.Properties.DistributionConfig.Aliases == [{"Ref": "DomainName"}]'
+    held "the distribution serves plain HTTP" '.Resources.doorDistribution.Properties.DistributionConfig | .DefaultCacheBehavior.ViewerProtocolPolicy == "redirect-to-https" and (.CacheBehaviors // [] | length) == 0'
+    held "the origin is not the bucket through the Origin Access Control" '.Resources.doorDistribution.Properties.DistributionConfig.Origins | length == 1 and .[0].OriginAccessControlId == {"Fn::GetAtt": ["doorAccess", "Id"]} and .[0].S3OriginConfig.OriginAccessIdentity == "" and (.[0].DomainName | tostring | contains("ReportsBucket"))'
+    held "no published version of the edge function runs on viewer requests" '.Resources.doorDistribution.Properties.DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations == [{"EventType": "viewer-request", "LambdaFunctionARN": {"Ref": "doorEdgeVersion"}}] and .Resources.doorEdgeVersion.Properties.FunctionName == {"Fn::GetAtt": ["doorEdge", "Arn"]}'
+    held "the bucket policy does not admit the distribution alone" '.Resources.doorBucketPolicy.Properties.PolicyDocument.Statement | length == 1 and .[0].Principal == {"Service": "cloudfront.amazonaws.com"} and .[0].Action == "s3:GetObject" and (.[0].Condition.StringEquals["AWS:SourceArn"] | tostring | contains("{\"Fn::GetAtt\":[\"doorDistribution\",\"Id\"]}"))'
+    held "the alias records do not point at the distribution" '[.Resources.doorDnsA, .Resources.doorDnsAAAA] | map(.Properties.AliasTarget.DNSName == {"Fn::GetAtt": ["doorDistribution", "DomainName"]} and .Properties.Name == {"Ref": "DomainName"}) | all'
+    held "the settings secret generates no session key" '.Resources.doorSettings.Properties.GenerateSecretString | .GenerateStringKey == "sessionKey" and .PasswordLength == 64'
   fi
   cfn DeleteStack --data-urlencode "StackName=$stack" >/dev/null 2>&1 || true
-  curl -s -o /dev/null -X DELETE "$floci/$bucket/index.html" || true
-  curl -s -o /dev/null -X DELETE "$floci/$bucket?policy" || true
-  curl -s -o /dev/null -X DELETE "$floci/$bucket" || true
   drop_work "$work"
   return $rc
 }
