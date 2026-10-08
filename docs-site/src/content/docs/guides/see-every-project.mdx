@@ -1,7 +1,7 @@
 ---
 title: See every project in one page
 description: A scheduled job writes one page to your reports bucket with every project's latest plan, drift check and waiting waves, and a link to open it.
-claims: [estate, estate-control, estate-override]
+claims: [estate, estate-control, estate-override, audit, audit-control]
 prompt: |
   Read https://intentius.io/terragucci/guides/see-every-project/.
   In this control repo, add the scheduled estate job the page gives for my forge,
@@ -23,8 +23,9 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 | roots applied under a [policy override](/terragucci/reference/policy/#overriding-a-denial), when there are any | a fifth count, and the apply wave that applied them |
 | per project: latest plan, latest drift check, apply waves | each project's `index.json` |
 | the 20 newest runs | every project's `index.json` |
+| a link to the [audit trail](/terragucci/reference/audit-trail/), when the job writes one | `audit.json` beside the page |
 
-The page reads `index.json` files only. It never opens a report, a plan's text or a root's plan JSON.
+The page reads `index.json` files and `audit.json`. It never opens a report, a plan's text or a root's plan JSON.
 
 ## Before you start
 
@@ -59,7 +60,7 @@ The page reads `index.json` files only. It never opens a report, a plan's text o
    {
      "Version": "2012-10-17",
      "Statement": [
-       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/estate.html"] },
+       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/audit.json"] },
        { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json"] }
      ]
    }
@@ -163,7 +164,14 @@ The page reads `index.json` files only. It never opens a report, a plan's text o
 
    The job fails (exit 1) when a project's index could not be read; the page still goes up and names that project.
 
-5. Share the link. Post it where your team looks, such as the drift issue or a chat channel.
+5. Add the audit trail, if you want one: a `terragucci audit` step before the estate step writes `audit.jsonl` and `audit.html`, and the page links them. [The audit trail](/terragucci/reference/audit-trail/#write-it) lists what that step reads.
+
+   ```yaml
+   - run: npx --yes @intentius/terragucci audit
+   - run: npx --yes @intentius/terragucci estate
+   ```
+
+6. Share the link. Post it where your team looks, such as the drift issue or a chat channel.
 
    | Link lifetime | Set by |
    |---|---|
@@ -178,4 +186,5 @@ The page's own numbers need nothing else. Its links to each run's report open wh
 ## Next
 
 - [CLI commands](/terragucci/reference/cli/#estate) lists the flags.
+- [The audit trail](/terragucci/reference/audit-trail/) describes every entry of `audit.jsonl`.
 - [Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) describes `estate.json` and the index rows.

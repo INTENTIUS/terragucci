@@ -92,6 +92,8 @@ export interface Estate {
   projects: EstateProject[];
   /** The newest runs across every project, newest first. */
   recent: EstateRun[];
+  /** The audit trail beside the page, when `terragucci audit` wrote one: its page, how many entries, and when. */
+  audit?: { page: string; entries: number; generated: string };
 }
 
 const at = (iso: string): number => Date.parse(iso) || 0;
@@ -292,6 +294,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans
 .scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}small,.none{color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Estate</h1>
 <p>${estate.projects.length} projects, built from their report indexes <time datetime="${esc(estate.generated)}">${esc(estate.generated)}</time>.</p>
+${estate.audit ? `<p>Audit trail: <a href="${esc(estate.audit.page)}" id="audit-trail">${estate.audit.entries} ${estate.audit.entries === 1 ? "entry" : "entries"}</a>, built <time datetime="${esc(estate.audit.generated)}">${esc(estate.audit.generated)}</time>.</p>` : ""}
 <div class="tiles">${tiles.join("")}</div>
 <h2>Waiting for an approval</h2>
 ${waitingRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Wave</th><th>Commit</th><th>Waiting for</th></tr>\n${waitingRows.join("\n")}\n</table></div>` : `<p class="none">No wave is waiting.</p>`}

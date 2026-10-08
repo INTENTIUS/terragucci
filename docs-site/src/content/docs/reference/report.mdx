@@ -249,7 +249,7 @@ Every upload rewrites `index.html` and `index.json`.
 | Where | one index for the project, and one at the top of the prefix for all projects |
 | A row per run | its counts, its failed and changed roots, a wave's gate and how long it has waited, and up to 50 destroys |
 | Rows kept | 500, plus the newest row of every project, stage and wave beyond them |
-| Built on it | [`terragucci estate`](/terragucci/reference/cli/#estate), one page for every project |
+| Built on it | [`terragucci estate`](/terragucci/reference/cli/#estate), one page for every project, and [`terragucci audit`](/terragucci/reference/audit-trail/), which reads each `tf-apply` row's report |
 | Retention | your bucket's lifecycle rule |
 
 :::caution

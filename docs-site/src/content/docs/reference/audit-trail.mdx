@@ -1,92 +1,181 @@
 ---
 title: The audit trail
-description: Who approved which plan digest and when, from the ledger on chant/lifecycle, and the report of every run in your bucket.
+description: One record of every approval, apply, policy override and refused wave across your projects, as JSON lines in your bucket, built from your git history and your reports.
 prompt: |
   Read https://intentius.io/terragucci/reference/audit-trail/.
-  Run the command under "Who approved which digest" with a read-only clone, and tell me each
-  approval with its wave, plan digest, approver and time, and where the apply report of that wave is.
-  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+  Download audit.jsonl from the top of my reports prefix with a read-only identity, run the queries
+  under "Query the record", and tell me, per project, every approval with its approver, plan digest
+  and time, every policy override with its reason, every refused wave and every failed apply in the
+  last 30 days, each with its evidence link.
+  Read only: do not run `terragucci audit` without `--check`, and write nothing to the bucket.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-terragucci keeps two records, both in places you own: the approval ledger in your repository and a report per run in your bucket, or in your CI's artifacts without one. No terragucci server holds a copy.
+`terragucci audit` writes one audit trail for every project: each approval, apply, policy override and refused wave as one JSON line, in your reports bucket. It builds the lines from two records you already own: the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo, and the wave reports in your bucket. No terragucci server or account holds a copy.
 
-## The records
+## Write it
+
+<Steps>
+
+1. Run it where the [estate page](/terragucci/guides/see-every-project/) job runs, before `terragucci estate`:
+
+   ```bash
+   npx --yes @intentius/terragucci audit
+   npx --yes @intentius/terragucci estate
+   ```
+
+   | Run from | Projects | Ledger read from | Reports read from | Record written to |
+   |---|---|---|---|---|
+   | a control repo | its `projects:` | each project's repo: its `url`, else `https://<key>`, with the forge token when the job has one | each project's `reports` | `defaults.reports` |
+   | one repo | the checkout's own | `origin` | the repo's `reports` | the same bucket |
+
+2. Give the job what it reads. On top of the estate job's identity:
+
+   | Reads | Why |
+   |---|---|
+   | `chant/lifecycle` of each project, with its history | every approval, override and revocation |
+   | `<prefix>/<project>/**/tf-apply-wave-*/report.json` | every apply and its result, every refused wave |
+   | `<prefix>/audit.jsonl`, and writes it, `audit.html` and `audit.json` | the record, its page and its summary |
+
+   The forge token is read from the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`. It needs read access to the repo and nothing else.
+
+3. Read the log:
+
+   ```text
+   audit: 214 entries, 3 added
+     2026-10-08T09:12:44.000Z github.com/acme/network approval wave-2 by dana sha256:4be1...: unsigned
+     2026-10-08T09:20:03.000Z github.com/acme/network apply wave-2 by dana sha256:4be1...: applied
+     2026-10-08T10:01:17.000Z gitlab.example.com/platform/data refused wave-1 by lee sha256:9c07...: changed-after-approval
+   wrote terragucci-audit/audit.jsonl, terragucci-audit/audit.html, terragucci-audit/audit.json
+   copied to s3://acme-terragucci/reports/audit.jsonl, reports/audit.html, reports/audit.json
+   link, until 2026-10-09T10:05:00.000Z:
+   https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/audit.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
+   ```
+
+   Exit code 1 when a project's ledger or index could not be read; the page names it, and the entries that could be read still land.
+
+</Steps>
+
+The estate page links `audit.html` once `audit.json` is beside it. Flags are on [CLI commands](/terragucci/reference/cli/#audit).
+
+## Where it lives
+
+| Object | What it is |
+|---|---|
+| `<prefix>/audit.jsonl` | the record: one entry per line, oldest first within each run's additions |
+| `<prefix>/audit.html` | the page: counts by kind, each project's ledger state, the newest 1000 entries with their evidence links |
+| `<prefix>/audit.json` | the summary, `terragucci.audit-summary/v1`: how many entries, how many the last run added, counts by kind, and each project's ledger state |
+
+## What each entry holds
+
+Every line is `terragucci.audit/v1`, with these fields in this order:
+
+| Field | What it holds |
+|---|---|
+| `schema` | `terragucci.audit/v1`; a new field never changes an existing one |
+| `id` | `sha256:` over where the entry came from: the ledger line, or the report's path and finish time |
+| `kind` | what happened; see the next table |
+| `project` | `<host>/<path>` of the repo |
+| `at` | when: the ledger line's `timestamp`, the commit that removed a line, or the run's finish |
+| `who` | the approver, the overrider, whoever removed the line, or for an apply the approver it applied under; `null` when nobody did |
+| `what` | the gate, `wave-<k>`, or for an override the root |
+| `digest` | the plan digest: the wave's set digest, or the digest an override binds; `null` when a root failed to plan |
+| `result` | the outcome; see the next table |
+| `evidence` | `source` (`ledger` or `report`); for the ledger `branch`, `path` and `commit`; for a report `bucket`, `key` and `job_url`; `url`, the commit's page or the run's `report.html`, when it is known |
+| `detail` | what else the source says, by kind |
+
+## Kinds and results
+
+| `kind` | From | `result` | `detail` |
+|---|---|---|---|
+| `approval-requested` | a pending line in `_gates/tf-apply.jsonl` | `waiting` | `expires`, `run_id`, `roots` |
+| `approval` | an approval line in `_gates/tf-apply.jsonl` | `unsigned`, `sealed` or `review` | `signer` (sealed), `via`, `pr`, `head`, `reviewers` (review), `committed_by` |
+| `approval-revoked` | an approval line a commit removed | `revoked` | `approved_by`, `approved_at` |
+| `override-requested` | a denial a wave recorded in `_gates/policy-override.jsonl` | `denied` | `rules`, `plan_digest` |
+| `override` | an override line in `_gates/policy-override.jsonl` | `unsigned` or `sealed` | `reason`, `rules`, `plan_digest`, `signer`, `committed_by` |
+| `override-revoked` | an override line a commit removed | `revoked` | `approved_by`, `approved_at` |
+| `apply` | a `tf-apply` wave report | `applied`, `failed` or `waiting` | `wave`, `commit`, `roots`, `gate`, `approval` (the id of the approval entry it applied under), `changes`, `failed`, `overrides` |
+| `refused` | a `tf-apply` wave report's `waves[].refused` | `changed-after-approval`, `changed-after-review`, `changed-after-override` or `denied-by-policy` | `approved` (the digest approved), `moved` or `denied` (the roots), `rules` (by root, for a denial) |
+
+`result` on an approval says how it was signed. Whether it counted is the wave's decision under the `approval:` mode at base, and the `apply` or `refused` entry of that wave records it.
+
+| The entry says | What it proves, by mode |
+|---|---|
+| `who` on an `approval` | `ledger`: the name the approver gave; anyone who can push to `chant/lifecycle` can write any name, and `detail.committed_by` is the commit's author |
+| `detail.signer` | `sealed`: the seal's signer; the wave checks it against `.chant/allowed_signers` at base |
+| `detail.via`, `pr`, `reviewers` | `pr-review`: the apply job recorded a review of that head by a writer other than the author |
+
+## How it stays complete
+
+| Property | How |
+|---|---|
+| Append-only | each run reads `audit.jsonl`, keeps every line, and appends the entries whose `id` it lacks; the write is conditional on the copy read, so two runs at once both land |
+| Re-derivable | the ledger is read from its git history every run, and the same records give the same `id`s; a new record built from the same sources holds the same entries |
+| Checked | `terragucci audit --check` builds the entries again, writes nothing, and exits 1 naming each one the record lacks, such as an approval on the ledger after the last run |
+| Revocations kept | removing a line from the ledger revokes it before its wave runs; the record keeps the approval and adds an `approval-revoked` entry with the commit that removed it |
+| Replaced reports | a second run of the same wave on the same commit replaces its report in the bucket; the record keeps the entry of the first run when an audit ran between them, so schedule the audit at least as often as waves run |
+
+## Query the record
+
+<Tabs syncKey="audit-query">
+  <TabItem label="Approvals">
+    ```bash
+    jq -r 'select(.kind == "approval") | [.at, .project, .what, .digest, .who, .result] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="Overrides">
+    ```bash
+    jq -r 'select(.kind == "override") | [.at, .project, .what, .who, (.detail.rules | join(",")), .detail.reason] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="Refused and failed">
+    ```bash
+    jq -r 'select(.kind == "refused" or .result == "failed") | [.at, .project, .what, .result, .evidence.url // .evidence.key] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="One wave">
+    ```bash
+    jq -c 'select(.project == "github.com/acme/network" and .what == "wave-2") | {at, kind, who, digest, result}' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="Applies with no approval">
+    ```bash
+    jq -r 'select(.kind == "apply" and .result == "applied" and .detail.gate == "approved" and .detail.approval == null) | [.at, .project, .what, .digest] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+</Tabs>
+
+Fetch it with the store's own CLI, such as `aws s3 cp s3://acme-terragucci/reports/audit.jsonl .`, or open the link the job prints for the page.
+
+## The records it reads
 
 | Record | Where | What it says | Written by |
 |---|---|---|---|
-| A wave asking for approval | `_gates/tf-apply.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), a `"kind":"pending"` line | the wave, the plan digest it asks for, when, and when the request expires | the apply job, when the wave waits |
+| A wave asking for approval | `_gates/tf-apply.jsonl` on `chant/lifecycle`, a `"kind":"pending"` line | the wave, the plan digest it asks for, when, and when the request expires | the apply job, when the wave waits |
 | An approval | `_gates/tf-apply.jsonl`, any other line, in a commit of its own | the wave, the plan digest it binds, who (`resolvedBy`) and when (`timestamp`) | `chant approve` or `terragucci approve`; under `approval: pr-review`, the apply job |
-| A review counted as an approval | the same line, with `"via": "pr-review"` | the pull request, its head and the reviewers | the apply job, under `approval: pr-review` |
 | A policy override | `_gates/policy-override.jsonl` | the root, its plan digest, the rules it overrides, who, when and the reason | `terragucci override` |
-| A waiting wave's report | `_gates/tf-apply/wave-<k>/<digest>.json` (`:` written as `_`) | the plans the wave asked approval for | the apply job |
-| A run's report | the bucket, under one path per commit and stage | every root's plan digest and changes, each wave's set digest and approval state, the commit, the pull request and the job | every `tf-plan`, `tf-apply` wave and `tf-drift` run |
-| The index | `index.json` and `index.html` at the project's path and at the top of the prefix | one row per run: counts, failed and changed roots, a wave's gate, how long it waited, when it applied | every upload |
+| A run's report | the bucket, under one path per commit and stage | every root's plan digest and changes, each wave's set digest, approval state and, when it applied nothing, why (`waves[].refused`) | every `tf-plan`, `tf-apply` wave and `tf-drift` run |
+| The index | `index.json` at the project's path | one row per run; `terragucci audit` reads its `tf-apply` rows to find the reports | every upload |
 
-A wave's report names its approval record's branch and path (`waves[].gate`) and never copies it. A root applied under an override carries it in `roots[].policy.override`. [Report JSON schema](/terragucci/reference/report-schema/) has every field.
-
-## Who approved which digest, and when
-
-```bash
-git fetch origin chant/lifecycle
-git show origin/chant/lifecycle:_gates/tf-apply.jsonl | jq -r '
-  select(.kind != "pending")
-  | [.timestamp, .gate, .planDigest, .resolvedBy, (.via // "chant approve")] | @tsv'
-```
-
-```bash
-git log --format='%h %an %aI %s' origin/chant/lifecycle -- _gates/tf-apply.jsonl
-```
-
-| The line says | What it proves, by mode |
-|---|---|
-| `planDigest` | every mode: the approval counts only for a wave that plans this digest |
-| `resolvedBy` | `ledger`: the name the approver gave; anyone who can push to `chant/lifecycle` can write any name, and the commit's pusher is in `git log` |
-| `resolvedBy` and `seal` | `sealed`: the seal verifies against `.chant/allowed_signers` at base |
-| `via`, `pr`, `head`, `reviewers` | `pr-review`: a writer other than the author approved this head, and the wave planned what the review saw |
-
-Removing a line revokes an approval before its wave runs. The commit that removed it stays in the branch's history; protect `chant/lifecycle` against force pushes and deletion ([per forge](/terragucci/guides/approve-a-wave/#who-can-push-to-chantlifecycle)).
-
-## What each run did
-
-<Tabs syncKey="reports-kept">
-  <TabItem label="With a bucket">
-    Each run writes under a path holding its full commit SHA:
-
-    ```text
-    reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.json
-    reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-apply-wave-2/report.json
-    ```
-
-    Read a wave's approval state and digest from its report:
-
-    ```bash
-    jq '.run.commit, (.waves[] | {number, set_digest, approval, gate})' report.json
-    ```
-
-    The index lists every run of a project, newest first; [`terragucci estate`](/terragucci/guides/see-every-project/) reads every project's index into one page. [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) sets it up.
-  </TabItem>
-  <TabItem label="Without a bucket">
-    Each report is a CI artifact of its job, kept as long as your forge keeps artifacts. The plan note and the job log name the run.
-  </TabItem>
-</Tabs>
+A wave's report names its approval record's branch and path (`waves[].gate`) and never copies it. [Report JSON schema](/terragucci/reference/report-schema/) has every field. Without a bucket, each report is a CI artifact of its job and `terragucci audit` has nothing to read; [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) sets one up.
 
 ## Matching an apply to its approval
 
 | Step | Read | Match |
 |---|---|---|
-| 1 | the `tf-apply-wave-<k>` report: `waves[].set_digest` and `run.commit` | the digest the wave applied, and the commit it applied from |
-| 2 | `_gates/tf-apply.jsonl` | an approval line whose `gate` is `wave-<k>` and whose `planDigest` is that digest |
-| 3 | the plan report of the same pull request: `waves[].review_digest` | the digest the reviewers saw, when the plans did not move after the merge |
+| 1 | the `apply` entry: `digest`, `detail.commit` | the digest the wave applied, and the commit it applied from |
+| 2 | `detail.approval` | the `id` of the `approval` entry whose `what` and `digest` it applied under |
+| 3 | that entry's `evidence.commit` | the commit on `chant/lifecycle` that added the approval line |
 
-A wave whose plans moved after approval applied nothing and exited 4; its report and the next pending line say so ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)).
+A wave whose plans moved after approval applied nothing and exited 4: its entry is `refused`, with the digest approved and the roots that moved ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)).
 
 ## How long the records last
 
 | Record | Kept |
 |---|---|
-| The ledger | as long as the `chant/lifecycle` branch; every change is a commit |
-| Reports and the index in a bucket | your bucket's lifecycle rule |
-| Reports as CI artifacts | your forge's artifact retention |
+| The audit record | your bucket's lifecycle rule; leave `audit.jsonl` out of any expiry |
+| The ledger | as long as the `chant/lifecycle` branch; every change is a commit. Protect it against force pushes and deletion ([per forge](/terragucci/guides/approve-a-wave/#who-can-push-to-chantlifecycle)) |
+| Reports and the index in a bucket | your bucket's lifecycle rule; an index keeps its newest 500 rows and the newest of each stage and wave |
 | Traces and metrics | your telemetry backend's retention ([Traces and metrics](/terragucci/reference/observability/)) |

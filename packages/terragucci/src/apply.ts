@@ -477,6 +477,8 @@ interface WaveRun {
   gate?: ReportWave["gate"];
   /** The digest the gate decided, which the report shows as the wave's set digest. */
   digest?: string;
+  /** Why the wave applied nothing although it planned, as the report's wave row shows it. */
+  refused?: ReportWave["refused"];
   /** When a waiting wave began waiting for an approval of its digest. */
   waitingSince?: string;
 }
@@ -506,7 +508,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
       return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -670,6 +672,8 @@ async function policyGate(
         console.log(indent(error));
       }
       console.log(`${label}: policy refused ${denied.size} root${denied.size === 1 ? "" : "s"}, so nothing in it was applied`);
+      const roots = [...denied.keys()].sort();
+      w.refused = { reason: moved ? "override" : "policy", roots };
       if (moved) {
         writeOutcome(options.env, `wave ${wave} changed after its policy override: ${[...denied.keys()].join(", ")}`);
         return EXIT.refused;
@@ -851,6 +855,7 @@ async function gateWave(
         console.log(`  ${approveLine(wave, digest, mode)}`);
         mkdirSync(join(repo, "terragucci-report", "current"), { recursive: true });
         writeFileSync(join(repo, "terragucci-report", "current", "report.json"), report());
+        w.refused = { reason: "review", approved: moved.reviewed, by: moved.by.join(", "), roots: members.map((m) => m.member).sort() };
         writeOutcome(options.env, `wave ${wave} changed since its review in pull request ${moved.pr}`);
         return EXIT.refused;
       }
@@ -868,6 +873,7 @@ async function gateWave(
           writeFileSync(join(repo, "terragucci-report", dir, "report.json"), text);
         }
         if (!approved || approved.status !== 0) console.log(`${label}: the approved plans were not kept, so only the roots that moved can be named`);
+        w.refused = { reason: "approval", ...(decision.approved ? { approved: decision.approved } : {}), by: decision.by, roots: moved };
         writeOutcome(options.env, `wave ${wave} changed after approval: ${moved.join(", ")}`);
         return EXIT.refused;
       }
