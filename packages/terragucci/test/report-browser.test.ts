@@ -122,7 +122,7 @@ describe.skipIf(!CHROME)("the HTML report in a headless browser", () => {
     await page.send("Network.enable");
     await page.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
     await go(url);
-  }, 30_000);
+  }, 120_000); // the whole file took about 11 s on a runner; beside the tofu tests the hook passed 30 s
 
   afterAll(() => {
     chrome?.kill();
