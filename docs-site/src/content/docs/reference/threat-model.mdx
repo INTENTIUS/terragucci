@@ -1,10 +1,11 @@
 ---
 title: Threat model
-description: What each forge's generated jobs can reach, what each approval mode stops, the trust apply before merge asks for, where the forge-token scrub ends, and the branch protection each forge relies on.
+description: What each forge's generated jobs can reach, what each approval mode and a policy override allow, the trust apply before merge asks for, where the forge-token scrub ends, and the branch protection each forge relies on.
 prompt: |
   Read https://intentius.io/terragucci/reference/threat-model/.
   For this repo's forge, compare the branch protection, the merge methods and the apply role's trust policy with the page's "Branch protection" tab, reading them through the forge's API or CLI.
   List each setting that differs and what it leaves open; do not change settings, tokens or trust policies yourself.
+  Do not run `terragucci override`.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -19,6 +20,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | Anyone with write access | run CI jobs, and the plan role through a pull request | the plan role is read-only; its trust names your repo |
 | Reviewers | decide what reaches the default branch | branch protection |
 | Approvers: under `approval: ledger` anyone who can push to `chant/lifecycle`, under `sealed` the people `.chant/allowed_signers` lists | release a gated wave | the plan digest the approval names, and under `sealed` its seal |
+| Overriders: the people `policy.override` lists at base | let one denied plan of one root through `tf-apply` | the root, plan digest and rules the override names, and under `sealed` its seal |
 | The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone |
 | A fork's author | nothing | forks get no plan job and never apply |
 
@@ -101,6 +103,17 @@ The gate policy decides when a wave waits: `always`, `on-destroy` (the default) 
 | `sealed` | `approval: sealed` at base, or no key and `identity.gates` listing gates at base; then every wave gate needs a seal | as above, and [`chant approve --sign`](/terragucci/concepts/glossary/#chant) sealed it with a key the signers file at base lists for that approver | forged lines from writers and job tokens; a change editing the `approval` key, the signers file, `.chant/trust.json` or `chant.workspace.json` to pass itself; signed fields edited later; moved plans | a listed approver's stolen key; an approver releasing their own change; a rebase merge of several commits, whose base is the change's own commit |
 
 With sealing on and no signers file at base, no approval counts. A reviewed change that sets `approval: ledger`, or with no key empties `identity.gates`, turns sealing off for the merges after it. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
+
+## What a policy override allows
+
+An override lets `tf-apply` apply one root's plan that the policy denies. It never edits the policy, and `tf-plan` still fails the root. Who may write one is `policy.override` in the config at base; with no key there, no override counts. [Overriding a denial](/terragucci/reference/policy/#overriding-a-denial) has the steps.
+
+| Mode | An override counts when | Stops | Does not stop |
+|---|---|---|---|
+| `ledger` or `pr-review` | a line on `chant/lifecycle` names the root, its plan digest and the rules that denied it, is newer than the recorded denial, gives a reason, and names someone listed at base | a change adding its author to `policy.override` to pass itself; an override standing for a plan or rules that changed; a line by someone unlisted; a line a job recorded (`via`) | anyone who can push to `chant/lifecycle` writing that line in a listed name, the apply jobs' token included |
+| `sealed` | as above, and sealed by a key the signers file at base lists for that person | as above, and forged lines from writers and job tokens | a listed person's stolen key; a listed person overriding their own change |
+
+No generated job runs `terragucci override` or writes an override line: the wave records only the denial. A root the policy could not check is never overridden.
 
 ## Apply before merge
 

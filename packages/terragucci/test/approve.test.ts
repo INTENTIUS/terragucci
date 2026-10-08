@@ -2,9 +2,10 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { approve, describeStored, waitingWaves } from "../src/approve";
+import { approve, describeStored, overrideDenial, waitingWaves } from "../src/approve";
 import { approvedPath, parseLedger } from "../src/apply";
 import { init, signerLine } from "../src/init";
+import { decideOverride, OVERRIDE_LEDGER, overrideDigest, recordedDenials } from "../src/override";
 import { git, tmp, twoRootRepo, write } from "./helpers";
 
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
@@ -75,6 +76,70 @@ describe("terragucci approve", () => {
     await expect(approve(two, { dryRun: true, log: () => {} })).rejects.toThrow(/2 waves wait \(wave-1, wave-2\)/);
     expect((await approve(two, { wave: "wave-2", dryRun: true, log: () => {} })).wave.digest).toBe("jcs1-sha256:cc");
     await expect(approve(two, { wave: "3", dryRun: true, log: () => {} })).rejects.toThrow(/wave-3 is not waiting/);
+  });
+});
+
+describe("terragucci override", () => {
+  const plan = "jcs1-sha256:" + "1".repeat(64);
+  const digest = overrideDigest("envs/prod/app", plan, ["main.deny_public", "main.deny_data"]);
+  const denial = (h: number, d = digest) => ({ version: 1, kind: "pending", op: "policy-override", gate: "envs/prod/app", timestamp: T(h), expiresAt: T(h + 48), planDigest: d, members: [{ member: "envs/prod/app", planDigest: plan }], rules: ["main.deny_data", "main.deny_public"] });
+  function checkout(ledger: string, files: Record<string, string> = {}): string {
+    const dir = tmp("tg-override-");
+    const origin = join(dir, "origin.git");
+    execFileSync("git", ["init", "-q", "--bare", origin]);
+    const life = join(dir, "life");
+    git(dir, "init", "-q", "-b", "chant/lifecycle", life);
+    write(life, { [OVERRIDE_LEDGER]: ledger });
+    git(life, "add", "-A");
+    git(life, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger");
+    git(life, "push", "-q", origin, "chant/lifecycle");
+    const work = join(dir, "work");
+    git(dir, "init", "-q", "-b", "main", work);
+    write(work, files);
+    git(work, "remote", "add", "origin", origin);
+    return work;
+  }
+
+  it("binds the root, its plan digest and the rules, in any order, and nothing else", () => {
+    expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(overrideDigest("envs/prod/app", plan, ["main.deny_data", "main.deny_public", "main.deny_data"])).toBe(digest);
+    expect(overrideDigest("envs/prod/app", plan, ["main.deny_data"])).not.toBe(digest);
+    expect(overrideDigest("envs/prod/other", plan, ["main.deny_public", "main.deny_data"])).not.toBe(digest);
+    expect(overrideDigest("envs/prod/app", "jcs1-sha256:" + "2".repeat(64), ["main.deny_public", "main.deny_data"])).not.toBe(digest);
+  });
+
+  it("an override older than the newest denial of the root does not answer it", () => {
+    const rule = { mode: "ledger" as const, overriders: ["Alice"], signers: null, signersPath: ".chant/allowed_signers" };
+    const line = (h: number) => ({ version: 1, kind: "resolution", op: "policy-override", gate: "envs/prod/app", resolvedBy: "alice", timestamp: T(h), planDigest: digest, note: "why" });
+    const rules = ["main.deny_public", "main.deny_data"];
+    expect(decideOverride(parseLedger(jsonl(denial(1), line(2))), rule, "envs/prod/app", plan, rules, T(3)).status).toBe("overridden");
+    expect(decideOverride(parseLedger(jsonl(denial(1), line(2), denial(3))), rule, "envs/prod/app", plan, rules, T(4)).status).toBe("none");
+    expect(recordedDenials(parseLedger(jsonl(denial(1), denial(3)))).map((d) => d.timestamp)).toEqual([T(3)]);
+  });
+
+  it("a dry run names the plan and rules denied and prints the chant approve command with the reason", async () => {
+    const lines: string[] = [];
+    const work = checkout(jsonl(denial(1)));
+    const r = await overrideDenial(work, { root: "envs/prod/app", rules: ["main.deny_public", "main.deny_data"], reason: "the outage needs it", actor: "github:alice", dryRun: true, log: (l) => void lines.push(l) });
+    expect(r.command).toBe(`chant approve policy-override envs/prod/app --plan ${digest} --note 'the outage needs it' --actor github:alice`);
+    expect(lines[0]).toContain(`its plan ${plan} was denied by main.deny_data, main.deny_public`);
+  });
+
+  it("asks for --sign under approval: sealed and runs the chant it is given", async () => {
+    const work = checkout(jsonl(denial(1)), { "terragucci.yml": "approval: sealed\n" });
+    const fake = join(work, "..", "chant.sh");
+    write(join(work, ".."), { "chant.sh": `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(join(work, "..", "args"))}\n` });
+    execFileSync("chmod", ["+x", fake]);
+    const r = await overrideDenial(work, { root: "envs/prod/app", rules: ["main.deny_data", "main.deny_public"], reason: "why", chant: fake, log: () => {} });
+    expect(r.code).toBe(0);
+    expect(readFileSync(join(work, "..", "args"), "utf-8").trim().split("\n")).toEqual(["approve", "policy-override", "envs/prod/app", "--plan", digest, "--note", "why", "--sign"]);
+  });
+
+  it("refuses rules that are not exactly the rules that denied the plan, a root with no denial, and no reason", async () => {
+    const work = checkout(jsonl(denial(1)));
+    await expect(overrideDenial(work, { root: "envs/prod/app", rules: ["main.deny_data"], reason: "why", dryRun: true, log: () => {} })).rejects.toThrow(/denied by main.deny_data, main.deny_public; an override names exactly those rules/);
+    await expect(overrideDenial(work, { root: "envs/dev/app", rules: ["main.deny_data"], reason: "why", dryRun: true, log: () => {} })).rejects.toThrow(/no denial of envs\/dev\/app is recorded.*denied: envs\/prod\/app/);
+    await expect(overrideDenial(work, { root: "envs/prod/app", rules: ["main.deny_data", "main.deny_public"], reason: " ", dryRun: true, log: () => {} })).rejects.toThrow(/needs --reason/);
   });
 });
 

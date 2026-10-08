@@ -18,6 +18,7 @@
  *   terragucci config check [--config <file>]
   terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]
  *   terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a waiting wave's digest with chant approve)
+ *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *   terragucci comment --forge gitlab --poll --layers <a,b;c>   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
@@ -44,7 +45,7 @@ import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
 import { approvalStatus } from "./review";
-import { approve } from "./approve";
+import { approve, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
@@ -89,6 +90,8 @@ const USAGE = `usage:
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
+  terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]
+  terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
@@ -385,6 +388,14 @@ export async function main(argv: string[]): Promise<number> {
       case "approve": {
         const sign = flags.sign === true ? true : str(flags, "sign");
         const done = await approve(cwd, { ...(args[0] ? { wave: args[0] } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
+        return done.code;
+      }
+      case "override": {
+        const sign = flags.sign === true ? true : str(flags, "sign");
+        // --rule may be given more than once, or as a comma-separated list.
+        const rules = argv.flatMap((a, i) => (a === "--rule" ? [argv[i + 1] ?? ""] : a.startsWith("--rule=") ? [a.slice(7)] : [])).flatMap((r) => r.split(","));
+        if (rules.some((r) => r === "" || r.startsWith("--"))) throw new ConfigError("--rule needs a rule id, such as main.deny_public_bucket");
+        const done = await overrideDenial(cwd, { root: args[0] ?? "", rules, reason: str(flags, "reason") ?? "", ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
       }
       case "approval-status": {

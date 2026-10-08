@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 9;
+export const REPORT_MINOR = 10;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -260,10 +260,36 @@ export interface ReportRootPolicy {
   result: "passed" | "denied" | "error";
   /** The messages of `deny`, `violation` and `deny_*` rules. */
   denials: string[];
+  /** The ids of the rules that denied, such as `main.deny_public_bucket`, sorted (minor 10): what an override names. */
+  rules?: string[];
   /** The messages of `warn` rules: advice that fails nothing. */
   warnings: string[];
   /** Why the policy could not be checked, with `result: error`. */
   error?: string;
+  /**
+   * The override that stands for this root's plan and rules (minor 10). On a
+   * `tf-apply` wave the root then applies, and is `planned` with its denial
+   * still here; on a `tf-plan` run the root still fails.
+   */
+  override?: ReportOverride;
+}
+
+/** A recorded policy override: a listed approver let one denied plan through (minor 10). */
+export interface ReportOverride {
+  /** Who wrote it, as the ledger names them. */
+  by: string;
+  /** When, from the ledger line. */
+  at: string;
+  /** The rule ids it overrides: exactly the rules that denied the plan. */
+  rules: string[];
+  /** Why, as the approver wrote it. */
+  reason: string;
+  /** The root's plan digest it names. */
+  plan_digest: string;
+  /** The digest the ledger line binds: the root, its plan digest and the rules. */
+  digest: string;
+  /** Whether its seal verified against the signers file at base (`approval: sealed`). */
+  sealed: boolean;
 }
 
 /** The run's policy check (minor 6). Absent when `policy` is off, and on a drift report. */
@@ -275,10 +301,14 @@ export interface ReportPolicy {
   namespace?: string;
   /** Where the policy was read from: the checkout, or the pull request's base branch. */
   from: "checkout" | "base";
-  /** The roots it failed, by path. */
+  /** The roots it denied or could not check, by path. An overridden root is here and in `overridden`. */
   denied: string[];
   /** How many warnings it gave across the roots. */
   warnings: number;
+  /** The denied roots an override stands for (minor 10). */
+  overridden?: string[];
+  /** Who may override a denial, from `policy.override` in the config at base (minor 10). Absent when nobody may. */
+  overriders?: string[];
 }
 
 export interface ReportWave {

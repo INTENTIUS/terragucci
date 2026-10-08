@@ -7,7 +7,7 @@ prompt: |
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
 Add `policy` to `terragucci.yml` to turn policy checks on; `tf-plan` then fails each planned root whose plan JSON your Rego denies.
@@ -25,6 +25,7 @@ policy:
 | `namespace` | every namespace for conftest; for opa, `main`, or every package under `terraform.policies` with `input: hcp` | the Rego package whose rules count |
 | `input` | `plan` | what `input` holds: `plan`, the bare plan JSON; `hcp`, `{plan, run}` as HCP Terraform's OPA policies read it |
 | `source` | none: the repo's own `path` | a shared policy repo at a pinned ref, `git+https://<host>/<path>@<ref>`; see [below](#a-shared-policy-source) |
+| `override` | none: no override counts | the forge identities or signers who may let one denied plan through `tf-apply`, read at base; see [below](#overriding-a-denial) |
 
 ## A shared policy source
 
@@ -105,6 +106,16 @@ HCP Terraform and Spacelift policies read other paths and deny nothing as writte
 
 A message is the rule's string or its object's `msg`. Both engines give the same verdict.
 
+Each denial carries its rule's id, which an [override](#overriding-a-denial) names:
+
+| Engine | Rule id |
+|---|---|
+| `conftest` | the package and rule of the query that denied, such as `main.deny_public_bucket` |
+| `opa` | the package and rule, such as `terraform.policies.no_public_buckets.deny` |
+| `opa` with a `policies.hcl` | the policy's name, such as `no_public_buckets` |
+
+The job's log and `roots[].policy.rules` in the report list them.
+
 ### Namespace matching
 
 If no Rego file outside the tests declares the namespace and has a `deny`, `violation` or `warn` rule, every planned root is refused and the message lists the packages found.
@@ -115,13 +126,66 @@ If no Rego file outside the tests declares the namespace and has a `deny`, `viol
 
 | Case | Result |
 |---|---|
-| a root's policy denies it | the root fails and the job exits 1; the denials go to `roots[].policy` in the report |
+| a root's policy denies it | the root fails and the job exits 1; the denials and their rule ids go to `roots[].policy` in the report |
 | the policy cannot run (no engine, Rego that does not compile) | the root fails |
 | a warning | never blocks |
 
-### No override
+Responses, agents and comments cannot waive a denial. The code changes until the policy passes, the policy changes in a pull request your reviewers approve and merge, or a listed approver overrides one plan.
 
-Responses, agents and comments cannot waive a denial; the code changes until the policy passes, or the policy changes in a pull request your reviewers approve and merge.
+## Overriding a denial
+
+With `override` set, a person it lists can let one denied plan through `tf-apply`. The override is a line on the ledger beside the approvals, and it never edits the policy. `tf-plan` still fails the root.
+
+```yaml
+policy:
+  path: policy
+  override: [github:alice, github:bob]
+```
+
+<Steps>
+
+1. The policy denies a root in a `tf-apply` wave. The wave applies nothing, exits 1, records the denial on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in `_gates/policy-override.jsonl`, and prints the command:
+
+   ```text
+   envs/prod/app: policy.override at base lists github:alice, github:bob; one of them can let this plan through with:
+     terragucci override envs/prod/app --rule main.deny_public_bucket --reason "<why>"
+   ```
+
+2. A listed approver reads the plan and the denial, then runs that command in a checkout, with the reason ([`override`](/terragucci/reference/cli/#override)). It runs `chant approve policy-override <root> --plan <digest> --note <reason>`, with `--sign` under `approval: sealed`.
+
+3. Run the wave's job again. It applies the root, and its report and note name the override.
+
+</Steps>
+
+### What an override binds
+
+| Part | Effect |
+|---|---|
+| one root | every other root's denial stands |
+| its plan digest | a plan that changes gives another digest: the override counts for nothing, the wave applies nothing and exits 4, and the next run asks again |
+| the rule ids | `--rule` names exactly the rules that denied the plan; a rule added or gone needs a new override |
+| a reason | required; kept on the ledger line and shown in the report |
+
+### Which overrides count
+
+| Case | Counts |
+|---|---|
+| by someone `override` lists in the config at base, written after the wave recorded the denial, with a reason | yes |
+| the same under `approval: sealed` | only when sealed by a key the signers file at base lists for that person |
+| by someone not listed, or listed only by the commit being applied | no |
+| a line a job wrote, such as a `pr-review` record | no |
+| no `override` at base | nothing counts, and no denial is recorded |
+| a root the policy could not check (no engine, Rego that does not compile) | never overridden |
+
+Base is the applied commit's first parent, or the pull request's base with `apply.when: pull-request`, as for [approvals](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from). Under `approval: ledger` the line names its approver without proving who wrote it; `approval: sealed` proves it ([threat model](/terragucci/reference/threat-model/#what-a-policy-override-allows)).
+
+### Where it shows
+
+| Place | Shows |
+|---|---|
+| the wave's report | `roots[].policy.override`: who, when, the rules, the reason, the plan digest; `policy.overridden` lists the roots |
+| the pull request's plan note, and the wave's `note.md` | the override that stands for each denied root, or the command to write one; the plan job still fails the root |
+| the estate page | the roots the newest apply waves applied under an override |
 
 ## The base branch decides
 
@@ -167,7 +231,7 @@ terragucci reads `origin/<branch>`, and the checkout needs that ref fetched. `TG
 
 ### tf-apply
 
-`tf-apply` checks each wave's plans before the gate. A denied wave applies nothing and records no approval. The policy comes from the default branch, or from `TG_BASE` when set.
+`tf-apply` checks each wave's plans before the gate. A denied wave applies nothing and records no approval; with `override` set it records the denial for an [override](#overriding-a-denial), and a root an override stands for goes on to the gate. The policy comes from the default branch, or from `TG_BASE` when set.
 
 ### The engines
 

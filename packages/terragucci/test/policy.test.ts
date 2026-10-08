@@ -11,7 +11,10 @@ import { REDACTED } from "../src/report/schema";
 import { buildReport } from "../src/report/build";
 import { renderNote } from "../src/report/views";
 import { plan, rc, RUN } from "./report-fixtures";
-import { runStage } from "../src/report/stage";
+import { planOverrides, runStage } from "../src/report/stage";
+import { renderHtml } from "../src/report/html";
+import { OVERRIDE_LEDGER, OVERRIDE_OP, overrideDigest } from "../src/override";
+import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { git, tmp, write } from "./helpers";
 
 const deny = (...msgs: string[]) => JSON.stringify([{ filename: "plan.json", namespace: "main", successes: 1, failures: msgs.map((msg) => ({ msg })), warnings: [{ msg: "advice only" }] }]);
@@ -24,7 +27,14 @@ describe("policy output", () => {
   });
 
   it("reads conftest warnings apart from its failures", () => {
-    expect(conftestFindings(deny("no public buckets"))).toEqual({ violations: ["no public buckets"], warnings: ["advice only"] });
+    expect(conftestFindings(deny("no public buckets"))).toEqual({ violations: ["no public buckets"], warnings: ["advice only"], rules: ["main.deny"] });
+  });
+
+  it("names each denial's rule: the query conftest ran, or the namespace an older conftest gives; the package and rule in opa", () => {
+    const out = JSON.stringify([{ namespace: "aws", failures: [{ msg: "a", metadata: { query: "data.aws.deny_public_bucket" } }, { msg: "b" }], warnings: [] }]);
+    expect(conftestFindings(out)?.rules).toEqual(["aws.deny_public_bucket", "aws.deny"]);
+    const pkg = { deny_public: ["x"], violation: ["y"], warn: ["z"], tags: { deny: ["t"] } };
+    expect(opaFindings(JSON.stringify({ result: [{ expressions: [{ value: pkg }] }] }), true, "terraform.policies")?.rules).toEqual(["terraform.policies.deny_public", "terraform.policies.tags.deny", "terraform.policies.violation"]);
   });
 
   it("reads the deny set from opa eval", () => {
@@ -80,7 +90,7 @@ describe("checkPlan", () => {
   it("passes a plan the policy allows and names what it denies", async () => {
     const repo = tmp();
     const exec: PolicyExec = async () => ({ status: 1, stdout: deny("no public buckets"), stderr: "" });
-    expect(await checkPlan("conftest", policy, repo, "{}", { exec })).toEqual({ violations: ["no public buckets"], warnings: ["advice only"] });
+    expect(await checkPlan("conftest", policy, repo, "{}", { exec })).toEqual({ violations: ["no public buckets"], rules: ["main.deny"], warnings: ["advice only"] });
     const ok: PolicyExec = async () => ({ status: 0, stdout: deny(), stderr: "" });
     expect(await checkPlan("conftest", policy, repo, "{}", { exec: ok })).toEqual({ violations: [], warnings: ["advice only"] });
   });
@@ -99,7 +109,7 @@ describe("checkPlan", () => {
     let seen: string[] = [];
     const exec: PolicyExec = async (_f, args) => ((seen = args), { status: 0, stdout: JSON.stringify({ result: [{ expressions: [{ value: { deny_public: ["x"], warn: ["y"] } }] }] }), stderr: "" });
     const v = await checkPlan("opa", { engine: "opa", namespace: "terraform.plan" }, tmp(), "{}", { exec });
-    expect(v).toEqual({ violations: ["x"], warnings: ["y"] });
+    expect(v).toEqual({ violations: ["x"], rules: ["terraform.plan.deny_public"], warnings: ["y"] });
     expect(seen).toContain("data.terraform.plan");
     await checkPlan("opa", { engine: "opa" }, tmp(), "{}", { exec });
     expect(seen).toContain("data.main");
@@ -154,7 +164,7 @@ describe("policies.hcl", () => {
     };
     const v = await checkPlan("opa", { engine: "opa", input: "hcp", path: dir }, tmp(), "{}", { exec }, { root: "a" });
     expect(queries).toEqual(["data.terraform.policies.no_public.deny", "data.terraform.policies.tags.deny"]);
-    expect(v).toEqual({ violations: ["no_public: bucket is public"], warnings: ["tags: no owner tag"] });
+    expect(v).toEqual({ violations: ["no_public: bucket is public"], rules: ["no_public"], warnings: ["tags: no owner tag"] });
   });
 
   it("fails the root when a policy's query matches no rule, or the namespace matches no policy", async () => {
@@ -401,7 +411,7 @@ describe("checkPlans and the report", () => {
   it("gives each root its verdict and warnings, and the run's settings", async () => {
     const repo = write(tmp(), { "policy/p.rego": "package main\n" });
     const found = await checkPlans(repo, { path: "policy" }, [{ path: "a", plan: {} }], undefined, {}, { exec: onPath(deny("no")) }, () => {});
-    expect(found.roots.get("a")).toEqual({ result: "denied", denials: ["no"], warnings: ["advice only"] });
+    expect(found.roots.get("a")).toEqual({ result: "denied", denials: ["no"], rules: ["main.deny"], warnings: ["advice only"] });
     expect(found.failed.get("a")).toMatch(/policy violation \(conftest\)/);
     expect(found.policy).toEqual({ engine: "conftest", input: "plan", from: "checkout", denied: ["a"], warnings: 1 });
     const passed = await checkPlans(repo, { path: "policy" }, [{ path: "a", plan: {} }], undefined, {}, { exec: onPath(deny(), 0) }, () => {});
@@ -437,6 +447,54 @@ describe("checkPlans and the report", () => {
     const note = renderNote(report);
     expect(note).toContain("Policy warnings (1), which fail nothing");
     expect(note).toContain("tag it");
+  });
+
+  it("shows an override in the note and the HTML, and the command when a listed approver may write one", () => {
+    const p = plan([rc("aws_s3_bucket.logs", ["create"], null, { bucket: "logs" })]);
+    const override = { by: "alice", at: "2026-01-01T02:00:00.000Z", rules: ["main.deny_bucket"], reason: "the incident needs it", plan_digest: "jcs1-sha256:aa", digest: "sha256:bb", sealed: true };
+    const denied = (path: string, o?: typeof override) => ({ path, plan: p, error: "policy violation (conftest):\n- no buckets", policy: { result: "denied" as const, denials: ["no buckets"], rules: ["main.deny_bucket"], warnings: [], ...(o ? { override: o } : {}) } });
+    const report = buildReport({
+      run: RUN,
+      roots: [denied("envs/dev/a", override), denied("envs/dev/b")],
+      waves: [{ number: 1, roots: ["envs/dev/a", "envs/dev/b"] }],
+      policy: { engine: "conftest", input: "plan", from: "base", denied: ["envs/dev/a", "envs/dev/b"], warnings: 0, overridden: ["envs/dev/a"], overriders: ["alice", "bob"] },
+    });
+    expect(report.roots[0].why).toContain("policy overridden by alice");
+    const note = renderNote(report, { sealed: true });
+    expect(note).toContain("Policy overrides (1 of 2 denied)");
+    expect(note).toContain("`main.deny_bucket` overridden by alice at 2026-01-01T02:00:00.000Z, sealed, for plan `jcs1-sha256:aa`: the incident needs it. tf-apply applies this plan; this run still fails it");
+    expect(note).toContain('alice, bob may override it once a tf-apply wave records the denial: `terragucci override envs/dev/b --rule main.deny_bucket --reason "<why>" --sign`');
+    expect(renderHtml(report)).toContain("Policy override: <code>main.deny_bucket</code> overridden by alice");
+    // With nobody listed, the note says nothing of overrides.
+    const plain = buildReport({ run: RUN, roots: [denied("envs/dev/b")], policy: { engine: "conftest", input: "plan", from: "base", denied: ["envs/dev/b"], warnings: 0 } });
+    expect(renderNote(plain)).not.toContain("override");
+  });
+
+  it("tf-plan shows the override that stands for a denied root, read from the ledger, and the root still fails", async () => {
+    const dir = tmp();
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    const repo = join(dir, "work");
+    git(dir, "init", "-q", "-b", "main", repo);
+    write(repo, { "terragucci.yml": "policy:\n  path: policy\n  override: [alice]\n" });
+    git(repo, "add", "-A");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
+    git(repo, "remote", "add", "origin", origin);
+    const p = plan([rc("aws_s3_bucket.logs", ["create"], null, { bucket: "logs" })]);
+    const planDigest = terraformChangeSetPart({ member: "a", plan: p, planner: "terraform" }).member.planDigest!;
+    const life = join(dir, "life");
+    git(dir, "init", "-q", "-b", "chant/lifecycle", life);
+    const pendingFact = { version: 1, kind: "pending", op: OVERRIDE_OP, gate: "a", timestamp: "2026-01-01T01:00:00.000Z", expiresAt: "2026-01-03T01:00:00.000Z", planDigest: overrideDigest("a", planDigest, ["main.deny"]) };
+    write(life, { [OVERRIDE_LEDGER]: [pendingFact, { version: 1, kind: "resolution", op: OVERRIDE_OP, gate: "a", resolvedBy: "alice", timestamp: "2026-01-01T02:00:00.000Z", planDigest: pendingFact.planDigest, note: "why" }].map((l) => JSON.stringify(l)).join("\n") + "\n" });
+    git(life, "add", "-A");
+    git(life, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger");
+    git(life, "push", "-q", origin, "chant/lifecycle");
+    const policy = { engine: "conftest" as const, input: "plan" as const, from: "checkout" as const, denied: ["a"], warnings: 0 };
+    const input = { path: "a", plan: p, planner: "terraform" as const, error: "policy violation (conftest):\n- no", policy: { result: "denied" as const, denials: ["no"], rules: ["main.deny"], warnings: [] } };
+    const out = await planOverrides(repo, {}, {}, [input], policy, () => {});
+    expect(out[0].policy?.override).toMatchObject({ by: "alice", reason: "why", plan_digest: planDigest });
+    expect(out[0].error).toBe(input.error);
+    expect(policy).toMatchObject({ overridden: ["a"], overriders: ["alice"] });
   });
 
   it("still fails a root whose plan never came, with no changes", () => {

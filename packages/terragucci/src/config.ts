@@ -107,6 +107,12 @@ export interface PolicySettings {
   namespace?: string;
   /** What `input` holds: `plan`, the bare plan JSON (default); `hcp`, `{plan, run}` as HCP Terraform's OPA policies read it. */
   input?: PolicyInput;
+  /**
+   * Who may override a denial: the forge identities or signers whose recorded
+   * override (`terragucci override`) lets `tf-apply` apply one denied plan.
+   * Read at base, like `approval:`. Unset, no override counts.
+   */
+  override?: string[];
 }
 
 /**
@@ -548,10 +554,13 @@ const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires"];
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {
-    problems.push(`${where} must be a map (settings: engine, path, namespace, input, source)`);
+    problems.push(`${where} must be a map (settings: engine, path, namespace, input, source, override)`);
     return;
   }
-  for (const k of Object.keys(p)) if (!["engine", "path", "namespace", "input", "source"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace, input, source)`);
+  for (const k of Object.keys(p)) if (!["engine", "path", "namespace", "input", "source", "override"].includes(k)) problems.push(`${where}.${k} is not a setting (settings: engine, path, namespace, input, source, override)`);
+  if (p.override !== undefined && !(Array.isArray(p.override) && p.override.length > 0 && p.override.every((o) => typeof o === "string" && o.trim() !== "" && !/[\r\n]/.test(o)))) {
+    problems.push(`${where}.override must be a list of the forge identities or signers who may override a denial, such as [github:alice]`);
+  }
   oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
   oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
   if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {

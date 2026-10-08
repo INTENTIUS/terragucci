@@ -29,6 +29,11 @@
  *
  * Nothing here records an approval. A person does, with `chant approve`.
  *
+ * A root the policy denies applies only under a recorded override of exactly
+ * its plan and rules, by someone `policy.override` at base lists
+ * (./override.ts); the wave records the denial an override answers, never the
+ * override itself.
+ *
  * Once its roots planned, the wave writes its report to `terragucci-report/`
  * (and copies it to the config's `reports` bucket when one is named): the
  * wave's plans, and each root's timings, the plan's and the apply's, from the
@@ -72,7 +77,8 @@ import { artifactReportUrl, eachLimited, reportLinks, rootsParallelism, runFacts
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
-import { approvalRule } from "./approval";
+import { approvalRule, type ApprovalRule } from "./approval";
+import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, overrideDigest, type OverridePending } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
@@ -139,6 +145,8 @@ export interface ResolutionRecord {
   environment?: string;
   relayedBy?: string;
   seal?: { signer?: unknown; key?: unknown; signature?: unknown } | null;
+  /** `chant approve --note`: the reason a policy override gives. */
+  note?: string;
   /** Set when the apply job recorded the approval from a pull request's review (`approval: pr-review`). */
   via?: "pr-review";
   pr?: number;
@@ -234,10 +242,10 @@ function fetchLifecycle(repo: string): boolean {
   return true;
 }
 
-/** The gate ledger as `chant/lifecycle` on origin holds it now. */
-export function readLedger(repo: string): GateLedger {
+/** The gate ledger as `chant/lifecycle` on origin holds it now: the waves' gates, or with `path` another op's file. */
+export function readLedger(repo: string, path: string = LEDGER_PATH): GateLedger {
   if (!fetchLifecycle(repo)) return { pending: [], resolutions: [] };
-  const show = git(repo, ["show", `${REMOTE_REF}:${LEDGER_PATH}`]);
+  const show = git(repo, ["show", `${REMOTE_REF}:${path}`]);
   return parseLedger(show.status === 0 ? show.stdout : "");
 }
 
@@ -256,17 +264,17 @@ export function storedReport(repo: string, wave: number, digest: string): string
 }
 
 /** Append a pending fact to the ledger and push it, with any `files` beside it, retrying when another writer moved the branch. */
-export function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}): void {
-  appendRecord(repo, record, files, `Pending gate record: ${record.op} ${record.gate}`);
+export function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}, path: string = LEDGER_PATH): void {
+  appendRecord(repo, record, files, `Pending gate record: ${record.op} ${record.gate}`, path);
 }
 
-/** Append one line to the ledger and push it, as appendPending does. */
-function appendRecord(repo: string, record: PendingRecord | ResolutionRecord, files: Record<string, string>, message: string): void {
+/** Append one line to the ledger (`path`, the waves' file by default) and push it, as appendPending does. */
+function appendRecord(repo: string, record: PendingRecord | ResolutionRecord, files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
   const line = JSON.stringify(record);
   for (let attempt = 0; attempt < 5; attempt++) {
     const exists = fetchLifecycle(repo);
     const parent = exists ? git(repo, ["rev-parse", REMOTE_REF]).stdout.trim() : "";
-    const old = exists ? git(repo, ["show", `${REMOTE_REF}:${LEDGER_PATH}`]) : undefined;
+    const old = exists ? git(repo, ["show", `${REMOTE_REF}:${path}`]) : undefined;
     // One record per line, each ending in a newline, so a line appended with `>>` stays its own record.
     const text = `${old && old.status === 0 && old.stdout.trim() ? `${old.stdout.replace(/\n$/, "")}\n` : ""}${line}\n`;
     const blob = git(repo, ["hash-object", "-w", "--stdin"], text).stdout.trim();
@@ -274,8 +282,8 @@ function appendRecord(repo: string, record: PendingRecord | ResolutionRecord, fi
     const scratch = mkdtempSync(join(tmpdir(), "terragucci-ledger-"));
     const env = { ...process.env, ...GIT_ID, GIT_INDEX_FILE: join(scratch, "index") };
     if (parent) git(repo, ["read-tree", parent], undefined, env);
-    for (const [path, b] of [[LEDGER_PATH, blob], ...Object.entries(files).map(([f, t]) => [f, git(repo, ["hash-object", "-w", "--stdin"], t).stdout.trim()])])
-      git(repo, ["update-index", "--add", "--cacheinfo", `100644,${b},${path}`], undefined, env);
+    for (const [file, b] of [[path, blob], ...Object.entries(files).map(([f, t]) => [f, git(repo, ["hash-object", "-w", "--stdin"], t).stdout.trim()])])
+      git(repo, ["update-index", "--add", "--cacheinfo", `100644,${b},${file}`], undefined, env);
     const tree = git(repo, ["write-tree"], undefined, env).stdout.trim();
     const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", message], undefined, env).stdout.trim();
     rmSync(scratch, { recursive: true, force: true });
@@ -651,6 +659,8 @@ async function policyGate(
       const verdict = found.roots.get(p.root);
       if (verdict) p.policy = verdict;
     }
+    // An override is looked up only when the policy key in force names who may write one; the list that counts is the one at base.
+    const moved = denied.size > 0 && !!governing.policy.override?.length && (await overrideDenials(repo, options, label, planned, denied, w));
     if (denied.size > 0) {
       for (const p of planned) {
         const error = denied.get(p.root);
@@ -660,11 +670,90 @@ async function policyGate(
         console.log(indent(error));
       }
       console.log(`${label}: policy refused ${denied.size} root${denied.size === 1 ? "" : "s"}, so nothing in it was applied`);
+      if (moved) {
+        writeOutcome(options.env, `wave ${wave} changed after its policy override: ${[...denied.keys()].join(", ")}`);
+        return EXIT.refused;
+      }
       writeOutcome(options.env, `wave ${wave} refused by policy: ${[...denied.keys()].join(", ")}`);
       return EXIT.failed;
     }
   }
   return undefined;
+}
+
+/**
+ * Look up an override for each root the policy denied, when `policy.override`
+ * in the config at base names who may write one (./override.ts). An
+ * overridden root leaves `denied` and carries its override; a denied root
+ * with none gets a pending fact for its plan and rules, and the command that
+ * overrides it. A root the policy could not check is never overridden.
+ * Returns true when, for a root still denied, an override stands for an
+ * earlier plan or other rules: the changed-wave refusal.
+ */
+async function overrideDenials(repo: string, options: ApplyWaveOptions, label: string, planned: WavePlan[], denied: Map<string, string>, w: WaveRun): Promise<boolean> {
+  const overridable = planned.filter((p) => denied.has(p.root) && p.policy?.result === "denied" && p.member?.planDigest);
+  if (overridable.length === 0) return false;
+  const configPath = options.config ?? findConfig(repo);
+  let rule: ApprovalRule;
+  let ledger: GateLedger;
+  try {
+    rule = await approvalRule(repo, { ...(options.base ? { at: options.base } : {}), ...(configPath ? { config: configPath } : {}), ...(options.approval ? { flag: options.approval } : {}) });
+    if (rule.overriders.length === 0) return false;
+    ledger = readLedger(repo, OVERRIDE_LEDGER);
+  } catch (e) {
+    console.log(`${label}: policy override: ${(e as Error).message}, so no override counts`);
+    return false;
+  }
+  if (w.policy) w.policy.overriders = rule.overriders;
+  const now = options.now ?? new Date().toISOString();
+  const env = options.env ?? process.env;
+  let moved = false;
+  const overridden: string[] = [];
+  for (const p of overridable) {
+    const rules = p.policy!.rules ?? [];
+    const planDigest = p.member!.planDigest;
+    const decision = decideOverride(ledger, rule, p.root, planDigest, rules, now);
+    if (decision.status === "overridden") {
+      const o = decision.override;
+      p.policy = { ...p.policy!, override: o };
+      denied.delete(p.root);
+      overridden.push(p.root);
+      console.log(`${p.root}: the policy denial (${o.rules.join(", ")}) is overridden by ${o.by} at ${o.at}${o.sealed ? ", sealed" : ""}: ${o.reason}`);
+      continue;
+    }
+    for (const why of decision.refusals) console.log(`${p.root}: an override does not count: ${why}`);
+    const digest = overrideDigest(p.root, planDigest, rules);
+    if (decision.status === "moved") {
+      moved = true;
+      console.log(`${p.root}: ${decision.by} overrode an earlier plan or other rules (${decision.was ?? "no digest"}); this plan and its rules give ${digest}, so that override counts for nothing`);
+    }
+    if (!decision.standing) {
+      const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
+      const pending: OverridePending = {
+        version: 1,
+        kind: "pending",
+        op: OVERRIDE_OP,
+        gate: p.root,
+        timestamp: now,
+        expiresAt: new Date(at(now) + 48 * 3600 * 1000).toISOString(),
+        planDigest: digest,
+        description: `${p.root}: plan ${planDigest} denied by ${rules.join(", ")}`,
+        ...(runId ? { runId } : {}),
+        members: [p.member!],
+        rules,
+        neverOverMcp: true,
+      };
+      try {
+        appendPending(repo, pending, {}, OVERRIDE_LEDGER);
+      } catch (e) {
+        console.log(`${p.root}: the denial was not recorded for an override: ${(e as Error).message}`);
+      }
+    }
+    console.log(`${p.root}: policy.override at base lists ${rule.overriders.join(", ")}; one of them can let this plan through with:`);
+    console.log(`  ${overrideCommand(p.root, rules, rule.mode === "sealed")}`);
+  }
+  if (overridden.length > 0 && w.policy) w.policy.overridden = overridden.sort();
+  return moved;
 }
 
 /**
