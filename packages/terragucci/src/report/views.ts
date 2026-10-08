@@ -4,10 +4,11 @@
  * `reports:terraform` counts.
  */
 import {
-  GITHUB_COMMENT_LIMIT, PLAN_SUMMARY_CONTRACT, PLAN_SUMMARY_SCHEMA_ID, renderPlanSummaryText,
+  GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT, PLAN_SUMMARY_CONTRACT, PLAN_SUMMARY_SCHEMA_ID, renderPlanSummaryText,
   type PlanSummary, type PlanSummaryChange,
 } from "@intentius/chant/plan-summary";
-import { groupAnchor, rootAnchor } from "./build";
+import { groupAnchor, planFiles, rootAnchor } from "./build";
+import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
 import { actionWord, type Report, type ReportNamed } from "./schema";
@@ -75,6 +76,26 @@ export function renderGitLabTerraform(report: Report): { create: number; update:
  */
 export const NOTE_FOOTER = `<sub><img src="${TACO_NOTE_URL}" width="26" height="16" alt=""> Posted by [terragucci](https://intentius.io/terragucci/)</sub>`;
 
+/**
+ * The most characters a Forgejo comment holds as terragucci writes it.
+ * Forgejo sets none (its API requires a body and stores it as LONGTEXT), so
+ * the note keeps to GitLab's figure, which a reader can still scroll.
+ */
+export const NOTE_LIMIT_FORGEJO = 1_000_000;
+
+/** The comment limits, by forge: GitHub's API refuses longer, GitLab documents its own, and Forgejo's is terragucci's. */
+export const NOTE_LIMITS = { github: GITHUB_COMMENT_LIMIT, gitlab: GITLAB_NOTE_LIMIT, forgejo: NOTE_LIMIT_FORGEJO } as const;
+
+/**
+ * How long the note may be on `forge`: its limit, less what the pipeline adds
+ * around the note, the first line naming the roots and the line an apply
+ * adds when the plan goes stale, which can name them again.
+ */
+export function noteLimit(forge: keyof typeof NOTE_LIMITS, report: Report): number {
+  const roots = codePoints(report.roots.map((r) => r.path).join(","));
+  return NOTE_LIMITS[forge] - 2 * roots - 400;
+}
+
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
 const codePoints = (s: string): number => [...s].length;
@@ -94,6 +115,18 @@ export interface NoteOptions {
   notices?: string[];
   /** `approval: sealed`: a waiting wave's command asks for `--sign`. */
   sealed?: boolean;
+  /**
+   * The CI run's page when the run keeps no report the note can link (a
+   * runner that keeps no forge artifact, and no `reports` bucket): the note
+   * names the run and links no report.
+   */
+  runUrl?: string;
+  /** Each root's rendered plan (`show`'s text, as plan.txt keeps it): a group shows its diff, and each root its whole plan. */
+  plans?: ReadonlyMap<string, string>;
+  /** Where each root's plan.txt is, when not beside report.html: a presigned link. */
+  planUrls?: ReadonlyMap<string, string>;
+  /** When the presigned links stop working, as an ISO time. */
+  expires?: string;
 }
 
 function changeText(l: PlanSummaryChange): string {
@@ -107,18 +140,48 @@ export function isArtifactPage(url: string): boolean {
   return !/\.html?$/i.test(url.split("#")[0].split("?")[0]);
 }
 
+/** A time as the note shows it: `2026-10-15 10:03 UTC`. */
+const utc = (iso: string): string => iso.replace("T", " ").replace(/:\d{2}(\.\d+)?Z$/, " UTC");
+
+const esc = (s: string): string => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+/**
+ * Where a root's plan.txt is: the link given for it, else beside report.html
+ * when the note links report.html itself. None when the report is a download
+ * on the run's page or is not linked at all.
+ */
+function planLink(report: Report, root: string, url: string | undefined, options: NoteOptions): string | undefined {
+  const given = options.planUrls?.get(root);
+  if (given) return given;
+  if (url === undefined || options.artifacts) return undefined;
+  const bare = url.split("#")[0];
+  if (bare.includes("?") || !/(^|\/)report\.html$/.test(bare)) return undefined;
+  const rel = report.roots.find((r) => r.path === root)?.plan.text ?? planFiles(root).text;
+  return bare.replace(/report\.html$/, "") + rel.split("/").map(encodeURIComponent).join("/");
+}
+
 /**
  * The pull-request note. Each group links to `report.html#group-<id>` and
- * each named change to `report.html#root-<path>`. Destroys, replacements and
- * refusals come first and are never dropped for space before a group is;
- * groups are dropped from the end, whole, with a line saying how many.
+ * each named change to `report.html#root-<path>`. With the roots' rendered
+ * plans, each group shows the diff of its first unit as the binary printed
+ * it, and each root's whole plan follows in a collapsed block, as Atlantis
+ * comments a plan. Destroys, replacements and refusals come first and are
+ * never dropped for space before a group is. Over the limit, the roots'
+ * whole plans go, and groups' diffs shrink to their attribute names,
+ * whichever saves the most first; then groups are dropped, whole, from the
+ * end. A Cut line names what went.
  */
 export function renderNote(report: Report, options: NoteOptions = {}): string {
-  const url = options.reportUrl ?? "report.html";
+  // No report link when the run kept the report nowhere a link reaches.
+  const url = options.reportUrl ?? (options.runUrl ? undefined : "report.html");
   const artifacts = options.artifacts === true;
-  // A link into the report; to the run's page, with no anchor, when the report is a download there.
-  const to = (text: string, anchor?: string): string => `[${text}](${url}${anchor && !artifacts ? `#${anchor}` : ""})`;
-  const full = artifacts ? `The full report is \`report.html\` in the \`terragucci-report\` artifact of [this run](${url}).` : `[Full report](${url})`;
+  // A link into the report; to the run's page, with no anchor, when the report is a download there; plain text with no report to link.
+  const to = (text: string, anchor?: string): string => (url === undefined ? text : `[${text}](${url}${anchor && !artifacts ? `#${anchor}` : ""})`);
+  const until = options.expires ? ` The links to the bucket work until ${utc(options.expires)}.` : "";
+  const full = url === undefined
+    ? `Planned in [this run](${options.runUrl}), which keeps no report artifact; with \`reports\` set, the note links the report in the bucket.`
+    : artifacts ? `The full report is \`report.html\` in the \`terragucci-report\` artifact of [this run](${url}).` : `[Full report](${url})${until}`;
+  const fullReport = url === undefined ? "The full report" : artifacts ? `The full report, in the artifacts of [this run](${url}),` : `[The full report](${url})`;
   const limit = options.limit ?? GITHUB_COMMENT_LIMIT;
   const { run } = report;
   const unitWord = report.unit === "instance" ? "instance" : "root";
@@ -131,25 +194,25 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   head.push(`${plural(report.units, unitWord)}: ${parts.join(", ")}. ${full}`, "");
   if (report.roots.length === 0 && run.stage === "tf-plan") head.push("This change reaches no root, so nothing was planned.", "");
   for (const n of options.notices ?? []) head.push(`> ${n}`, "");
-  if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts ? "full report" : to("full report", "tips")}.`, "");
+  if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
   // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
   const slow = report.timings?.resources.slice(0, 3) ?? [];
   if (slow.length > 0) {
-    head.push(`Slowest: ${slow.map((r) => `${code(`${r.root}: ${r.address}`)} ${duration(r.ms)}`).join(", ")}. ${artifacts ? "Where the time went is in the full report." : to("Where the time went", "timings")}`, "");
+    head.push(`Slowest: ${slow.map((r) => `${code(`${r.root}: ${r.address}`)} ${duration(r.ms)}`).join(", ")}. ${artifacts || url === undefined ? "Where the time went is in the full report." : to("Where the time went", "timings")}`, "");
   }
 
-  const blocks: { text: string; group: boolean; units: number }[] = [];
+  const blocks: NoteBlock[] = [];
   const named = report.named;
   if (named.length > 0) {
-    blocks.push({ group: false, units: 0, text: `**Destroys, replacements, refusals, imports and forgets (${named.length}):**\n\n` });
+    blocks.push({ kind: "line", units: 0, text: `**Destroys, replacements, refusals, imports and forgets (${named.length}):**\n\n` });
     for (const n of named) {
       const what = n.address ? `${n.root}: ${n.address}${n.deposed !== undefined ? ` (deposed ${n.deposed})` : ""}` : n.root;
       const forced = n.replace_paths?.length ? `, forced by ${n.replace_paths.map((p) => code(p.join("."))).join(", ")}` : "";
       const reason = n.reason ? `: ${n.reason.split(/\s+/).join(" ")}` : "";
-      blocks.push({ group: false, units: 0, text: `- ${to(code(what), rootAnchor(n.root))} (${actionWord(run.stage, n.action)}${forced})${reason}\n` });
+      blocks.push({ kind: "line", units: 0, text: `- ${to(code(what), rootAnchor(n.root))} (${actionWord(run.stage, n.action)}${forced})${reason}\n` });
     }
-    blocks.push({ group: false, units: 0, text: "\n" });
+    blocks.push({ kind: "line", units: 0, text: "\n" });
   }
   // A denial a listed approver may override: the override that stands, or the command that writes one.
   const overridable = report.policy?.overriders?.length ? report.roots.filter((r) => r.policy?.result === "denied") : report.roots.filter((r) => r.policy?.override);
@@ -162,19 +225,19 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
         ? `- ${to(code(r.path), rootAnchor(r.path))}: ${rules} overridden by ${o.by} at ${o.at}${o.sealed ? ", sealed" : ""}, for plan ${code(o.plan_digest)}: ${o.reason.split(/\s+/).join(" ")}${run.stage === "tf-plan" ? ". tf-apply applies this plan; this run still fails it" : ""}\n`
         : `- ${to(code(r.path), rootAnchor(r.path))}: denied by ${rules}. ${report.policy!.overriders!.join(", ")} may override it once a tf-apply wave records the denial: ${code(overrideCommand(r.path, r.policy!.rules ?? [], options.sealed))}\n`;
     }
-    blocks.push({ group: false, units: 0, text: t + "\n" });
+    blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   const warned = report.roots.filter((r) => r.policy?.warnings.length);
   if (warned.length > 0) {
     const count = warned.reduce((n, r) => n + r.policy!.warnings.length, 0);
     let t = `**Policy warnings (${count}), which fail nothing:**\n\n`;
     for (const r of warned) for (const w of r.policy!.warnings) t += `- ${to(code(r.path), rootAnchor(r.path))}: ${w.split(/\s+/).join(" ")}\n`;
-    blocks.push({ group: false, units: 0, text: t + "\n" });
+    blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   if (report.deferred?.length) {
     let t = `**Planned once what they wait for applies (${report.deferred.length}):**\n\n`;
     for (const d of report.deferred) t += `- ${code(d.unit)} after ${d.after.map(code).join(", ")}: ${d.why}${d.previewed ? " (previewed)" : ""}\n`;
-    blocks.push({ group: false, units: 0, text: t + "\n" });
+    blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   if (report.waves.some((w) => w.review_digest !== undefined)) {
     // A plan's waves: the digest of what each changes, which approval: pr-review binds a review to, and whether the gate will hold it.
@@ -183,42 +246,136 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const when = w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
       t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : "no change"} | ${when} |\n`;
     }
-    blocks.push({ group: false, units: 0, text: t + "\n" });
+    blocks.push({ kind: "line", units: 0, text: t + "\n" });
     head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })) }), "");
   } else if (report.waves.length > 0) {
     let t = "| Wave | Roots | Set digest | Approval |\n|---|---|---|---|\n";
     for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
-    blocks.push({ group: false, units: 0, text: t + "\n" });
+    blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
+  const unitsWord = report.unit === "instance" ? "Instances" : "Roots";
   for (const g of report.groups) {
     let title = `${to(`Group ${g.id}`, groupAnchor(g.id))}: ${plural(g.units.length, unitWord)}`;
     if (g.resource) title += ` of ${code(g.resource)}`;
     if (g.outlier) title += " (outlier)";
     title += g.noChanges ? ", no changes" : g.extends ? `, group ${g.extends}'s change plus` : g.units.length > 1 ? ", identical change" : ", change";
-    let t = `#### ${title}\n\n`;
+    const heading = `#### ${title}\n\n`;
     const lines = g.extends ? (g.plus ?? []) : g.changes;
-    if (lines.length > 0) t += "```\n" + lines.map(changeText).join("\n") + "\n```\n\n";
+    const names = lines.length > 0 ? "```\n" + lines.map(changeText).join("\n") + "\n```\n\n" : "";
     const shown = g.units.slice(0, 20).map(code).join(", ");
-    t += `${report.unit === "instance" ? "Instances" : "Roots"}: ${shown}${g.units.length > 20 ? `, and ${g.units.length - 20} more in the report` : ""}\n\n`;
-    blocks.push({ group: true, units: g.units.length, text: t });
+    const members = `${unitsWord}: ${shown}${g.units.length > 20 ? `, and ${g.units.length - 20} more in the report` : ""}\n\n`;
+    const diff = g.noChanges ? undefined : groupDiff(report, g.units, options.plans);
+    if (!diff) {
+      blocks.push({ kind: "group", units: g.units.length, text: heading + names + members });
+      continue;
+    }
+    let t = heading;
+    if (g.units.length > 1) t += `As ${code(diff.unit)} plans it:\n\n`;
+    t += diffFence(diffLines(diff.lines)) + "\n";
+    const differs = lines.filter((l) => l.differsFrom);
+    for (const l of differs) t += `- ${code(l.line)} differs from group ${l.differsFrom}${l.differsIn?.length ? ` in ${l.differsIn.map(code).join(", ")}` : ""}.\n`;
+    if (g.varies.length > 0) t += `${differs.length > 0 ? "- " : ""}Values differ between its ${unitWord}s in ${g.varies.flatMap((v) => v.paths.map((p) => code(`${v.address}.${p}`))).join(", ")}.\n`;
+    if (differs.length > 0 || g.varies.length > 0) t += "\n";
+    blocks.push({ kind: "group", units: g.units.length, text: t + members, short: heading + names + members });
+  }
+  // Each root's whole plan, collapsed, as Atlantis comments it.
+  let first = true;
+  for (const r of report.roots) {
+    const text = options.plans?.get(r.path);
+    if (text === undefined || (r.changes.length === 0 && !/^Changes to Outputs:/m.test(text))) continue;
+    const link = planLink(report, r.path, url, options);
+    const totals = planTotals(text);
+    let t = first ? "**Each root's plan:**\n\n" : "";
+    first = false;
+    t += `<details><summary><code>${esc(r.path)}</code>${totals ? `: ${esc(totals)}` : ""}</summary>\n\n`;
+    t += diffFence(diffLines(text.replace(/\r\n/g, "\n").replace(/^(\s*\n)+/, "").replace(/\s+$/, "").split("\n"))) + "\n";
+    if (link) t += `[plan.txt](${link})\n\n`;
+    t += "</details>\n\n";
+    blocks.push({ kind: "plan", units: 0, root: r.path, text: t });
   }
   const top = head.join("\n") + "\n";
   const foot = `\n${NOTE_FOOTER}\n`;
   const all = top + blocks.map((b) => b.text).join("") + foot;
   if (codePoints(all) <= limit) return all;
 
-  const notice = (kept: number): string => {
-    const cut = blocks.slice(kept);
-    const groups = cut.filter((b) => b.group);
-    const lines = cut.length - groups.length;
-    const what = [groups.length > 0 ? `${plural(groups.length, "group")} (${plural(groups.reduce((n, b) => n + b.units, 0), unitWord)})` : "", lines > 0 ? plural(lines, "line") : ""].filter(Boolean).join(" and ");
-    return `**Cut:** this note leaves out ${what} to stay within ${limit} characters. ${artifacts ? `The full report, in the artifacts of [this run](${url}),` : `[The full report](${url})`} has all of it.\n`;
+  const cut = { plans: [] as string[], diffs: 0, groups: 0, units: 0, lines: 0 };
+  const notice = (): string => {
+    const out: string[] = [];
+    if (cut.plans.length > 0) {
+      const named = cut.plans.slice(0, 20).map((root) => {
+        const link = planLink(report, root, url, options);
+        return link ? `[${code(root)}](${link})` : code(root);
+      });
+      const more = cut.plans.length - named.length;
+      out.push(`the whole plans of ${plural(cut.plans.length, "root")} (${named.join(", ")}${more > 0 ? `, and ${more} more` : ""})`);
+    }
+    if (cut.groups > 0) out.push(`${plural(cut.groups, "group")} (${plural(cut.units, unitWord)})`);
+    if (cut.lines > 0) out.push(plural(cut.lines, "line"));
+    const clauses: string[] = [];
+    if (out.length > 0) clauses.push(`leaves out ${out.length > 1 ? `${out.slice(0, -1).join(", ")} and ${out[out.length - 1]}` : out[0]}`);
+    if (cut.diffs > 0) clauses.push(`shows ${cut.diffs === 1 ? "one group" : `${cut.diffs} groups`} by attribute name, without the diff`);
+    return `**Cut:** this note ${clauses.join(" and ")}, to stay within ${limit} characters. ${fullReport} has all of it${options.plans ? ", and each root's plan.txt the whole plan" : ""}.\n`;
   };
-  let kept = blocks.length;
+  const size = (b: NoteBlock): number => codePoints(b.text);
   let used = codePoints(all);
-  while (kept > 0 && used + codePoints(notice(kept)) > limit) {
-    kept--;
-    used -= codePoints(blocks[kept].text);
+  const over = (): boolean => used + codePoints(notice()) > limit;
+  // The roots' whole plans and the groups' diffs, whichever saves the most first: a whole plan before a diff that saves as much, the later of two alike first.
+  const candidates = blocks
+    .map((b, i) => ({ i, plan: b.kind === "plan", saves: b.kind === "plan" ? size(b) : b.short !== undefined ? size(b) - codePoints(b.short) : 0 }))
+    .filter((c) => c.saves > 0)
+    .sort((a, b) => b.saves - a.saves || Number(b.plan) - Number(a.plan) || b.i - a.i);
+  const gone = new Set<number>();
+  for (const c of candidates) {
+    if (!over()) break;
+    const b = blocks[c.i];
+    if (c.plan) {
+      used -= size(b);
+      gone.add(c.i);
+    } else {
+      used += codePoints(b.short!) - size(b);
+      b.text = b.short!;
+      b.short = undefined;
+      cut.diffs++;
+    }
   }
-  return top + blocks.slice(0, kept).map((b) => b.text).join("") + notice(kept) + foot;
+  cut.plans.push(...blocks.filter((_, i) => gone.has(i)).map((b) => b.root!));
+  for (let i = blocks.length - 1; i >= 0; i--) if (gone.has(i)) blocks.splice(i, 1);
+  // Then whole blocks from the end: groups, and last the destroys.
+  while (blocks.length > 0 && over()) {
+    const b = blocks.pop()!;
+    used -= size(b);
+    if (b.kind === "group") {
+      cut.groups++;
+      cut.units += b.units;
+    } else if (b.kind === "plan") cut.plans.unshift(b.root!);
+    else cut.lines++;
+  }
+  return top + blocks.map((b) => b.text).join("") + notice() + foot;
+}
+
+interface NoteBlock {
+  text: string;
+  /** `line`: destroys, policy and wave lines; `group`: a group; `plan`: a root's whole plan. */
+  kind: "line" | "group" | "plan";
+  units: number;
+  /** A group's text with its attribute names in place of its diff. */
+  short?: string;
+  root?: string;
+}
+
+/**
+ * The diff a group shows: the blocks of its first unit with a rendered plan.
+ * A root group's unit is a root, and its diff every resource the root
+ * changes; an instance group's unit is an instance of the one root, and its
+ * diff that instance's block.
+ */
+function groupDiff(report: Report, units: string[], plans: ReadonlyMap<string, string> | undefined): { unit: string; lines: string[] } | undefined {
+  if (!plans) return undefined;
+  for (const unit of units) {
+    const text = report.unit === "instance" ? plans.get(report.roots[0]?.path ?? "") : plans.get(unit);
+    if (text === undefined) continue;
+    const blocks = report.unit === "instance" ? unitBlocks(text, unit) : unitBlocks(text);
+    if (blocks.length > 0) return { unit, lines: blocks.flatMap((b, i) => (i > 0 ? ["", ...b.lines] : b.lines)) };
+  }
+  return undefined;
 }

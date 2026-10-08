@@ -39,14 +39,15 @@ import { driftOf } from "../respond/drift";
 import { checkDriftSchedule } from "./drift-schedule";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
+import { scrubPlanText } from "./plan-text";
 import { checkPlans, governingPolicy, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
 import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
-import { bucketReportUrl, uploadReport, writeReportDir, type Uploaded } from "./store";
-import { isArtifactPage, type NoteOptions } from "./views";
+import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
+import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
@@ -181,8 +182,18 @@ export function runFacts(repo: string, env: NodeJS.ProcessEnv, forge?: ForgeName
  */
 export function artifactReportUrl(env: NodeJS.ProcessEnv): string | undefined {
   if (env.CI_JOB_URL) return `${env.CI_JOB_URL}/artifacts/file/terragucci-report/report.html`;
-  if (env.GITHUB_REPOSITORY && env.GITHUB_RUN_ID) return `${(env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "")}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+  if (env.GITHUB_REPOSITORY && forgeArtifact(env)) return `${(env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "")}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
   return undefined;
+}
+
+/**
+ * Whether the job runs where the pipeline's upload step keeps a forge
+ * artifact: a GitLab job, or a GitHub or Forgejo Actions run, which number
+ * their runs. A runner that runs the workflow on its own (its run ids are not
+ * numbers) keeps no artifact on the forge, so the note does not point at one.
+ */
+export function forgeArtifact(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.CI_JOB_URL) || /^\d+$/.test(env.GITHUB_RUN_ID ?? "");
 }
 
 /** What the report says about where it can be read and traced, and how the note links it. */
@@ -203,16 +214,24 @@ export interface ReportLinks {
  */
 export function reportLinks(
   report: Report,
-  o: { reports?: { bucket?: string; prefix?: string; url?: string }; given?: string; traceId?: string; traceUrl?: string },
+  o: { reports?: { bucket?: string; prefix?: string; url?: string }; given?: string; traceId?: string; traceUrl?: string; env?: NodeJS.ProcessEnv },
 ): ReportLinks {
   const bucket = o.reports?.bucket ? bucketReportUrl(report, o.reports) : undefined;
   const url = bucket ?? o.given;
-  const note: NoteOptions = url ? { reportUrl: url, ...(isArtifactPage(url) ? { artifacts: true } : {}) } : {};
+  // A run's page that holds no artifact: the note names the run and links no report.
+  const noArtifact = !bucket && url !== undefined && isArtifactPage(url) && o.env !== undefined && !forgeArtifact(o.env);
+  const note: NoteOptions = noArtifact ? { runUrl: url } : url ? { reportUrl: url, ...(isArtifactPage(url) ? { artifacts: true } : {}) } : {};
   const traceUrl = o.traceId && o.traceUrl ? o.traceUrl.replaceAll("{trace_id}", o.traceId) : undefined;
   return {
     run: { ...(bucket ? { report_url: bucket } : {}), ...(o.traceId ? { trace_id: o.traceId } : {}), ...(traceUrl ? { trace_url: traceUrl } : {}) },
     note,
   };
+}
+
+/** The forge the CI environment is: GitLab's variables, Forgejo's flag, else GitHub. */
+export function forgeOfEnv(env: NodeJS.ProcessEnv): ForgeName {
+  if (env.CI_PROJECT_PATH) return "gitlab";
+  return env.FORGEJO_ACTIONS === "true" || env.GITEA_ACTIONS === "true" ? "forgejo" : "github";
 }
 
 function tfFiles(dir: string): string[] {
@@ -712,7 +731,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
       lines.push(drift ? `${root}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
       return {
         root, lines, redacted: safe.values,
-        plan: { text: text.stdout, json: JSON.stringify(safe.plan, null, 2) + "\n" },
+        // The binary masks what the plan marks sensitive; a value copied into an unmarked attribute is masked here too.
+        plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
         input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) },
@@ -1060,9 +1080,20 @@ async function finish(
   const same = named && settings.reports?.bucket === named.bucket ? settings.reports : undefined;
   const configured = named && !named.url ? same?.url : undefined;
   const reports = named ? { ...named, ...(configured ? { url: configured } : {}), ...(same?.role ? { role: same.role } : {}) } : settings.reports;
-  const links = reportLinks(report, { reports, given: options.reportUrl, traceId: observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url });
+  const links = reportLinks(report, { reports, given: options.reportUrl, traceId: observer.trace?.traceId, traceUrl: settings.telemetry?.trace_url, env });
   Object.assign(report.run, links.run);
   observer.reportUrl = links.run.report_url;
+  // A bucket with no address that serves it: the note links its report.html and plan.txt files presigned, as `terragucci estate` links its page.
+  let noteLinks = links.note;
+  if (reports?.bucket && !links.run.report_url) {
+    try {
+      const store = storeFromEnv(reports, env, options.fetch);
+      noteLinks = await presignedLinks(store, report, reports.prefix, [...plans].filter(([, p]) => p.text !== undefined).map(([root]) => root));
+    } catch (e) {
+      log(`the note links no copy in the bucket: ${(e as Error).message}`);
+    }
+  }
+  const limit = noteLimit(options.forge ?? settings.forge ?? forgeOfEnv(env), report);
   // A drift schedule that stopped cannot say so itself; the plan job, which runs on every pull request, does.
   const notices: string[] = [];
   if (!drift && typeof settings.drift === "string") {
@@ -1072,7 +1103,7 @@ async function finish(
   }
   // A waiting wave's command in the note asks for --sign when the repo seals its approvals.
   const sealed = (settings.approval ?? (declaredGates(existsSync(join(repo, "chant.workspace.json")) ? readFileSync(join(repo, "chant.workspace.json"), "utf-8") : undefined) > 0 ? "sealed" : "ledger")) === "sealed";
-  writeReportDir(dir, report, plans, { ...links.note, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
+  writeReportDir(dir, report, plans, { ...noteLinks, limit, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
   let uploaded: Uploaded | undefined;
   if (reports?.bucket) {
     uploaded = await uploadReport(storeFromEnv(reports, env, options.fetch), dir, report, reports.prefix);
