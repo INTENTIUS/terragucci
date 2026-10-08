@@ -81,7 +81,7 @@ describe("sealRule", () => {
     write(repo, {
       "chant.workspace.json": declared(),
       ".chant/allowed_signers": `${signerLine("alice", alice)}\n${signerLine("bob", bob)}\n`,
-      ".chant/trust.json": JSON.stringify({ signers: "keys/signers" }),
+      ".chant/trust.json": JSON.stringify({ schema: 1, signers: "keys/signers" }),
       "keys/signers": `${signerLine("bob", bob)}\n`,
     });
     git(repo, "add", "-A");
@@ -107,7 +107,7 @@ describe("sealRule", () => {
   it("reads a root commit as it is, and another base when one is named", () => {
     const repo = tmp("tg-rule-root-");
     git(repo, "init", "-q", "-b", "main");
-    write(repo, { "chant.workspace.json": declared("wave-1"), ".chant/trust.json": JSON.stringify({ signers: "keys/signers" }), "keys/signers": `${signerLine("bob", bob)}\n` });
+    write(repo, { "chant.workspace.json": declared("wave-1"), ".chant/trust.json": JSON.stringify({ schema: 1, signers: "keys/signers" }), "keys/signers": `${signerLine("bob", bob)}\n` });
     git(repo, "add", "-A");
     git(repo, "commit", "-q", "-m", "first");
     const rule = sealRule(repo);
@@ -116,6 +116,17 @@ describe("sealRule", () => {
     expect(rule.signers?.map((s) => s.principals)).toEqual([["bob"]]);
     const later = merged();
     expect(sealRule(later, "HEAD").gates.size).toBe(0);
+  });
+
+  it("reads no signers through a trust.json without \"schema\": 1, as chant does", () => {
+    const repo = tmp("tg-rule-schema-");
+    git(repo, "init", "-q", "-b", "main");
+    write(repo, { "chant.workspace.json": declared("wave-1"), ".chant/trust.json": JSON.stringify({ signers: "keys/signers" }), "keys/signers": `${signerLine("bob", bob)}\n` });
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "first");
+    const rule = sealRule(repo);
+    expect(rule.signers).toBeNull();
+    expect(rule.signersPath).toMatch(/needs "schema": 1/);
   });
 });
 

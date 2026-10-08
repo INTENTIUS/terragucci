@@ -247,6 +247,7 @@ describe("the highlight table", () => {
         path: "a", planner: "tofu", plan: plan([
           rc("aws_db_instance.main", ["update"], { password_wo_version: 1 }, { password_wo_version: 2 }),
           rc("aws_s3_bucket.old", ["no-op"], { bucket: "old" }, { bucket: "old" }, { importing: { id: "old" } }),
+          rc("aws_sqs_queue.found", ["update"], { max_message_size: 1048576 }, { max_message_size: 262144 }, { importing: { id: "q" } }),
           rc("ephemeral.aws_secretsmanager_secret_version.pw", ["read"], null, { secret_string: "x" }, { mode: "ephemeral" }),
         ]),
       }],
@@ -254,7 +255,10 @@ describe("the highlight table", () => {
     const changes = report.roots[0].changes;
     expect(changes.find((c) => c.address === "aws_db_instance.main")!.write_only).toEqual(["password_wo_version"]);
     expect(changes.some((c) => c.address.startsWith("ephemeral."))).toBe(false);
-    expect(report.named).toEqual([{ root: "a", address: "aws_s3_bucket.old", type: "aws_s3_bucket", action: "import" }]);
+    expect(report.named).toEqual([
+      { root: "a", address: "aws_s3_bucket.old", type: "aws_s3_bucket", action: "import" },
+      { root: "a", address: "aws_sqs_queue.found", type: "aws_sqs_queue", action: "import" },
+    ]);
   });
 });
 
