@@ -99,6 +99,48 @@
       "break": "caught"
     },
     {
+      "forge": "github.com",
+      "claim": "affected",
+      "says": "a pull request that changes one root plans that root alone, and its plan note covers it alone",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "comment-plan",
+      "says": "/terragucci plan on a pull request re-plans it in a run of its own, and the re-plan edits the plan note",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "pr-lock",
+      "says": "with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "policy",
+      "says": "a pull request that replaces a table fails terragucci/plan under the Rego policy on main, and its plan note names the denial",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "oidc",
+      "says": "the plan job holds a GitHub-signed OIDC token for this repo and run, for the plan role, and the apply job on main one for the apply role; with no cloud account the token is checked, not traded with STS",
+      "verdict": "pass",
+      "break": null
+    },
+    {
+      "forge": "github.com",
+      "claim": "gate-wait",
+      "says": "a merged destroy stops its wave with the approve command, and after a sealed chant approve the re-run applies it",
+      "verdict": "pass",
+      "break": null
+    },
+    {
       "forge": "gitlab",
       "claim": "check",
       "says": "the generated pipeline fails an unformatted root and names the file",
