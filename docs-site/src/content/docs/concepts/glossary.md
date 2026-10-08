@@ -39,7 +39,7 @@ A hash of one root's plan. The job takes it before anything is redacted or rende
 
 ### set digest
 
-The hash over every plan digest in a wave. An approval names it, so when one plan in the wave changes, the wave refuses to apply.
+The hash over the plan digests of the roots in a wave whose plan changes something. An approval names it, so when one plan in the wave changes, or a root starts or stops changing, the wave refuses to apply. A pull request's plan note shows it for each wave.
 
 ### gate
 

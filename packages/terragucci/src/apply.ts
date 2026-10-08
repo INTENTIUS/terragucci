@@ -4,8 +4,9 @@
  * OpenTofu roots, and with `--terragrunt` for a Terragrunt repo's units).
  *
  * The wave plans its roots now, after the waves before it applied, and takes
- * the wave's set digest: chant's `waveSetDigest` over each root's plan
- * digest, the same digest the plan report shows for the wave. The gate policy
+ * the wave's set digest: chant's `waveSetDigest` over the plan digest of each
+ * root whose plan changes something, the digest a pull request's plan note
+ * shows for the wave when nothing moved since. The gate policy
  * then decides whether the wave waits:
  *
  *   always      every wave with a change waits for an approval of its digest
@@ -72,8 +73,9 @@ import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
 import { version as VERSION } from "../package.json";
 import { approvalRule } from "./approval";
+import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
-import { reviewDigest, reviewWave, type ReviewOutcome } from "./review";
+import { changesSomething, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
 import { sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
@@ -84,8 +86,7 @@ export const APPLY_OP = "tf-apply";
 /** The gate wave `k` waits on. */
 export const waveGate = (wave: number): string => `wave-${wave}`;
 /** The approval command a waiting wave prints, bound to the digest it planned, and under `approval: sealed` sealed with the approver's key. */
-export const approveLine = (wave: number, digest: string, mode: Approval = "ledger"): string =>
-  `chant approve ${APPLY_OP} ${waveGate(wave)} --plan ${digest}${mode === "sealed" ? " --sign" : ""}`;
+export const approveLine = (wave: number, digest: string, mode: Approval = "ledger"): string => approveCommand(wave, digest, mode === "sealed");
 
 /** Exit codes of `stage tf-apply`. */
 export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
@@ -247,6 +248,12 @@ export function readLedger(repo: string): GateLedger {
  * not carry them.
  */
 export const approvedPath = (wave: number, digest: string): string => `_gates/${APPLY_OP}/${waveGate(wave)}/${digest.replace(":", "_")}.json`;
+
+/** The report a waiting wave kept for `digest` on chant/lifecycle, as last fetched; undefined when it kept none. */
+export function storedReport(repo: string, wave: number, digest: string): string | undefined {
+  const show = git(repo, ["show", `${REMOTE_REF}:${approvedPath(wave, digest)}`]);
+  return show.status === 0 ? show.stdout : undefined;
+}
 
 /** Append a pending fact to the ledger and push it, with any `files` beside it, retrying when another writer moved the branch. */
 export function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}): void {
@@ -460,6 +467,8 @@ interface WaveRun {
   /** The wave's gate state and the ledger that holds its record, as the report's wave row shows them. */
   approval?: ReportWave["approval"];
   gate?: ReportWave["gate"];
+  /** The digest the gate decided, which the report shows as the wave's set digest. */
+  digest?: string;
   /** When a waiting wave began waiting for an approval of its digest. */
   waitingSince?: string;
 }
@@ -489,7 +498,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
       return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -586,8 +595,12 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   }
   const refusedByPolicy = await policyGate(repo, options, { label, settings, configPath }, planned, w);
   if (refusedByPolicy !== undefined) return refusedByPolicy;
-  const members = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
-  const digest = waveSetDigest(members);
+  // The set digest covers the roots whose plan changes something, as a Terragrunt wave's and the plan note's do, so the digest a
+  // pull request's note shows is the one this wave asks approval for when nothing moved.
+  const all = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
+  const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
+  const members = all.filter((m) => changing.has(m.member));
+  const digest = waveSetDigest(members.length > 0 ? members : all);
   const changes = planned.reduce((n, p) => n + p.changes, 0);
   const destroys = planned.reduce((n, p) => n + p.destroys, 0);
   console.log(`${label}: set digest ${digest}, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
@@ -672,6 +685,7 @@ async function gateWave(
   // A wave with nothing to change has nothing to approve.
   const gated = changes > 0 && (gate === "always" || (gate === "on-destroy" && destroys > 0));
   w.approval = gated ? "waiting" : "not-required";
+  w.digest = digest;
   if (gated) {
     w.gate = { branch: LIFECYCLE, path: LEDGER_PATH };
     const name = waveGate(wave);
@@ -724,7 +738,7 @@ async function gateWave(
         JSON.stringify(buildReport({
           run: { ...runFacts(repo, env), stage: "tf-apply", wave, binary, runtime: "forge", started: now, finished: now },
           roots: planned.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(binary) })),
-          waves: [{ number: wave, roots }],
+          waves: [{ number: wave, roots, setDigest: digest }],
         }));
       if (!decision.standing) {
         const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;

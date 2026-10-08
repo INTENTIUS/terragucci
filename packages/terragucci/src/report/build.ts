@@ -53,6 +53,8 @@ export interface WaveInput {
   approval?: ReportWave["approval"];
   gate?: ReportWave["gate"];
   waitingSince?: string;
+  /** A `tf-apply` wave's gate digest, which the report shows as its set digest: the digest over the roots that change. */
+  setDigest?: string;
 }
 
 export interface BuildInput {
@@ -284,7 +286,7 @@ export function buildReport(input: BuildInput): Report {
     return {
       number: w.number,
       roots: w.roots,
-      set_digest: failed || members.length === 0 ? null : changeSetDigest(members),
+      set_digest: w.setDigest ?? (failed || members.length === 0 ? null : changeSetDigest(members)),
       approval: w.approval ?? "not-requested",
       ...review,
       ...(w.gate ? { gate: w.gate } : {}),

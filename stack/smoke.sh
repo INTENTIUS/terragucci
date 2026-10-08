@@ -193,7 +193,8 @@ pr-review-moved|with approval: pr-review a wave whose plans changed between the 
 pr-review-status|with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head|
 cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that change different resources run at once, both reach their record write together and both apply, with no lock wait and no lock object|
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
-cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|'
+cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
+approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -5887,6 +5888,63 @@ claim_cdf_iam() {
   return $rc
 }
 
+claim_approve_command() {
+  # The gated fixture, approval ledger (the default). A pull request changes
+  # canary/one; its plan note gives wave 1 the command chant approve tf-apply
+  # wave-1 --plan <digest>. Merged, wave 1 waits for that same digest. In a
+  # clone, terragucci approve finds the waiting wave and approves its digest;
+  # the next push applies canary/one.
+  # BREAK: terragucci approve runs with --dry-run, so nothing is approved and
+  # canary/one stays out.
+  log() { echo "[smoke approve-command] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/approve-command" sha head pr merge note noted waited out applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo approve-command || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "approve-command: first")"
+  wait_run "$repo" "$sha" || rc=1
+  echo 2 > "$work/tree/canary/one/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" change "approve-command: change canary/one")"
+  pr="$(pr_open "$repo" change "approve-command: change canary/one")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | contains("terragucci:waves"))] | last | .body // empty')"
+    noted="$(grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$note" | head -1)"
+    log "the note gives: ${noted:-no command}"
+    [ -n "$noted" ] || { log "the plan note gives no chant approve command for wave 1"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || rc=1
+    merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+    [ -n "$merge" ] || { log "pull request $pr has no merge commit"; rc=1; }
+    [ $rc = 0 ] && { wait_run "$repo" "$merge" push || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    waited="$(print_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1)"
+    log "the merge waits for: ${waited:-nothing}"
+    [ "$waited" = "$noted" ] || { log "the merge's wave 1 asks for another digest than the note gave"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver" || rc=1
+    git -C "$work/approver" config user.name smoke-approver
+    git -C "$work/approver" config user.email smoke-approver@terragucci.local
+    out="$(cd "$work/approver" && PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" approve --actor smoke-approver ${BREAK:+--dry-run} 2>&1)" || { log "terragucci approve failed: $out"; rc=1; }
+    log "terragucci approve: $(tr '\n' ' ' <<<"$out")"
+    grep -qF -- "${noted#chant }" <<<"$out" || { log "terragucci approve did not approve the digest the note gave"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "approve-command: after terragucci approve")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied approve-command)"
+    log "after terragucci approve: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one to apply once terragucci approve approved wave 1"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the note gave the digest the merge asked for, and terragucci approve approved it with nothing copied"
+  return $rc
+}
+
 names() { cut -d'|' -f1 <<<"$CLAIMS"; }
 # The claims with no issue to wait for, in CLAIMS order.
 runnable_names() {
@@ -6028,6 +6086,7 @@ pr-review-status     runner self! weight=250
 cdf-concurrency      weight=150
 cdf-write-race       weight=150
 cdf-iam              self! weight=250
+approve-command      runner self! weight=250
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"

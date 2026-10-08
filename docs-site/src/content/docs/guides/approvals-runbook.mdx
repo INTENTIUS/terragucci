@@ -7,7 +7,7 @@ prompt: |
   Run the "List the waves waiting" command with a read-only clone and tell me
   each wave, digest and expiry.
   Do not revoke, approve or push to chant/lifecycle.
-  Never run apply, `chant approve` or `--mode apply`, and never merge.
+  Never run apply, `chant approve`, `terragucci approve` or `--mode apply`, and never merge.
 ---
 
 import Shot from '../../../components/Shot.astro';
@@ -41,7 +41,7 @@ Under `approval: sealed` only. Once per repo, in a reviewed pull request to the 
 
 <Steps>
 
-1. Add `.chant/allowed_signers`, one line per approver in ssh-keygen's allowed_signers format. The first field is what the person passes as `--actor`:
+1. Add `.chant/allowed_signers`, one line per approver in ssh-keygen's allowed_signers format; `terragucci init --signer <principal>` writes the first from `git config user.signingkey`. The first field is what the person passes as `--actor`:
 
    ```text
    github:alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
@@ -57,22 +57,22 @@ Under `approval: sealed` only. Once per repo, in a reviewed pull request to the 
 
 ## Approve a wave
 
-A waiting wave exits with code 3 and prints the command. Read the plans in the report. Then run the command with your name, and your key under `sealed`.
+A waiting wave exits with code 3; its command is in the job log, the `terragucci/apply` status and the pull request's plan note. Read the plans in the report, then, from a checkout:
 
 <Tabs syncKey="approval">
   <TabItem label="ledger (default) or pr-review">
     ```bash
-    npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
+    npx terragucci approve wave-2 --actor github:alice
     ```
   </TabItem>
   <TabItem label="sealed">
     ```bash
-    npx chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice --sign ~/.ssh/id_ed25519
+    npx terragucci approve wave-2 --actor github:alice --sign ~/.ssh/id_ed25519
     ```
   </TabItem>
 </Tabs>
 
-The sign-off covers the `--plan` set digest only. Then re-run the job, or comment `/terragucci apply` on the pull request (GitHub or Forgejo; merged, or open with `apply.when: pull-request`).
+It runs `chant approve tf-apply wave-2 --plan <digest>` for the digest the wave planned; `--dry-run` prints that command instead. Then re-run the job, or comment `/terragucci apply` on the pull request (GitHub or Forgejo; merged, or open with `apply.when: pull-request`).
 
 ## Approve by review
 
