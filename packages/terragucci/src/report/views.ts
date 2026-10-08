@@ -12,6 +12,7 @@ import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
 import { actionWord, type Report, type ReportNamed } from "./schema";
 import { duration } from "./spans";
+import { TACO_NOTE_URL } from "./taco";
 
 /** chant's plan summary, rebuilt from the report. */
 export function planSummaryOf(report: Report): PlanSummary {
@@ -65,6 +66,14 @@ export function renderGitLabTerraform(report: Report): { create: number; update:
   // A replacement both deletes and creates.
   return { create: t.create + t.replace, update: t.update, delete: t.delete + t.replace };
 }
+
+/**
+ * The note's last line: the small taco and a link to the docs. Every forge
+ * (GitHub, GitLab, Forgejo) renders an inline <img> from an https URL and keeps
+ * its width and height; the image is served by the docs site, so the note
+ * stays plain text with no attachment.
+ */
+export const NOTE_FOOTER = `<sub><img src="${TACO_NOTE_URL}" width="26" height="16" alt=""> Posted by [terragucci](https://intentius.io/terragucci/)</sub>`;
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
@@ -194,7 +203,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     blocks.push({ group: true, units: g.units.length, text: t });
   }
   const top = head.join("\n") + "\n";
-  const all = top + blocks.map((b) => b.text).join("");
+  const foot = `\n${NOTE_FOOTER}\n`;
+  const all = top + blocks.map((b) => b.text).join("") + foot;
   if (codePoints(all) <= limit) return all;
 
   const notice = (kept: number): string => {
@@ -210,5 +220,5 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     kept--;
     used -= codePoints(blocks[kept].text);
   }
-  return top + blocks.slice(0, kept).map((b) => b.text).join("") + notice(kept);
+  return top + blocks.slice(0, kept).map((b) => b.text).join("") + notice(kept) + foot;
 }

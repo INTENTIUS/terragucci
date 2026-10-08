@@ -51,11 +51,25 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'terragucci',
+			// The taco: the logo beside the title, the favicons, and the card a shared link shows.
+			logo: { src: './src/assets/brand/taco.svg', alt: '' },
+			favicon: '/favicon.svg',
+			head: [
+				{ tag: 'link', attrs: { rel: 'icon', href: '/terragucci/favicon.ico', sizes: '32x32' } },
+				{ tag: 'link', attrs: { rel: 'icon', href: '/terragucci/favicon-32.png', type: 'image/png', sizes: '32x32' } },
+				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/terragucci/apple-touch-icon.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://intentius.io/terragucci/og.png' } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+				{ tag: 'meta', attrs: { property: 'og:image:alt', content: 'A pixel-art taco with a diamond in it, beside the terragucci name and tagline' } },
+				{ tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://intentius.io/terragucci/og.png' } },
+			],
 			expressiveCode: { plugins: [newlinesBetweenLines], shiki: { langs: [rego] } },
 			customCss: ['./src/styles/terragucci.css'],
 			// The title gets a "Copy page as Markdown" button, an llms.txt pointer and
-			// the page's agent prompt.
-			components: { PageTitle: './src/components/PageTitle.astro' },
+			// the page's agent prompt. The footer adds the tutorial step and a small taco.
+			components: { PageTitle: './src/components/PageTitle.astro', Footer: './src/components/Footer.astro' },
 			description: 'Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },

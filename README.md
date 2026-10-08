@@ -1,3 +1,5 @@
+<p align="center"><img src="docs-site/public/brand/taco-160.png" width="160" height="96" alt="terragucci's logo, a pixel-art taco with a diamond in it"></p>
+
 # terragucci
 
 Plan, approve and apply hundreds of Terraform, OpenTofu and Terragrunt roots from pull requests, in your own CI, with a trace of every run.

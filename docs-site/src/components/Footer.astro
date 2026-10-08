@@ -1,0 +1,54 @@
+---
+// Starlight's footer, with the step a tutorial page is on and a small taco
+// under it on every page. The step comes from the sidebar's Tutorial group,
+// so a new tutorial page counts without an edit here.
+import Default from '@astrojs/starlight/components/Footer.astro';
+import Taco from './Taco.astro';
+
+type Entry = { type: 'link'; label: string; isCurrent: boolean } | { type: 'group'; label: string; entries: Entry[] };
+const { sidebar } = Astro.locals.starlightRoute;
+const group = (sidebar as Entry[]).find((e): e is Extract<Entry, { type: 'group' }> => e.type === 'group' && e.label === 'Tutorial');
+const flat = (es: Entry[]): Extract<Entry, { type: 'link' }>[] => es.flatMap((e) => (e.type === 'link' ? [e] : flat(e.entries)));
+const steps = group ? flat(group.entries) : [];
+const step = steps.findIndex((e) => e.isCurrent) + 1;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+{step > 0 && (
+	<p class="tg-step not-content">
+		<Taco scale="small" />
+		{step === steps.length ? `The end of the tutorial: all ${steps.length} steps.` : `Tutorial step ${step} of ${steps.length}.`}
+	</p>
+)}
+<Default />
+<p class="tg-foot not-content">
+	<a href={`${base}/`}><Taco /><span>terragucci</span></a>
+</p>
+
+<style>
+	.tg-step {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin: 3rem 0 0;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.tg-foot {
+		margin: 2rem 0 1rem;
+		text-align: center;
+	}
+	.tg-foot a {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.4rem;
+		font-family: var(--tg-display);
+		font-size: var(--sl-text-xs);
+		font-weight: 600;
+		color: var(--sl-color-gray-3);
+		text-decoration: none;
+	}
+	.tg-foot a:hover {
+		color: var(--sl-color-white);
+	}
+</style>

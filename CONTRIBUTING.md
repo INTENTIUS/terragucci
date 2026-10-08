@@ -1,4 +1,4 @@
-# Working on terragucci
+# <img src="docs-site/public/brand/taco-small.png" width="26" height="16" alt=""> Working on terragucci
 
 ```bash
 npm install
@@ -336,3 +336,7 @@ Designs waiting for review before any code live in `design/`, one file each. The
 | File | Covers |
 |---|---|
 | [design/estate-carving.md](design/estate-carving.md) | splitting a large root into smaller ones: survey, propose, verify and a person-run migration |
+
+## The taco
+
+The logo is a 51x31 pixel-art taco. `docs-site/public/brand/taco.svg` draws it with one square per art pixel; `docs-site/src/assets/brand/taco.svg` is the same file for Starlight's header logo. Show it at a whole multiple of 51x31 (the `Taco` component's `scale`) so every pixel stays square. `taco-small.png` is the 26x16 mark at twice that size, for inline use and the plan note's last line, which links it at `https://intentius.io/terragucci/brand/taco-small.png`: keep that path, since old notes point at it. The report, index and estate pages inline the 1x PNG from `packages/terragucci/src/report/taco.ts`. `docs-site/public/social-preview.png` is the image for the repository's social preview in GitHub's settings.

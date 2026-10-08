@@ -20,6 +20,7 @@ import { dirname, join, relative } from "node:path";
 import { esc, renderHtml } from "./html";
 import { StoreConflict, StoreError, type ObjectStore } from "./object-store";
 import type { Report } from "./schema";
+import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
 
 /** Write a run's report directory. `plans` maps each root to its full plan text and redacted JSON. */
@@ -231,9 +232,10 @@ export function renderIndexHtml(index: ReportIndex, title: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
 <title>${esc(title)}</title>
-<style>:root{--bg:#fbfbfa;--fg:#1d1d1b;--line:#deded8;--link:#1f5fbf}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--line:#34342f;--link:#8ab4ff}}
+${TACO_ICON}
+<style>${TACO_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--line:#deded8;--link:#1f5fbf}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--line:#34342f;--link:#8ab4ff}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px;overflow-x:auto}a{color:var(--link)}table{border-collapse:collapse}td,th{border-bottom:1px solid var(--line);padding:4px 12px 4px 0;text-align:left;vertical-align:top}code{font:12.5px ui-monospace,Menlo,monospace}</style>
-</head><body><main><h1>${esc(title)}</h1><p>${index.reports.length} reports, newest first.</p>
+</head><body><main><h1 class="brand">${TACO_IMG}${esc(title)}</h1><p>${index.reports.length} reports, newest first.</p>
 <table><tr><th>Project</th><th>Commit</th><th>Pull request</th><th>Stage</th><th>Finished</th><th>Roots</th><th>Changes</th><th>Destroys</th><th></th></tr>
 ${rows.join("\n")}
 </table></main></body></html>

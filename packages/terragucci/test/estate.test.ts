@@ -126,8 +126,9 @@ describe("the estate page", () => {
     expect(html).toContain(">3h 0m</time>");
     expect(html).toContain(`href="github.com/acme/web/index.html"`);
     expect(readInlineEstate(html)).toEqual(e);
-    // Self-contained: nothing loads from anywhere.
-    expect(html).not.toMatch(/<(script|link|img)[^>]+(src|href)=/);
+    // Self-contained: nothing loads from anywhere; the taco is an inline data: image.
+    expect(html).not.toMatch(/<(script|link|img)[^>]+(src|href)="(?!data:)/);
+    expect(html).toContain(`<h1 class="brand"><img class="taco" src="data:image/png;base64,`);
   });
 
   it("counts failed roots, and names a project with no index and one whose index could not be read", () => {

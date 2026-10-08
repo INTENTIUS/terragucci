@@ -1,8 +1,11 @@
 ---
 // A grouped plan summary as it lands on a pull request: the product's own artefact.
+// The taco is the bot's avatar.
+import Taco from './Taco.astro';
 ---
 <figure class="tg-note not-content" aria-label="A grouped plan summary on a pull request">
 	<header>
+		<span class="avatar"><Taco scale="small" /></span>
 		<span class="who">terragucci</span>
 		<span class="meta">commented on #482 · bump modules/iam to 1.4.0</span>
 	</header>
@@ -44,6 +47,15 @@
 		align-items: baseline;
 		padding: 0.65rem 1rem;
 		border-bottom: 1px solid var(--tg-rule);
+	}
+	.avatar {
+		display: inline-grid;
+		place-items: center;
+		width: 2rem;
+		height: 2rem;
+		border-radius: 50%;
+		background: #47b3c0;
+		align-self: center;
 	}
 	.who {
 		font-weight: 600;
