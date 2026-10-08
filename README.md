@@ -11,8 +11,6 @@ npx terragucci init
 
 The site is [intentius.io/terragucci](https://intentius.io/terragucci/), and [How terragucci works](https://intentius.io/terragucci/concepts/how-it-works/) follows one change from pull request to drift. Its [validation page](https://intentius.io/terragucci/reference/validation/) lists every check the generated pipelines pass.
 
-[How terragucci compares](https://intentius.io/terragucci/compare/) sets it beside Atlantis, HCP Terraform, Spacelift and OpenTaco.
-
 ## For agents
 
 Setting terragucci up with a coding agent? Paste this prompt into it.

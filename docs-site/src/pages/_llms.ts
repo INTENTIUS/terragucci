@@ -38,7 +38,6 @@ const ORDER = [
 	'concepts/why-plans-are-grouped',
 	'concepts/approvals-as-records',
 	'concepts/glossary',
-	'compare',
 ];
 
 export async function pages() {

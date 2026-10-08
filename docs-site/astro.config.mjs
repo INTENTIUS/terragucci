@@ -145,7 +145,6 @@ export default defineConfig({
 						{ label: 'Glossary', slug: 'concepts/glossary' },
 					],
 				},
-				{ label: 'How terragucci compares', slug: 'compare' },
 				{ label: 'Coming from Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
 				{ label: 'Validation', slug: 'reference/validation' },
 			],
