@@ -1,7 +1,7 @@
 ---
 title: Keep reports in a bucket
 description: Copy every plan report to an S3 bucket, a GCS bucket or an Azure Blob container, so they outlive your CI's artifact retention and share one index.
-claims: [report, drill-down, report-oidc, front-door, blob-gcs, blob-azure, note-report-link]
+claims: [report, drill-down, report-oidc, front-door, blob-gcs, blob-azure, note-report-link, blob-gcs-key, blob-azure-key, index-writes]
 prompt: |
   Read https://intentius.io/terragucci/guides/keep-reports-in-a-bucket/.
   Add the `reports:` block for bucket <bucket>, rerun `npx terragucci init`, write

@@ -11,15 +11,21 @@
 //   MODE=sts     AWS STS: AssumeRoleWithWebIdentity and AssumeRole answer
 //                keys for any role (floci takes any keys), and
 //                GetCallerIdentity answers the account 000000000000
+//   MODE=s3      S3, forwarded to UPSTREAM (floci:4566). HOLD_PATH holds the
+//                first two PUTs to that path until both arrived (or 60s
+//                passed), then sends them at once, so two writers race on
+//                one object. STRIP=1 drops If-Match and If-None-Match, as a
+//                store that ignores them would. ANSWER_501=1 answers 501 to a
+//                PUT of an index.json that carries either header.
 //
-// It listens on PORT (default 8790). GET /_requests lists every request it
+// It listens on PORT (default 8790; s3 on 4566). GET /_requests lists every request it
 // took, in order: method, path, status, headers, the body as JSON when it
 // parses, and a form body's fields as form (the claims read this from the
 // host through a published port).
 import http from "node:http";
 
 const mode = process.env.MODE ?? "decide";
-const port = Number(process.env.PORT ?? 8790);
+const port = Number(process.env.PORT ?? (mode === "s3" ? 4566 : 8790));
 const seen = [];
 
 const answer = (res, status, body, type = "application/json") => {
@@ -66,12 +72,72 @@ function otlp(req) {
   return [200, {}];
 }
 
+// ── s3 ──
+const [upHost, upPort] = (process.env.UPSTREAM ?? "floci:4566").split(":");
+const held = [];
+let holding = Boolean(process.env.HOLD_PATH);
+
+function forward(req, res, payload) {
+  const headers = { ...req.headers, host: `${upHost}:${upPort}`, "content-length": String(payload.length) };
+  delete headers.connection;
+  delete headers.expect;
+  delete headers["transfer-encoding"];
+  const cond = req.headers["if-match"] ? `if-match ${req.headers["if-match"]}` : req.headers["if-none-match"] ? `if-none-match ${req.headers["if-none-match"]}` : "";
+  if (process.env.STRIP) {
+    delete headers["if-match"];
+    delete headers["if-none-match"];
+  }
+  const up = http.request({ host: upHost, port: Number(upPort), method: req.method, path: req.url, headers }, (r) => {
+    const out = [];
+    r.on("data", (d) => out.push(d));
+    r.on("end", () => {
+      const data = Buffer.concat(out);
+      const h = req.method === "HEAD" ? { ...r.headers } : { ...r.headers, "content-length": String(data.length) };
+      delete h.connection;
+      delete h["transfer-encoding"];
+      res.writeHead(r.statusCode ?? 502, h);
+      res.end(req.method === "HEAD" ? undefined : data);
+      seen.push({ method: req.method, path: req.url.split("?")[0], status: r.statusCode, cond });
+    });
+  });
+  up.on("error", (e) => {
+    res.writeHead(502);
+    res.end(String(e));
+    seen.push({ method: req.method, path: req.url.split("?")[0], status: 502, cond, error: e.message });
+  });
+  up.end(payload);
+}
+
+function s3(req, res, payload) {
+  const path = req.url.split("?")[0];
+  const cond = req.headers["if-match"] || req.headers["if-none-match"];
+  if (req.method === "PUT" && process.env.ANSWER_501 && cond && path.endsWith("/index.json")) {
+    seen.push({ method: req.method, path, status: 501, cond: req.headers["if-match"] ? "if-match" : "if-none-match" });
+    res.writeHead(501, { "content-type": "application/xml" });
+    return res.end("<Error><Code>NotImplemented</Code><Message>A header you provided implies functionality that is not implemented</Message></Error>");
+  }
+  if (req.method === "PUT" && holding && path === process.env.HOLD_PATH) {
+    held.push({ req, res, payload });
+    const go = () => {
+      if (!holding) return;
+      holding = false;
+      for (const h of held.splice(0)) forward(h.req, h.res, h.payload);
+    };
+    if (held.length >= 2) go();
+    else setTimeout(go, 60_000);
+    return;
+  }
+  forward(req, res, payload);
+}
+
 http
   .createServer((req, res) => {
-    let raw = "";
-    req.on("data", (c) => (raw += c));
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
       if (req.method === "GET" && req.url === "/_requests") return answer(res, 200, seen);
+      if (mode === "s3") return s3(req, res, Buffer.concat(chunks));
+      const raw = Buffer.concat(chunks).toString("utf8");
       let body;
       try {
         body = raw ? JSON.parse(raw) : undefined;
