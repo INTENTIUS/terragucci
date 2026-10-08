@@ -123,6 +123,9 @@ export default defineConfig({
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
+								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
+								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
+								{ label: 'Estimate the cost of a change', slug: 'guides/estimate-cost' },
 							],
 						},
 						{

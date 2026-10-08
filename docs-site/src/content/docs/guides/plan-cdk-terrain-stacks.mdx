@@ -2,7 +2,6 @@
 title: Plan CDK Terrain stacks
 description: Run cdktn synth in the pipeline before tf-plan, so each pull request plans the stacks your CDK Terrain app writes.
 claims: [cdktn-synth]
-draft: true
 prompt: |
   Read https://intentius.io/terragucci/guides/plan-cdk-terrain-stacks/.
   Add `synth: npm ci && npx cdktn synth` to terragucci.yml, add cdktf.out/ and node_modules/ to .gitignore,

@@ -8421,7 +8421,7 @@ claim_tf_terraform() {
   # the terragucci-terraform image. A pull request that changes fleet/two
   # gets a passing terragucci/plan; the push to main passes check and waits
   # at wave 1; approved, the next push applies canary/one with Terraform,
-  # whose state says terraform_version 1.14.0.
+  # whose state says terraform_version 1.14.9.
   # BREAK: the pushed pipeline runs in the tofu image, which has no
   # terraform, so nothing plans or applies.
   log() { echo "[smoke tf-terraform] $*" >&2; }
@@ -8462,10 +8462,10 @@ claim_tf_terraform() {
     [ "$(gated_applied tf-terraform)" = "canary/one " ] || { log "canary/one did not apply alone: $(gated_applied tf-terraform)"; rc=1; }
     version="$(curl -fsS "$FLOCI/shop-terraform-state/tf-terraform/canary/one.tfstate" 2>/dev/null | jq -r '.terraform_version // empty')"
     log "canary/one state written by version ${version:-none}"
-    [ "$version" = 1.14.0 ] || { log "Terraform 1.14.0 did not write the state of canary/one"; rc=1; }
+    [ "$version" = 1.14.9 ] || { log "Terraform 1.14.9 did not write the state of canary/one"; rc=1; }
   fi
   drop_work "$work"
-  [ $rc = 0 ] && log "with binary: terraform, check and the plan passed, wave 1 waited, and its approval applied canary/one with Terraform 1.14.0"
+  [ $rc = 0 ] && log "with binary: terraform, check and the plan passed, wave 1 waited, and its approval applied canary/one with Terraform 1.14.9"
   return $rc
 }
 
@@ -8478,7 +8478,7 @@ context_state() { # repo, sha, context
 claim_tg_terraform() {
   # The Terragrunt gated fixture with binary: terraform and gate: never. The
   # pipeline installs Terraform beside Terragrunt and the push to main
-  # applies every unit; each unit's state says terraform_version 1.14.0.
+  # applies every unit; each unit's state says terraform_version 1.14.9.
   # BREAK: binary stays tofu, so OpenTofu writes the state.
   log() { echo "[smoke tg-terraform] $*" >&2; }
   # shellcheck source=lib.sh
@@ -8492,7 +8492,7 @@ claim_tg_terraform() {
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
   if [ -z "${BREAK:-}" ]; then
     # shellcheck disable=SC2016 # the step's own text
-    grep -qF 'dir="$(terragucci install terraform 1.14.0)"' "$wf" || { log "the pipeline does not install Terraform"; rc=1; }
+    grep -qF 'dir="$(terragucci install terraform 1.14.9)"' "$wf" || { log "the pipeline does not install Terraform"; rc=1; }
   fi
   sha="$(push_tree "$work/tree" "$repo" main "tg-terraform: first")" || { drop_work "$work"; return 1; }
   wait_run "$repo" "$sha" || rc=1
@@ -8500,10 +8500,10 @@ claim_tg_terraform() {
   [ "$(tg_gated_applied tg-terraform)" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "not every unit applied"; rc=1; }
   for unit in live/canary/one live/fleet/two live/fleet/three; do
     version="$(curl -fsS "$FLOCI/shop-terraform-state/tg-terraform/$unit/terraform.tfstate" 2>/dev/null | jq -r '.terraform_version // empty')"
-    [ "$version" = 1.14.0 ] || { log "$unit state was written by ${version:-nothing}, not Terraform 1.14.0"; rc=1; }
+    [ "$version" = 1.14.9 ] || { log "$unit state was written by ${version:-nothing}, not Terraform 1.14.9"; rc=1; }
   done
   drop_work "$work"
-  [ $rc = 0 ] && log "Terragrunt ran Terraform 1.14.0, installed in the job, and applied every unit"
+  [ $rc = 0 ] && log "Terragrunt ran Terraform 1.14.9, installed in the job, and applied every unit"
   return $rc
 }
 
@@ -9972,11 +9972,12 @@ runner_prep() {
   export SMOKE_CLI_BUILT=1
   SMOKE_TOFU_IMAGE="$(image_tag tofu)"; SMOKE_TG_IMAGE="$(image_tag terragrunt)"
   export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE
-  if ! docker image inspect "$SMOKE_TOFU_IMAGE" >/dev/null 2>&1 || ! docker image inspect "$SMOKE_TG_IMAGE" >/dev/null 2>&1; then
-    echo "[smoke] building the CI images (a few minutes the first time)" >&2
-    (cd "$HERE/.." && npx tsx scripts/images.ts build >"$SMOKE_LOG_DIR/images.log" 2>&1) \
-      || { echo "[smoke] the CI images did not build; see $SMOKE_LOG_DIR/images.log" >&2; return 1; }
-  fi
+  # Built every time: a forge job runs the bundle inside the image, so an
+  # image left from an older tree would test older code. The layer cache
+  # makes a rebuild take seconds when only the bundle moved.
+  echo "[smoke] building the CI images (a few minutes the first time)" >&2
+  (cd "$HERE/.." && npx tsx scripts/images.ts build >"$SMOKE_LOG_DIR/images.log" 2>&1) \
+    || { echo "[smoke] the CI images did not build; see $SMOKE_LOG_DIR/images.log" >&2; return 1; }
   "$HERE/bootstrap.sh" forgejo >/dev/null 2>"$SMOKE_LOG_DIR/bootstrap.log" \
     || { cat "$SMOKE_LOG_DIR/bootstrap.log" >&2; echo "[smoke] the stack did not start" >&2; return 1; }
   # The steward claim runs alongside others, so its fountain profile starts

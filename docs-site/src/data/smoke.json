@@ -51,7 +51,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "76d6e29"
+      "commit": "1d4fe88"
     },
     {
       "claim": "refuse",
@@ -598,7 +598,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "76d6e29"
+      "commit": "1d4fe88"
     },
     {
       "claim": "tg-pr-apply",
@@ -762,7 +762,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "76d6e29"
+      "commit": "1d4fe88"
     },
     {
       "claim": "note-stale",
@@ -826,7 +826,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d6d5427"
+      "commit": "1d4fe88"
     },
     {
       "claim": "highlight-sensitive",
@@ -842,7 +842,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "76d6e29"
+      "commit": "1d4fe88"
     },
     {
       "claim": "pending-expiry",
@@ -858,7 +858,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f9098c3"
+      "commit": "1d4fe88"
     },
     {
       "claim": "rollout-control",
@@ -933,12 +933,28 @@
       "commit": "6a8d796"
     },
     {
+      "claim": "tf-terraform",
+      "says": "with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d4fe88"
+    },
+    {
       "claim": "tg-terraform",
       "says": "in a Terragrunt repo with binary: terraform the pipeline installs Terraform and Terragrunt applies every unit with it",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "6a8d796"
+      "commit": "1d4fe88"
+    },
+    {
+      "claim": "tfquery-import",
+      "says": "with binary: terraform a root with a .tfquery.hcl gets the drift pull request with the config terraform query generated for what it lists",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d4fe88"
     },
     {
       "claim": "alerts-fire",
@@ -984,9 +1000,9 @@
       "claim": "cdktn-synth",
       "says": "with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans every synthesized stack",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "76d6e29"
+      "commit": "1d4fe88"
     },
     {
       "claim": "audit",
@@ -1024,17 +1040,17 @@
       "claim": "notify-chat",
       "says": "with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "76d6e29"
+      "commit": "1d4fe88"
     },
     {
       "claim": "cost-estimate",
       "says": "with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "76d6e29"
+      "commit": "1d4fe88"
     }
   ]
 }

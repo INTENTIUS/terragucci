@@ -117,7 +117,7 @@ describe("init", () => {
 
   it("terragucci.yml roots, binary, version and env reach the pipeline", async () => {
     const dir = write(withRemote("https://github.com/acme/infra.git"), {
-      "terragucci.yml": 'roots: ["network"]\nbinary: terraform\nversion: "1.14.0"\nenv:\n  AWS_REGION: eu-west-1\n',
+      "terragucci.yml": 'roots: ["network"]\nbinary: terraform\nversion: "1.14.9"\nenv:\n  AWS_REGION: eu-west-1\n',
     });
     const r = await init(dir);
     expect(r.roots).toEqual(["network"]);
