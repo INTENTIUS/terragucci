@@ -69,6 +69,60 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
+
+/**
+ * How many levels of `needs` Forgejo 16 settles while it creates a run. It
+ * evaluates a job with no `needs` whose `if` is false as skipped on the spot,
+ * then, in the same transaction, skips each job below it one level of `needs`
+ * at a time, and past this many levels it gives up (checkJobsOfRun's recursion
+ * limit) and creates no run at all. A pull request on a repo with five waves
+ * and the tips job below `check` got no plan.
+ */
+export const forgejoSkipLevels = 5;
+
+/**
+ * An `if` that refers to `env` is one Forgejo cannot evaluate when it creates
+ * a run, so it hands the job to the runner, which skips it. The jobs below are
+ * then skipped by Forgejo's job queue, which retries past the limit, so the run
+ * goes on. This one is always true.
+ */
+export const runnerEvaluatedIf = "(env.TF_IN_AUTOMATION || 'set') != ''";
+
+/** The number of jobs on the longest chain of `needs` below each job. */
+export function needsDepths(entities: Map<string, unknown>): Map<string, number> {
+  const below = new Map<string, string[]>();
+  for (const [name, job] of entities) {
+    if (name === "workflow") continue;
+    const needs = (job as { props?: { needs?: string | string[] } }).props?.needs;
+    for (const n of needs === undefined ? [] : Array.isArray(needs) ? needs : [needs]) below.set(n, [...(below.get(n) ?? []), name]);
+  }
+  const depths = new Map<string, number>();
+  const depth = (name: string, seen: Set<string>): number => {
+    const known = depths.get(name);
+    if (known !== undefined) return known;
+    if (seen.has(name)) return 0;
+    seen.add(name);
+    const d = Math.max(0, ...(below.get(name) ?? []).map((c) => 1 + depth(c, seen)));
+    depths.set(name, d);
+    return d;
+  };
+  for (const name of entities.keys()) if (name !== "workflow") depth(name, new Set());
+  return depths;
+}
+
+/**
+ * On Forgejo, a job with no `needs` and an `if`, with more than
+ * forgejoSkipLevels jobs on a chain of `needs` below it, gets its `if`
+ * evaluated by the runner, so an event that skips it still creates the run.
+ */
+export function deferDeepSkips(entities: Map<string, unknown>): void {
+  const depths = needsDepths(entities);
+  for (const [name, job] of entities) {
+    const props = (job as { props?: { needs?: unknown; if?: unknown } }).props;
+    if (name === "workflow" || !props || props.needs !== undefined || typeof props.if !== "string") continue;
+    if ((depths.get(name) ?? 0) > forgejoSkipLevels) props.if = `${runnerEvaluatedIf} && (${props.if})`;
+  }
+}
 import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
@@ -2204,12 +2258,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       container: { image },
       needs: "check",
       if: `always() && needs.check.result == 'failure' && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)${branchNames.map((b) => ` && github.ref != 'refs/heads/${b}'`).join("")}`,
-      permissions: { contents: "write" },
+      // With locks: plan it also answers the lock of the branch's pull request on the new head: its push, made with
+      // the job's own token, starts no pr-lock run.
+      permissions: { contents: "write", ...(locksPlan ? { statuses: "write", "pull-requests": "write" } : {}) },
       env: { TG_TOKEN: "${{ github.token }}" },
       steps: [
         new Step({ uses: "actions/checkout@v4" }),
         ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
         new Step({ name: "Commit the formatting", shell: "bash", run: fmtScript(binary, forge, tokenEnv) }),
+        ...(locksPlan ? [new Step({ name: "Lock the roots the pull request's new head reaches", shell: "bash", run: planLockScript(layers, forge, prApply, Boolean(tg)) })] : []),
       ],
     } as never) as never);
   }
@@ -2439,6 +2496,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     } as never) as never);
   }
   if (drift && input.agentDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
+  if (forge === "forgejo") deferDeepSkips(entities);
   const serializer = forge === "forgejo" ? forgejoSerializer : githubSerializer;
   const extra: { path: string; content: string }[] = [];
   if (input.resume) {

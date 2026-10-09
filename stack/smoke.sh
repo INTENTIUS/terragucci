@@ -250,6 +250,7 @@ tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an 
 tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
 plan-lock|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
 plan-lock-release|with locks: plan the merge of a pull request releases the lock its first plan took|
+plan-lock-fmt|with locks: plan a pull request whose push the fmt job formats, with a push that starts no run, has its lock answered on the formatted head|
 policy-override|a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest|
 policy-override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
 policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|
@@ -370,7 +371,10 @@ provider-cache-once|a wave of eight roots that use one provider downloads it onc
 unlock-state|terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies|
 tip-moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
 mcp-last-apply|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
-drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|'
+drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
+tg-pr-plan|a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo|
+github-drift-issue|on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another|
+runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -5314,6 +5318,20 @@ pr_mergeable() { # repo, number -> waits until the forge has finished checking t
   echo "$m"
 }
 
+# Merge a pull request once the forge has worked out that it can. Forgejo
+# answers a merge with 405 while it is still checking the pull request, so a
+# 405 is read as "not yet" and the merge is tried again, for up to a minute.
+merge_pr() { # repo, number
+  local i code
+  for i in $(seq 1 20); do
+    [ "$(api "$URL/api/v1/repos/$1/pulls/$2" | jq -r .mergeable)" = true ] || { sleep 3; continue; }
+    code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$1/pulls/$2/merge")"
+    case "$code" in 2??) return 0 ;; 405) sleep 3 ;; *) echo "the merge of pull request $2 answered $code" >&2; return 1 ;; esac
+  done
+  echo "pull request $2 never merged: the forge did not call it mergeable, or answered 405, for a minute" >&2
+  return 1
+}
+
 claim_pr_requires() {
   # Two repos with apply.when: pull-request and apply.merge: manual. In
   # pr-requires, apply.requires is [approved]: a pull request changes
@@ -7571,8 +7589,8 @@ claim_cdf_write_race() {
   grep -qF "<Key>tofu-address</Key><Value>terraform_data.shared</Value>" <<<"$tags" || { log "the record is not tagged tofu-address=terraform_data.shared: $tags"; rc=1; }
   curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
   if [ $rc = 0 ]; then
-    # --layers names the root: it has no backend and no provider block, which is what tf-plan finds roots by.
-    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --layers estate --binary choudoufu; then
+    # tf-plan finds the root by its live block: it has no backend and no provider block.
+    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --binary choudoufu; then
       log "tf-plan in checkout $loser failed"; tail -20 "$work/replan.log" >&2; rc=1
     else
       got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | select(.address == "terraform_data.shared") | .attributes[] | select(.path == "input") | "\(.before) \(.after)"][0] // "none"' "$work/$loser/terragucci-report/report.json" 2>/dev/null || echo none)"
@@ -15548,7 +15566,7 @@ claim_tip_moved() {
     base="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.base.ref')"
     files="$(pr_files "$repo" "$pr")"
     [ "$base" = rename ] && [ "$files" = app/main.tf ] || { log "pull request $pr goes into $base and changes $files, not rename and app/main.tf"; drop_work "$work"; return 1; }
-    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "could not merge pull request $pr"; drop_work "$work"; return 1; }
+    merge_pr "$repo" "$pr" || { log "could not merge pull request $pr"; drop_work "$work"; return 1; }
     log "merged pull request $pr into rename"
   else
     log "no pull request from terragucci/tip/moved-app"
@@ -15565,6 +15583,222 @@ claim_tip_moved() {
     || { log "the plan of rename does not move terraform_data.old to terraform_data.new"; rc=1; }
   drop_work "$work"
   [ $rc = 0 ] && log "the tip's pull request $pr added the moved block, and rename now plans a move with no destroy"
+  return $rc
+}
+
+claim_tg_pr_plan() {
+  # Forgejo 16 creates no run for an event that skips a job with more than
+  # five levels of needs below it: the Terragrunt example's check job heads
+  # five waves and the tips job, so its pull requests got no plan. init hands
+  # that check's if to the runner. A copy of the example, its main pushed
+  # without the pipeline so nothing applies, gets a pull request that adds the
+  # committed pipeline and the one-unit scenario: its pull_request run plans
+  # and the plan note names live/dev/orders.
+  # BREAK: the pipeline's check keeps Forgejo's if, and Forgejo creates no
+  # pull_request run.
+  log() { echo "[smoke tg-pr-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-pr-plan" tree flow sha pr run="" i notes rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo tg-pr-plan || return 1
+  tree="$work/tree"
+  mkdir -p "$tree"
+  cp -R "$TG_EXAMPLE/." "$tree/"
+  flow="$work/terragucci.yml"
+  mv "$tree/.forgejo/workflows/terragucci.yml" "$flow"
+  grep -q "if: (env.TF_IN_AUTOMATION || 'set') != '' && (" "$flow" || { log "the committed pipeline's check keeps Forgejo's if"; drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && perl -pi -e "s/^(    if: )\\Q(env.TF_IN_AUTOMATION || 'set') != '' && (\\E(.*)\\)\$/\$1\$2/" "$flow"
+  push_tree "$tree" "$repo" main "the example, without its pipeline" >/dev/null || { drop_work "$work"; return 1; }
+  mkdir -p "$tree/.forgejo/workflows"
+  cp "$flow" "$tree/.forgejo/workflows/terragucci.yml"
+  git -C "$tree" apply "$TG_EXAMPLE/changes/one-unit.patch" || { log "changes/one-unit.patch does not apply"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$tree" "$repo" change/one-unit "the pipeline and the one-unit scenario")" || { drop_work "$work"; return 1; }
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"title":"one-unit","head":"change/one-unit","base":"main"}' "$URL/api/v1/repos/$repo/pulls" | jq -r '.number // empty')"
+  [ -n "$pr" ] || { log "no pull request opened"; drop_work "$work"; return 1; }
+  # Forgejo makes the run when the event comes, or never.
+  for i in $(seq 1 40); do
+    run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" | jq -r '[.workflow_runs[] | select(.event == "pull_request")][0].id // empty')"
+    [ -n "$run" ] && break
+    sleep 3
+  done
+  if [ -z "$run" ]; then
+    log "pull request $pr got no pull_request run in two minutes: $(docker logs --since 5m terragucci-forgejo 2>&1 | grep -m1 "runID .* hit recursion limit" || echo 'no recursion line in the Forgejo log')"
+    drop_work "$work"; return 1
+  fi
+  TIMEOUT=900 wait_run "$repo" "$sha" pull_request || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { log "the pull_request run ended $RUN_STATUS"; print_logs "$repo" "$RUN_ID" >&2; rc=1; }
+  notes="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+  if [ -z "$notes" ]; then log "pull request $pr has no plan note"; rc=1
+  elif ! grep -q "live/dev/orders" <<<"$notes"; then log "the plan note does not name live/dev/orders: $(head -c 400 <<<"$notes")"; rc=1
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $pr got its pull_request run ($RUN_URL) and a plan note naming live/dev/orders"
+  return $rc
+}
+
+claim_plan_lock_fmt() {
+  # A repo with locks: plan. Pull request A changes canary/one and holds it.
+  # Then an unformatted main.tf is pushed to its branch: the check fails, and
+  # the fmt job commits the formatting with the job's token, a push that
+  # starts no run, so no pr-lock run sees the formatted head. The fmt job then
+  # answers the lock itself: terragucci/lock on the formatted head is success,
+  # holding canary/one (and the roots its main.tf reaches), and A holds
+  # canary/one at that head.
+  # BREAK: the fmt job's lock step is cut from the pushed pipeline, so the
+  # formatted head is never answered.
+  log() { echo "[smoke plan-lock-fmt] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/plan-lock-fmt" wf head_a head_u head_f="" pr_a got i rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  plan_lock_repo plan-lock-fmt || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "Lock the roots the pull request's new head reaches" "$wf" || { log "init wrote no lock step in the fmt job"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    perl -0pi -e "s/\n      - name: Lock the roots the pull request's new head reaches\n.*?\n(?=  \S|      - )/\n/s" "$wf"
+    ! grep -q "new head reaches" "$wf" || { log "the BREAK did not cut the lock step"; drop_work "$work"; return 1; }
+  fi
+  wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock-fmt: first")" || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" change-a "plan-lock-fmt: a")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "plan-lock-fmt: a")" || { drop_work "$work"; return 1; }
+  got="$(wait_lock_status "$repo" "$head_a" success)"
+  log "A ($pr_a) at ${head_a:0:8}: terragucci/lock ${got:-none}"
+  [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; drop_work "$work"; return 1; }
+  perl -pi -e 's/^  input = trimspace/  input    =    trimspace/' "$work/tree/canary/one/main.tf"
+  head_u="$(push_tree "$work/tree" "$repo" change-a "plan-lock-fmt: unformatted")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$head_u" push || { drop_work "$work"; return 1; }
+  for i in $(seq 1 20); do
+    head_f="$(remote_head "$repo" change-a)"
+    [ -n "$head_f" ] && [ "$head_f" != "$head_u" ] && break
+    sleep 3
+  done
+  if [ -z "$head_f" ] || [ "$head_f" = "$head_u" ]; then
+    log "the fmt job pushed no formatting onto change-a"; drop_work "$work"; return 1
+  fi
+  log "the fmt job formatted change-a: ${head_u:0:8} -> ${head_f:0:8}; runs on the formatted head: $(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$head_f" | jq '.workflow_runs | length')"
+  got="$(TIMEOUT=180 wait_lock_status "$repo" "$head_f" success)"
+  log "A at the formatted head: terragucci/lock ${got:-none}; lock: $(lock_file "$repo" | jq -c '.locks["canary/one"] | {pr, head}' 2>/dev/null)"
+  # A change to canary/one's main.tf also reaches the fleet roots, so the answer may hold more than canary/one.
+  case "$got" in "success holds canary/one"*) ;; *) log "the formatted head of A has no lock answer"; rc=1 ;; esac
+  [ "$(lock_file "$repo" | jq -r '.locks["canary/one"].head // empty' 2>/dev/null)" = "$head_f" ] || { log "the lock on canary/one is not at the formatted head"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the fmt job's formatting commit got terragucci/lock success and A holds canary/one at it"
+  return $rc
+}
+
+claim_github_drift_issue() {
+  # stack/mock-github, as this tree has it, in a container of the claim's own:
+  # it lists a repo's issues as github.com does, pull requests among them, and
+  # answers 422 to a query parameter github.com does not take, such as
+  # type=issues. One root's queue is applied, then its timeout changed in
+  # floci. tf-drift --forge github must open the drift issue on the mock, and
+  # a second run must find that issue and update it: one open drift issue.
+  # BREAK: a bundle whose findIssue sends type=issues on GitHub too
+  # (break_bundle), which the mock refuses, so no issue opens.
+  log() { echo "[smoke github-drift-issue] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work queue="tg-ghdrift-$STAMP" key="github-drift-issue/$STAMP.tfstate" tree url image mock="tgs-mockgh-$STAMP" port issues i rc=0 run
+  local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" gh_token=tg-mock-github-token gh_repo=terragucci-admin/drift
+  image="$(image_tag tofu)"
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" forge.ts 'const only = t.forge === "forgejo" ? "&type=issues" : "";' 'const only = "&type=issues";' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  docker run -d --name "$mock" --network terragucci -p 127.0.0.1::8188 -v "$HERE/mock-github:/srv:ro" \
+    -e PORT=8188 -e MOCK_TOKEN="$gh_token" -e MOCK_PUBLIC_URL="http://$mock:8188" \
+    public.ecr.aws/docker/library/node:22-bookworm node /srv/server.mjs >/dev/null || { log "the mock did not start"; drop_work "$work"; return 1; }
+  port="$(docker port "$mock" 8188/tcp | head -1 | sed 's/.*://')"
+  for i in $(seq 1 30); do curl -fsS -o /dev/null "http://127.0.0.1:$port/__mock/health" 2>/dev/null && break; sleep 1; done
+  ghm() { curl -fsS -H "Authorization: Bearer $gh_token" -H 'content-type: application/json' "$@"; }
+  ghm -o /dev/null -d '{"name":"drift","default_branch":"main"}' "http://127.0.0.1:$port/api/v3/user/repos" || { log "could not make the repo on the mock"; docker rm -f "$mock" >/dev/null 2>&1; drop_work "$work"; return 1; }
+  tree="$work/tree"
+  respond_tree "$work" "$gh_repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+  tags                       = { owner = \"smoke\" }
+}")"
+  in_image "$tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; docker rm -f "$mock" >/dev/null 2>&1; drop_work "$work"; return 1; }
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r .QueueUrl)"
+  sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null || { log "could not change $queue's timeout"; rc=1; }
+  issues() { ghm "http://127.0.0.1:$port/api/v3/repos/$gh_repo/issues?state=open&per_page=100" | jq -c '[.[] | select(.pull_request == null and ((.body // "") | contains("<!-- terragucci:drift -->")))]'; }
+  for run in 1 2; do
+    run_copied --rm --network terragucci -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      "${AWS_DOCKER_ENV[@]}" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e "GITHUB_REPOSITORY=$gh_repo" -e GITHUB_SERVER_URL=https://github.com -e "GITHUB_API_URL=http://$mock:8188/api/v3" -e "TG_TOKEN=$gh_token" \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage tf-drift --forge github >"$work/drift-$run.log" 2>&1 || true
+    clean_mounted "$tree" "$image"
+    grep -i 'drift issue\|issue' "$work/drift-$run.log" | tail -3 | sed "s/^/[smoke github-drift-issue] run $run: /" >&2 || true
+    log "after run $run: $(issues | jq -r 'map("#\(.number)") | join(", ") | if . == "" then "no drift issue" else "drift issue " + . end')"
+  done
+  if [ "$(issues | jq length)" != 1 ]; then
+    log "expected one open drift issue on the mock after two runs, found $(issues | jq length)"; tail -15 "$work/drift-2.log" >&2; rc=1
+  elif ! grep -q 'drift issue updated' "$work/drift-2.log"; then
+    log "the second run did not update the issue the first opened"; tail -15 "$work/drift-2.log" >&2; rc=1
+  fi
+  sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  docker rm -f "$mock" >/dev/null 2>&1 || true
+  drop_work "$work" "$image" 2>/dev/null || true
+  [ $rc = 0 ] && log "the first run opened the drift issue on the mock and the second updated it: one open drift issue"
+  return $rc
+}
+
+claim_runner_nudge() {
+  # Forgejo 16 moves no task version when a run ends with no task reporting
+  # (forgejo#14576), so a run queued behind it in a concurrency group waits
+  # until something else moves it. This makes that state on purpose: run 1's
+  # job asks for a label no runner has, so it waits; run 2, pushed after it in
+  # the same group, queues behind it; then run 1 is cancelled, which frees the
+  # group and moves nothing. The claim holds the stack alone, so no other job
+  # moves the version either. lib.sh's runner_watch, polled by wait_run, sees
+  # a job waiting with nothing running and restarts the runner, and run 2
+  # succeeds. BREAK: TG_RUNNER_WATCH=off, so run 2 is still waiting after three
+  # minutes.
+  log() { echo "[smoke runner-nudge] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/runner-nudge" tree sha1 sha2 r1="" r2="" i rc=0 t0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo runner-nudge || return 1
+  tree="$work/tree"
+  mkdir -p "$tree/.forgejo/workflows"
+  nudge_flow() { printf 'on: push\nconcurrency:\n  group: nudge\n  cancel-in-progress: false\njobs:\n  a:\n    runs-on: %s\n    steps:\n      - run: echo ran\n' "$1" > "$tree/.forgejo/workflows/nudge.yml"; }
+  nudge_run() { api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$1" | jq -r '.workflow_runs[0].id // empty'; }
+  nudge_flow terragucci-no-runner-has-this
+  sha1="$(push_tree "$tree" "$repo" main "run 1: a label no runner serves")" || { drop_work "$work"; return 1; }
+  for i in $(seq 1 30); do r1="$(nudge_run "$sha1")"; [ -n "$r1" ] && break; sleep 2; done
+  [ -n "$r1" ] || { log "no run for $sha1"; drop_work "$work"; return 1; }
+  nudge_flow docker
+  sha2="$(push_tree "$tree" "$repo" main "run 2: queued behind run 1")" || { drop_work "$work"; return 1; }
+  for i in $(seq 1 30); do r2="$(nudge_run "$sha2")"; [ -n "$r2" ] && break; sleep 2; done
+  [ -n "$r2" ] || { log "no run for $sha2"; drop_work "$work"; return 1; }
+  # A job still running elsewhere would move the version when it ends.
+  for i in $(seq 1 60); do
+    [ "$(api "$URL/api/v1/admin/actions/runners/jobs" | jq '[.[]? | select(.status == "running")] | length')" = 0 ] && break
+    sleep 2
+  done
+  log "run 2 ($r2) is $(api "$URL/api/v1/repos/$repo/actions/runs/$r2" | jq -r .status) behind run 1 ($r1); cancelling run 1"
+  api -o /dev/null -X POST "$URL/api/v1/repos/$repo/actions/runs/$r1/cancel" || { log "could not cancel run 1"; drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && TG_RUNNER_WATCH=off
+  t0="$(date +%s)"
+  if TIMEOUT=180 wait_run "$repo" "$sha2" push && [ "$RUN_STATUS" = success ]; then
+    log "run 2 succeeded $(( $(date +%s) - t0 ))s after run 1 was cancelled, after $RUNNER_NUDGES runner restart(s)"
+  else
+    log "run 2 did not succeed within three minutes of run 1's cancel (status ${RUN_STATUS:-waiting})"
+    api -o /dev/null -X POST "$URL/api/v1/repos/$repo/actions/runs/$r2/cancel" 2>/dev/null || true
+    rc=1
+  fi
+  TG_RUNNER_WATCH=on
+  drop_work "$work"
   return $rc
 }
 
@@ -15858,6 +16092,10 @@ unlock-state         runner self! weight=300
 tip-moved            self! weight=150
 mcp-last-apply       weight=120
 drift-agent          runner self! weight=250
+runner-nudge         stack! self! weight=200
+github-drift-issue   self! weight=90
+plan-lock-fmt        runner self! weight=200
+tg-pr-plan           tg self! after=tg-waves weight=300
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

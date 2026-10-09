@@ -8,7 +8,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, forgejoSkipLevels, needsDepths, runnerEvaluatedIf, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -20,6 +20,50 @@ const render = (forge: ForgeName, oidc?: typeof OIDC): string =>
   renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc }).content;
 
 const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+
+describe("the fmt job under locks: plan", () => {
+  it.each(["github", "forgejo"] as const)("%s: after its formatting commit, which starts no run, it answers the pull request's lock", (forge) => {
+    const fmt = (locksPlan: boolean) => body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ...(locksPlan ? { locksPlan } : {}) } as never).content).jobs.fmt;
+    const on = fmt(true);
+    expect(on.steps.at(-1).run).toContain("terragucci pr-lock --layers");
+    // Forgejo's dialect drops permissions: its job token has them all.
+    if (forge === "github") expect(on.permissions).toEqual({ contents: "write", statuses: "write", "pull-requests": "write" });
+    const off = fmt(false);
+    expect(JSON.stringify(off)).not.toContain("pr-lock");
+    if (forge === "github") expect(off.permissions).toEqual({ contents: "write" });
+  });
+});
+
+describe("Forgejo's limit on skipped needs", () => {
+  // Forgejo 16 skips the jobs below a skipped job one level of needs at a time while it creates the run, and
+  // creates no run past five levels: five waves and the tips job below check left a pull request with no plan.
+  const deep = (forge: ForgeName, waves: number): Record<string, any> =>
+    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: Array.from({ length: waves }, (_, i) => [`r${i}`]), env: {} }).content);
+
+  it("forgejo: check's if goes to the runner once more than five jobs chain below it", () => {
+    const doc = deep("forgejo", 5);
+    const depth = needsDepths(new Map(Object.entries(doc.jobs).map(([k, v]) => [k, { props: v }])));
+    expect(depth.get("check")).toBe(forgejoSkipLevels + 1);
+    expect(doc.jobs.check.if.startsWith(`${runnerEvaluatedIf} && (github.event_name == 'push' || `)).toBe(true);
+    // Only the head of the chain: the waves below keep their own if.
+    expect(doc.jobs["apply-wave-1"].if).not.toContain("env.");
+    expect(doc.jobs.plan.if).not.toContain("env.");
+  });
+
+  it("forgejo: four waves and tips stay within the limit, and check's if is Forgejo's to evaluate", () => {
+    expect(deep("forgejo", 4).jobs.check.if).toBe("github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)");
+  });
+
+  it("github: no limit, so check's if is left as it is", () => {
+    expect(deep("github", 8).jobs.check.if).not.toContain("env.");
+  });
+
+  it("counts the longest chain, through a job that needs several", () => {
+    const job = (needs?: string | string[]) => ({ props: needs === undefined ? {} : { needs } });
+    const depth = needsDepths(new Map<string, unknown>([["a", job()], ["b", job("a")], ["c", job(["a", "b"])], ["d", job("c")]]));
+    expect([depth.get("a"), depth.get("b"), depth.get("c"), depth.get("d")]).toEqual([3, 2, 1, 0]);
+  });
+});
 
 describe("the check job", () => {
   it.each(["github", "forgejo"] as const)("%s: validates through check-root, tests the policy, keeps the report and has the history", (forge) => {
