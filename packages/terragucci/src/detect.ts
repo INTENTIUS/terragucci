@@ -42,7 +42,7 @@ const posix = (p: string): string => p.split("\\").join("/");
 
 /**
  * A root is a directory whose Terraform files declare a backend (or a `cloud`
- * block) or configure a provider. A child module does neither, so a module
+ * block, or choudoufu's `live` block) or configure a provider. A child module does neither, so a module
  * with its own `terraform { required_providers }` block is not a root.
  */
 export function isRoot(dir: string): boolean {
@@ -62,6 +62,8 @@ export function rootReason(dir: string): string | undefined {
     if (m) return `backend ${m[1]}`;
   }
   if (texts.some((t) => /^\s*cloud\s*\{/m.test(t))) return "cloud block";
+  // choudoufu keeps an estate in a record store its `terraform { live { ... } }` block names, in place of a backend.
+  if (texts.some(hasLiveBlock)) return "choudoufu live block";
   for (const text of texts) {
     const m = text.match(/^\s*provider\s+"([^"]+)"\s*\{/m);
     if (m) return `provider ${m[1]}`;
@@ -88,6 +90,23 @@ function jsonRootReason(text: string): string | undefined {
   if (blocks.some((b) => b.cloud !== undefined)) return "cloud block";
   const provider = Object.keys(obj(obj(doc)?.provider) ?? {})[0];
   return provider ? `provider ${provider}` : undefined;
+}
+
+/** Whether a `terraform` block holds a `live` block directly. */
+function hasLiveBlock(text: string): boolean {
+  for (const m of text.matchAll(/^\s*terraform\s*\{/gm)) {
+    let depth = 1;
+    let line = "";
+    for (let i = (m.index ?? 0) + m[0].length; i < text.length && depth > 0; i++) {
+      const c = text[i]!;
+      if (c === "{") {
+        if (depth === 1 && /^\s*live\s*$/.test(line)) return true;
+        depth++;
+      } else if (c === "}") depth--;
+      line = c === "\n" ? "" : line + c;
+    }
+  }
+  return false;
 }
 
 function stripComments(text: string): string {

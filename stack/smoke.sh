@@ -7414,8 +7414,8 @@ claim_cdf_write_race() {
   grep -qF "<Key>tofu-address</Key><Value>terraform_data.shared</Value>" <<<"$tags" || { log "the record is not tagged tofu-address=terraform_data.shared: $tags"; rc=1; }
   curl -fsS -o /dev/null -X POST "$CDF_CTL/open" || true
   if [ $rc = 0 ]; then
-    # --layers names the root: it has no backend and no provider block, which is what tf-plan finds roots by.
-    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --layers estate --binary choudoufu; then
+    # tf-plan finds the root by its live block: it has no backend and no provider block.
+    if ! cdf_run "$work/$loser" "$work/replan.log" "$CDF_ALIAS-replan" choudoufu "" tf-plan --binary choudoufu; then
       log "tf-plan in checkout $loser failed"; tail -20 "$work/replan.log" >&2; rc=1
     else
       got="$(jq -r '[.roots[] | select(.path == "estate") | .changes[] | select(.address == "terraform_data.shared") | .attributes[] | select(.path == "input") | "\(.before) \(.after)"][0] // "none"' "$work/$loser/terragucci-report/report.json" 2>/dev/null || echo none)"

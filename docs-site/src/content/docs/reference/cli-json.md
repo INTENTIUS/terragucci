@@ -39,7 +39,7 @@ Exit codes are the same with or without `--json`; [the CLI page](/terragucci/ref
 | Field | Holds |
 |---|---|
 | `dryRun` | Whether the run wrote files. |
-| `roots` | Each root as `path` and `reason`, such as `backend s3`, `cloud block`, `provider aws` or `matches roots glob <glob>`. |
+| `roots` | Each root as `path` and `reason`, such as `backend s3`, `cloud block`, `choudoufu live block`, `provider aws` or `matches roots glob <glob>`. |
 | `layers` | Roots grouped in apply order; roots in one layer can apply together. |
 | `binary`, `version`, `forge` | Each as `value` and `reason`, where the reason names the file, flag or detection that decided it. |
 | `image` | The CI image the pipeline runs in. |
