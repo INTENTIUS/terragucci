@@ -358,6 +358,28 @@
         "overriders": { "type": "array", "items": { "type": "string" }, "description": "Who may override a denial, from policy.override at base (minor 10)." }
       }
     },
+    "blast": {
+      "description": "A tf-plan run's blast radius (minor 22): the roots whose plan changes a resource or an output, and every root of the repo that reads their state through terraform_remote_state, followed through, nearest first. Absent when no root's plan changes anything, on a Terragrunt repo, and on other stages.",
+      "type": "object",
+      "required": ["roots", "downstream"],
+      "properties": {
+        "roots": { "type": "array", "items": { "type": "string" } },
+        "downstream": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "reads", "depth", "planned"],
+            "properties": {
+              "root": { "type": "string" },
+              "reads": { "type": "array", "items": { "type": "string" }, "description": "The roots in the radius whose state it reads." },
+              "depth": { "type": "integer", "minimum": 1, "description": "1 when it reads a changed root's state itself, 2 when it reads such a reader's, and so on." },
+              "wave": { "type": "integer", "description": "The apply wave it is in." },
+              "planned": { "type": "boolean", "description": "Whether this run planned it." }
+            }
+          }
+        }
+      }
+    },
     "cost": {
       "description": "The cost estimate of a tf-plan run, or of a tf-apply wave's plans (minor 19), when cost is on (minor 12): each root's monthly cost from the estimator, and the sums over the roots estimated.",
       "type": "object",

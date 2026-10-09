@@ -75,8 +75,71 @@ export const PLAN_KEYS = {
   plain: ["format_version", "terraform_version", "relevant_attributes", "checks", "applyable", "complete", "errored", "timestamp"],
 } as const;
 
-/** The plan with every sensitive value replaced, and how many there were. The input is not changed. */
+/**
+ * The plan with every sensitive value replaced, and how many there were. The input is not changed.
+ * A value the plan marks is replaced where it is marked, and then wherever else it appears: the
+ * binary does not mark every copy, such as terraform_data's `output`, which repeats its sensitive
+ * `input` unmarked in the state and in a change's `before`.
+ */
 export function redactPlan(plan: unknown): Redacted {
+  const marked = redactMarked(plan);
+  const secrets = coveredStrings(plan, marked.plan);
+  if (secrets.length === 0) return marked;
+  const count = { n: marked.values };
+  return { plan: scrub(marked.plan, secrets, count), values: count.n };
+}
+
+/** The strings a plan marks sensitive anywhere, longest first: what {@link redactPlan} replaces wherever it appears. */
+export function sensitiveStrings(plan: unknown): string[] {
+  return coveredStrings(plan, redactMarked(plan).plan);
+}
+
+/** `value` with every string that is one of `secrets` replaced, and every secret of eight characters and more cut out of the strings that hold it. */
+export function scrubSecrets<T>(value: T, secrets: readonly string[]): T {
+  return secrets.length === 0 ? value : (scrub(value, secrets, { n: 0 }) as T);
+}
+
+/** The string leaves of `raw` at each place `safe` holds REDACTED, longest first. */
+function coveredStrings(raw: unknown, safe: unknown): string[] {
+  const out = new Set<string>();
+  const leaves = (v: unknown): void => {
+    if (typeof v === "string") {
+      if (v !== "" && v !== REDACTED) out.add(v);
+    } else if (Array.isArray(v)) v.forEach(leaves);
+    else if (isObject(v)) Object.values(v).forEach(leaves);
+  };
+  const walk = (r: unknown, s: unknown): void => {
+    if (s === REDACTED && r !== REDACTED) leaves(r);
+    else if (Array.isArray(r) && Array.isArray(s)) r.forEach((v, i) => walk(v, s[i]));
+    else if (isObject(r) && isObject(s)) for (const k of Object.keys(r)) walk(r[k], s[k]);
+  };
+  walk(raw, safe);
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+function scrub(value: unknown, secrets: readonly string[], count: { n: number }): unknown {
+  if (typeof value === "string") {
+    if (value === REDACTED) return value;
+    if (secrets.includes(value)) {
+      count.n++;
+      return REDACTED;
+    }
+    let out = value;
+    for (const s of secrets) {
+      if (s.length >= 8 && out.includes(s)) {
+        count.n++;
+        out = out.split(s).join(REDACTED);
+      }
+    }
+    return out;
+  }
+  if (Array.isArray(value)) return value.map((v) => scrub(v, secrets, count));
+  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrub(v, secrets, count)]));
+  return value;
+}
+
+/** The plan with every value it marks sensitive replaced where it is marked. */
+function redactMarked(plan: unknown): Redacted {
   if (!isObject(plan)) return { plan, values: 0 };
   const count = { n: 0 };
   const out: Json = { ...plan };

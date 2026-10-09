@@ -37,6 +37,7 @@ prompt: |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
+| `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
 | `install` | fetches a release of OpenTofu, Terraform, Terragrunt, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Infracost, verified against its checksums |
@@ -165,7 +166,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
     [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
-    [--shares <n> [--share <s>] [--decided <file>]]
+    [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]]
 ```
 
 | Flag | Environment | Meaning |
@@ -197,6 +198,8 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
 | `--share` | | with `--shares`: plan this share's roots and apply them when each plan has the digest in the decision file; exit 4 when one moved |
 | `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
+| `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots of `--branch` when the map names it, and otherwise every root no branch's glob matches |
+| `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
 
 ## publish
 
@@ -235,12 +238,12 @@ terragucci respond rollout [--mode dry-run|apply]
 | Flag | Used by | Meaning |
 |---|---|---|
 | `--mode` | all | `dry-run` (the default) or `apply`, which opens the pull request or pushes the commit and never runs `terraform apply` |
-| `--report` | `plan`, `description` | the report directory |
+| `--report` | `plan`, `description`, `tips` | the report directory; for `tips`, a `stage tf-plan` report whose plans' renames get a `moved` block, and only those |
 | `--approved`, `--current`, `--wave` | `wave-refused` | the approved report, the current report directory and the wave number |
 | `--log` | `apply-failed` | the apply log; `-` reads standard input |
 | `--root`, `--import` | `drift` | one root, and `<address>=<id>` for a resource the state does not hold |
 | `--platform` | `tips` | lock file platforms, comma separated |
-| `--branch` | `fmt` | the branch to format; the default branch is refused |
+| `--branch` | `fmt`, `tips` | `fmt`: the branch to format; the default branch is refused. `tips` with `--report`: the branch the `moved` blocks' pull request goes into; default the default branch |
 | `--module`, `--version` | `publish` | the module, and the release |
 | `--module`, `--since` | `version-bump` | one module, and the ref to count changes from for a module with no release tag |
 | `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |
@@ -510,6 +513,35 @@ state export: wrote /tmp/terragucci-export-Xb3k/envs_dev_app.3HL4kqtJlcpXroDTDmJ
 
 An approval by the person who asked does not count. A request exports once; another export asks again. It never writes a state to the reports bucket or a job artifact.
 
+## unlock-state
+
+```bash
+terragucci unlock-state <root> [--actor <name>] [--binary <b>] [--config <file>]
+```
+
+Releases the state lock a job killed mid-apply left on `<root>`: the lock file an `s3` backend with `use_lockfile = true` takes. Run it at a shell, in a checkout whose `origin` you can push to, with the backend's credentials and the forge token in the variable `token_env` names (`FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN` by default). A comment never runs it.
+
+| Step | What it does |
+|---|---|
+| read the lock | inits the root and reads `<key>.tflock`: its ID, who took it and when |
+| check no holder is alive | reads the forge's runs still running or waiting; while one that began before the lock was taken is alive, it may hold the lock, so nothing is released and it exits 1 naming the runs. A forge it cannot read is a refusal too |
+| wait at the gate | records a pending fact for gate `<root>` of op `tf-unlock` on `chant/lifecycle`, bound to a digest of the root, the lock's location and its ID, prints `chant approve tf-unlock <root> --plan <digest>` and exits 3. Under `approval: sealed`, only a sealed approval counts |
+| release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID, and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads |
+
+| Flag | Meaning |
+|---|---|
+| `--actor` | the name the record gives the person who released it; default git's `user.name` |
+| `--binary`, `--config` | as above |
+
+```text
+terragucci unlock-state: slow: s3://acme-state/slow.tfstate.tflock holds lock 1f0c..., OperationTypeApply by root@runner-7 at 2026-10-09T18:02:11.420Z
+terragucci unlock-state: slow: no run that began before the lock is alive
+terragucci unlock-state: slow: releasing lock 1f0c..., OperationTypeApply by root@runner-7 at 2026-10-09T18:02:11.420Z waits for an approval of digest jcs1-sha256:6d2b.... Approve it with:
+terragucci unlock-state:   chant approve tf-unlock slow --plan jcs1-sha256:6d2b...
+```
+
+An approval names one lock: when the lock was released some other way and another taken since, the approval does not release the new one, and it exits 4.
+
 ## resume
 
 ```text
@@ -593,8 +625,9 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
 | `verify-release` | every target verified | a target refused | | | |
+| `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
 | `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
 
-Code 4 comes only from `stage tf-apply`, which has no `--json`.
+Code 4 comes from `stage tf-apply` and `unlock-state`, which have no `--json`.

@@ -36,7 +36,7 @@ import { commentCell, leftOut } from "./import/guide";
 export const COMMENT_COMMANDS = ["plan", "apply", "agent"] as const;
 
 /** Commands a comment never runs, named in the reply so nobody waits on them. */
-const NEVER = new Set(["approve", "force-unlock", "import", "state", "destroy", "merge"]);
+const NEVER = new Set(["approve", "force-unlock", "unlock-state", "import", "state", "destroy", "merge"]);
 
 /** A root as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
 const ROOT = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
