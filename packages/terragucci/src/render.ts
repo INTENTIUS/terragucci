@@ -69,7 +69,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -77,6 +77,8 @@ import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
+import { reviewJobs } from "./render-review";
+import type { ReviewInput } from "./review-agent";
 import { applyWaves, DECIDED_DIR, waveShares } from "./apply";
 import { CHECK_DIR } from "./check";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
@@ -125,6 +127,8 @@ export interface PipelineInput {
   install?: { binary: Binary; version: string };
   /** Some roots pin their own version: the check job runs each root with the binary `terragucci binary` names for it. */
   rootPins?: boolean;
+  /** `generate` is set: the check job runs `terragucci generate --check`, which refuses a generated file out of line with terragucci.yml. */
+  generate?: boolean;
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
@@ -132,7 +136,7 @@ export interface PipelineInput {
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
-  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
   cost?: { keySecret: string; install: boolean; approveAbove?: boolean };
   env: Record<string, string>;
@@ -184,6 +188,8 @@ export interface PipelineInput {
   agentComment?: AgentCommentInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
+  /** `review.agent` is on: a pull request gets the review and review-note jobs after its plan (render-review.ts). GitHub and Forgejo only. */
+  review?: ReviewInput;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the `mr-apply` pipeline), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
   applyWhen?: ApplyWhen;
   /** `apply.merge`: with `auto`, a pull request whose every wave applied is merged. */
@@ -245,9 +251,12 @@ export function fmtScript(binary: Binary, forge: ForgeName, tokenEnv?: string): 
   ].join("\n");
 }
 
-/** The tips response: one small pull request per tip, from the default branch after the apply. A response that fails never fails the job. */
-export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string): string {
-  return ["set -u", ...respondSetup(forge, tokenEnv), `terragucci respond tips --mode apply --binary ${binary} || true`].join("\n");
+/**
+ * The tips response: one small pull request per tip, from the default branch after the apply. A response that fails never
+ * fails the job. With `synth` the job writes the roots first, as the apply did, so the tips read the same stacks.
+ */
+export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string, synth?: string): string {
+  return ["set -u", ...(synth ? [synthScript(synth)] : []), ...respondSetup(forge, tokenEnv), `terragucci respond tips --mode apply --binary ${binary} || true`].join("\n");
 }
 
 /**
@@ -336,7 +345,7 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
   const loop = rootPins
     ? [
@@ -359,6 +368,8 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
         ]
       : [`${binary} fmt -check -recursive -diff .`]),
     "failed=0",
+    // With `generate` set, every generated backend, provider and version file must be what terragucci generate writes.
+    ...(generate ? ["terragucci generate --check || failed=1"] : []),
     `for dir in ${roots.map(sh).join(" ")}; do`,
     ...loop,
     "done",
@@ -1491,7 +1502,7 @@ export function publishScript(forge: ForgeName): string {
  * -refresh-only, writes the plan report, and keeps the drift issue. A root
  * that cannot be refreshed fails the job; drift alone does not.
  */
-export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }): string {
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -1511,10 +1522,13 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
+    ...(pullRequest || notify ? ["rc=$?"] : []),
+    ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${SYNTH_DRIFT_PR_SHORT}"`] : []),
+    // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
+    ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
     // The drift pull request: a person reviews and merges it, or closes it.
-    ...(pullRequest
-      ? ["rc=$?", ...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`, 'exit "$rc"']
-      : []),
+    ...(pullRequest ? [...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`] : []),
+    ...(pullRequest || notify ? ['exit "$rc"'] : []),
   ].join("\n");
 }
 
@@ -1627,7 +1641,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
@@ -1642,6 +1656,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       .filter(([k]) => input.notify?.[k])
       .map(([k, v]) => [v, forge === "gitlab" ? `$${input.notify![k]}` : `\${{ secrets.${input.notify![k]} }}`]),
   );
+  // notify.relay: the relay's name, a plain value, so a waiting wave's message offers its buttons.
+  if (input.notify?.relay) notifyEnv.TERRAGUCCI_RELAY = input.notify.relay;
+  // The drift job posts drift to Slack and Teams: their secrets alone, never the generic webhook's.
+  const driftNotifyEnv = Object.fromEntries(Object.entries(notifyEnv).filter(([k]) => k === "TERRAGUCCI_SLACK_WEBHOOK" || k === "TERRAGUCCI_TEAMS_WEBHOOK"));
+  const driftNotify = Object.keys(driftNotifyEnv).length > 0;
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destroy";
@@ -1687,9 +1706,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
   const writesLedger = gate !== "never" || input.cost?.approveAbove === true || (forge === "github" && input.migrations === true);
   const what = tg ? "unit" : "root";
-  // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
+  // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself. With synth the
+  // config refuses respond.drift: pull-request (SYNTH_DRIFT_PR); attribute names who changed each attribute in the
+  // drift issue, and the job says why no pull request follows.
   const fmtOn = !tg && responds(input.respond, "fmt");
-  const driftPr = !tg && responds(input.respond, "drift") ? { tokenEnv } : undefined;
+  if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${SYNTH_DRIFT_PR}`);
+  if (input.synth && rollouts) throw new RenderError(`rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
+  const driftPr = !tg && !input.synth && responds(input.respond, "drift") ? { tokenEnv } : undefined;
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
   const tipsOn = responds(input.respond, "tips");
   // An agent response writes its input file; the job keeps it as an artifact.
@@ -1701,6 +1724,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   if (forge === "gitlab") {
     if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
+    if (input.review) throw new RenderError("review.agent runs on GitHub and Forgejo; leave review unset on GitLab");
     // With gitlab.token: protected no merge request pipeline holds the token, and the comments job posts the plan notes.
     const protectedToken = input.gitlabToken === "protected";
     if (protectedToken && !input.comments) throw new RenderError(`gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`);
@@ -1843,7 +1867,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         variables: { ...gitlabEnv, GIT_DEPTH: "0" },
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-tips",
-        script: script(bash("TIPS", tipsScript(binary, forge, tokenEnv))),
+        script: script(bash("TIPS", tipsScript(binary, forge, tokenEnv, input.synth))),
       } as never) as never);
     }
     if (bumpOn) {
@@ -1877,12 +1901,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("drift", new GitLabJob({
         stage: "drift",
         image: jobImage,
-        variables: gitlabEnv,
+        variables: { ...gitlabEnv, ...driftNotifyEnv },
         // The comments, resume and rollouts schedules' pipelines carry TERRAGUCCI_SCHEDULE=comments, resume or rollouts; any other schedule, with or without a variable, is drift's.
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}` })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
-        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))],
+        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify))],
         artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
     }
@@ -2185,6 +2209,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     } as never) as never);
   }
   if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
+  if (input.review) for (const [name, job] of reviewJobs(forge, image, input.review, { sameRepo, reportDir: REPORT_DIR })) entities.set(name, job);
   if (locksPlan) {
     // locks: plan. The workflow is the default branch's on pull_request_target and on a comment, and the job checks out
     // only the default branch: it reads the change as data from git, runs no binary and assumes no cloud role. So it may
@@ -2278,7 +2303,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       steps: [
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
         ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
-        new Step({ name: "Open a pull request for each tip", shell: "bash", run: tipsScript(binary, forge, tokenEnv) }),
+        new Step({ name: "Open a pull request for each tip", shell: "bash", run: tipsScript(binary, forge, tokenEnv, input.synth) }),
       ],
     } as never) as never);
   }
@@ -2336,9 +2361,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...headersEnv,
         ...driftDecideEnv,
         ...reportKeyEnv(forge, input.reports),
+        ...driftNotifyEnv,
       },
       steps: [
-        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true, false, awsStep),
+        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify) }), true, false, awsStep),
         new Step({
           name: "Keep the drift report",
           if: "always()",

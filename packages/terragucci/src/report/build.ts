@@ -24,8 +24,9 @@ import {
   type ReportRootPolicy,
   type ReportStateVersion,
   type ReportRootBinary,
-  type ReportRead,
   type ReportStep,
+  type ReportRead,
+  type WaveState,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost,
 } from "./schema";
 
@@ -60,8 +61,10 @@ export interface RootInput {
   state?: ReportStateVersion;
   /** The steps that ran for it. */
   steps?: ReportStep[];
-  /** The roots whose state it reads. */
+  /** The roots whose state it reads, and which outputs it planned on. */
   reads?: ReportRead[];
+  /** A Terragrunt unit's dependencies, by path. */
+  dependencies?: string[];
 }
 
 export interface WaveInput {
@@ -80,6 +83,12 @@ export interface WaveInput {
   heldBySteps?: string[];
   /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
   cost?: ReportWaveCost;
+  /** Where the wave stands. */
+  state?: WaveState;
+  /** The waves whose roots its roots read. */
+  reads?: number[];
+  /** A `tf-plan` wave that plans again once these waves apply: no review digest binds it. */
+  replansAfter?: number[];
 }
 
 export interface BuildInput {
@@ -272,6 +281,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.applied && src.state ? { state: src.state } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
       ...(src.reads?.length ? { reads: src.reads } : {}),
+      ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
     };
   });
 
@@ -317,7 +327,8 @@ export function buildReport(input: BuildInput): Report {
       const changing = members.filter((m) => changesSomething(plans.get(m.member)));
       const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
       review = {
-        review_digest: failed || changing.length === 0 ? null : changeSetDigest([...changing, ...extra]),
+        // A wave that plans again once the waves it reads apply has no digest a review can bind: that plan is not made yet.
+        review_digest: failed || changing.length === 0 || (w.replansAfter?.length ?? 0) > 0 ? null : changeSetDigest([...changing, ...extra]),
         waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0),
       };
     }
@@ -333,6 +344,9 @@ export function buildReport(input: BuildInput): Report {
       ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
       ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
       ...(w.cost ? { cost: w.cost } : {}),
+      ...(w.state ? { state: w.state } : {}),
+      ...(w.reads?.length ? { reads: w.reads } : {}),
+      ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
     };
   });
 

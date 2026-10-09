@@ -317,6 +317,17 @@ The push starts the pull request's plan job, which plans the change with its rea
 | `CLAUDE.md`, `AGENTS.md` | any directory | agent instructions |
 | `.gitattributes`, `.gitmodules` | any directory | git settings |
 
+### The review
+
+With `review.agent` set on GitHub or Forgejo, a pull request from the repo gets two jobs after its plan job, whether the plan passed or failed. Neither gets a cloud role.
+
+| Job | Token | Does |
+|---|---|---|
+| `review` | the job's own, read-only; the command's step runs without it | checks out the head with the whole history and no credentials kept; `terragucci review prompt` writes the prompt from the event, the diff and the plan job's report, with the instructions from the default branch; runs the review command in the default branch's files with the prompt on stdin and the model's key in that step alone; keeps what it prints |
+| `review-note` | the job's own, to comment | in a fresh container, `terragucci review post` posts the review as one note, or edits the note it posted before |
+
+The note's first line is a marker with the head and the risk, which a `tf-apply` wave reads as [`input.review`](/terragucci/reference/policy/#review). [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) covers the setup.
+
 ### Terragrunt
 
 In a Terragrunt repo, each environment can have its own pair of roles, chosen by the unit's path:

@@ -1,8 +1,9 @@
 /**
  * The roots each root reads the state of: `<prefix>/<project>/edges.json`,
  * `terragucci.state-edges/v1`. A report names, for each root, the roots it
- * reads (`roots[].reads`): through `terraform_remote_state`, or a Terragrunt
- * unit's `dependency` and `dependencies` blocks. The upload keeps, for each
+ * reads: `roots[].reads`, each `terraform_remote_state` block's upstream,
+ * and `roots[].dependencies`, a Terragrunt unit's `dependency` and
+ * `dependencies` blocks. The upload keeps, for each
  * root, the reads the newest default-branch run found in its code, the
  * newest run that planned it (a pull request's plan, a drift check or an
  * apply wave's plan), and the newest apply wave that changed it.
@@ -14,7 +15,7 @@
  * Only root paths, run facts and version ids are kept: never a state's
  * contents or an output's value.
  */
-import type { Report, ReportRead } from "./schema";
+import type { Report, ReportRoot } from "./schema";
 
 export const EDGES_SCHEMA = "terragucci.state-edges/v1";
 
@@ -32,10 +33,16 @@ export interface EdgeRun {
   version_id?: string;
 }
 
+/** One root a root reads, and how. */
+export interface EdgeRead {
+  root: string;
+  via: "terraform_remote_state" | "dependency";
+}
+
 export interface EdgeRoot {
   root: string;
   /** The roots it reads, as the newest default-branch run found them. */
-  reads: ReportRead[];
+  reads: EdgeRead[];
   /** When that run finished. */
   reads_seen?: string;
   planned?: EdgeRun;
@@ -72,7 +79,7 @@ const newer = (a: EdgeRun | undefined, b: EdgeRun): EdgeRun => (a && at(a.finish
  * when it applies a change.
  */
 export function hasEdgeFacts(report: Report): boolean {
-  return report.roots.some((r) => (r.reads?.length ?? 0) > 0 || (report.run.stage === "tf-apply" && (r.applied_changes?.length ?? 0) > 0));
+  return report.roots.some((r) => readsOf(r).length > 0 || (report.run.stage === "tf-apply" && (r.applied_changes?.length ?? 0) > 0));
 }
 
 /**
@@ -95,10 +102,11 @@ export function addToStateEdges(existing: string | undefined, report: Report, pa
   };
   for (const r of report.roots) {
     const old = held.get(r.path);
-    const fromDefault = !run.pull_request;
-    // Reads come from the newest default-branch run; the code under review in a pull request never sets them.
-    const readsNewer = fromDefault && (!old?.reads_seen || at(run.finished) >= at(old.reads_seen));
-    const reads = readsNewer ? (r.reads ?? []) : (old?.reads ?? []);
+    // Reads come from the newest default-branch plan or apply that planned the root; the code under review in a
+    // pull request never sets them, and a drift check, which names no reads, leaves them.
+    const knows = !run.pull_request && run.stage !== "tf-drift" && r.status === "planned";
+    const readsNewer = knows && (!old?.reads_seen || at(run.finished) >= at(old.reads_seen));
+    const reads = readsNewer ? readsOf(r) : (old?.reads ?? []);
     const seen = readsNewer ? run.finished : old?.reads_seen;
     const planned = r.status === "planned" && !r.terragrunt?.provisional ? newer(old?.planned, mark) : old?.planned;
     const changed = run.stage === "tf-apply" && r.status === "planned" && (r.applied_changes?.length ?? 0) > 0;
@@ -113,7 +121,7 @@ export function addToStateEdges(existing: string | undefined, report: Report, pa
 export interface Edge {
   consumer: string;
   producer: string;
-  via: ReportRead["via"];
+  via: EdgeRead["via"];
   consumer_planned?: EdgeRun;
   producer_applied?: EdgeRun;
   /**
@@ -141,10 +149,10 @@ export function edgesOf(edges: StateEdges): Edge[] {
   return out.sort((a, b) => (a.consumer < b.consumer ? -1 : a.consumer > b.consumer ? 1 : a.producer < b.producer ? -1 : a.producer > b.producer ? 1 : 0));
 }
 
-/** Each input's reads, from a map of root to the roots it reads. */
-export function readsFor(deps: ReadonlyMap<string, Iterable<string>>, via: ReportRead["via"]): (root: string) => ReportRead[] | undefined {
-  return (root) => {
-    const ups = [...(deps.get(root) ?? [])].sort();
-    return ups.length > 0 ? ups.map((up) => ({ root: up, via })) : undefined;
-  };
+/** The roots a report's root reads: its remote state blocks' upstreams, then a unit's dependencies, each once. */
+export function readsOf(r: Pick<ReportRoot, "reads" | "dependencies">): EdgeRead[] {
+  const out: EdgeRead[] = [];
+  for (const up of [...new Set((r.reads ?? []).map((x) => x.upstream))].sort()) out.push({ root: up, via: "terraform_remote_state" });
+  for (const up of [...new Set(r.dependencies ?? [])].sort()) if (!out.some((x) => x.root === up)) out.push({ root: up, via: "dependency" });
+  return out;
 }

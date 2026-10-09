@@ -1,7 +1,7 @@
 ---
 title: Publish your modules
 description: Version the modules beside your roots automatically, as OCI artifacts or git tags, on every merge.
-claims: [publish, version-bump-job, publish-attest, require-attested, require-recorded]
+claims: [publish, version-bump-job, publish-attest, require-attested, require-recorded, tg-require-attested]
 prompt: |
   Read https://intentius.io/terragucci/guides/publish-modules/.
   Add the `modules:` block, run `npx terragucci publish --dry-run`, show me what
@@ -172,6 +172,8 @@ A tag pushed by hand has no record that matches it, and neither does one moved a
 ## Require attested releases
 
 With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root that pins a release that does not verify fails, and the check report and the plan note name the root, the module call, the version and why.
+
+In a Terragrunt repo the pin is each unit's `terraform { source }`. `tf-check` runs `terragucci check-pins` over every unit, and `tf-plan` takes a refused unit out of its wave, so it fails without planning while the rest of the wave plans.
 
 ```yaml
 modules:

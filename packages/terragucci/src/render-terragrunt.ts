@@ -2,7 +2,8 @@
  * The pipeline's jobs for a Terragrunt repo. The jobs are the same three as
  * for plain roots; what they run differs:
  *
- * check  `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs`.
+ * check  `terragrunt hcl fmt --check`, `terragrunt hcl validate --inputs`, and
+ *        `terragucci check-pins` for `modules.require: attested`.
  * plan   `terragucci stage tf-plan --terragrunt`: one `run --all` per wave.
  * apply  `terragucci stage tf-apply --terragrunt`, one job per wave: a wave
  *        is one dependency layer of the units, cut from `terragrunt find`
@@ -85,6 +86,8 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
     "terragrunt hcl fmt --check --diff --no-color",
     `terragrunt hcl validate --inputs --no-color ${filters(tg.exclude)}`,
     'echo "every unit is formatted and its inputs match its module"',
+    // With `modules.require: attested`, each unit's terraform source must pin an attested release; without it, prints nothing.
+    "terragucci check-pins",
     // With `policy:` set, the policy's own tests; no `policy:` key prints nothing.
     "terragucci check-policy",
   ].join("\n");
