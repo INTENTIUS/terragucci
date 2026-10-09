@@ -57,6 +57,7 @@ import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportBlast, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
 import { blastRadius } from "./graph";
+import { branchCheckouts } from "../branch-checkouts";
 import { changesSomething } from "./changing";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
 import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
@@ -939,6 +940,16 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const observer = new StageObserver(telemetryFromEnv(env), stage, env);
   if (roots.length > 0) await observer.collectSpans(log);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
+  // apply.branches: drift checks a root another branch applies from that branch, which is what applied it (../branch-checkouts.ts).
+  const sources = drift ? branchCheckouts(repo, settings.apply?.branches, roots, work, log) : undefined;
+  const checkoutOf = (root: string): string => sources?.dirOf(root) ?? repo;
+  const binariesAt = new Map<string, RootBinaries>([[repo, binaries]]);
+  /** A root's binaries, read from the checkout it plans from, so a pin its branch sets is the one it runs. */
+  const binariesOf = (root: string): RootBinaries => {
+    const at = checkoutOf(root);
+    if (!binariesAt.has(at)) binariesAt.set(at, new RootBinaries(at, binary, settings.version, env, options.installer));
+    return binariesAt.get(at)!;
+  };
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   // The roots share one provider cache, the job's or one of the stage's own, so a provider downloads once per job rather
@@ -1007,7 +1018,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   /** One root planned, its outcome kept apart so the report and the log take roots in order, not in the order they finish. */
   const planRoot = async (root: string, index: number): Promise<RootOutcome> => {
     const lines: string[] = [];
-    const dir = join(repo, root);
+    const dir = join(checkoutOf(root), root);
     const { links, reads } = linksFor(root);
     // A root that reads the state of a root nothing has applied cannot plan: its terraform_remote_state block reads that
     // state even when its references point at the upstream's plan. Hold it back. An upstream that has applied and has a
@@ -1019,7 +1030,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     }
     const planFile = join(work, `${index}.tfplan`);
     const timing = observer.root(root);
-    let bin = binaries.expected(root);
+    let bin = binariesOf(root).expected(root);
     let path = binary;
     // The root's own role, when `oidc.roles` names one (../roles.ts).
     const rootEnv = rootRoleEnv(binEnv, root);
@@ -1030,7 +1041,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     /** Run one moment's steps; the error when one failed the root. */
     const step = async (when: StepWhen, file?: string): Promise<string | undefined> => {
       if (steps.length === 0) return undefined;
-      const o = await runSteps(steps, when, { repo, root, stage: drift ? "tf-drift" : "tf-plan", env: rootEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
+      const o = await runSteps(steps, when, { repo: checkoutOf(root), root, stage: drift ? "tf-drift" : "tf-plan", env: rootEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
       ran.push(...o.runs);
       holds.push(...o.holds);
       return o.error;
@@ -1044,10 +1055,15 @@ export async function runStage(stage: string, repo: string, options: StageOption
       observer.endRoot(timing);
       return failed(refused.join("\n"), `${root}: refused by modules.require: attested`);
     }
+    const unchecked = sources?.failed.get(root);
+    if (unchecked) {
+      observer.endRoot(timing);
+      return failed(unchecked, `${root}: not checked, its branch could not be checked out`);
+    }
     const planStep = drift ? "drift" : "plan";
     try {
       try {
-        const resolved = await binaries.resolve(root);
+        const resolved = await binariesOf(root).resolve(root);
         ({ path } = resolved);
         bin = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
       } catch (e) {
@@ -1169,6 +1185,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       });
     }
   } finally {
+    sources?.close();
     rmSync(work, { recursive: true, force: true });
   }
 
@@ -1328,15 +1345,39 @@ async function runTerragruntStage(
   const layers = full
     .map((w, i) => ({ number: i + 1, roots: w.filter((u) => selected.has(u)), preview: w.filter((u) => previewing.has(u)) }))
     .filter((l) => l.roots.length > 0 || l.preview.length > 0);
+  // apply.branches: drift checks a unit another branch applies from that branch, which is what applied it (../branch-checkouts.ts).
+  const sources = drift ? branchCheckouts(repo, settings.apply?.branches, layers.flatMap((l) => l.roots), work, log) : undefined;
   try {
     const terragrunt = options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-    const tools = new UnitBinaries(repo, binary, settings.version, terragrunt, env, options.installer);
-    const planned = await planUnits(repo, layers, binary, work, {
-      ...options, env, drift, observer, waveOf, steps, tools,
-      // The edges a preview follows: discovery's, else the plain paths the units' files name.
-      graph: units ?? walkUnits(repo, settings.terragrunt?.exclude),
-      selection: (u) => reasons.get(u) ?? everyUnit,
-    }, log);
+    const graph = units ?? walkUnits(repo, settings.terragrunt?.exclude);
+    /** One checkout's units planned: the repo's, or a branch's worktree's, with its own pins and its own explicit stacks. */
+    const planIn = async (dir: string, own: UnitLayer[], sub: string): Promise<Awaited<ReturnType<typeof planUnits>>> => {
+      if (dir !== repo) await generateStacks(dir, { binary, ...tool });
+      const tools = new UnitBinaries(dir, binary, settings.version, terragrunt, env, options.installer);
+      return planUnits(dir, own, binary, sub, {
+        ...options, env, drift, observer, waveOf, steps, tools,
+        // The edges a preview follows: discovery's, else the plain paths the units' files name.
+        graph,
+        selection: (u) => reasons.get(u) ?? everyUnit,
+      }, log);
+    };
+    let planned: Awaited<ReturnType<typeof planUnits>>;
+    if (!sources) planned = await planIn(repo, layers, work);
+    else {
+      const parts: Awaited<ReturnType<typeof planUnits>>[] = [];
+      for (const [i, g] of sources.groups(layers.flatMap((l) => l.roots)).entries()) {
+        const mine = new Set(g.roots);
+        const own = layers.map((l) => ({ ...l, roots: l.roots.filter((u) => mine.has(u)), preview: [] })).filter((l) => l.roots.length > 0);
+        const sub = join(work, `checkout-${i}`);
+        mkdirSync(sub, { recursive: true });
+        parts.push(await planIn(g.dir, own, sub));
+      }
+      planned = mergePlanned(parts);
+      for (const [u, why] of sources.failed) {
+        log(`${u}: not checked, its branch could not be checked out`);
+        planned.inputs.push({ path: u, planner: plannerForBinary(binary), error: why, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
+      }
+    }
     const { inputs, plans, redacted, mockReads } = planned;
     inputs.push(...refusedUnits);
     /** Say why a unit waits; a dependent already listed gets the reason added. */
@@ -1403,8 +1444,27 @@ async function runTerragruntStage(
         .filter((w) => w.roots.length > 0),
     });
   } finally {
+    sources?.close();
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+/** The units of several checkouts planned, as one run: each checkout's units are its own, so nothing overlaps. */
+function mergePlanned(parts: Awaited<ReturnType<typeof planUnits>>[]): Awaited<ReturnType<typeof planUnits>> {
+  const waveReads = new Map<number, number[]>();
+  for (const p of parts) for (const [w, r] of p.waveReads) waveReads.set(w, [...new Set([...(waveReads.get(w) ?? []), ...r])].sort((a, b) => a - b));
+  return {
+    inputs: parts.flatMap((p) => p.inputs).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    plans: new Map(parts.flatMap((p) => [...p.plans])),
+    redacted: parts.reduce((n, p) => n + p.redacted, 0),
+    mockReads: parts.flatMap((p) => p.mockReads),
+    waiting: parts.flatMap((p) => p.waiting),
+    names: new Map(parts.flatMap((p) => [...p.names])),
+    unpreviewed: new Map(parts.flatMap((p) => [...p.unpreviewed])),
+    waveReads,
+    found: new Map(parts.flatMap((p) => [...p.found])),
+    heldBySteps: new Set(parts.flatMap((p) => [...p.heldBySteps])),
+  };
 }
 
 /**

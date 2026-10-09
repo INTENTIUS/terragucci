@@ -13,7 +13,7 @@ import { renderHtml } from "../src/report/html";
 import { renderNote } from "../src/report/views";
 import { runStage } from "../src/report/stage";
 import { plan, rc, RUN } from "./report-fixtures";
-import { tmp, write } from "./helpers";
+import { bareFrom, git, tmp, write } from "./helpers";
 
 const queueGone = rc("module.service.aws_sqs_queue.jobs", ["delete"], { name: "shop-staging-orders-jobs", arn: "arn:aws:sqs:::x" }, null);
 const tagsMoved = rc("aws_s3_bucket.logs", ["update"], { bucket: "logs", tags: { team: "a" } }, { bucket: "logs", tags: { team: "b" } });
@@ -211,5 +211,56 @@ describe.skipIf(!TOFU)("tf-drift with tofu", () => {
     expect(result.report.roots[0].changes).toEqual([]);
     expect(result.report.totals.update).toBe(0);
     expect(result.report.named).toEqual([]);
+  });
+});
+
+describe("tf-drift with apply.branches", () => {
+  /** orders drifted as main has it, and clean as release, which applies it, has it; search is main's own. */
+  function branched(): string {
+    const repo = write(tmp(), {
+      "terragucci.yml": 'roots: ["envs/*"]\napply:\n  branches:\n    release: ["envs/orders"]\n',
+      "envs/orders/main.tf": "",
+      "envs/orders/plan.json": JSON.stringify(drifted),
+      "envs/search/main.tf": "",
+      "envs/search/plan.json": JSON.stringify(clean),
+    });
+    const bare = bareFrom(repo);
+    git(repo, "remote", "add", "origin", bare);
+    git(repo, "checkout", "-q", "-b", "release");
+    writeFileSync(join(repo, "envs/orders/plan.json"), JSON.stringify(clean));
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qam", "release");
+    git(repo, "push", "-q", "origin", "release");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "branch", "-q", "-D", "release");
+    return repo;
+  }
+
+  it("plans a root another branch applies from that branch, so the difference between the branches is not drift", { timeout: 60_000 }, async () => {
+    const repo = branched();
+    const bin = tmp();
+    const lines: string[] = [];
+    const r = await runStage("tf-drift", repo, { binary: fakeTofu(bin), env: { PATH: process.env.PATH } }, (l) => lines.push(l));
+    const orders = r.report.roots.find((x) => x.path === "envs/orders")!;
+    expect(orders.changes).toEqual([]);
+    expect(orders.error).toBeUndefined();
+    expect(lines.join("\n")).toMatch(/apply\.branches: envs\/orders plans from release at [0-9a-f]{8}, the branch that applies it/);
+    // orders planned in a worktree of release, search in the repo; the worktree is gone afterwards.
+    const calls = readFileSync(join(bin, "calls.log"), "utf-8").split("\n").filter((l) => / plan /.test(l));
+    expect(calls.find((c) => c.includes("envs/search"))!.startsWith(join(repo, "envs/search"))).toBe(true);
+    expect(calls.find((c) => c.includes("envs/orders"))!.startsWith(join(repo, "envs/orders"))).toBe(false);
+    expect(git(repo, "worktree", "list").trim().split("\n")).toHaveLength(1);
+    // Planned from main instead, orders reports the difference between the branches as drift.
+    const unmapped = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, config: join(write(tmp(), { "t.yml": 'roots: ["envs/*"]\n' }), "t.yml") }, () => {});
+    expect(unmapped.report.roots.find((x) => x.path === "envs/orders")!.changes).toHaveLength(2);
+  });
+
+  it("a root whose branch cannot be fetched fails with the reason, and the rest are checked", { timeout: 60_000 }, async () => {
+    const repo = branched();
+    git(repo, "push", "-q", "origin", "--delete", "release");
+    const r = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH } }, () => {});
+    const orders = r.report.roots.find((x) => x.path === "envs/orders")!;
+    expect(orders.error).toMatch(/^apply\.branches: release applies envs\/orders, so the drift check plans it from release, and git could not fetch release from origin/);
+    expect(r.report.roots.find((x) => x.path === "envs/search")!.error).toBeUndefined();
+    expect(r.failed).toBe(true);
   });
 });

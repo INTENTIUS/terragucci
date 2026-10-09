@@ -1,7 +1,7 @@
 // Terragrunt mode: detection, discovery, waves, the auth provider, init's
 // pipeline and the tf-plan stage. Terragrunt itself is stubbed; the last block
 // runs the real binary when TERRAGUCCI_TERRAGRUNT names one and tofu is on the path.
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -715,6 +715,30 @@ describe("terragucci stage tf-drift in a Terragrunt repo", () => {
     expect(r.report.roots).toHaveLength(4);
     expect(r.failed).toBe(false);
     expect(readFileSync(join(repo, "out/issue.md"), "utf-8")).toContain("live/dev/vpc");
+  });
+
+  it("with apply.branches, a unit another branch applies is refresh-planned in a checkout of that branch, and the rest in the repo", async () => {
+    const repo = liveRepo({ "terragucci.yml": 'apply:\n  branches:\n    release: ["live/prod/**"]\n' });
+    const bare = tmp("tg-bare-");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare]);
+    git(repo, "remote", "set-url", "origin", bare);
+    git(repo, "add", "-A");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "main");
+    git(repo, "push", "-q", "origin", "HEAD:main", "HEAD:release");
+    const where: [string, string][] = [];
+    const base = fakeTerragrunt();
+    const exec: TerragruntExec = async (file, args, options) => {
+      if (args[0] === "run") where.push([args.flatMap((a, i) => (args[i - 1] === "--filter" && a.startsWith("{./") ? [a.slice(3, -1)] : [])).join(","), options.cwd]);
+      return base(file, args, options);
+    };
+    const lines: string[] = [];
+    const r = await runStage("tf-drift", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc", "live/prod/vpc"], ["live/dev/app", "live/prod/app"]], terragruntExec: exec, env: {} }, (l) => lines.push(l));
+    expect(lines.join("\n")).toMatch(/apply\.branches: live\/prod\/app, live\/prod\/vpc plan from release at [0-9a-f]{8}, the branch that applies them/);
+    for (const [units, cwd] of where) expect(cwd === repo, units).toBe(!units.includes("live/prod"));
+    expect(where.map(([u]) => u).sort()).toEqual(["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]);
+    expect(r.report.roots.map((u) => u.path).sort()).toEqual(["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]);
+    expect(r.failed).toBe(false);
+    expect(git(repo, "worktree", "list").trim().split("\n")).toHaveLength(1);
   });
 
   it("a plain tf-plan does not refresh-only", async () => {
