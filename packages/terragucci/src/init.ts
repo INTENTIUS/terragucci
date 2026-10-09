@@ -14,6 +14,7 @@ import { SIGNERS_PATH } from "./seal";
 import {
   ConfigError,
   COST_KEY_SECRET,
+  EPHEMERAL_SWEEP,
   gitlabPrApplyProblems,
   findConfig,
   ownJobsProblems,
@@ -38,7 +39,7 @@ import { reportsBase } from "./report/store";
 import { agentCommentInput, agentDriftInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
-import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
+import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { migrationFiles } from "./migrate";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
@@ -321,6 +322,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),
     ...(settings.apply?.branches && Object.keys(settings.apply.branches).length > 0 ? { applyBranches: settings.apply.branches } : {}),
     ...(settings.own_jobs !== undefined ? { ownJobs: ownJobs(repo, settings.own_jobs) } : {}),
+    ...(settings.ephemeral ? { ephemeral: { sweep: settings.ephemeral.sweep ?? EPHEMERAL_SWEEP } } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
@@ -328,15 +330,16 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
   const rolloutRel = forgeChoice.value === "gitlab" ? undefined : ROLLOUT_PATHS[forgeChoice.value];
   const reviewRel = forgeChoice.value === "gitlab" ? undefined : REVIEW_PATHS[forgeChoice.value];
+  const ephemeralRel = forgeChoice.value === "gitlab" ? undefined : EPHEMERAL_PATHS[forgeChoice.value];
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
     // The rollout and review workflows, like the pipeline, overwrite only a file terragucci wrote.
-    if ((f.path === rolloutRel || f.path === reviewRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
   }
-  // A rollout or review workflow an earlier init wrote goes when the config stops asking for it.
-  for (const rel of [rolloutRel, reviewRel]) {
+  // A rollout, review or ephemeral workflow an earlier init wrote goes when the config stops asking for it.
+  for (const rel of [rolloutRel, reviewRel, ephemeralRel]) {
     if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
     const path = join(repo, rel);
     if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });

@@ -1883,6 +1883,22 @@
       "commit": "fbfefd6f"
     },
     {
+      "claim": "ephemeral-pr",
+      "says": "with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7c2ff19c"
+    },
+    {
+      "claim": "ephemeral-ttl",
+      "says": "with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7c2ff19c"
+    },
+    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,

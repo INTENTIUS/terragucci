@@ -10,6 +10,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { estate } from "../src/estate";
+import { updateList } from "../src/ephemeral";
 import { appendEntries, APPLY_LEDGER, AUDIT_SCHEMA, ledgerEntries, OVERRIDE_LEDGER_FILE, readRecord, reportEntry, type LedgerChange } from "../src/report/audit";
 import { buildReport } from "../src/report/build";
 import { ESTATE_SCHEMA } from "../src/report/estate";
@@ -195,6 +196,8 @@ describe("terragucci.estate/v1", () => {
     // The run view of the network project's applied commit, as its waves' jobs write it.
     const view = withWave(undefined, runSkeleton(NET, "b".repeat(40), [["a"], ["envs/dev/orders", "envs/dev/search"]], new Map([["envs/dev/orders", new Set(["a"])]])), { number: 1, state: "applied" }, at(10, 40));
     objects.set(`acme-reports:reports/${NET}/runs/${"b".repeat(40)}/run.json`, JSON.stringify(view));
+    // A pull request's ephemeral copy, as its job lists it beside the index.
+    objects.set(`acme-reports:reports/${WEB}/ephemeral.json`, JSON.stringify(updateList(undefined, WEB, 12, { pull_request: 12, pull_request_url: "https://github.com/acme/web/pull/12", suffix: "pr-12", roots: [{ root: "envs/preview/app", location: "s3://state/web/preview/app-pr-12.tfstate" }], commit: "c".repeat(40), applied: at(10), expires: at(23), approved_by: "alice", status: "live" }, at(10))));
     const config = {
       defaults: { reports: { bucket: "s3://acme-reports", endpoint: "http://minio:9000", prefix: "reports" } },
       projects: { [WEB]: {}, [NET]: {}, "github.com/acme/locked": { reports: { bucket: "s3://locked", endpoint: "http://minio:9000" } }, "github.com/acme/fresh": {} },
@@ -227,6 +230,9 @@ describe("terragucci.estate/v1", () => {
     const edges: Json[] = projects.flatMap((p) => p.edges ?? []);
     expect([...keys(edges)].sort()).toEqual(named(ESTATE.$defs.edge).sort());
     expect([...keys(edges.flatMap((e) => [e.consumer_planned, e.producer_applied]))].sort()).toEqual(named(ESTATE.$defs.edgeRun).sort());
+    const copies: Json[] = projects.flatMap((p) => p.ephemeral ?? []);
+    expect([...keys(copies)].sort()).toEqual(named(ESTATE.$defs.project.properties.ephemeral.items).sort());
+    expect([...keys(copies.flatMap((c) => c.roots))].sort()).toEqual(named(ESTATE.$defs.project.properties.ephemeral.items.properties.roots.items).sort());
   });
 
   it("refuses a project with a status it does not know, and a run with a field it does not name", async () => {
