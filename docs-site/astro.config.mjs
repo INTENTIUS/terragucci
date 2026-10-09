@@ -126,6 +126,7 @@ export default defineConfig({
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
 								{ label: 'Estimate the cost of a change', slug: 'guides/estimate-cost' },
 								{ label: 'Run steps around a stage', slug: 'guides/run-steps' },
+								{ label: 'Generate backend and provider files', slug: 'guides/generate-root-files' },
 							],
 						},
 						{

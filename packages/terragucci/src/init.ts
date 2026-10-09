@@ -29,6 +29,7 @@ import {
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
 import { STEPS_NOT_TERRAGRUNT } from "./steps";
+import { TERRAGRUNT_GENERATE } from "./generate-config";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
@@ -139,6 +140,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (settings.cost) throw new ConfigError("cost estimates read each root's plan from tf-plan, and a Terragrunt repo plans its units with run --all; remove cost");
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
     if (settings.steps?.length) throw new ConfigError(STEPS_NOT_TERRAGRUNT);
+    if (settings.generate) throw new ConfigError(TERRAGRUNT_GENERATE);
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {
@@ -261,6 +263,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.image ? { imageFromConfig: true } : {}),
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
     ...(pins.length > 0 ? { rootPins: true } : {}),
+    ...(settings.generate && !tgInput ? { generate: true } : {}),
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,

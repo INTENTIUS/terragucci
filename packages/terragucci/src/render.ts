@@ -123,6 +123,8 @@ export interface PipelineInput {
   install?: { binary: Binary; version: string };
   /** Some roots pin their own version: the check job runs each root with the binary `terragucci binary` names for it. */
   rootPins?: boolean;
+  /** `generate` is set: the check job runs `terragucci generate --check`, which refuses a generated file out of line with terragucci.yml. */
+  generate?: boolean;
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
@@ -330,7 +332,7 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
   const loop = rootPins
     ? [
@@ -353,6 +355,8 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
         ]
       : [`${binary} fmt -check -recursive -diff .`]),
     "failed=0",
+    // With `generate` set, every generated backend, provider and version file must be what terragucci generate writes.
+    ...(generate ? ["terragucci generate --check || failed=1"] : []),
     `for dir in ${roots.map(sh).join(" ")}; do`,
     ...loop,
     "done",
@@ -1606,7 +1610,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.

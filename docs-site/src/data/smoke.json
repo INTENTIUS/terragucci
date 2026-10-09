@@ -164,7 +164,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "68fd6a8"
     },
     {
       "claim": "apply-serial",
@@ -189,7 +189,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "68fd6a8"
     },
     {
       "claim": "traces",
@@ -944,6 +944,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "2d19653"
+    },
+    {
+      "claim": "generate",
+      "says": "terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
     },
     {
       "claim": "root-pins",

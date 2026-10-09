@@ -13,6 +13,7 @@ prompt: |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
+| `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/); `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
@@ -71,6 +72,14 @@ terragucci reconcile [--config <file>] [--mode dry-run|apply] [--project <host/p
 ```
 
 `--config` defaults to the config file in the working directory and `--mode` to `dry-run`. `--mode apply` opens a pull request per changed project and never runs `terraform apply` ([glossary](/terragucci/concepts/glossary/#words-that-mean-something-else-in-terraform)). `--project` limits the run to one project.
+
+## generate
+
+```bash
+terragucci generate [--check] [--dry-run] [--config <file>]
+```
+
+Writes `backend.tf`, `providers.tf` and `versions.tf` in each root from `terragucci.yml`'s `generate` key, and removes a generated file the key no longer asks for. It never overwrites a file it did not write, and refuses a Terragrunt repo. `--dry-run` prints what it would write. `--check` writes nothing and fails on each generated file that differs from what it would write, is missing, or is no longer asked for, with the lines that differ. See [Generate backend and provider files](/terragucci/guides/generate-root-files/).
 
 ## estate
 
@@ -445,6 +454,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 |---|---|---|---|---|---|
 | `init` | done | | an existing config file needs a line added | | |
 | `reconcile` | done | a project failed | | | |
+| `generate` | written, or with `--check` every generated file matches | with `--check`, a generated file out of line | a file it did not write is in the way, or a root's own files declare what it would write | | |
 | `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
 | `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one | `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
 | `publish` | done | | OCI tag exists already; git tag exists with different content | | |

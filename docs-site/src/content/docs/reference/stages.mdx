@@ -75,6 +75,15 @@ error: envs/dev/orders/main.tf:12:3-12:8: Unsupported argument
 FAILED envs/dev/orders: validate found 1 error(s)
 ```
 
+With [`generate`](/terragucci/guides/generate-root-files/) set, the check job also runs `terragucci generate --check` before the roots' `init`, and fails on a generated file that differs from what `terragucci generate` writes:
+
+```text
+refused: envs/prod/app/backend.tf differs from what terragucci generate writes from terragucci.yml:
+    -    bucket = "hand-edited"
+    +    bucket = "acme-prod-state"
+FAILED generate: 1 generated file out of line with terragucci.yml; run terragucci generate and commit what it writes
+```
+
 With [`policy`](/terragucci/reference/policy/) set, the last step runs `conftest verify` or `opa test`, with the tests and key read from the default branch or the pull request's target. The log is kept as `terragucci-check/report.md`.
 
 <Shot step="check" view="log" alt="A failed check job in a Forgejo run. The format step is expanded and shows a diff of envs/dev/orders/locals.tf, where the alignment of the team line differs, followed by a runner exit code 3. The later jobs of the pipeline are skipped." />

@@ -259,6 +259,7 @@ description-check|with respond.description: check the plan job flags a destroy t
 decide-backends|decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env|
 otlp-headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
 pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
+generate|terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file|
 root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
@@ -7702,6 +7703,109 @@ claim_root_pins() {
   return $rc
 }
 
+claim_generate() {
+  # Three roots under envs/ and a terragucci.yml whose generate key gives the
+  # backend, the aws provider and its version at the repo level, a bucket for
+  # envs/prod/* and a region for envs/prod/network. terragucci generate writes
+  # each root's backend.tf, providers.tf and versions.tf. The repo-level bucket
+  # changes, and a second generate rewrites the backend.tf of the one root that
+  # takes it; the backend region changes, and a third rewrites all three. The
+  # check step init writes, run in the tofu image as the check job runs it,
+  # passes: generate --check, fmt -check over the generated files, and
+  # validate in each root.
+  # BREAK: envs/prod/app/backend.tf is edited by hand after generate, so the
+  # check step refuses it by name and fails.
+  log() { echo "[smoke generate] $*" >&2; }
+  local work tree image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" out code=0 body r f rc=0
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  for r in envs/dev/app envs/prod/app envs/prod/network; do
+    mkdir -p "$tree/$r"
+    printf 'resource "terraform_data" "this" {\n  input = "%s"\n}\n' "$r" > "$tree/$r/main.tf"
+    cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$tree/$r/"
+  done
+  cat > "$tree/terragucci.yml" <<'YML'
+forge: forgejo
+binary: tofu
+roots: ["envs/*/*"]
+generate:
+  backend:
+    s3:
+      bucket: shop-terraform-state
+      key: "generate/{root}.tfstate"
+      region: us-east-1
+      use_lockfile: true
+      use_path_style: true
+  providers:
+    aws:
+      source: hashicorp/aws
+      version: "6.67.0"
+      region: us-east-1
+      s3_use_path_style: true
+  required_version: ">= 1.6"
+  dirs:
+    "envs/prod/*":
+      backend: { s3: { bucket: shop-terraform-state-prod } }
+  roots:
+    envs/prod/network:
+      providers: { aws: { region: eu-west-1 } }
+YML
+  (cd "$tree" && "$TERRAGUCCI" generate >&2) || { log "generate failed"; drop_work "$work"; return 1; }
+  for r in envs/dev/app envs/prod/app envs/prod/network; do
+    for f in backend.tf providers.tf versions.tf; do
+      [ -f "$tree/$r/$f" ] || { log "generate wrote no $r/$f"; rc=1; }
+    done
+  done
+  grep -q 'region            = "eu-west-1"' "$tree/envs/prod/network/providers.tf" || { log "envs/prod/network does not configure aws in its own region"; rc=1; }
+  grep -q 'key            = "generate/envs/dev/app.tfstate"' "$tree/envs/dev/app/backend.tf" || { log "envs/dev/app's state key does not name the root"; rc=1; }
+  # One global changes: the repo-level bucket. The root that takes it follows; the prod roots keep their glob's.
+  perl -pi -e 's#^      bucket: shop-terraform-state$#      bucket: shop-terraform-state-2#' "$tree/terragucci.yml"
+  out="$(cd "$tree" && "$TERRAGUCCI" generate 2>&1)" || { echo "$out" >&2; log "the second generate failed"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  [ "$(grep '^updated ' <<<"$out" | tr '\n' ' ')" = "updated envs/dev/app/backend.tf " ] || { log "the second generate did not update exactly the backend file of the one root that takes the repo-level bucket"; rc=1; }
+  grep -q 'bucket         = "shop-terraform-state-2"' "$tree/envs/dev/app/backend.tf" || { log "envs/dev/app's backend did not follow the new bucket"; rc=1; }
+  for r in envs/prod/app envs/prod/network; do
+    grep -q 'bucket         = "shop-terraform-state-prod"' "$tree/$r/backend.tf" || { log "$r lost the bucket its glob sets"; rc=1; }
+  done
+  # Another global: the backend's region, which no level below sets. Every root's backend.tf follows.
+  perl -0pi -e 's#(key: "generate/\{root\}\.tfstate"\n      region: )us-east-1#${1}us-east-2#' "$tree/terragucci.yml"
+  out="$(cd "$tree" && "$TERRAGUCCI" generate 2>&1)" || { echo "$out" >&2; log "the third generate failed"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  [ "$(grep '^updated ' <<<"$out" | tr '\n' ' ')" = "updated envs/dev/app/backend.tf updated envs/prod/app/backend.tf updated envs/prod/network/backend.tf " ] || { log "the backend region change did not reach exactly every root's backend.tf"; rc=1; }
+  for r in envs/dev/app envs/prod/app envs/prod/network; do
+    grep -q 'region         = "us-east-2"' "$tree/$r/backend.tf" || { log "$r's backend.tf does not name us-east-2"; rc=1; }
+  done
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  body="$(check_step_body "$tree/.forgejo/workflows/terragucci.yml")"
+  grep -q '^terragucci generate --check || failed=1$' <<<"$body" || { log "the check step runs no terragucci generate --check"; rc=1; }
+  [ -n "${BREAK:-}" ] && perl -pi -e 's#shop-terraform-state-prod#hand-edited#' "$tree/envs/prod/app/backend.tf"
+  git -C "$tree" init -q -b main
+  git -C "$tree" add -A && git -C "$tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "generated roots"
+  run_copied --rm --network terragucci -v "$tree:/repo" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" sh -c "$body" >"$work/check.log" 2>&1 || code=$?
+  cat "$work/check.log" >&2
+  clean_mounted "$tree" "$image"
+  if [ "$code" != 0 ]; then
+    log "the check step exited $code"
+    grep -q '^refused: envs/prod/app/backend.tf differs from what terragucci generate writes' "$work/check.log" && log "it refused the hand-edited envs/prod/app/backend.tf by name"
+    rc=1
+  else
+    grep -q '^generated files match terragucci.yml: 9 files in 3 roots$' "$work/check.log" || { log "the check step did not say the 9 generated files match"; rc=1; }
+    for r in envs/dev/app envs/prod/app envs/prod/network; do
+      grep -q "^valid $r$" "$work/check.log" || { log "$r did not validate with its generated files"; rc=1; }
+    done
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "generate wrote each root's backend, provider and version files from three levels, a changed global reached every root that takes it, and tf-check passed them"
+  return $rc
+}
+
 claim_drift_close() {
   # A queue applied with a visibility timeout of 30, then set to 45 in floci
   # outside OpenTofu: tf-drift opens the drift issue naming app. The timeout
@@ -11252,6 +11356,7 @@ decide-backends      weight=80
 otlp-headers         weight=60
 pinned-install       weight=60
 root-pins            weight=60
+generate             weight=60
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150
