@@ -203,6 +203,48 @@ describe("reconcile", () => {
     expect(validateConfig((await import("@intentius/chant/yaml")).parseYAML(file!.content), "t")).toMatchObject({ policy: { path: "policy" }, reports: { bucket: "s3://acme-reports" } });
   });
 
+  it("writes every key the project's jobs read into its terragucci.yml, and leaves out built-in values and what the pipeline carries", async () => {
+    const config = validateConfig(
+      {
+        defaults: {
+          binary: "tofu",
+          gate: "on-destroy",
+          parallelism: 1,
+          waves: { canary: ["envs/dev/*"] },
+          respond: { tips: "off" },
+          token_env: "ACME_TOKEN",
+          telemetry: { trace_url: "https://traces.acme.dev/{trace_id}" },
+          notify: { slack: "SLACK_WEBHOOK" },
+          modules: { require: "attested", trusted: [{ source: "oci://ghcr.io/acme/modules", key: "keys/acme.pub", ledger: "https://github.com/acme/modules" }] },
+          apply: { resume: 10 },
+        },
+        projects: { "github.com/acme/infra": { url: bareFrom(twoRootRepo()), drift: "0 6 * * *" } },
+      },
+      "t",
+    );
+    const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
+    const file = out[0].changes.find((c) => c.path === "terragucci.yml");
+    expect(file?.status).toBe("created");
+    const written = validateConfig((await import("@intentius/chant/yaml")).parseYAML(file!.content), "t");
+    expect(written).toEqual({
+      parallelism: 1,
+      waves: { canary: ["envs/dev/*"] },
+      drift: "0 6 * * *",
+      telemetry: { trace_url: "https://traces.acme.dev/{trace_id}" },
+      respond: { tips: "off" },
+      modules: { require: "attested", trusted: [{ source: "oci://ghcr.io/acme/modules", key: "keys/acme.pub", ledger: "https://github.com/acme/modules" }] },
+      token_env: "ACME_TOKEN",
+    });
+  });
+
+  it("fails a project whose own terragucci.yml sets another value of a key its jobs read, and names the key", async () => {
+    const own = twoRootRepo();
+    write(own, { "terragucci.yml": "binary: tofu\nparallelism: 8\n" });
+    const config = validateConfig({ defaults: { binary: "tofu", parallelism: 2 }, projects: { "github.com/acme/own": { url: bareFrom(own) } } }, "t");
+    const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
+    expect(out[0]).toMatchObject({ status: "failed", error: expect.stringMatching(/jobs read parallelism from it; set its parallelism key to the control repo's \(2\)/) });
+  });
+
   it("writes no terragucci.yml into a project when the control repo sets no policy and no reports", async () => {
     const { config } = controlRepo();
     const out = await reconcile(config, { mode: "dry-run", fetch: recordingFetch().fetch, env: {} });
