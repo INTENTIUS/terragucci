@@ -246,7 +246,7 @@ sandbox *args:
 scale *args:
     stack/scale/scale.sh {{args}}
 
-[doc("The GitLab lab, on its own stack (compose project tglab): up, status, stop, down. Off until up; GitLab takes about 4 GB of memory.")]
+[doc("The GitLab lab, on its own stack (compose project tglab): up, status, stop, down. Off until up; it takes about 5 GB of memory.")]
 gitlab-lab *args:
     stack/gitlab/gitlab.sh {{args}}
 

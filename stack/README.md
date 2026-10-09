@@ -133,6 +133,20 @@ just gitlab-lab down                     # containers, job containers, network a
 
 Nothing starts the lab but `up`: a claim run on GitLab fails at once, saying so, when it is down. `up` refuses when the data volume has less than `TGLAB_MIN_FREE_GB` (40) free.
 
+Measured on an Apple silicon Mac (18 cores, Docker given 20 GB), GitLab under emulation:
+
+| | |
+|---|---|
+| cold `up`, from no volumes | 141 s (GitLab serves after about 120 s) |
+| `up` after `stop` | 44 s |
+| GitLab's memory | 3.4 GB idle after boot, 3.8 GB at the peak of boot, 4.4 GB after a claim run |
+| floci and the runner | 0.3 GB and under 0.1 GB |
+| images | 3.7 GB (GitLab CE) and 0.4 GB (the runner), pulled once |
+| volumes | 0.4 GB after boot, 0.5 GB after a claim run |
+| the four GitLab claims, plain and broken | about 5 minutes |
+
+That is about 5 GB of memory while it runs. Keep it down while the validation stack runs a full claim pass or the scale bench runs, and bring it down when done.
+
 `SMOKE_FORGE=gitlab` points `smoke.sh` at the claims in `smoke-gitlab.sh`: the table `GITLAB_CLAIMS`, the locks `GITLAB_CLAIM_GROUPS`, and a `gitlab_claim_<name>` per claim. Their locks and logs are under `stack/gitlab/.state/`. Each run pushes a one-root repo with the pipeline `terragucci init --forge gitlab` writes to a new project named after the claim and the run (`smoke-tips-plain-<time>`), and its state to the lab's floci under the same name, so a claim's plain and `BREAK=1` runs go at once. The next run of a claim deletes the projects the last one left. A GitLab row in `smoke.json` carries `forge: "gitlab"` and replaces only the GitLab row of its claim; a row with no `forge` is Forgejo's. The validation page shows GitLab rows in a column of their own, and `tutorial-check` and `tutorial-capture` read only the Forgejo rows. `just claims-affected` picks Forgejo claims; run GitLab's by name.
 
 ## Networking rules
