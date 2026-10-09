@@ -154,7 +154,9 @@ describe("the inventory in the bucket and on the estate page", () => {
     expect(html).toContain('<h2 id="resources">Resources</h2>');
     expect(html).toContain('id="resources-filter"');
     expect(html).toContain('<tbody class="inv" data-root="envs/dev/orders">');
-    expect(html).toContain("<td><code>module.db.aws_db_instance.main</code></td><td><code>aws_db_instance</code></td><td>hashicorp/aws</td>");
+    // The database the waves updated links its history; the bucket no wave changed does not.
+    expect(html).toMatch(/<td><a href="history\.html#h-[0-9a-f]{16}"><code>module\.db\.aws_db_instance\.main<\/code><\/a><\/td><td><code>aws_db_instance<\/code><\/td><td>hashicorp\/aws<\/td>/);
+    expect(html).toContain("<td><code>aws_s3_bucket.logs</code></td><td><code>aws_s3_bucket</code></td><td>hashicorp/aws</td>");
     expect(html).toContain("<code>aws_db_instance</code> 2");
     expect(html).toContain("<b>6</b><span>resources</span>");
     expect(readInlineEstate(html)).toEqual(r.estate);

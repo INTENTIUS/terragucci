@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 14;
+export const REPORT_MINOR = 15;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -258,6 +258,24 @@ export interface ReportRoot {
    * (minor 14). Never a value. Absent on a root that did not apply.
    */
   resources?: ReportResource[];
+  /**
+   * On a `tf-apply` wave, a root that applied: what the apply did to each
+   * resource, and which top-level attributes an update or a replacement
+   * changed, by name (minor 15). Never a value.
+   */
+  applied_changes?: ReportAppliedChange[];
+}
+
+/** What one apply did to one resource (minor 15). */
+export interface ReportAppliedChange {
+  address: string;
+  type: string;
+  /** In this order when several hold: move, import, then create, update, replace, delete or forget. */
+  actions: ("create" | "update" | "replace" | "delete" | "import" | "move" | "forget")[];
+  /** The top-level attributes an update or a replacement changed, sorted; empty for the other actions. */
+  attributes: string[];
+  /** Where a moved resource was. */
+  previous_address?: string;
 }
 
 /** One resource a root holds (minor 14): its address, type and provider, never a value. */

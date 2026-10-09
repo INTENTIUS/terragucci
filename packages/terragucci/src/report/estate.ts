@@ -14,6 +14,7 @@
 import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
 import type { ReportResource } from "./schema";
+import type { ChangeRow } from "./history";
 import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
@@ -33,6 +34,8 @@ export interface ProjectIndex {
   base?: string;
   /** Its inventory.json, when an apply wrote one. */
   inventory?: Inventory;
+  /** Its changes.json rows, when an apply wrote them: the history page's, never the estate page's. */
+  changes?: ChangeRow[];
 }
 
 /** One root's resources, as its newest applied wave left them. */
@@ -43,7 +46,12 @@ export interface EstateInventoryRoot {
   wave?: number;
   /** The wave's report.html, when the page can link it. */
   report?: string;
-  resources: ReportResource[];
+  resources: EstateResource[];
+}
+
+/** A resource on the page, and its section of history.html when an apply changed it. */
+export interface EstateResource extends ReportResource {
+  history?: string;
 }
 
 /** A project's resources: how many, how many of each type, and each root's list. */
@@ -120,6 +128,8 @@ export interface Estate {
   recent: EstateRun[];
   /** The audit trail beside the page, when `terragucci audit` wrote one: its page, how many entries, and when. */
   audit?: { page: string; entries: number; generated: string };
+  /** The resource history beside the page, when an apply changed a resource: its page, how many addresses, and when. */
+  history?: { page: string; resources: number; generated: string };
 }
 
 const at = (iso: string): number => Date.parse(iso) || 0;
@@ -309,7 +319,7 @@ function resourcesSection(estate: Estate, now: Date): string {
     const types = inv.types.map((t) => `<code>${esc(t.type)}</code> ${t.count}`).join(", ");
     const roots = inv.roots.map((r) => {
       const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${r.resources.length} ${r.resources.length === 1 ? "resource" : "resources"}, ${link(r.report, `${r.wave !== undefined ? `wave ${r.wave}` : "applied"}`)} ${short(r.commit)} ${when(r.finished, now)}</th></tr>`;
-      const rows = r.resources.map((x) => `<tr data-r="${esc(`${r.root} ${x.address} ${x.type} ${x.provider}`.toLowerCase())}"><td><code>${esc(x.address)}</code></td><td><code>${esc(x.type)}</code></td><td>${esc(providerName(x.provider))}</td></tr>`);
+      const rows = r.resources.map((x) => `<tr data-r="${esc(`${r.root} ${x.address} ${x.type} ${x.provider}`.toLowerCase())}"><td>${link(x.history, `<code>${esc(x.address)}</code>`)}</td><td><code>${esc(x.type)}</code></td><td>${esc(providerName(x.provider))}</td></tr>`);
       return `<tbody class="inv" data-root="${esc(r.root)}">${head}${rows.join("")}</tbody>`;
     });
     return `<h3>${link(p.index, esc(p.project))}: ${inv.resources} ${inv.resources === 1 ? "resource" : "resources"} in ${inv.roots.length} ${inv.roots.length === 1 ? "root" : "roots"}</h3>
@@ -371,7 +381,7 @@ ${projectRows.join("\n")}
 <h2>Recent runs</h2>
 ${recentRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Stage</th><th>Commit</th><th>Pull request</th><th>Changes</th><th></th><th>Finished</th><th></th></tr>\n${recentRows.join("\n")}\n</table></div>` : `<p class="none">No runs yet.</p>`}
 <h2 id="resources">Resources</h2>
-${resourcesSection(estate, now)}
+${estate.history ? `<p>Change history: <a href="${esc(estate.history.page)}" id="resource-history">${estate.history.resources} ${estate.history.resources === 1 ? "resource" : "resources"}</a>, each apply that changed one with its approver.</p>\n` : ""}${resourcesSection(estate, now)}
 </main>
 <script type="application/json" id="terragucci-estate">${json}</script>
 <script>(function(){function f(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d>0?d+"d "+h+"h":h>0?h+"h "+m+"m":m+"m"}var n=Date.now();document.querySelectorAll("td time[datetime],tbody.inv th time[datetime]").forEach(function(t){var s=Math.max(0,Math.round((n-Date.parse(t.getAttribute("datetime")))/1000));if(!isNaN(s))t.textContent=f(s)+(t.hasAttribute("data-for")?"":" ago")});var q=document.getElementById("resources-filter");if(q){q.hidden=false;q.addEventListener("input",function(){var v=q.value.toLowerCase().trim();document.querySelectorAll("tbody.inv").forEach(function(b){var n=0;b.querySelectorAll("tr[data-r]").forEach(function(r){var m=!v||r.getAttribute("data-r").indexOf(v)>=0;r.hidden=!m;if(m)n++});b.hidden=n===0})})}})()</script>

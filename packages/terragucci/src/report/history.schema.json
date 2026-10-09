@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/history/v1/history.schema.json",
+  "title": "terragucci.history/v1",
+  "description": "history.json at the top of a reports prefix, which terragucci estate builds from every project's changes.json and the audit trail: each resource address with every apply that changed it, oldest first. Actions and attribute names, never a value. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "generated", "audit", "resources"],
+  "properties": {
+    "schema": { "const": "terragucci.history/v1" },
+    "generated": { "type": "string" },
+    "audit": { "type": "boolean", "description": "Whether the audit trail was read for the approvers." },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "project", "root", "address", "type", "applies"],
+        "properties": {
+          "id": { "type": "string", "description": "Its anchor on history.html." },
+          "project": { "type": "string" },
+          "root": { "type": "string" },
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "applies": {
+            "type": "array",
+            "description": "Oldest first.",
+            "items": {
+              "type": "object",
+              "required": ["actions", "attributes", "commit", "finished", "plan_digest", "set_digest"],
+              "properties": {
+                "actions": { "type": "array", "items": { "enum": ["create", "update", "replace", "delete", "import", "move", "forget"] } },
+                "attributes": { "type": "array", "items": { "type": "string" } },
+                "previous_address": { "type": "string" },
+                "commit": { "type": "string" },
+                "wave": { "type": "integer" },
+                "finished": { "type": "string" },
+                "plan_digest": { "type": ["string", "null"] },
+                "set_digest": { "type": ["string", "null"] },
+                "approver": { "type": ["string", "null"], "description": "Who approved the wave, from its apply entry in the audit trail; null when no gate held it. Absent when the audit trail has no entry for the wave." },
+                "approval": { "type": "string", "description": "The id of the approval entry in the audit trail." },
+                "report": { "type": "string" },
+                "pull_request": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
