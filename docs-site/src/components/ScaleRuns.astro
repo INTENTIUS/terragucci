@@ -1,69 +1,88 @@
 ---
-// The scale bench's runs, as last recorded by `just scale record`.
+// The scale bench's runs, as last recorded by `just scale record`: one compact row per estate size.
 import record from '../data/scale.json';
 
 type Run = (typeof record.runs)[number];
-const runs = record.runs as Run[];
+const runs = [...(record.runs as Run[])].sort((a, b) => a.estate.resources - b.estate.resources);
 
 const n = (v: number) => v.toLocaleString('en-US');
-const mins = (s: number) => (s < 90 ? `${s} s` : `${Math.round(s / 60)} min`);
-const kb = (b: number) => (b < 1_000_000 ? `${Math.round(b / 1000)} kB` : `${(b / 1_000_000).toFixed(1)} MB`);
-// A run records the release it was built from, and on main the commit after it (0.4.1+9cc0eca): that shows as "after 0.4.1".
-const build = (release: string) => (release.includes('+') ? `after ${release.split('+')[0]}` : release);
-const host = (r: Run) => {
-	const load = (r as { host_load?: { mean: number; cpus: number } | null }).host_load;
-	return `${r.host.os === 'darwin' ? 'macOS' : r.host.os === 'linux' ? 'Linux' : r.host.os} ${r.host.arch}, ${r.host.runner_capacity} jobs at once${load ? `, mean load ${load.mean} on ${load.cpus} CPUs` : ''}`;
-};
+const size = (b: number) => (b < 1_000_000 ? `${Math.round(b / 1000)} kB` : `${(b / 1_000_000).toFixed(1)} MB`);
+// A run records the release it was built from, and on main the commit after it (0.4.1+9cc0eca): "a build just after 0.4.1".
+const build = (release: string) => (release.includes('+') ? `a build just after ${release.split('+')[0]}` : release);
+const os = (o: string) => (o === 'darwin' ? 'macOS' : o === 'linux' ? 'Linux' : o);
+const machine = (r: Run) => `${build(r.release)} on ${os(r.host.os)} ${r.host.arch}, ${r.host.runner_capacity} jobs at once`;
+const machines = [...new Set(runs.map(machine))];
+const largest = runs[runs.length - 1];
+const load = (largest as { host_load?: { mean: number; cpus: number } | null } | undefined)?.host_load;
+const repos = (largest?.note.by_repo ?? []) as { cut?: boolean }[];
+const uncut = repos.length > 0 && repos.every((r) => r.cut === false);
 ---
 <div class="tg-scale not-content">
 	<table>
 		<thead>
 			<tr>
-				<th>Resources</th><th>Roots</th><th>Repos</th>
-				<th>Reconcile</th><th>Create</th><th>Plan</th><th>Change</th><th>Runner minutes</th>
-				<th>Largest plan note</th><th>Largest report</th><th>Run</th>
+				<th>Resources</th><th>Minutes</th><th>Runner minutes</th><th>Largest note</th><th>Largest report</th>
 			</tr>
 		</thead>
 		<tbody>
 			{runs.map((r) => (
 				<tr>
-					<td>{n(r.estate.resources)}</td>
-					<td>{n(r.estate.roots)}</td>
-					<td>{r.estate.repos}</td>
-					<td>{mins(r.wall_seconds.reconcile)}</td>
-					<td>{mins(r.wall_seconds.create)}</td>
-					<td>{mins(r.wall_seconds.plan)}</td>
-					<td>{mins(r.wall_seconds.change)}</td>
+					<td>{n(r.estate.resources)}<span class="sub">{n(r.estate.roots)} roots, {r.estate.repos} repos</span></td>
+					<td>{Math.round(r.wall_seconds.total / 60)}</td>
 					<td>{n(Math.round(r.runner_minutes.total))}</td>
-					<td>{kb(r.note.bytes_max)}</td>
-					<td>{kb(r.reports.report_json_bytes_max)}</td>
-					<td>{build(r.release)}, {r.finished_at.slice(0, 10)}, {host(r)}</td>
+					<td>{size(r.note.bytes_max)}</td>
+					<td>{size(r.reports.report_json_bytes_max)}</td>
 				</tr>
 			))}
 		</tbody>
 	</table>
+	<p>
+		Each run used {machines.join('; ')}.
+		{load && <> Over the largest run the machine's mean one-minute load was {load.mean} on {load.cpus} CPUs.</>}
+		{uncut && <> No plan note in the largest run was cut to fit the comment limit.</>}
+	</p>
 </div>
 
 <style>
 	.tg-scale {
 		overflow-x: auto;
+		margin: 1.5rem 0;
 	}
 	table {
 		width: 100%;
 		border-collapse: collapse;
 		font-size: 0.9rem;
+		font-variant-numeric: tabular-nums;
 	}
 	th {
-		text-align: left;
+		text-align: right;
 		font-weight: 500;
 		font-size: 0.8rem;
 		color: var(--sl-color-gray-3);
-		padding: 0.5rem 0.75rem 0.5rem 0;
+		padding: 0.5rem 0 0.5rem 0.75rem;
 		border-bottom: 1px solid var(--sl-color-gray-5);
+		vertical-align: bottom;
 	}
 	td {
-		padding: 0.5rem 0.75rem 0.5rem 0;
+		text-align: right;
+		padding: 0.5rem 0 0.5rem 0.75rem;
 		border-bottom: 1px solid var(--sl-color-gray-6);
 		vertical-align: top;
+		white-space: nowrap;
+	}
+	th:first-child,
+	td:first-child {
+		text-align: left;
+		padding-left: 0;
+	}
+	.sub {
+		display: block;
+		font-size: 0.75rem;
+		color: var(--sl-color-gray-3);
+	}
+	p {
+		margin-top: 0.75rem;
+		font-size: 0.85rem;
+		color: var(--sl-color-gray-3);
 	}
 </style>
