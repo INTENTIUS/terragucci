@@ -224,7 +224,7 @@ cdf-concurrency|with binary: choudoufu two tf-apply waves of one estate that cha
 cdf-write-race|with binary: choudoufu two tf-apply waves of one estate that change the same resource at once: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed|
 cdf-iam|with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate|
 resume-approve|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
-resume-schedule|with apply.resume set, the resume workflow applies a waiting wave on its next run once an approval of its digest is on chant/lifecycle|
+resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
 approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
 approve-command|the plan note of a pull request gives the chant approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied|
 tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an open and approved pull request applies its waves of units from its head and then merges it with apply.merge: auto|
@@ -6401,15 +6401,17 @@ claim_resume_approve() {
 
 claim_resume_schedule() {
   # The gated fixture, approval ledger, apply.resume: 5, so init writes the
-  # resume workflow. A push waits at wave 1. In a clone, terragucci approve
-  # --no-resume records the approval and starts nothing. The next run of the
-  # resume workflow, on its schedule, applies canary/one; wave 2 then waits at
-  # its own gate.
-  # BREAK: nobody approves, so the resume run that follows applies nothing.
+  # resume workflow (its cron is checked by test/resume.test.ts). A push waits
+  # at wave 1. In a clone, terragucci approve --no-resume records the
+  # approval and starts nothing. One run of the resume workflow, dispatched as
+  # its schedule would start it, applies canary/one; wave 2 then waits at its
+  # own gate. The check is made once that run ended, never by waiting on the
+  # cron.
+  # BREAK: nobody approves, so the dispatched run applies nothing.
   log() { echo "[smoke resume-schedule] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/resume-schedule" sha out last ended i applied rc=0
+  local work repo="$USER/resume-schedule" sha out run status deadline applied rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo resume-schedule || { drop_work "$work"; return 1; }
   printf 'apply:\n  resume: 5\n' >> "$work/tree/terragucci.yml"
@@ -6418,9 +6420,6 @@ claim_resume_schedule() {
   sha="$(push_tree "$work/tree" "$repo" main "resume-schedule: first")"
   wait_run "$repo" "$sha" || rc=1
   [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'chant approve tf-apply wave-1 --plan' || { log "wave 1 did not wait"; rc=1; }; }
-  # The newest schedule run so far: the one that resumes must start after the approval.
-  sched_runs() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq -c '[.workflow_runs[] | select(.event == "schedule")]'; }
-  last="$(sched_runs | jq '[.[].id] | max // 0')"
   if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
     git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver-clone" || rc=1
     git -C "$work/approver-clone" config user.name smoke-approver
@@ -6429,22 +6428,28 @@ claim_resume_schedule() {
     log "terragucci approve: $(tr '\n' ' ' <<<"$out")"
   fi
   if [ $rc = 0 ]; then
-    # Wait for one resume run that started after the approval to end, then read the state once.
-    ended=""
-    for i in $(seq 1 160); do
-      ended="$(sched_runs | jq -r --argjson l "$last" '[.[] | select(.id > $l and (.status | IN("success","failure","cancelled","skipped")))] | first | if . == null then "" else "\(.id) \(.status)" end')"
-      [ -n "$ended" ] && break
-      [ $(( i % 20 )) = 0 ] && log "waiting for the resume workflow's next run ($(( i * 3 ))s)"
-      sleep 3
-    done
-    log "the resume run after the approval: ${ended:-none ended within 8 minutes}"
-    [ -n "$ended" ] || rc=1
+    # The resume job, once, as its schedule runs it.
+    dispatched() { api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -c '.workflow_runs // []'; }
+    if run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' \
+        "$URL/api/v1/repos/$repo/actions/workflows/terragucci-resume.yml/dispatches" 2>/dev/null)"; then
+      run="$(jq -r '.id // empty' <<<"$run" 2>/dev/null || true)"
+      deadline=$(( $(date +%s) + TIMEOUT )); status=""
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        status="$(dispatched | jq -r --arg r "${run:-0}" '[.[] | select($r == "0" or .id == ($r | tonumber))] | (.[0].status // "")')"
+        case "$status" in success|failure|cancelled|skipped) break ;; esac
+        sleep 3
+      done
+      log "the dispatched resume run ${run:-?} ended '${status:-unknown}'"
+      [ -n "$run" ] && print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci resume|wave [0-9]+' >&2 || true
+    else
+      log "Forgejo has no resume workflow to run in $repo"; rc=1
+    fi
     applied="$(gated_applied resume-schedule)"
     log "after the resume run: state for: ${applied:-nothing}"
     [ "$applied" = "canary/one " ] || { log "expected the resume run to apply canary/one"; rc=1; }
   fi
   drop_work "$work"
-  [ $rc = 0 ] && log "the approval started nothing, and the next resume run applied canary/one"
+  [ $rc = 0 ] && log "the approval started nothing, and one run of the resume workflow applied canary/one"
   return $rc
 }
 
