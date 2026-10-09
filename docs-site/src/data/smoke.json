@@ -1539,6 +1539,22 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "unlock-state",
+      "says": "terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c5480bff"
+    },
+    {
+      "claim": "tip-moved",
+      "says": "a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "beaf3d9c"
+    },
+    {
       "claim": "plan-no-lock",
       "says": "a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it",
       "needs": null,
