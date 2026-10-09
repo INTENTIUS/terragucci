@@ -527,9 +527,9 @@
       "claim": "pr-apply-lock",
       "says": "a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "230962e"
     },
     {
       "claim": "pr-apply-stale",
@@ -709,11 +709,11 @@
     },
     {
       "claim": "resume-schedule",
-      "says": "with apply.resume set, the resume workflow applies a waiting wave on its next run once an approval of its digest is on chant/lifecycle",
+      "says": "with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "230962e"
     },
     {
       "claim": "approve-plan",
@@ -1039,9 +1039,9 @@
       "claim": "rollout-pins",
       "says": "rollout moves an oci:// tag and a registry version pin, each in the shape it had",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "230962e"
     },
     {
       "claim": "rollout-continue",
@@ -1049,7 +1049,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "230962e"
     },
     {
       "claim": "policy-opa",
