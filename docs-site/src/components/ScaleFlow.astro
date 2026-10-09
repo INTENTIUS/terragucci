@@ -1,0 +1,160 @@
+---
+// What one run of the scale bench does, drawn for its largest run: the untimed setup, then the
+// control repo, the repos and their waves, the buckets and the check at the end.
+import record from '../data/scale.json';
+
+const run = [...record.runs].sort((a, b) => b.estate.resources - a.estate.resources)[0];
+const n = (v: number) => v.toLocaleString('en-US');
+const platform = run?.note.by_repo.find((r) => r.repo === 'platform')?.roots ?? 0;
+const identityRepos = run ? run.estate.repos - 1 : 0;
+const identityRoots = run ? run.estate.roots - platform : 0;
+
+// The phases on the rail, with the colours the chart gives them.
+const rail = [
+	{ key: 'reconcile', label: 'reconcile', y: 150 },
+	{ key: 'create', label: 'create', y: 222 },
+	{ key: 'plan', label: 'plan', y: 244 },
+	{ key: 'change', label: 'change', y: 266 },
+];
+---
+{run && platform > 0 && (
+	<figure class="tg-scale-flow not-content">
+		<svg viewBox="0 0 360 432" role="img" aria-labelledby="tg-flow-title tg-flow-desc">
+			<title id="tg-flow-title">One run of the scale bench</title>
+			<desc id="tg-flow-desc">
+				Setup, not timed: terralith-gen writes one root module and the bench carves it into {n(run.estate.roots)} roots in {run.estate.repos} repos.
+				Timed: in the reconcile phase the control repo, whose terragucci.yml lists {run.estate.repos} repos, opens one pipeline pull request per repo.
+				The create, plan and change phases run in the repos: the platform repo applies the platform root in wave 1 and the {n(platform - 1)} roots that read its state in wave 2; {identityRepos} identity repos hold {n(identityRoots)} roots that read no state.
+				The runs write one state file per root and a report per stage to the reports bucket. Verify checks that the state files hold all {n(run.estate.resources)} resources.
+			</desc>
+			<defs>
+				<marker id="tg-flow-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+					<path d="M0,0 L8,4 L0,8 z" class="head" />
+				</marker>
+			</defs>
+
+			<text class="rail-label muted" x="0" y="42">setup</text>
+			<rect class="box setup" x="84" y="0" width="272" height="74" rx="6" />
+			<text class="small muted" x="96" y="20">not timed</text>
+			<text class="muted" x="96" y="40">terralith-gen writes one root module</text>
+			<text class="small muted" x="96" y="60">carved into {n(run.estate.roots)} roots in {run.estate.repos} repos</text>
+			<line class="flow dashed" x1="100" y1="74" x2="100" y2="98" marker-end="url(#tg-flow-arrow)" />
+
+			<line class="bracket" x1="78" y1="102" x2="78" y2="294" />
+			{rail.map((p) => (
+				<g>
+					<circle class={p.key} cx="6" cy={p.y - 4} r="4" />
+					<text class="rail-label" x="15" y={p.y}>{p.label}</text>
+				</g>
+			))}
+
+			<rect class="box" x="84" y="102" width="272" height="44" rx="6" />
+			<text class="strong" x="96" y="121">control repo</text>
+			<text class="small" x="96" y="138">terragucci.yml lists {run.estate.repos} repos</text>
+			<line class="flow" x1="100" y1="146" x2="100" y2="188" marker-end="url(#tg-flow-arrow)" />
+			<text class="small" x="110" y="171">one pipeline pull request per repo</text>
+
+			<rect class="box" x="84" y="192" width="130" height="102" rx="6" />
+			<text class="strong" x="94" y="210">platform repo</text>
+			<rect class="wave" x="92" y="218" width="114" height="32" rx="4" />
+			<text class="tiny muted" x="100" y="231">wave 1</text>
+			<text class="small" x="100" y="244">platform root</text>
+			<rect class="wave" x="92" y="256" width="114" height="32" rx="4" />
+			<text class="tiny muted" x="100" y="269">wave 2</text>
+			<text class="small" x="100" y="282">{n(platform - 1)} roots read it</text>
+
+			<rect class="box" x="226" y="192" width="130" height="102" rx="6" />
+			<text class="strong" x="236" y="210">{identityRepos} identity repos</text>
+			<text class="small" x="236" y="232">{n(identityRoots)} roots,</text>
+			<text class="small" x="236" y="248">{run.estate.roots_per_repo} to a repo</text>
+			<text class="small muted" x="236" y="270">read no state</text>
+
+			<line class="flow" x1="149" y1="294" x2="149" y2="318" marker-end="url(#tg-flow-arrow)" />
+			<line class="flow" x1="291" y1="294" x2="291" y2="318" marker-end="url(#tg-flow-arrow)" />
+
+			<rect class="box" x="84" y="322" width="130" height="42" rx="6" />
+			<text class="strong" x="94" y="340">state files</text>
+			<text class="small" x="94" y="356">one per root</text>
+			<rect class="box" x="226" y="322" width="130" height="42" rx="6" />
+			<text class="strong" x="236" y="340">reports bucket</text>
+			<text class="small" x="236" y="356">a report per stage</text>
+
+			<line class="flow" x1="149" y1="364" x2="149" y2="386" marker-end="url(#tg-flow-arrow)" />
+			<text class="rail-label muted" x="0" y="414">verify</text>
+			<rect class="box" x="84" y="390" width="272" height="42" rx="6" />
+			<text class="strong" x="96" y="408">verify</text>
+			<text class="small" x="96" y="424">the state files hold all {n(run.estate.resources)} resources</text>
+		</svg>
+	</figure>
+)}
+
+<style>
+	.tg-scale-flow {
+		margin: 1.5rem 0;
+	}
+	svg {
+		display: block;
+		width: 100%;
+		max-width: 30rem;
+		height: auto;
+		font-family: var(--sl-font);
+	}
+	text {
+		font-size: 12px;
+		fill: var(--sl-color-gray-1);
+	}
+	.strong {
+		font-weight: 600;
+		fill: var(--sl-color-white);
+	}
+	.small {
+		font-size: 11px;
+	}
+	.tiny {
+		font-size: 10px;
+	}
+	.muted {
+		fill: var(--sl-color-gray-3);
+	}
+	.rail-label {
+		font-size: 11px;
+		font-weight: 500;
+	}
+	.box {
+		fill: var(--tg-panel);
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1;
+	}
+	.box.setup {
+		fill: none;
+		stroke: var(--sl-color-gray-4);
+		stroke-dasharray: 4 3;
+	}
+	.wave {
+		fill: none;
+		stroke: var(--sl-color-gray-5);
+	}
+	.flow {
+		stroke: var(--sl-color-gray-3);
+		stroke-width: 1.5;
+	}
+	.flow.dashed {
+		stroke-dasharray: 3 3;
+	}
+	.head {
+		fill: var(--sl-color-gray-3);
+	}
+	.bracket {
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 2;
+	}
+	/* The chart's phase colours: dark first, then light. */
+	.reconcile { fill: #3987e5; }
+	.create { fill: #d95926; }
+	.plan { fill: #199e70; }
+	.change { fill: #c98500; }
+	:global(:root[data-theme='light']) .reconcile { fill: #2a78d6; }
+	:global(:root[data-theme='light']) .create { fill: #eb6834; }
+	:global(:root[data-theme='light']) .plan { fill: #1baf7a; }
+	:global(:root[data-theme='light']) .change { fill: #eda100; }
+</style>
