@@ -97,6 +97,23 @@ Each names a secret in your forge's store.
 | `notify.teams` | none | a Microsoft Teams incoming webhook address; the apply jobs get it as `TERRAGUCCI_TEAMS_WEBHOOK` |
 | `notify.webhook` | none | a webhook's address for the JSON event; the apply jobs get it as `TERRAGUCCI_WEBHOOK` |
 | `notify.webhook_key` | none, required with `notify.webhook` | the key that signs the event; the apply jobs get it as `TERRAGUCCI_WEBHOOK_KEY` |
+
+`notify.slack` and `notify.teams` reach the drift job too. `notify.relay` is not a secret: the apply jobs get the relay's name as `TERRAGUCCI_RELAY`.
+
+## The relay
+
+[`terragucci relay`](/terragucci/guides/approve-from-chat/) reads these from its own environment, in your cloud. No generated job gets them.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TERRAGUCCI_RELAY_REPO` | none, required | the repo's https clone address, with no credential in it |
+| `TERRAGUCCI_RELAY_TOKEN` | none, required | the approve-only token; the relay refuses to start with a token that administers the repo, may push to its default branch, or on GitLab has the `api` scope |
+| `TERRAGUCCI_RELAY_FORGE` | read from the host | `github`, `gitlab` or `forgejo`, for a host other than github.com and gitlab.com |
+| `TERRAGUCCI_RELAY_PRINCIPAL` | `terragucci-relay` | the name each approval records as `relayedBy` |
+| `SLACK_SIGNING_SECRET` | none | the Slack app's signing secret; without it the relay refuses every Slack request |
+| `TEAMS_WEBHOOK_SECRET` | none | the key Teams showed when you made the outgoing webhook; without it the relay refuses every Teams request |
+| `TERRAGUCCI_RELAY_SLACK_RESPONSE` | `https://hooks.slack.com/,https://hooks.slack-gov.com/` | the address prefixes a Slack `response_url` may have; the relay posts its answer to no other |
+| `PORT` | `8080` | the port it serves on |
 | `telemetry.headers_secret` | none | the value of `OTEL_EXPORTER_OTLP_HEADERS` |
 | `token_env` | by forge, see above | the forge token |
 
@@ -209,7 +226,7 @@ A local run needs none of these.
 
 | Forge | Variables |
 |---|---|
-| GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
+| GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
 | GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
@@ -230,6 +247,8 @@ Internal; a value set in `env:` is overwritten.
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
 | `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc` |
 | `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent comment's job: the prompt file and the turn limit |
+| `TG_REVIEW_PROMPT` | the review command's step: the prompt file, which is also its stdin |
+| `TG_DEFAULT_BRANCH` | the review job: the default branch, read from the event, that the instructions come from |
 | `TF_HTTP_ADDRESS`, `TF_PLUGIN_CACHE_DIR` | read from your job: GitLab state lowers parallelism; the roots of a stage share the cache, or one of the stage's own when it is unset |
 
 

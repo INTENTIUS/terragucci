@@ -17,6 +17,7 @@ import { CHANGES_SCHEMA, HISTORY_SCHEMA } from "../src/report/history";
 import { DORA_SCHEMA } from "../src/report/dora";
 import { INVENTORY_SCHEMA } from "../src/report/inventory";
 import { STATES_SCHEMA } from "../src/report/state-versions";
+import { RUN_SCHEMA, runSkeleton, withWave } from "../src/report/run-view";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import type { Report } from "../src/report/schema";
 import { copyToRun, INDEX_DESTROYS, INDEX_SCHEMA, runPath, uploadReport, VIEWS_DIR, writeReportDir } from "../src/report/store";
@@ -34,6 +35,7 @@ const STATES = schema("state-versions.schema.json");
 const CHANGES = schema("changes.schema.json");
 const HISTORY = schema("history.schema.json");
 const DORA = schema("dora.schema.json");
+const RUN_VIEW = schema("run.schema.json");
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1" };
@@ -97,7 +99,7 @@ const named = (s: Json): string[] => Object.keys(s.properties ?? {});
 
 describe("the reader contracts' schemas", () => {
   it("use only the keywords the check reads, and name the schema id the writer puts in `schema`", () => {
-    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA]] as const) {
+    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [RUN_VIEW, RUN_SCHEMA]] as const) {
       expect(unknownKeywords(s)).toEqual([]);
       expect(s.title).toBe(id);
       expect(s.properties.schema.const).toBe(id);
@@ -107,11 +109,24 @@ describe("the reader contracts' schemas", () => {
 
   it("ship beside report.schema.json: the build copies each one into dist, which the package publishes", () => {
     const shipped = readdirSync(SRC).filter((f) => f.endsWith(".schema.json")).sort();
-    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "state-versions.schema.json"]);
+    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "run.schema.json", "state-versions.schema.json"]);
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "../package.json"), "utf-8"));
     expect(pkg.files).toContain("dist");
     const build = readFileSync(join(import.meta.dirname, "../../../scripts/build-cli.mjs"), "utf-8");
     for (const f of shipped) expect(build).toContain(`"${f}"`);
+  });
+});
+
+describe("run.json", () => {
+  it("is what the waves' jobs write, and between them they carry every field the schema names", () => {
+    const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]));
+    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1" }, at(1));
+    v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "chant approve tf-apply wave-2 --plan d2", shares: 2 }, at(2));
+    v = withWave(JSON.stringify(v), skeleton, { number: 2, shares_applied: [1] }, at(3));
+    expect(validate(RUN_VIEW, v)).toEqual([]);
+    expect([...keys([v as unknown as Json])].sort()).toEqual(named(RUN_VIEW).sort());
+    expect([...keys(v.roots as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.roots.items).sort());
+    expect([...keys(v.waves as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items).sort());
   });
 });
 

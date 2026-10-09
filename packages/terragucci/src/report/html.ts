@@ -31,6 +31,21 @@ export function readInlineReport(html: string): Report {
   return JSON.parse(html.slice(start, end)) as Report;
 }
 
+/** A wave's state as the report's table says it: a plan that is made again after the waves it reads apply says so. */
+export function waveStateText(w: Report["waves"][number]): string {
+  const again = w.replans_after?.length ? `; plans again once wave ${w.replans_after.join(", ")} applies, and waits for an approval of that plan` : "";
+  return `${w.state ?? ""}${again}`.replace(/^; /, "");
+}
+
+/** Which roots read which, and on what outputs: the edges of the run's graph. */
+function readsList(report: Report): string {
+  const rows = report.roots.flatMap((r) => (r.reads ?? []).map((x) => {
+    const on = x.outputs === "planned" ? `planned outputs${x.unknown?.length ? `, ${x.unknown.map((u) => `<code>${esc(u)}</code>`).join(", ")} known once it applies` : ""}` : `applied state${x.why ? ` (${esc(x.why)})` : ""}`;
+    return `<li data-root="${esc(r.path)}" data-upstream="${esc(x.upstream)}"><code>${esc(r.path)}</code> reads <code>${esc(x.upstream)}</code> through <code>${esc(x.data)}</code>: ${on}</li>`;
+  }));
+  return rows.length ? `<h3>Reads</h3><ul id="reads">${rows.join("")}</ul>` : "";
+}
+
 /** The pull request the run planned, linked when its page is known. */
 function pullRequest(run: Report["run"]): string {
   if (!run.pull_request) return "";
@@ -268,7 +283,7 @@ export function renderHtml(report: Report): string {
   const filters = `<form class="filters" onsubmit="return false"><label>Group <select id="f-group">${opt("", "all")}${report.groups.map((g) => opt(g.id, `${g.id} (${g.units.length})`)).join("")}</select></label><label>Root <input id="f-root" placeholder="path contains" size="18"></label><label>Action <select id="f-action">${opt("", "all")}${actions.map((a) => opt(a, a)).join("")}</select></label>${report.waves.length ? `<label>Wave <select id="f-wave">${opt("", "all")}${report.waves.map((w) => opt(String(w.number), String(w.number))).join("")}</select></label>` : ""}<span id="shown" class="counts"></span></form>`;
 
   const waves = report.waves.length
-    ? `<h2>Waves</h2><table><tr><th>Wave</th><th>Roots</th><th>Set digest</th><th>Approval</th><th>Record</th></tr>${report.waves.map((w) => `<tr><td>${w.number}</td><td>${w.roots.length}</td><td><code class="digest">${esc(w.set_digest ?? "none: a root did not plan")}</code></td><td>${esc(w.approval)}</td><td>${w.gate ? `<code>${esc(w.gate.branch)}:${esc(w.gate.path)}</code>` : ""}</td></tr>`).join("")}</table>`
+    ? `<h2>Waves</h2><table id="waves"><tr><th>Wave</th><th>Roots</th><th>After</th><th>State</th><th>Set digest</th><th>Approval</th><th>Record</th></tr>${report.waves.map((w) => `<tr data-wave="${w.number}" data-state="${esc(w.state ?? "")}"><td>${w.number}</td><td>${w.roots.length}</td><td>${w.reads?.length ? `wave ${w.reads.join(", ")}` : ""}</td><td>${esc(waveStateText(w))}</td><td><code class="digest">${esc(w.set_digest ?? "none: a root did not plan")}</code></td><td>${esc(w.approval)}</td><td>${w.gate ? `<code>${esc(w.gate.branch)}:${esc(w.gate.path)}</code>` : ""}</td></tr>`).join("")}</table>${readsList(report)}`
     : "";
 
   const holes = report.holes.length ? `<h2>Holes (${report.holes.length})</h2><ul>${report.holes.map((h) => `<li><code>${esc(h.root)}: ${esc(h.address)}</code> ${esc(h.reason)}</li>`).join("")}</ul>` : "";

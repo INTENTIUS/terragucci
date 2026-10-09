@@ -47,7 +47,7 @@ A key the control repo sets away from its default reaches each project one of tw
 
 | How it reaches the project | Keys |
 |---|---|
-| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env` |
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 ```yaml
@@ -112,6 +112,8 @@ agent:
   via: forge
   token_env: AGENT_FORGE_TOKEN
   comment: true
+review:
+  agent: true
 decide:
   backend: laya
   url: http://decide:8790
@@ -124,7 +126,7 @@ dashboards: true
 | Key | Default | Meaning |
 |---|---|---|
 | `roots` | detected | globs of root directories |
-| `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply, tips and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's. With it, `rollouts` and a `drift` schedule under `respond.drift: pull-request` are config errors, since both edit the files the command writes; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
 | `steps` | none | commands run before or after a root's `init`, `plan`, `apply` or `drift`, in the stage's own job: each has `run`, one of `before` and `after`, and optionally `name`, `roots` (globs) and `on_failure` (`fail`, the default, or `approve`, which holds the root's wave at its gate instead). Read from `terragucci.yml` at base. Plain roots only; see [Run steps around a stage](/terragucci/guides/run-steps/) |
 | `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
@@ -134,7 +136,7 @@ dashboards: true
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1; `jobs`, the most jobs one wave's roots spread across, 1 when unset (plain roots on GitHub and Forgejo, not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
-| `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/) |
+| `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay`: the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
 | `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
 | `rollouts` | `false` (off) | a cron schedule for the rollout job, which opens the next wave of each rollout in flight once the last applied; `respond.rollout: off` leaves it out. Not in a control repo; see [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) for its token and the GitLab schedule |
@@ -143,6 +145,7 @@ dashboards: true
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket` (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), `endpoint` (the store's address, for an S3-compatible store, an emulator or a sovereign cloud), `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index)) and `role` (an AWS role ARN that writes, `s3://` only); see [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 | `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
+| `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers` and `required_version` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
@@ -160,6 +163,7 @@ dashboards: true
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge`), `token_env` and [`comment`](#the-agent-comment) |
 | `atlantis_comments` | `false` (off) | `true`: `atlantis plan` and `atlantis apply` comments work as `/terragucci plan` and `/terragucci apply`, with the same checks; see [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) |
+| `review` | none (off) | `agent`, `command`, `key_secret`, `instructions`, `timeout`: a model reviews each pull request's description against its plan; see [The review](#the-review) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
@@ -185,7 +189,7 @@ version:
 
 A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
 
-A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version, and a Terragrunt repo runs one version of its binary for every unit. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version.
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version, and a Terragrunt repo runs one version of its binary for every unit. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-a-root-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
 
 ## Apply before merge
 
@@ -314,6 +318,29 @@ agent:
 | `timeout` | 30 | minutes before the agent's job is stopped |
 
 The agent's jobs get no cloud credentials; `init` refuses `agent.comment` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-agent-comment).
+
+## The review
+
+`review.agent` adds two jobs after a pull request's plan: a model compares the title and description with the diff, the plan note and the policy results, and the pipeline posts its review as a note. GitHub and Forgejo only; [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/).
+
+```yaml
+review:
+  agent: true
+  command: my-reviewer --stdin
+  key_secret: ANTHROPIC_API_KEY
+  instructions: .terragucci/review.md
+  timeout: 10
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `agent` | `false` | `true` turns the review on; the other keys need it |
+| `command` | Claude Code in print mode with no tools | run in the default branch's files with the prompt on stdin; what it prints is the review |
+| `key_secret` | `ANTHROPIC_API_KEY` | the secret holding the model's API key, given to the command's step alone |
+| `instructions` | `.terragucci/review.md` | the instructions file, read from the default branch only |
+| `timeout` | 10 | minutes before the review job is stopped |
+
+The review jobs get no cloud credentials and the command's step no forge token; `init` refuses `review` on GitLab. With `policy` set, each `tf-apply` wave reads the review's risk as [`input.review`](/terragucci/reference/policy/#review).
 
 ## The decide block
 

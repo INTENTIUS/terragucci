@@ -305,6 +305,7 @@ describe("init in a Terragrunt repo", () => {
     const check = doc.jobs.check.steps.at(-2).run as string;
     expect(check).toContain("terragrunt hcl fmt --check --diff");
     expect(check).toContain("terragrunt hcl validate --inputs --no-color --filter '!./catalog/**'");
+    expect(check).toContain("terragucci check-pins");
     expect(check).toContain("terragucci check-policy");
     const plan = doc.jobs.plan.steps.at(-2).run as string;
     const layers = "'live/dev/vpc;live/dev/app;live/prod/vpc;live/prod/app'";
@@ -488,7 +489,7 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(runs).toHaveLength(2);
     expect(runs[0]).toEqual(expect.arrayContaining(["--all", "--no-filters-file", "{./live/dev/app}", "{./live/dev/vpc}", "--json-out-dir"]));
     expect(runs[0]).not.toContain("{./live/prod/vpc}");
-    expect(r.report.minor).toBe(20);
+    expect(r.report.minor).toBe(21);
     // A run report with no Started and Ended times no unit, and the report says so.
     expect(r.report.timings).toEqual({ roots: [], resources: [], note: expect.stringMatching(/^Terragrunt ran the binary/) });
     const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
