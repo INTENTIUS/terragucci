@@ -197,7 +197,7 @@ describe("a wave behind its gate", () => {
     const ledger = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
     expect(ledger.resolutions).toEqual([]);
     expect(ledger.pending).toHaveLength(1);
-    expect(ledger.pending[0]).toMatchObject({ op: "tf-apply", gate: "wave-1", members: [{ member: "a" }] });
+    expect(ledger.pending[0]).toMatchObject({ op: "tf-apply", gate: "wave-1", members: [{ member: "a" }], commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
     expect(ledger.pending[0].planDigest).toMatch(/\S/);
 
     expect(await applyWave(work, { ...opts, now: T(2) })).toBe(3);

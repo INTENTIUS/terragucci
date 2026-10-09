@@ -247,6 +247,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
+    ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),
   });
@@ -254,7 +255,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
-  const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
+  const files: FileChange[] = [plan(pipelinePath, pipeline.content), ...(pipeline.extra ?? []).map((f) => plan(join(repo, f.path), f.content))];
   // On GitLab the repo's own .gitlab-ci.yml includes the pipeline; its jobs stay.
   if (forgeChoice.value === "gitlab") {
     const root = join(repo, GL_ROOT_FILE);

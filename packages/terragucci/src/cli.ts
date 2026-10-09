@@ -17,8 +17,10 @@
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
-  terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
- *   terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a waiting wave's digest with chant approve)
+  terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
+  terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
+ *   terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
+ *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
@@ -39,7 +41,8 @@
  * config error; 3 waiting on an approval; 4 a wave's plans changed after
  * its approval, so it applied nothing.
  */
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
@@ -61,7 +64,8 @@ import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
-import { applyWave } from "./apply";
+import { applyWave, readLedger } from "./apply";
+import { resumeStep } from "./resume";
 import { checkPolicyTests, checkRoot, emitCheck } from "./check";
 import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
@@ -433,7 +437,7 @@ export async function main(argv: string[]): Promise<number> {
       case "approve": {
         const sign = flags.sign === true ? true : str(flags, "sign");
         const plan = flags.plan === true ? "" : str(flags, "plan");
-        const done = await approve(cwd, { ...(args[0] ? { wave: args[0] } : {}), ...(plan !== undefined ? { plan } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
+        const done = await approve(cwd, { ...(flags["no-resume"] === true ? { resume: false } : {}), ...(args[0] ? { wave: args[0] } : {}), ...(plan !== undefined ? { plan } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
       }
       case "override": {
@@ -443,6 +447,20 @@ export async function main(argv: string[]): Promise<number> {
         if (rules.some((r) => r === "" || r.startsWith("--"))) throw new ConfigError("--rule needs a rule id, such as main.deny_public_bucket");
         const done = await overrideDenial(cwd, { root: args[0] ?? "", rules, reason: str(flags, "reason") ?? "", ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
+      }
+      case "resume": {
+        const forge = str(flags, "forge") ?? (process.env.GITLAB_CI === "true" ? "gitlab" : process.env.GITEA_ACTIONS === "true" || process.env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
+        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("resume's --forge is github, forgejo or gitlab");
+        const out = str(flags, "out");
+        const sha = process.env.TG_SHA || spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).stdout.trim();
+        const step = await resumeStep({ ledger: readLedger(cwd), forge, sha, env: process.env });
+        if (out) writeFileSync(resolve(cwd, out), step.kind === "apply" ? `TG_SHA=${step.sha}\nTG_PR=${step.pr ?? ""}\n` : "");
+        if (step.kind === "none") console.log(`terragucci resume: nothing to resume: ${step.why}`);
+        else {
+          for (const w of step.waves) console.log(`terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
+          console.log(step.kind === "apply" ? `terragucci resume: applying the waves again at ${step.sha.slice(0, 8)}; each gate decides` : `terragucci resume: retried ${step.job} of pipeline ${step.pipeline}${step.url ? ` (${step.url})` : ""}; the waves after it follow`);
+        }
+        return 0;
       }
       case "notify": {
         const event = args[0] as NotifyEvent;

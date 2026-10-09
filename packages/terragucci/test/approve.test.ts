@@ -65,9 +65,15 @@ describe("terragucci approve", () => {
     const fake = join(work, "..", "chant.sh");
     write(join(work, ".."), { "chant.sh": `#!/bin/sh\necho "$@" > ${JSON.stringify(join(work, "..", "args"))}\n` });
     execFileSync("chmod", ["+x", fake]);
-    const r = await approve(work, { chant: fake, sign: "/keys/me", log: () => {} });
+    const lines: string[] = [];
+    const r = await approve(work, { chant: fake, sign: "/keys/me", log: (l) => void lines.push(l) });
     expect(r.code).toBe(0);
+    // A local origin names no forge: the approval stands, and the line says how the wave resumes.
+    expect(lines.at(-1)).toMatch(/^not resumed from here: the origin is not on github.com or gitlab.com/);
     expect(readFileSync(join(work, "..", "args"), "utf-8").trim()).toBe("approve tf-apply wave-2 --plan jcs1-sha256:cc --sign /keys/me");
+    const quiet: string[] = [];
+    await approve(work, { chant: fake, resume: false, log: (l) => void quiet.push(l) });
+    expect(quiet.at(-1)).toMatch(/^not resumed \(--no-resume\)/);
   });
 
   it("refuses when no wave waits, when several do and none is named, and a wave that does not wait", async () => {

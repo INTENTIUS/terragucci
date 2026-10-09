@@ -289,7 +289,7 @@ approval: ledger (the default)
 ## approve
 
 ```bash
-terragucci approve [wave-<k>] [--plan <digest>] [--actor <name>] [--sign [<key>]] [--dry-run]
+terragucci approve [wave-<k>] [--plan <digest>] [--actor <name>] [--sign [<key>]] [--dry-run] [--no-resume]
 ```
 
 | Flag | Meaning |
@@ -299,6 +299,7 @@ terragucci approve [wave-<k>] [--plan <digest>] [--actor <name>] [--sign [<key>]
 | `--actor` | the name the approval records; under `approval: sealed`, your principal in the signers file |
 | `--sign` | seal the approval with this key, or with git's `user.signingkey` when no key is given; the default under `approval: sealed` |
 | `--dry-run` | print the `chant approve` command and run nothing |
+| `--no-resume` | record the approval only; by default it then starts the wave again with your forge token ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)) |
 
 Run it in a checkout whose `origin` you can push to. It finds chant in `node_modules/.bin`, then on the path.
 
@@ -314,6 +315,14 @@ With a digest that no longer waits, because the plans moved after you read them:
 ```text
 not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha256:2e7a63f3.... The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest
 ```
+
+## resume
+
+```text
+terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
+```
+
+The resume job runs it ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). It reads `chant/lifecycle` and finds each waiting wave whose digest has an approval no apply has used. On GitHub and Forgejo it writes `TG_SHA` and `TG_PR` to `--out` for the job's waves to apply; on GitLab it retries the waiting apply job. It exits 0 when there is nothing to resume.
 
 ## override
 

@@ -19,7 +19,7 @@ A message in your channel each time an apply job stops at a wave. A message appr
 | You want | You set up |
 |---|---|
 | a notice in Slack or Teams, and under `approval: pr-review` a link straight to the review that approves the wave | `notify:` and an incoming webhook for the channel. Nothing to install or host. |
-| a chat click that becomes an approval on `chant/lifecycle` | a relay of your own: a bot or a function that receives the [signed event](#send-events-to-your-own-webhook) and, for the person who clicked, runs `terragucci approve wave-<k> --plan <digest>` with the digest the event named, so plans that moved since are never approved |
+| a chat click that becomes an approval on `chant/lifecycle` | a relay of your own: a bot or a function that receives the [signed event](#send-events-to-your-own-webhook) and, for the person who clicked, runs `terragucci approve wave-<k> --plan <digest>` with the digest the event named, so plans that moved since are never approved. The wave then resumes: with the relay's token, or within [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) minutes |
 
 | The wave | Exit | The message says |
 |---|---|---|

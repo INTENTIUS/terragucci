@@ -1,7 +1,7 @@
 ---
 title: Approve a waiting wave
 description: Read what a wave will do, record your approval, and let the apply carry on.
-claims: [waves, sealed, comment-apply, wave-report, ledger-default, approval-at-base, pr-review, pr-review-moved, pr-review-status, approve-command, signer-trust, notify-chat]
+claims: [waves, sealed, comment-apply, wave-report, ledger-default, approval-at-base, pr-review, pr-review-moved, pr-review-status, approve-command, signer-trust, notify-chat, resume-approve, resume-schedule]
 prompt: |
   Read https://intentius.io/terragucci/guides/approve-a-wave/.
   Find the waiting wave with `npx terragucci approve --dry-run`, summarize its
@@ -142,6 +142,7 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | `--actor` | the name the approval records; pass it on your own machine, where chant would otherwise record `$USER` |
    | `--sign` | seals the approval; the default under `approval: sealed` |
    | `--dry-run` | prints the command and runs nothing |
+   | `--no-resume` | records the approval and starts nothing |
 
    The approval binds that digest only; a wave that plans differently is refused as changed.
 
@@ -151,7 +152,9 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
 
    <Shot step="approved" view="record" alt="The approval commit on chant/lifecycle in Forgejo, Gate resolution record: it appends one line to _gates/tf-apply.jsonl, a human approval of wave 4 resolved by terragucci-admin, binding the plan digest of the pending line above it and sealed with an ssh signature" />
 
-4. Run the stage again.
+4. Let the wave run again.
+
+   `terragucci approve` starts it again right after it records the approval, with your forge token: `GH_TOKEN` (or `gh auth login`) on GitHub, `GITLAB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo. Without one it says so. With [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) set, the resume job applies the wave within that many minutes of the approval, whoever recorded it. Otherwise, or after a pull request review under `approval: pr-review`, run it again by hand:
 
    | Situation | How to re-run |
    |---|---|
