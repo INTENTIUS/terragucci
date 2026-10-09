@@ -1,52 +1,60 @@
 ---
-title: What is new in 0.4.3
-description: "terragucci 0.4.3, released 2026-10-09."
+title: Changes in 0.4.4
+description: "terragucci 0.4.4, released 2026-10-09."
 ---
 
-terragucci 0.4.3 is on npm as `@intentius/terragucci@0.4.3`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.3) lists every change.
+terragucci 0.4.4 is on npm as `@intentius/terragucci@0.4.4`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.4) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.3 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.4 init`, then merge the pipeline it writes |
 
-## Approvals, chat and webhooks
-
-| What | Where |
-|---|---|
-| `terragucci approve` pushes an approval to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) and restarts the waiting wave with your token; the scheduled resume job applies any wave it could not restart | [Approve with chant](/terragucci/guides/approve-a-wave/#approve-with-chant) |
-| `terragucci approve --plan <digest>` approves only that plan digest | [Approve with chant](/terragucci/guides/approve-a-wave/#approve-with-chant) |
-| Under `approval: pr-review`, a waiting wave's chat message links the pull request's review; the message itself approves nothing | [Approve from the message](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) |
-| `notify` posts a signed, versioned JSON event to a webhook of your own, which a relay you run can act on | [Send events to your own webhook](/terragucci/guides/notify-a-chat-channel/#send-events-to-your-own-webhook) |
-| An approval's audit entry records who relayed it | [Audit trail](/terragucci/reference/audit-trail/) |
-
-## Modules
+## Security
 
 | What | Where |
 |---|---|
-| `modules.attest: true` signs each module release with cosign, with provenance and an SPDX SBOM, and records it in the release ledger | [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
-| `modules.require: attested` makes `tf-check` and `tf-plan` refuse a root that pins an unattested release | [Require attested releases](/terragucci/guides/publish-modules/#require-attested-releases) |
-| A scheduled job continues every rollout in flight | [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) |
+| A sensitive value's old value no longer reaches plan.json, the report or the bucket: OpenTofu repeats some sensitive inputs unmarked, and terragucci now redacts those copies too | [Report](/terragucci/reference/report/) |
+| The policy reads an AI review's verdict from the review job's own artifact for that head, never from a comment | [Review a pull request with an agent](/terragucci/guides/agent-review-a-pull-request/) |
 
-## The estate page
-
-| What | Where |
-|---|---|
-| The resources each root holds, by address, type and provider, never values | [See every project](/terragucci/guides/see-every-project/#the-resources) |
-| Each resource's change history, with who approved each apply | [See every project](/terragucci/guides/see-every-project/#change-history) |
-| JSON Schemas for `index.json`, `estate.json` and audit lines, and the bucket layout on one page | [Reports bucket](/terragucci/reference/reports-bucket/) |
-
-## Security and control repos
+## Plans across roots
 
 | What | Where |
 |---|---|
-| No forge token where a pull request's code runs: separate note jobs, a `fmt` job and checkouts without credentials | [Threat model](/terragucci/reference/threat-model/) |
-| A control repo's defaults reach each project: `reconcile` writes every key the jobs read into its `terragucci.yml` | [Govern many repos](/terragucci/guides/govern-many-repos/) |
-| An estate of 10,069 resources in 1,361 roots, planned and applied through the generated pipeline | [Scale](/terragucci/reference/scale/) |
+| A root that reads another's state plans on that root's planned outputs, with unknown values named, and its wave plans again once the upstream applies | [Waves and approvals](/terragucci/concepts/waves-and-approvals/) |
+| Each apply writes a run page to your bucket: the waves, what each reads, and where each stands | [Reports bucket](/terragucci/reference/reports-bucket/) |
+| The estate page draws each project's dependency graph, and the plan note and run page show a change's blast radius and a timeline of each wave | [See every project](/terragucci/guides/see-every-project/) |
+| `waves.jobs` spreads a wide wave's roots across jobs under one gate | [Waves and approvals](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) |
 
-## Fixes
+## State
 
 | What | Where |
 |---|---|
-| The check step runs when its shell cannot restart itself | [Pipeline](/terragucci/reference/pipeline/) |
-| Rollouts read Forgejo's 404 on a just-pushed repo's pull requests as none open | [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) |
-| On GitLab, an apply wave under policy pushes with the project token, so a denial under `gate: never` is recorded for an override | [Overriding a denial](/terragucci/reference/policy/#overriding-a-denial) |
+| Each apply records its state version, listed on the estate page | [See every project](/terragucci/guides/see-every-project/) |
+| `terragucci unlock-state` releases a lock a killed job left, only after an approval and with a record of who did it | [Release a state lock](/terragucci/guides/release-a-state-lock/) |
+| Migration files move resources between roots or to a new backend, planned with zero changes, approved by digest, with a gated revert | [Move resources between roots](/terragucci/guides/move-resources-between-roots/) |
+
+## Approvals and review
+
+| What | Where |
+|---|---|
+| Approve and Decline buttons in Slack, and an approving reply in Teams, through `terragucci relay`, which you run | [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) |
+| An AI review of a pull request's description against its plan, on your own model, from instructions on the default branch; it never approves | [Review a pull request with an agent](/terragucci/guides/agent-review-a-pull-request/) |
+| `cost.approve_above` holds a wave whose monthly cost change is over the amount, and cost is in the policy input | [Estimate the cost of a change](/terragucci/guides/estimate-cost/) |
+
+## Your setup
+
+| What | Where |
+|---|---|
+| `steps` run your commands before and after each stage; a failed `approve` step holds the wave | [Run your own steps](/terragucci/guides/run-steps/) |
+| Each root pins its own OpenTofu or Terraform version | [Choose your binary](/terragucci/guides/use-a-binary/) |
+| `terragucci generate` writes each root's backend, provider and version files from `terragucci.yml` | [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
+| `terragucci import atlantis` and `import digger` write `terragucci.yml` from your existing config | [Coming from Atlantis or OpenTaco](/terragucci/guides/coming-from-atlantis-or-opentaco/) |
+| A tip opens a pull request that writes the `moved` block for a rename, so it plans as a move | [Tips](/terragucci/reference/tips/) |
+| DORA metrics on the estate page and as OTLP gauges | [Delivery metrics](/terragucci/reference/delivery-metrics/) |
+
+## Terragrunt and CDK Terrain
+
+| What | Where |
+|---|---|
+| `modules.require: attested` is enforced for each Terragrunt unit | [Publish modules](/terragucci/guides/publish-modules/) |
+| CDK Terrain stacks apply through gated waves, and the tips job synthesizes first | [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
