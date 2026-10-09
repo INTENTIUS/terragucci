@@ -3,6 +3,8 @@ title: Locks that settle at the API
 description: Applies of one estate that touch different resources run at once, settled by conditional writes to an S3 backend with no lock table or database to run; each resource carries its estate as a tag, and one bucket serves every estate.
 ---
 
+With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), every estate gets the three features on this page. Other binaries keep your own backend and its locking.
+
 ## Locking per resource
 
 Two applies of one estate that change different resources run at the same time. Neither waits for an estate-wide lock.
@@ -18,8 +20,6 @@ Each resource has its own record in the estate's record store bucket. Every reco
 |---|---|---|
 | create | `If-None-Match: *` | the write fails, because the record exists |
 | update | `If-Match: <the version it read>` | the write fails, because the version moved |
-
-<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci. <a href="/terragucci/guides/use-a-binary/#choudoufu">Set it up</a>.</small>
 
 ## Live resource markers
 
@@ -48,8 +48,6 @@ The scoped role's write statement, for an estate called `prod`:
 ```
 
 The role also reads with `ec2:Describe*`. [choudoufu's marker spec](https://github.com/INTENTIUS/choudoufu/blob/main/live/MARKERS.md) publishes the whole grant, creates included.
-
-<small>Markers are written by choudoufu. <a href="/terragucci/guides/use-a-binary/#choudoufu">Choose your binary</a> turns it on with one line.</small>
 
 ## One backend for all your estates
 
@@ -82,5 +80,3 @@ The apply checks the bucket before it writes a record:
 | public access blocks | all four on |
 
 [choudoufu's bucket page](https://intentius.io/choudoufu/docs/use/bucket/) has the IAM policy for a role per estate.
-
-<small>Only choudoufu estates keep a record store; <a href="/terragucci/guides/use-a-binary/#choudoufu">switch the binary</a> to get one.</small>

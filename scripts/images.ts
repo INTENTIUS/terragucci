@@ -14,7 +14,15 @@ const root = join(import.meta.dirname, "..");
 const NAMES = ["tofu", "terraform", "terragrunt", "choudoufu"] as const;
 type Name = (typeof NAMES)[number];
 
-const ref = (name: Name): string => `${REGISTRY}/terragucci-${name}:${imageTag(name)}`;
+// TG_IMAGE_SUFFIX (stack/smoke.sh sets it: "-t" and 12 hex digits of this tree's
+// bundle and Dockerfiles) gives a tree tags of its own, so claim runs from two
+// worktrees never run each other's code under one shared tag.
+const SUFFIX = process.env.TG_IMAGE_SUFFIX ?? "";
+if (SUFFIX && !/^-t[0-9a-f]{12}$/.test(SUFFIX)) {
+  console.error(`TG_IMAGE_SUFFIX is "-t" and 12 hex digits, not "${SUFFIX}"`);
+  process.exit(2);
+}
+const ref = (name: Name): string => `${REGISTRY}/terragucci-${name}:${imageTag(name)}${SUFFIX}`;
 
 /** What each image must answer, with a version it must print. */
 const PROBES: Record<Name, Array<[string[], string]>> = {

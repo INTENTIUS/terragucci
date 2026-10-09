@@ -63,6 +63,8 @@ The binary's exporter goes to a loopback receiver that forwards batches to your 
 
 ## Where the time went
 
+With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the report also times each provider call, sums timings by resource type on a large estate, and times every state lock wait.
+
 ### What the report lists
 
 Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where the run spent its time, endpoint or not:
@@ -82,8 +84,6 @@ The report can also list these two:
 | provider calls | choudoufu | `tfplugin5.Provider/<method>` and `tfplugin6.Provider/<method>`, with `rpc.method` | `roots[].timings.provider_calls` |
 | summed timings | choudoufu, once a walk passes its span budget (2000 by default) | `Aggregate: <span name>` | `roots[].timings.aggregates` |
 
-<small>This needs <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci. <a href="/terragucci/guides/use-a-binary/#choudoufu">Set it up</a>.</small>
-
 ### Timings by binary
 
 | Binary | What the report gets |
@@ -95,7 +95,7 @@ The report can also list these two:
 
 ### State lock waits
 
-On a root whose backend locks (S3 with `use_lockfile`, say), each wait shows as a `State lock wait` span with its attempts. The report lists it and `terragucci_lock_wait_seconds` carries it.
+With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait shows as a `State lock wait` span with its attempts. The report lists it and `terragucci_lock_wait_seconds` carries it.
 
 | Run | State lock wait |
 |---|---|
@@ -103,8 +103,6 @@ On a root whose backend locks (S3 with `use_lockfile`, say), each wait shows as 
 | a `tf-apply` wave's plan and apply | up to five minutes (`-lock-timeout=5m`) |
 
 `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` set a different wait. A wave writes its report to `terragucci-report/` and the `reports` bucket when set.
-
-<small>Lock-wait spans come from choudoufu on a root whose backend locks; <a href="/terragucci/guides/use-a-binary/#choudoufu">Choose your binary</a> sets it up.</small>
 
 The HTML report shows them under "Where the time went", and `report.json` carries `timings` and `roots[].timings`; see [Report JSON schema](/terragucci/reference/report-schema/).
 
