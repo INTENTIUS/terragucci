@@ -1031,7 +1031,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "7cf53dd9"
     },
     {
       "claim": "comment-refused",
@@ -1379,6 +1379,30 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "state-roles",
+      "says": "with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7cf53dd9"
+    },
+    {
+      "claim": "state-export",
+      "says": "terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7cf53dd9"
+    },
+    {
+      "claim": "state-edges",
+      "says": "the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7cf53dd9"
+    },
+    {
       "claim": "migrate-resume",
       "says": "with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again",
       "needs": null,
@@ -1576,7 +1600,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "5ba02028"
+      "commit": "7cf53dd9"
     },
     {
       "claim": "linked-states",
