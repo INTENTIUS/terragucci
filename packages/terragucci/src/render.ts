@@ -69,7 +69,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, BRANCHES_NOT_TERRAGRUNT, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
@@ -78,7 +78,7 @@ import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { reviewJobs } from "./render-review";
 import type { ReviewInput } from "./review-agent";
-import { applyWaves, DECIDED_DIR, waveShares } from "./apply";
+import { applyWaves, branchesArg, DECIDED_DIR, waveShares } from "./apply";
 import { CHECK_DIR } from "./check";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
 import {
@@ -199,6 +199,10 @@ export interface PipelineInput {
   applyRequires?: ApplyRequire[];
   /** `locks: plan`: the `pr-lock` job locks a pull request's roots from its first plan (GitHub and Forgejo). */
   locksPlan?: boolean;
+  /** `apply.branches`: a push to a named branch runs the apply waves for that branch's roots alone, and the default branch skips them. Plain roots, `apply.when: merge`. */
+  applyBranches?: Record<string, string[]>;
+  /** `own_jobs`: jobs of the repo's own, written after terragucci's as they are (ownJobsYAML). */
+  ownJobs?: Record<string, Record<string, unknown>>;
 }
 
 export interface RenderedPipeline {
@@ -752,6 +756,8 @@ export interface ApplyWaveInput {
   share?: number;
   /** The pipeline splits a wave across jobs, so every apply job holds the run's shared lock (sharedApplyLock) under this job name. */
   sharedLock?: string;
+  /** `apply.branches`: the job passes the map and the branch it runs on, and the stage applies that branch's roots alone (branchLayers). */
+  branches?: Record<string, string[]>;
 }
 
 /**
@@ -794,6 +800,7 @@ export function applyScript(
     ...(tg && last ? ["--rest"] : []),
     ...(input.shares !== undefined ? ["--shares", String(input.shares)] : []),
     ...(share !== undefined ? ["--share", String(share)] : []),
+    ...(input.branches ? ["--branches", sh(branchesArg(input.branches)), "--branch", forge === "gitlab" ? '"$CI_COMMIT_BRANCH"' : '"$GITHUB_REF_NAME"'] : []),
   ];
   // With --rest the wave that stopped may be a later one: its outcome line names it.
   const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
@@ -871,6 +878,8 @@ export interface CommentApplyInput {
   notify?: boolean;
   /** GitHub, when the pipeline splits a wave across jobs: the apply takes the lock tag those jobs hold, as on Forgejo, since the shares run outside the concurrency group. */
   lockTag?: boolean;
+  /** `apply.branches`: the apply of a merge into the default branch skips the roots another branch applies. */
+  branches?: Record<string, string[]>;
 }
 
 /**
@@ -887,7 +896,7 @@ function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, 
   const triage = responds(input.respond, "apply-failed");
   const refused = responds(input.respond, "wave-refused");
   const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(base ? [base] : [])];
+  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destroy", ...(input.approval ? ["--approval", input.approval] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(input.branches ? ["--branches", sh(branchesArg(input.branches))] : []), ...(base ? [base] : [])];
   return [
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
@@ -1581,6 +1590,28 @@ function header(image: string, fromConfig?: boolean): string {
   ].join("\n");
 }
 
+/** Keys of a GitLab pipeline that are not jobs, so no job of your own may take one as its name. */
+const GL_KEYWORDS_NOT_JOBS = ["default", "include", "stages", "variables", "workflow", "image", "services", "cache", "before_script", "after_script", "pages", "spec"];
+
+/** The line above the jobs `own_jobs` adds, which says where they come from. */
+export const OWN_JOBS_LINE = "# Your own jobs, from own_jobs in terragucci.yml, as they are there.";
+
+/**
+ * `own_jobs`, after the jobs terragucci writes: on GitHub and Forgejo under
+ * the workflow's `jobs:`, which the serializer writes last, and on GitLab as
+ * top-level jobs. Each job is written as it is. A name terragucci already
+ * gives a job, or one GitLab reads as a keyword, is refused.
+ */
+export function ownJobsYAML(own: PipelineInput["ownJobs"], ours: string[], forge: ForgeName): string {
+  if (!own || Object.keys(own).length === 0) return "";
+  for (const name of Object.keys(own)) {
+    if (ours.includes(name)) throw new RenderError(`own_jobs.${name}: terragucci writes a job of that name; give yours another`);
+    if (forge === "gitlab" && GL_KEYWORDS_NOT_JOBS.includes(name)) throw new RenderError(`own_jobs.${name}: GitLab reads ${name} as a keyword, not a job; give yours another name`);
+  }
+  const indent = forge === "gitlab" ? 0 : 1;
+  return [`${forge === "gitlab" ? "" : "  "}${OWN_JOBS_LINE}`, ...Object.entries(own).map(([name, job]) => emitYAMLEntry(name, job, indent))].join("\n") + "\n";
+}
+
 function text(result: string | { primary: string }): string {
   return typeof result === "string" ? result : result.primary;
 }
@@ -1594,6 +1625,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (waveJobs && forge === "gitlab") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
   if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
+  const applyBranches = input.applyBranches && Object.keys(input.applyBranches).length > 0 ? input.applyBranches : undefined;
+  if (applyBranches && tg) throw new RenderError(`apply.branches: ${BRANCHES_NOT_TERRAGRUNT}`);
+  if (applyBranches && input.applyWhen === "pull-request") throw new RenderError(`apply.branches: ${BRANCHES_NOT_PR_APPLY}`);
+  const branchNames = applyBranches ? Object.keys(applyBranches) : [];
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
   // review.agent: an apply job reads the verdict from the review job's artifact in the pull request's run, which takes actions: read on GitHub.
@@ -1664,7 +1699,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const wave = i + 1;
     const n = sharesOf(i);
     const name = `apply-wave-${wave}`;
-    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}) };
+    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}) };
     applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(split ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
     before = [name];
     if (n > 1) {
@@ -1686,7 +1721,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(split && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(split && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
   // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
@@ -1742,6 +1777,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const notMrApply = prApply ? ` && $${MR_VAR} == null` : "";
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
+    // apply.branches: a push to a named branch runs the apply jobs too, for that branch's roots.
+    const onBranches = branchNames.map((b) => ` || $CI_COMMIT_BRANCH == "${b}"`).join("");
+    const onApply = onBranches ? `($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH${onBranches})${scheduled ? ' && $CI_PIPELINE_SOURCE != "schedule"' : ""}${notMrApply}` : onDefault;
+    const notBranches = branchNames.map((b) => ` && $CI_COMMIT_BRANCH != "${b}"`).join("");
     const mrApplyRule = `$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${MR_VAR}`;
     // Only the jobs that run no merge request code see the merge token: GitLab gives a variable scoped to this environment to the jobs that name it.
     const mergeEnvironment = { environment: { name: MERGE_ENVIRONMENT, action: "access" } };
@@ -1786,7 +1825,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         needs: ["check"],
         variables: { ...jobEnv, TG_TOKEN: gitlabEnv.TG_TOKEN },
-        rules: [new Rule({ if: `$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"${notMrApply}`, when: "on_failure" } as never)],
+        rules: [new Rule({ if: `$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH${notBranches} && $CI_PIPELINE_SOURCE != "schedule"${notMrApply}`, when: "on_failure" } as never)],
         script: script(bash("FMT", fmtScript(binary, forge, tokenEnv))),
       } as never) as never);
     }
@@ -1797,7 +1836,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv, ...glCostEnv },
-        rules: [new Rule({ if: onDefault })],
+        rules: [new Rule({ if: onApply })],
         resource_group: "terragucci-apply",
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
@@ -1938,7 +1977,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
     });
-    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out };
+    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge) };
   }
 
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
@@ -2131,7 +2170,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       "runs-on": "ubuntu-latest",
       container: { image },
       needs: "check",
-      if: "always() && needs.check.result == 'failure' && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)",
+      if: `always() && needs.check.result == 'failure' && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)${branchNames.map((b) => ` && github.ref != 'refs/heads/${b}'`).join("")}`,
       permissions: { contents: "write" },
       env: { TG_TOKEN: "${{ github.token }}" },
       steps: [
@@ -2214,7 +2253,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
-  const applyIf = `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`;
+  // apply.branches: a push to a named branch runs the waves too, for that branch's roots.
+  const onRefs = ["github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", ...branchNames.map((b) => `github.ref == 'refs/heads/${b}'`)];
+  const applyIf = `${drift ? "github.event_name == 'push' && " : ""}${onRefs.length > 1 ? `(${onRefs.join(" || ")})` : onRefs[0]}`;
   for (const job of pushApplyJobs) {
     if (job.done) {
       // After the last wave's shares: it runs no code and holds no credential, and posts the one success.
@@ -2385,7 +2426,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(resume)) });
   }
   if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined))) });
-  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(entities)), ...(extra.length ? { extra } : {}) };
+  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(entities)) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), ...(extra.length ? { extra } : {}) };
 }
 
 /**

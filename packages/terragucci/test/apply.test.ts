@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, approvedPath, decideGate, decidedPath, parseApplied as readApplied, waveShares, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, decidedPath, parseApplied as readApplied, waveShares, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
 import type { CostRunner } from "../src/report/cost";
@@ -26,6 +26,27 @@ describe("applyWaves", () => {
 
   it("puts the canary roots first, still in dependency order, then the rest", () => {
     expect(applyWaves([["dev/net", "prod/net"], ["dev/app", "prod/app"]], ["dev/*"])).toEqual([["dev/net"], ["dev/app"], ["prod/net"], ["prod/app"]]);
+  });
+});
+
+describe("apply.branches", () => {
+  const branches = { release: ["prod/*"], "env/staging": ["staging/app"] };
+  const layers = [["dev/net", "prod/net", "staging/net"], ["dev/app", "prod/app", "staging/app"]];
+
+  it("cuts a named branch's layers to its own roots, and the default branch's to every other root", () => {
+    expect(branchLayers(layers, branches, "release").layers).toEqual([["prod/net"], ["prod/app"]]);
+    expect(branchLayers(layers, branches, "env/staging").layers).toEqual([[], ["staging/app"]]);
+    expect(branchLayers(layers, branches, "main").layers).toEqual([["dev/net", "staging/net"], ["dev/app"]]);
+    expect(branchLayers(layers, branches).layers).toEqual([["dev/net", "staging/net"], ["dev/app"]]);
+    expect(applyWaves(branchLayers(layers, branches, "env/staging").layers)).toEqual([["staging/app"]]);
+    expect(branchLayers(layers, branches, "main").note).toBe("apply.branches: prod/net, prod/app, staging/app apply from release, env/staging, not here");
+    expect(branchLayers(layers, branches, "release").note).toBe("apply.branches: release applies prod/net, prod/app");
+  });
+
+  it("goes to the stage as one argument and back", () => {
+    expect(branchesArg(branches)).toBe("release=prod/*;env/staging=staging/app");
+    expect(parseBranches(branchesArg(branches))).toEqual(branches);
+    expect(() => parseBranches("release")).toThrow(/--branches takes/);
   });
 });
 
@@ -220,6 +241,24 @@ describe("a wave behind its gate", () => {
     for (const v of ["job-token-1234", "merge-token-5678", "gh-1", "ci-1", "fj-1"]) expect(env.split("\n").filter((l) => l.includes(v) && !l.startsWith("TF_HTTP_PASSWORD="))).toEqual([]);
     // A TF_ variable is given to the binary on purpose, so it stays.
     expect(env).toMatch(/^TF_HTTP_PASSWORD=job-token-1234$/m);
+  });
+
+  it("with apply.branches applies a branch's roots on that branch alone, behind the same gate, and nothing of them on the default branch", async () => {
+    const { work, origin, bin, log } = setup();
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const opts = { wave: 1, layers: [["a"]], binary: bin, env: {}, branches: { release: ["a"] } };
+    // The default branch skips a, so the wave applies nothing and records no gate fact.
+    expect(await applyWave(work, { ...opts, gate: "always", now: T(1) })).toBe(0);
+    expect(existsSync(log)).toBe(false);
+    expect(out.mock.calls.flat().join("\n")).toContain("no root applies from this branch, so there is nothing to apply");
+    expect(() => git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).toThrow();
+    // On release the wave plans a and waits at its gate, as on the default branch.
+    expect(await applyWave(work, { ...opts, gate: "always", branch: "release", now: T(1) })).toBe(3);
+    expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]).toMatchObject({ gate: "wave-1", members: [{ member: "a" }] });
+    expect(existsSync(log)).toBe(false);
+    expect(await applyWave(work, { ...opts, gate: "never", branch: "release", now: T(2) })).toBe(0);
+    expect(existsSync(log)).toBe(true);
+    await expect(applyWave(work, { ...opts, gate: "never", terragrunt: true, now: T(2) })).rejects.toThrow(/--branches: a Terragrunt wave/);
   });
 
   it("records one pending fact with each root's digest, applies nothing, and records no second fact on a re-run", async () => {

@@ -133,6 +133,14 @@ export interface ApplySettings {
    * unset. 5 to 60.
    */
   resume?: number;
+  /**
+   * Roots that apply from a branch other than the default: branch name to
+   * root globs. A push to a named branch applies only the roots its globs
+   * match, in waves behind the same gate; a push to the default branch, and
+   * the apply a comment starts from a merge into it, skip every root a glob
+   * here matches. Plain roots only, with `when: merge`.
+   */
+  branches?: Record<string, string[]>;
 }
 
 /**
@@ -448,6 +456,12 @@ export interface ProjectSettings {
   audit_region?: string;
   /** Dashboards and alert rules written next to the pipeline. Off unless set. */
   dashboards?: boolean | DashboardSettings;
+  /**
+   * Jobs of your own that `init` and `reconcile` write into the generated
+   * pipeline as they are: a map of job name to the job, in the forge's own
+   * syntax, or the path of a YAML file in the repo that holds that map.
+   */
+  own_jobs?: string | Record<string, Record<string, unknown>>;
 }
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
@@ -549,7 +563,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -606,6 +620,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
   if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge);
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
+  if (isObject(s.apply) && s.apply.branches !== undefined && s.terragrunt !== undefined) problems.push(`${where}.apply.branches: ${BRANCHES_NOT_TERRAGRUNT}`);
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
@@ -651,6 +666,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(...synthProblems(s as ProjectSettings, where));
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
+  if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
   }
@@ -930,6 +946,7 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
     // On GitLab the token also starts the apply pipeline, so it is set with merge: manual too.
     else if (a.merge !== "auto" && forge !== "gitlab") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env (on GitLab, where the token also starts the apply pipeline, set forge: gitlab)`);
   }
+  if (a.branches !== undefined) checkApplyBranches(a.branches, `${where}.branches`, problems, a.when);
   if (a.requires !== undefined) {
     if (!Array.isArray(a.requires) || a.requires.some((r) => !(APPLY_REQUIRES as readonly unknown[]).includes(r))) problems.push(`${where}.requires must be a list of ${APPLY_REQUIRES.join(", ")}`);
     else if (new Set(a.requires).size !== a.requires.length) problems.push(`${where}.requires names a requirement twice`);
@@ -939,7 +956,58 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
   }
 }
 
-const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume"];
+/** A job name `own_jobs` takes: one every forge's YAML reads as a plain key. */
+export const OWN_JOB_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/** The problems with `own_jobs`: a map of job name to job, or the path of a YAML file in the repo that holds one. */
+export function ownJobsProblems(v: unknown, where: string): string[] {
+  if (typeof v === "string") {
+    return v !== "" && !v.startsWith("/") && !v.split("/").includes("..") && /\.ya?ml$/.test(v)
+      ? []
+      : [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  }
+  if (!isObject(v) || Object.keys(v).length === 0) return [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  const problems: string[] = [];
+  for (const [name, job] of Object.entries(v)) {
+    if (!OWN_JOB_NAME.test(name)) problems.push(`${where}: ${JSON.stringify(name)} is not a job name terragucci writes as it is; use letters, digits, "_" and "-"`);
+    else if (!isObject(job) || Object.keys(job).length === 0) problems.push(`${where}.${name} must be a job: a map of its keys, in the forge's own syntax`);
+  }
+  return problems;
+}
+
+const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches"];
+
+/** A branch name `apply.branches` may name: what a forge's rule and the job's shell both take as it is. */
+export const APPLY_BRANCH = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
+
+/** Why `apply.branches` is refused with `apply.when: pull-request`. */
+export const BRANCHES_NOT_PR_APPLY = "apply.when: pull-request applies an open pull request into the default branch, and a push applies nothing, so no branch could apply its roots; leave apply.branches unset";
+/** Why `apply.branches` is refused in a Terragrunt repo. */
+export const BRANCHES_NOT_TERRAGRUNT = "a Terragrunt wave runs its units with one run --all, cut from terragrunt find when it runs; apply.branches maps plain roots, so leave it unset";
+
+function checkApplyBranches(b: unknown, where: string, problems: string[], when: unknown): void {
+  if (!isObject(b) || Object.keys(b).length === 0) {
+    problems.push(`${where} must map branch names to lists of root globs, such as release: ["envs/prod/*"]`);
+    return;
+  }
+  if (when === "pull-request") problems.push(`${where}: ${BRANCHES_NOT_PR_APPLY}`);
+  const seen = new Map<string, string>();
+  for (const [branch, globs] of Object.entries(b)) {
+    if (!APPLY_BRANCH.test(branch) || branch.split("/").some((part) => part === "" || part === "..") || branch.endsWith(".lock")) {
+      problems.push(`${where}: ${JSON.stringify(branch)} is not a branch name terragucci takes; use letters, digits, ".", "_", "-" and "/"`);
+      continue;
+    }
+    if (!Array.isArray(globs) || globs.length === 0 || !globs.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+      problems.push(`${where}.${branch} must be a list of root globs, such as ["envs/prod/*"]`);
+      continue;
+    }
+    for (const g of globs as string[]) {
+      const other = seen.get(g);
+      if (other !== undefined) problems.push(`${where}: ${g} is under both ${other} and ${branch}; a root applies from one branch`);
+      else seen.set(g, branch);
+    }
+  }
+}
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {
