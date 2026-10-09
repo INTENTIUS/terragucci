@@ -125,6 +125,7 @@ export default defineConfig({
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
 								{ label: 'Estimate the cost of a change', slug: 'guides/estimate-cost' },
+								{ label: 'Run steps around a stage', slug: 'guides/run-steps' },
 							],
 						},
 						{
