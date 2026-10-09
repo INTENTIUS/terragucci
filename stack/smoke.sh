@@ -188,6 +188,8 @@ forgejo-oidc|a Forgejo job gets an OIDC token Forgejo signed for its repo and re
 steward|tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root|273
 policy|an opt-in policy denies a plan, fails the root in tf-plan, and names the violation|
 comment-plan|a pull request comment re-plans on request and never applies, and a root outside the configured ones is refused|
+import-atlantis|terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects|
+comment-atlantis|with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are|
 lock-wait|a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace|
 dash-pipeline|the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave|
 dash-changes|the Change review dashboard init writes shows the roots, groups and changes by action of a pull request|
@@ -2950,6 +2952,176 @@ TF
   [ "$(remote_head "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }
   drop_work "$work" 2>/dev/null || true
   [ "$rc" = 0 ] && log "plan re-planned the pull request; apply, an unknown root and a shell-shaped root were each refused and planned nothing"
+  return "$rc"
+}
+
+claim_import_atlantis() {
+  # The example as an Atlantis repo would have it: an atlantis.yaml whose six
+  # projects are dev's five roots and staging's orders, with a workflow that
+  # sets a variable, passes a flag and has an import stage. `terragucci import
+  # atlantis` writes terragucci.yml from it and names the import stage as left
+  # out on purpose; `init` writes the pipeline; and that pipeline's plan step,
+  # run on the tree in the CI image, must plan exactly the six projects'
+  # directories. BREAK: one project is dropped from the written terragucci.yml
+  # before init, so the pipeline plans five.
+  log() { echo "[smoke import-atlantis] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local tree work rc=0 out wf layers got r
+  local want="envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/platform,envs/dev/search,envs/staging/orders"
+  tree="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$tree"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$EXAMPLE/." "$tree/"
+  cat > "$tree/atlantis.yaml" <<'YAML'
+version: 3
+automerge: true
+projects:
+- name: dev-platform
+  dir: envs/dev/platform
+  apply_requirements: [approved]
+  workflow: shop
+- name: dev-email
+  dir: envs/dev/email
+  workflow: shop
+- name: dev-orders
+  dir: ./envs/dev/orders/
+  autoplan:
+    when_modified: ["*.tf", "../../../modules/**/*.tf"]
+- name: dev-payments
+  dir: envs/dev/payments
+- name: dev-search
+  dir: envs/dev/search
+  execution_order_group: 2
+- name: staging-orders
+  dir: envs/staging/orders
+  workspace: default
+workflows:
+  shop:
+    plan:
+      steps:
+      - env:
+          name: TF_VAR_team
+          value: shop
+      - init
+      - plan:
+          extra_args: ["-lock=false"]
+    import:
+      steps: [init, import]
+YAML
+  # The example's own terragucci.yml gives way to the imported one.
+  out="$(cd "$tree" && "$TERRAGUCCI" import atlantis --force --forge forgejo 2>&1)" || { log "import failed: $out"; return 1; }
+  grep -q '^  workflows.shop.import (`import` or `state rm` from a comment): The guide: every state change comes from a reviewed commit' <<<"$out" \
+    || { log "the import did not name the import stage as left out on purpose"; rc=1; }
+  grep -q 'workflows.shop.plan.steps\[2\].plan.extra_args (Flags at run time)' <<<"$out" || { log "the import did not name the flag a step passes"; rc=1; }
+  if [ -n "${BREAK:-}" ]; then
+    grep -v 'envs/staging/orders' "$tree/terragucci.yml" > "$tree/terragucci.yml.new" && mv "$tree/terragucci.yml.new" "$tree/terragucci.yml"
+  fi
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed on the imported terragucci.yml"; return 1; }
+  wf="$tree/.forgejo/workflows/terragucci.yml"
+  layers="$(grep -o "terragucci stage tf-plan --out terragucci-report --binary [a-z]* --layers '[^']*'" "$wf" | head -1 | sed -E "s/.*--layers '([^']*)'/\1/")"
+  [ -n "$layers" ] || { log "the pipeline has no plan step with --layers"; return 1; }
+  log "the pipeline's plan step: --layers $layers"
+  local -a REPORT_ARGS=(--layers "$layers")
+  REPORT_TREE="$tree" report_run "$work" || true
+  r="$work/terragucci-report/report.json"
+  [ -f "$r" ] || { log "no report"; return 1; }
+  got="$(jq -r '[.roots[] | select(.status == "planned") | .path] | sort | join(",")' "$r")"
+  [ "$got" = "$want" ] || { log "the pipeline planned $got, not the Atlantis projects $want"; rc=1; }
+  drop_work "$work"; drop_work "$tree"
+  [ $rc = 0 ] && log "the imported pipeline planned the six Atlantis projects and nothing else"
+  return $rc
+}
+
+claim_comment_atlantis() {
+  # A scratch repo with two roots and atlantis_comments: true, the pipeline
+  # init writes for it, a push to main, and a pull request that changes one
+  # root. `atlantis plan -d app` by the repo's admin must start a run that
+  # posts a new terragucci/plan status on the head. Then `atlantis apply` on
+  # the open pull request must be refused as `/terragucci apply` is (it is not
+  # merged), `atlantis plan -w blue` must be refused with the guide's reason,
+  # neither may plan, and main gains no terragucci/apply status.
+  # BREAK: the pipeline is written without atlantis_comments, so the comment
+  # starts no job and the re-plan never comes.
+  log() { echo "[smoke comment-atlantis] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/comment-atlantis" main_sha head_sha pr i rc=0 before after replies root cfg
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo comment-atlantis || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for root in app net; do
+    mkdir -p "$work/tree/$root"
+    echo 1 > "$work/tree/$root/rev.txt"
+    cat > "$work/tree/$root/main.tf" <<'TF'
+terraform {
+  required_providers {
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
+  }
+}
+
+# init finds a root by its backend or provider block; state stays local.
+provider "external" {}
+
+resource "terraform_data" "rev" {
+  input = file("${path.module}/rev.txt")
+}
+TF
+  done
+  cfg='forge: forgejo\nbinary: tofu\ngate: never\n'
+  [ -z "${BREAK:-}" ] && cfg="${cfg}atlantis_comments: true\n"
+  # shellcheck disable=SC2059 # the config's newlines are printf escapes
+  printf "$cfg" > "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  main_sha="$(push_tree "$work/tree" "$repo" main "comment-atlantis: first")" || return 1
+  wait_run "$repo" "$main_sha" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the push to main did not go green"; return 1; }
+  echo 2 > "$work/tree/app/rev.txt"
+  head_sha="$(push_tree "$work/tree" "$repo" atlantis-change "comment-atlantis: change")" || return 1
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"head":"atlantis-change","base":"main","title":"comment-atlantis: plan"}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+  log "pull request $pr for ${head_sha:0:8}"
+  statuses() { api "$URL/api/v1/repos/$repo/commits/$1/statuses?limit=100" | jq --arg c "$2" '[.[] | select(.context == $c)] | length'; }
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    [ "$(statuses "$head_sha" terragucci/plan)" -ge 2 ] && break
+    sleep 3
+  done
+  before="$(statuses "$head_sha" terragucci/plan)"
+  [ "$before" -ge 2 ] || { log "the pull request's own plan never finished"; return 1; }
+  local applied_before
+  applied_before="$(statuses "$main_sha" terragucci/apply)"
+  comment() { api -o /dev/null -H 'content-type: application/json' -X POST -d "$(jq -cn --arg b "$1" '{body: $b}')" "$URL/api/v1/repos/$repo/issues/$pr/comments"; }
+  comment_runs() { api "$URL/api/v1/repos/$repo/actions/runs?limit=50" | jq '[.workflow_runs[] | select(.event == "issue_comment" and (.status == "success" or .status == "failure" or .status == "skipped"))] | length'; }
+  local runs_before wait=$(( TIMEOUT < 240 ? TIMEOUT : 240 ))
+  runs_before="$(comment_runs)"
+  comment "atlantis plan -d app"
+  # The re-plan's note job posts the status inside the comment's run, so once that run has finished the status is there or never comes.
+  for i in $(seq 1 $(( wait / 3 ))); do
+    after="$(statuses "$head_sha" terragucci/plan)"
+    [ "$after" -gt "$before" ] && break
+    [ "$(comment_runs)" -gt "$runs_before" ] && { sleep 3; break; }
+    sleep 3
+  done
+  after="$(statuses "$head_sha" terragucci/plan)"
+  [ "$after" -gt "$before" ] || { log "atlantis plan -d app posted no new plan status on the head ($before before, $after after)"; return 1; }
+  log "atlantis plan -d app re-planned: terragucci/plan statuses on the head went from $before to $after"
+  before="$after"
+  comment "atlantis apply"
+  comment "atlantis plan -w blue"
+  for i in $(seq 1 $(( wait / 3 ))); do
+    replies="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("terragucci: "))] | map(.body) | join("\n")')"
+    [ "$(grep -c '^terragucci: ' <<<"$replies")" -ge 2 ] && break
+    sleep 3
+  done
+  grep -q "pull request $pr is not merged" <<<"$replies" || { log "atlantis apply on an open pull request was not refused as /terragucci apply is"; rc=1; }
+  grep -q 'picks a workspace, and terragucci has no flag: each root is a directory with one state' <<<"$replies" || { log "atlantis plan -w was not refused with the guide's reason"; rc=1; }
+  after="$(statuses "$head_sha" terragucci/plan)"
+  [ "$after" = "$before" ] || { log "a refused comment still planned ($before before, $after after)"; rc=1; }
+  [ "$(statuses "$main_sha" terragucci/apply)" = "$applied_before" ] || { log "main gained an apply status from a comment"; rc=1; }
+  [ "$(remote_head "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }
+  drop_work "$work" 2>/dev/null || true
+  [ "$rc" = 0 ] && log "atlantis plan re-planned; atlantis apply and atlantis plan -w were refused with the terragucci reasons and planned nothing"
   return "$rc"
 }
 
@@ -11183,6 +11355,8 @@ respond-notes   weight=20
 policy          ex after=boot weight=150
 steward         ex! runner fountain! weight=950
 comment-plan    runner self! weight=150
+comment-atlantis runner self! weight=150
+import-atlantis ex after=boot weight=150
 lock-wait       otel! self! weight=150
 dash-pipeline   ex otel after=boot weight=120
 dash-changes    ex otel after=boot weight=120

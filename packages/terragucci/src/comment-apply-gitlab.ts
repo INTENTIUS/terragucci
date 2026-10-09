@@ -34,7 +34,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { applyWaves } from "./apply";
-import { LOGIN, parseComment, SHA } from "./comment";
+import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { reachedRoots, reachedUnits, type ApplyCommentDecision, type Git } from "./comment-apply";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, type Fetch, type ForgeTarget } from "./forge";
@@ -260,7 +260,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
   };
 
   // The note is the request: what it asks, and who asked, come from GitLab, never from the variables.
-  const parsed = parseComment(note?.body);
+  const parsed = parseComment(note?.body, parseOptions(env));
   if (note?.system === true || !parsed || !["apply", "lock", "unlock"].includes(parsed.kind)) return stop(`note ${noteText} on !${iid} asks for no apply, lock or unlock, so nothing runs`);
   const user = note?.author?.username;
   const uid = note?.author?.id;

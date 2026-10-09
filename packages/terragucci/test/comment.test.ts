@@ -1,7 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { allowRoot, decideComment, parseComment } from "../src/comment";
+import { allowRoot, decideComment, fromAtlantis, parseComment } from "../src/comment";
+import { COMMENT_TABLE, LEFT_OUT_TABLE } from "../src/import/guide";
 import type { Fetch } from "../src/forge";
 import { tmp } from "./helpers";
 
@@ -57,6 +58,43 @@ describe("parseComment", () => {
   });
 });
 
+describe("the atlantis comment aliases", () => {
+  const on = { atlantis: true };
+
+  it("are not read unless atlantis_comments is on", () => {
+    for (const c of ["atlantis plan", "atlantis apply", "atlantis plan -d envs/dev/app"]) expect(parseComment(c)).toBeUndefined();
+  });
+
+  it("read atlantis plan and atlantis apply as the terragucci commands, through the same grammar", () => {
+    expect(parseComment("atlantis plan", on)).toEqual(parseComment("/terragucci plan"));
+    expect(parseComment("atlantis plan -d ./envs/dev/app/", on)).toEqual({ kind: "plan", root: "envs/dev/app" });
+    expect(parseComment("atlantis plan --dir envs/dev/app --verbose", on)).toEqual({ kind: "plan", root: "envs/dev/app" });
+    expect(parseComment("atlantis apply", on)).toEqual({ kind: "apply" });
+    expect(parseComment("atlantis apply wave-2", on)).toEqual({ kind: "apply", wave: 2 });
+    // The terragucci forms still work beside them, and other comments stay unaddressed.
+    expect(parseComment("/terragucci plan", on)).toEqual({ kind: "plan" });
+    for (const c of ["atlantis unlock", "atlantis planet", "please atlantis plan", "atlantis"]) expect(parseComment(c, on)).toBeUndefined();
+  });
+
+  it("refuse what the terragucci grammar refuses: a shell-shaped root is still refused", () => {
+    expect(parseComment("atlantis plan -d $(id)", on)).toMatchObject({ kind: "refused" });
+    expect(parseComment("atlantis plan -d ../x", on)).toMatchObject({ kind: "refused" });
+    expect(parseComment("atlantis plan\natlantis apply", on)).toMatchObject({ kind: "refused" });
+  });
+
+  it("refuse the Atlantis forms terragucci has no counterpart for, with the guide's reason", () => {
+    const cell = (row: string) => COMMENT_TABLE.find((r) => r[0] === row)![3];
+    const rule = (row: string) => LEFT_OUT_TABLE.find((r) => r[0] === row)![2];
+    expect(fromAtlantis("atlantis plan -p orders")).toMatchObject({ kind: "refused", reason: expect.stringContaining(cell("Plan one project")) });
+    expect(fromAtlantis("atlantis plan -w blue")).toMatchObject({ kind: "refused", reason: expect.stringContaining(cell("Plan one workspace")) });
+    expect(fromAtlantis("atlantis plan -- -lock=false")).toMatchObject({ kind: "refused", reason: expect.stringContaining(rule("Flags at run time")) });
+    expect(fromAtlantis("atlantis apply -d envs/dev/app")).toMatchObject({ kind: "refused", reason: expect.stringContaining(rule("Applying one root of a wave")) });
+    expect(fromAtlantis("atlantis apply -p orders")).toMatchObject({ kind: "refused", reason: expect.stringContaining(rule("Applying one root of a wave")) });
+    expect(fromAtlantis("atlantis plan -x")).toMatchObject({ kind: "refused" });
+    expect(fromAtlantis("atlantis plan -d")).toMatchObject({ kind: "refused" });
+  });
+});
+
 describe("allowRoot", () => {
   it("accepts a configured root exactly", () => {
     expect(allowRoot("network", layers)).toBe(true);
@@ -92,6 +130,17 @@ function setup(opts: { comment: string; user?: string; permission?: string; pr?:
 }
 
 describe("decideComment", () => {
+  it("re-plans on atlantis plan only where the pipeline set TG_ATLANTIS_COMMENTS, with the same checks", async () => {
+    const off = setup({ comment: "atlantis plan -d envs/dev/app" });
+    expect(await decideComment({ layers, env: off.env, fetch: off.fetch })).toMatchObject({ go: false, reason: "the comment is not addressed to terragucci" });
+    const s = setup({ comment: "atlantis plan -d envs/dev/app" });
+    expect(await decideComment({ layers, env: { ...s.env, TG_ATLANTIS_COMMENTS: "1" }, fetch: s.fetch })).toMatchObject({ go: true, root: "envs/dev/app" });
+    const reader = setup({ comment: "atlantis plan", permission: "read" });
+    expect((await decideComment({ layers, env: { ...reader.env, TG_ATLANTIS_COMMENTS: "1" }, fetch: reader.fetch })).go).toBe(false);
+    const nope = setup({ comment: "atlantis plan -d envs/nope" });
+    expect(await decideComment({ layers, env: { ...nope.env, TG_ATLANTIS_COMMENTS: "1" }, fetch: nope.fetch })).toMatchObject({ go: false, reason: "envs/nope is not a root of this repository" });
+  });
+
   it("re-plans the pull request's head for someone who can write", async () => {
     const s = setup({ comment: "/terragucci plan envs/dev/app" });
     const d = await decideComment({ layers, env: s.env, fetch: s.fetch });
