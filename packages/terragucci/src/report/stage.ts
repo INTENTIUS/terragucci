@@ -37,7 +37,7 @@ import { describeTips, repoTips } from "../tips";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf } from "../respond/drift";
-import { checkDriftSchedule } from "./drift-schedule";
+import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./drift-schedule";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
@@ -1157,14 +1157,24 @@ async function finish(
   const limit = noteLimit(options.forge ?? settings.forge ?? forgeOfEnv(env), report);
   // A drift schedule that stopped cannot say so itself; the plan job, which runs on every pull request, does.
   const notices: string[] = [...selection];
+  // Without a token the stage asks as a reader, which only a public repo answers; the note job asks again with its token.
+  let leftSchedule: { cron: string; added?: string } | undefined;
   if (!drift && typeof settings.drift === "string") {
-    const reader = targetFromEnv(options.forge ?? settings.forge, env, options.token ?? env.TG_TOKEN, true);
+    const token = options.token ?? env.TG_TOKEN;
+    const forge = options.forge ?? settings.forge;
+    const reader = targetFromEnv(forge, env, token, true);
     const late = reader ? await checkDriftSchedule(repo, settings.drift, reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), options.now ?? new Date(), log) : undefined;
     if (late) notices.push(late.message);
+    if (!token && reader && reader.forge !== "gitlab") {
+      const added = pipelineAdded(repo, reader.forge);
+      leftSchedule = { cron: settings.drift, ...(added ? { added } : {}) };
+    }
   }
   // A waiting wave's command in the note asks for --sign when the repo seals its approvals.
   const sealed = (settings.approval ?? (declaredGates(existsSync(join(repo, "chant.workspace.json")) ? readFileSync(join(repo, "chant.workspace.json"), "utf-8") : undefined) > 0 ? "sealed" : "ledger")) === "sealed";
   writeReportDir(dir, report, plans, { ...noteLinks, limit, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
+  if (leftSchedule) writeFileSync(join(dir, DRIFT_SCHEDULE_FILE), JSON.stringify(leftSchedule) + "\n");
+  else rmSync(join(dir, DRIFT_SCHEDULE_FILE), { force: true });
   if (costOutputs) writeCostFiles(dir, costOutputs);
   let uploaded: Uploaded | undefined;
   if (reports?.bucket) {

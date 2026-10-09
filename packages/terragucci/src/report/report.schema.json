@@ -169,6 +169,26 @@
                 }
               }
             }
+          },
+          "resources": {
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values. Never a value (minor 14).",
+            "type": "array",
+            "items": { "$ref": "#/$defs/resource" }
+          },
+          "applied_changes": {
+            "description": "On a tf-apply wave, a root that applied: what the apply did to each resource, and the top-level attributes an update or a replacement changed, by name. Never a value (minor 15).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "type", "actions", "attributes"],
+              "properties": {
+                "address": { "type": "string" },
+                "type": { "type": "string" },
+                "actions": { "type": "array", "items": { "enum": ["create", "update", "replace", "delete", "import", "move", "forget"] } },
+                "attributes": { "type": "array", "items": { "type": "string" } },
+                "previous_address": { "type": "string" }
+              }
+            }
           }
         }
       }
@@ -388,6 +408,15 @@
     }
   },
   "$defs": {
+    "resource": {
+      "type": "object",
+      "required": ["address", "type", "provider"],
+      "properties": {
+        "address": { "type": "string" },
+        "type": { "type": "string" },
+        "provider": { "type": "string", "description": "The provider's source address, such as registry.opentofu.org/hashicorp/aws." }
+      }
+    },
     "timingDetail": { "enum": ["resources", "aggregate", "none"] },
     "timingSource": { "description": "binary: terragucci timed each run of the binary; terragrunt: from Terragrunt's run report (minor 3).", "enum": ["binary", "terragrunt"] },
     "rootTimings": {

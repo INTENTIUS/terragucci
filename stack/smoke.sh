@@ -213,6 +213,7 @@ summed-timings|with binary: choudoufu past its span budget the report lists the 
 foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
 tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
+reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
 pr-requires|with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable|
 pr-lock|/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named|
 front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|
@@ -262,6 +263,7 @@ pr-guard|with apply.when: pull-request a pull request that changes the pipeline 
 pr-close-release|with apply.when: pull-request closing a pull request releases the roots it locked|
 tg-lock-fanout|in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none|
 token-scrub|the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set|
+plan-token-free|the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan|
 fork-no-plan|a pull request from a fork runs check and no plan job|
 highlight-sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
 approval-revoke|removing an approval line from chant/lifecycle makes its wave wait again|
@@ -291,6 +293,8 @@ audit|terragucci audit writes one record to the bucket: every approval on the le
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
+inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
+resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
@@ -789,8 +793,10 @@ provider "aws" {
   sed -i.bak 's#reconcile/#inline/#; s#tg-reconcile-#tg-inline-#' "$work/in-line/network/main.tf" "$work/in-line/app/main.tf"
   rm -f "$work/in-line/network/main.tf.bak" "$work/in-line/app/main.tf.bak"
   # The same settings as the control repo's defaults, so init writes what reconcile would.
+  # The file stays: the jobs read token_env there, and reconcile leaves a
+  # project's own file alone when it holds the control repo's value.
   printf 'forge: forgejo\nbinary: tofu\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' > "$work/in-line/terragucci.yml"
-  (cd "$work/in-line" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
+  (cd "$work/in-line" && "$TERRAGUCCI" init >/dev/null)
   # in-line must hold exactly what init writes, digest pins included, or reconcile
   # sees a change; its push runs a pipeline the claim never waits on.
   TG_KEEP_DIGESTS=1 push_tree "$work/in-line" "$USER/in-line" main "Two roots, pipeline in line" >/dev/null
@@ -3592,9 +3598,12 @@ claim_comment_not_affected() {
   #       API, so the forge call that fails is the pull request read, not the
   #       permission read; the token is refused outright (401), not short of
   #       a permission (403).
-  # BREAK: the pushed pipeline is the re-plan job as it was before: it neither
-  # answers a root the change does not reach nor fails when `terragucci
-  # comment` does (its `|| exit 1` is `|| exit 0`).
+  # The not-affected answer is `terragucci plan-note --root`, which the
+  # replan-note job runs after the re-plan job.
+  # BREAK: the pushed pipeline's replan-note job does not hand the re-plan's
+  # root to `terragucci plan-note`, so it posts a note and a status where it
+  # should answer that the root is not affected, and the re-plan job does not
+  # fail when `terragucci comment` does (its `|| exit 1` is `|| exit 0`).
   log() { echo "[smoke comment-not-affected] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -3628,10 +3637,11 @@ TF
   printf 'forge: forgejo\nbinary: tofu\ngate: never\n' > "$tree/terragucci.yml"
   (cd "$tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; return 1; }
   wf="$tree/.forgejo/workflows/terragucci.yml"
-  grep -q 'is not affected by this pull request' "$wf" || { log "the pipeline's re-plan job has no not-affected answer"; return 1; }
+  grep -q 'terragucci plan-note .*\${TG_ROOT:+--root "\$TG_ROOT"}' "$wf" || { log "the pipeline's replan-note job does not hand the re-plan's root to plan-note, which answers a root the change does not reach"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    sed -i.bak -e '/is not affected by this pull request/d' \
-      -e 's#--out terragucci-comment.json || exit 1#--out terragucci-comment.json || exit 0#' "$wf" && rm -f "$wf.bak"
+    sed -e '/terragucci plan-note /s#\${TG_ROOT:+--root "\$TG_ROOT"}##' \
+      -e 's#--out terragucci-comment.json || exit 1#--out terragucci-comment.json || exit 0#' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    if grep -q 'terragucci plan-note .*--root' "$wf"; then log "could not take the root from the replan-note job"; return 1; fi
   fi
   main_sha="$(push_tree "$tree" "$repo" main "comment-na: first")" || return 1
   wait_run "$repo" "$main_sha" || return 1
@@ -3980,7 +3990,8 @@ import { parseYAML } from "@intentius/chant/yaml";
 const [wf, out, brk] = process.argv.slice(1);
 const doc = parseYAML(readFileSync(wf, "utf-8").split("\n").filter((l) => !l.startsWith("#")).join("\n"));
 for (const job of ["plan", "apply-wave-1"]) {
-  const run = doc.jobs[job].steps.map((s) => s.run ?? "").find((r) => r.startsWith("set +e -uo pipefail"));
+  // The step that runs the stage, by name: the plan job has a status step before it, and its script starts with the token restart.
+  const run = doc.jobs[job].steps.find((s) => /^(Plan the |Apply wave 1 )/.test(s.name ?? "") && typeof s.run === "string")?.run;
   if (!run) throw new Error("no script in " + job);
   let lines = run.split("\n");
   lines = lines.slice(0, lines.findIndex((l) => /^(lock_ref=|tg status terragucci\/|terragucci stage )/.test(l)));
@@ -4851,6 +4862,49 @@ YML
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "the project has no policy directory, reconcile wrote the control repo source into its terragucci.yml, and the wave fetched $repo at $ref and refused app with its denial"
+  return $rc
+}
+
+claim_reconcile_parallelism() {
+  # A control repo whose defaults set parallelism: 1 is reconciled in a dry
+  # run over one project of two roots, with no terragucci.yml of its own. The
+  # terragucci.yml reconcile would write is committed to the project, and
+  # tf-plan runs there in the tofu CI image with no --parallelism. It must plan
+  # one root at a time and name terragucci.yml as the reason.
+  # BREAK: the control repo's defaults set parallelism: 2, so the plan job
+  # plans both roots at once and the claim's check of one at a time fails.
+  log() { echo "[smoke reconcile-parallelism] $*" >&2; }
+  local work want=1 file code=0 rc=0
+  [ -n "${BREAK:-}" ] && want=2
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/project/app" "$work/project/app2"
+  cp "$HERE/fixtures/policy-wave/app/main.tf" "$work/project/app/"
+  sed 's/input = "policy"/input = "parallelism"/' "$HERE/fixtures/policy-wave/app/main.tf" > "$work/project/app2/main.tf"
+  git -C "$work/project" init -q -b main
+  git -C "$work/project" add -A && git -C "$work/project" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "two roots, no terragucci.yml"
+  cat > "$work/control.yml" <<YML
+defaults:
+  forge: forgejo
+  binary: tofu
+  parallelism: $want
+projects:
+  localhost/smoke/parallelism-project:
+    url: /repo/project
+YML
+  in_image "$work" sh -c 'terragucci reconcile --config control.yml --json > reconcile.json' >&2 || { log "reconcile failed: $(head -c 2000 "$work/reconcile.json" 2>/dev/null)"; drop_work "$work"; return 1; }
+  file="$(jq -r '.results.projects[0].changes[] | select(.path == "terragucci.yml") | .content' "$work/reconcile.json")"
+  [ -n "$file" ] || { log "reconcile would write no terragucci.yml into the project"; drop_work "$work"; return 1; }
+  grep -q "^parallelism: $want\$" <<<"$file" || { log "the project terragucci.yml does not set parallelism: $want"; rc=1; }
+  printf '%s\n' "$file" > "$work/project/terragucci.yml"
+  git -C "$work/project" add -A && git -C "$work/project" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "terragucci.yml from the control repo"
+  in_image "$work/project" terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'app,app2' > "$work/plan.log" 2>&1 || code=$?
+  clean_mounted "$work/project" "$(image_tag tofu)"
+  cat "$work/plan.log" >&2
+  [ "$code" = 0 ] || { log "tf-plan exited $code, not 0"; rc=1; }
+  grep -q "planning one root at a time (terragucci.yml)" "$work/plan.log" || { log "the plan job did not plan one root at a time from terragucci.yml"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "reconcile wrote the control repo's parallelism: 1 into the project's terragucci.yml, and the plan job planned its two roots one at a time"
   return $rc
 }
 
@@ -7056,9 +7110,9 @@ claim_note_diff() {
   # retention of dev orders to 604800 seconds. Its plan note must show the
   # change as the binary prints it, before the whole plans: a diff block whose
   # line for message_retention_seconds holds the value before and 604800
-  # after it. BREAK: the pushed pipeline deletes every line holding "->"
-  # from the note before it posts it, as a note that names only the
-  # attributes reads.
+  # after it. BREAK: the pushed pipeline's plan job deletes every line
+  # holding "->" from the note it writes for the plan-note job, as a note
+  # that names only the attributes reads.
   log() { echo "[smoke note-diff] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -7071,9 +7125,9 @@ claim_note_diff() {
   cp "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$wf"
   git -C "$work/tree" apply "$EXAMPLE/changes/one-root.patch" || { drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    # shellcheck disable=SC2016 # written into the workflow, expanded by the job
-    sed -i.bak 's#tg note "\$note"#sed -i -e "/->/d" "$note"; tg note "$note"#' "$wf" && rm -f "$wf.bak"
-    grep -q 'sed -i -e "/->/d"' "$wf" || { log "BREAK found no tg note line to cut"; drop_work "$work"; return 1; }
+    # The plan job writes the note into the report, and the plan-note job posts it from there.
+    sed 's#\(cat terragucci-report/note.md; } >terragucci-report/plan-note.md\)$#\1; sed -i -e "/->/d" terragucci-report/plan-note.md#' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'sed -i -e "/->/d" terragucci-report/plan-note.md' "$wf" || { log "BREAK found no line that writes the plan note to cut"; drop_work "$work"; return 1; }
   fi
   sha="$(push_tree "$work/tree" "$repo" "$branch" "smoke note-diff: one-root $(date +%s)")"
   pr="$(open_pr "$repo" "$branch")"
@@ -8142,6 +8196,74 @@ TF
   grep -qx "TF_VAR_token=$secret" "$seen" || { log "TF_VAR_token did not pass as set"; rc=1; }
   drop_work "$work"
   [ $rc = 0 ] && log "the data source saw no forge token by name or by value, and TF_VAR_token as set"
+  return $rc
+}
+
+claim_plan_token_free() {
+  # A scratch repo with two roots. A pull request adds to app an external data
+  # source, the change's own code, which looks for a forge token where it
+  # runs: the forge token variables in its environment and in each parent
+  # process's, by name, and a credential in the checkout's git config. It
+  # prints only the names it found and fails the plan when it finds one. The
+  # pull request's run and a /terragucci plan re-plan must both go green, and
+  # the plan-note job must post the plan note and terragucci/plan success.
+  # BREAK: the pushed workflow gives the plan job TG_TOKEN and its plan step
+  # keeps the runner's token variables, as the plan job did before, so the
+  # probe finds the token and the plan fails.
+  log() { echo "[smoke plan-token-free] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/plan-token-free" wf head pr n rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo plan-token-free || return 1
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then
+    grep -v 'TG_NO_FORGE_TOKEN=1 bash' "$wf" | awk '
+      /^  plan:$/ { inplan = 1 } /^  [a-z-]+:$/ && !/^  plan:$/ { inplan = 0 }
+      { print } inplan && /^    env:$/ && !done { print "      TG_TOKEN: ${{ github.token }}"; done = 1 }' > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'TG_TOKEN: \${{ github.token }}' "$wf" || { log "could not give the plan job TG_TOKEN"; return 1; }
+    MAIN_SHA="$(push_tree "$work/tree" "$repo" main "plan-token-free: the plan job holds the token")" || return 1
+    wait_run "$repo" "$MAIN_SHA" || return 1
+  fi
+  git -C "$work/tree" checkout -q -B probe
+  cat > "$work/tree/app/probe.sh" <<'SH'
+#!/bin/sh
+# Names only: which forge token variables and git credentials this process can reach.
+found=""
+names="TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN GITEA_TOKEN FORGEJO_TOKEN ACTIONS_RUNTIME_TOKEN"
+for v in $names; do
+  eval "x=\${$v:-}"
+  [ -z "$x" ] || found="$found env:$v"
+done
+p="$PPID"
+while [ -n "$p" ] && [ "$p" -gt 1 ] && [ -r "/proc/$p/environ" ]; do
+  for v in $names; do
+    tr '\0' '\n' < "/proc/$p/environ" | grep -q "^$v=." && found="$found parent:$v"
+  done
+  p="$(awk '/^PPid:/ { print $2 }' "/proc/$p/status")"
+done
+git -C "$1" config --get-regexp '^http\..*extraheader$' >/dev/null 2>&1 && found="$found git-config:extraheader"
+git -C "$1" remote get-url origin 2>/dev/null | grep -q '://[^/@]*@' && found="$found git-config:remote"
+if [ -n "$found" ]; then echo "token-probe: reachable:$found" >&2; exit 1; fi
+echo '{"probe":"clean"}'
+SH
+  chmod +x "$work/tree/app/probe.sh"
+  # shellcheck disable=SC2016 # HCL interpolation
+  printf 'terraform {\n  required_providers {\n    external = {\n      source  = "hashicorp/external"\n      version = "~> 2.3"\n    }\n  }\n}\n\ndata "external" "probe" {\n  program = ["sh", "${path.module}/probe.sh", abspath(path.root)]\n}\n\nresource "terraform_data" "probe" {\n  input = data.external.probe.result\n}\n' > "$work/tree/app/probe.tf"
+  head="$(push_tree "$work/tree" "$repo" probe "plan-token-free: the change's code looks for a token")" || return 1
+  pr="$(pr_open "$repo" probe "plan-token-free: probe")" || return 1
+  wait_run "$repo" "$head" pull_request || return 1
+  [ "$RUN_STATUS" = success ] || { log "the pull request's run ended '$RUN_STATUS'"; run_logs "$repo" "$RUN_ID" | grep -E 'token-probe|terragucci' | tail -20 >&2; rc=1; }
+  [ "$(api "$URL/api/v1/repos/$repo/commits/$head/statuses?limit=100" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // empty')" = success ] || { log "terragucci/plan on ${head:0:8} is not success"; rc=1; }
+  n="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq '[.[] | select(.body | startswith("<!-- terragucci:plan roots="))] | length')"
+  [ "$n" = 1 ] || { log "pull request $pr has $n plan notes; expected 1"; rc=1; }
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci plan"}' "$URL/api/v1/repos/$repo/issues/$pr/comments" || return 1
+    wait_run "$repo" "$MAIN_SHA" issue_comment || return 1
+    [ "$RUN_STATUS" = success ] || { log "the re-plan's run ended '$RUN_STATUS'"; run_logs "$repo" "$RUN_ID" | grep -E 'token-probe|terragucci' | tail -20 >&2; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the plan and the re-plan ran the change's code with no forge token in reach, and the note jobs posted the note and terragucci/plan"
   return $rc
 }
 
@@ -10003,6 +10125,156 @@ YAML
   return $rc
 }
 
+# ── the resource inventory ───────────────────────────────────────────────
+# The example's envs/dev/platform and envs/dev/orders roots and the service
+# module, in a repo whose reports go to the bucket under a fresh prefix. Each
+# root keeps local state and its resources get a name of their own (env
+# i<stamp> in place of dev), so the claim shares nothing with the example.
+inventory_repo() { # work, prefix -> $1/wave with the two roots and the module, and $1/origin.git
+  local work="$1" prefix="$2" env="i$STAMP" root
+  mkdir -p "$work/wave/envs/dev" "$work/wave/modules/service"
+  cp "$EXAMPLE/modules/service/"*.tf "$work/wave/modules/service/"
+  for root in platform orders; do
+    mkdir -p "$work/wave/envs/dev/$root"
+    cp "$EXAMPLE/envs/dev/$root/main.tf" "$EXAMPLE/envs/dev/$root/.terraform.lock.hcl" "$work/wave/envs/dev/$root/"
+    perl -0pi -e 's/backend "s3" \{.*?\n  \}\n/backend "local" {}\n/s; s/backend = "s3"\n  config = \{.*?\n  \}/backend = "local"\n  config = {\n    path = "..\/platform\/terraform.tfstate"\n  }/s' \
+      "$work/wave/envs/dev/$root/main.tf"
+  done
+  perl -pi -e "s/\"shop-dev-logs\"/\"shop-$env-logs\"/" "$work/wave/envs/dev/platform/main.tf"
+  perl -pi -e "s/env(\s+)= \"dev\"/env\$1= \"$env\"/" "$work/wave/envs/dev/orders/main.tf"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+}
+
+claim_inventory() {
+  # inventory_repo's two roots apply in two waves, platform then orders, each
+  # copying its report to the bucket. terragucci estate then lists every
+  # resource of both roots: estate.json has each root with its resources by
+  # address, type and provider and the project's count of each type, and
+  # estate.html shows each root and resource. No name of a resource, which
+  # the plans hold as values, reaches inventory.json or the page.
+  # BREAK: the orders root's list is dropped from inventory.json before the
+  # page is built, so the page lists platform alone.
+  log() { echo "[smoke inventory] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="inventory-$STAMP" project inv page html wave
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  inventory_repo "$work" "$prefix"
+  for wave in 1 2; do
+    [ $rc = 0 ] || break
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-apply --wave "$wave" --layers 'envs/dev/platform;envs/dev/orders' --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave $wave exited $AUDIT_CODE, not 0"; rc=1; }
+  done
+  if [ $rc = 0 ]; then
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    inv="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$project/inventory.json")" || { log "no inventory.json at $REPORT_BUCKET/$prefix/$project"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    jq '.roots |= map(select(.root != "envs/dev/orders"))' <<<"$inv" | curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @- "$FLOCI/$REPORT_BUCKET/$prefix/$project/inventory.json" || { log "could not drop the orders list"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '.projects[].inventory | {resources, types, roots: [.roots[] | {root, wave, resources: [.resources[] | "\(.address) \(.type)"]}]}' <<<"$page" >&2
+    [ "$(jq -r '[.projects[].inventory.roots[]?.root] | join(",")' <<<"$page")" = "envs/dev/orders,envs/dev/platform" ] \
+      || { log "the page lists the roots $(jq -c '[.projects[].inventory.roots[]?.root]' <<<"$page"), not envs/dev/orders and envs/dev/platform"; rc=1; }
+    jq -e '[.projects[].inventory.roots[]? | select(.root == "envs/dev/platform") | .resources[] | select(.address == "aws_s3_bucket.logs" and .type == "aws_s3_bucket" and (.provider | endswith("hashicorp/aws")))] | length == 1' <<<"$page" >/dev/null \
+      || { log "envs/dev/platform does not list aws_s3_bucket.logs"; rc=1; }
+    jq -e '[.projects[].inventory.roots[]? | select(.root == "envs/dev/orders") | .resources[].address] as $a | ["module.service.aws_dynamodb_table.records[0]", "module.service.aws_s3_bucket.files", "module.service.aws_s3_object.registration", "module.service.aws_sqs_queue.jobs"] - $a | length == 0' <<<"$page" >/dev/null \
+      || { log "envs/dev/orders does not list the service module's bucket, queue, table and registration"; rc=1; }
+    jq -e '[.projects[].inventory.types[]? | select(.type == "aws_s3_bucket") | .count] == [2]' <<<"$page" >/dev/null \
+      || { log "the project does not count two aws_s3_bucket: $(jq -c '[.projects[].inventory.types]' <<<"$page")"; rc=1; }
+    grep -q '<tbody class="inv" data-root="envs/dev/orders">' <<<"$html" || { log "estate.html shows no envs/dev/orders"; rc=1; }
+    grep -q '<code>module.service.aws_sqs_queue.jobs</code>' <<<"$html" || { log "estate.html does not list the jobs queue"; rc=1; }
+    if grep -q "shop-i$STAMP-" <<<"$inv$page$html"; then log "a resource name, a value in the plan, reached inventory.json or the page"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the estate page lists both roots' resources by root and type, and no value"
+  return $rc
+}
+
+claim_resource_history() {
+  # The audit repo (one root, app, holding terraform_data.app) with --gate
+  # always and reports in the bucket. Three commits each set a new input; each
+  # time wave 1 waits, approver-one, approver-two and approver-three approve it
+  # in turn, and the next run applies. terragucci audit writes the record and
+  # terragucci estate the history: terraform_data.app has three applies in
+  # order, a create and two updates of input, approved by approver-one,
+  # approver-two and approver-three, and the estate page links it. No input
+  # value reaches changes.json, the history or the estate page.
+  # BREAK: the second apply copies its report to another prefix, so neither
+  # its report nor its changes are in the bucket and the history lists two.
+  log() { echo "[smoke resource-history] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="history-$STAMP" n who project changes hist html page id got
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  audit_repo "$work" "$prefix"
+  for n in 1 2 3; do
+    [ $rc = 0 ] || break
+    case $n in 1) who=approver-one ;; 2) who=approver-two ;; 3) who=approver-three ;; esac
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "app" {\n  input = "hist-%s-%s"\n}\n' "$STAMP" "$n" > "$work/wave/app/main.tf"
+    printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+    if [ -n "${BREAK:-}" ] && [ $n = 2 ]; then
+      printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s-elsewhere\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+    fi
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app input $n"
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 3 ] || { log "change $n: the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; break; }
+    audit_approve "$work/origin.git" "$work/ledger" "$who" wave-1 || { log "change $n: could not approve wave 1"; rc=1; break; }
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 0 ] || { log "change $n: the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
+  done
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    changes="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$project/changes.json")" || { log "no changes.json at $REPORT_BUCKET/$prefix/$project"; rc=1; }
+    hist="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/history.json")" || { log "no history.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/history.html")" || { log "no history.html at $REPORT_BUCKET/$prefix"; rc=1; }
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '.resources[] | {address, applies: [.applies[] | {actions, attributes, approver, finished}]}' <<<"$hist" >&2
+    got="$(jq -r '[.resources[] | select(.address == "terraform_data.app") | .applies[] | "\(.actions | join("+")) \(.approver)"] | join(",")' <<<"$hist")"
+    [ "$got" = "create approver-one,update approver-two,update approver-three" ] \
+      || { log "the history of terraform_data.app is [$got], not a create by approver-one and updates by approver-two and approver-three"; rc=1; }
+    jq -e '[.resources[] | select(.address == "terraform_data.app") | .applies | (map(.finished) == (map(.finished) | sort)) and ([.[] | select(.actions == ["update"]) | .attributes | index("input")] | all(. != null))] == [true]' <<<"$hist" >/dev/null \
+      || { log "the applies are not oldest first, or an update does not name input"; rc=1; }
+    id="$(jq -r '.resources[] | select(.address == "terraform_data.app") | .id' <<<"$hist")"
+    grep -q "<section id=\"$id\">" <<<"$html" || { log "history.html has no section for terraform_data.app"; rc=1; }
+    grep -q "href=\"history.html#$id\"" <<<"$page" || { log "estate.html does not link terraform_data.app to its history"; rc=1; }
+    if grep -q "hist-$STAMP-" <<<"$changes$hist$html$page"; then log "an input value reached changes.json, the history or the estate page"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "terraform_data.app lists three applies in order, approved by approver-one, approver-two and approver-three, and no value"
+  return $rc
+}
+
 claim_notify_chat() {
   # The gated fixture (gate: always) with approval: pr-review and notify
   # naming two secrets, which hold the addresses of a webhook stand-in: one
@@ -10389,6 +10661,7 @@ summed-timings       weight=90
 foreign-checkout     ex after=boot weight=150
 tg-layers            runner self! weight=300
 policy-source        self! weight=150
+reconcile-parallelism weight=120
 pr-requires          runner self! weight=300
 pr-lock              runner self! weight=200
 front-door           self! weight=40
@@ -10438,6 +10711,7 @@ pr-guard             runner self! weight=300
 pr-close-release     runner self! weight=200
 tg-lock-fanout       runner self! weight=200
 token-scrub          weight=60
+plan-token-free      runner self! weight=250
 fork-no-plan         runner self! weight=250
 highlight-sensitive  weight=90
 approval-revoke      runner self! weight=250
@@ -10467,6 +10741,8 @@ apply-outcome        self! weight=120
 audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150
+inventory            weight=150
+resource-history     weight=200
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150

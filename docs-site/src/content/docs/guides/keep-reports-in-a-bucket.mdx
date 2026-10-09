@@ -165,7 +165,7 @@ Every run's report in a bucket under one path per run, and an `index.html` that 
 
 5. <span id="5-serve-the-index"></span>Open the reports.
 
-   Every upload adds the run's row to two `index.json` files, one at the project's path and one at the top of the prefix, and writes `index.html` from each. Writes are retried up to 8 times:
+   Every upload adds the run's row to two `index.json` files, one at the project's path and one at the top of the prefix, and writes `index.html` from each. A `tf-apply` wave's upload also writes the resources each applied root holds to the project's `inventory.json`, and what it did to each resource to the project's `changes.json`. Writes are retried up to 8 times:
 
    | Store | Index write |
    |---|---|

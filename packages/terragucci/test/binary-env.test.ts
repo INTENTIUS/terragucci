@@ -3,6 +3,7 @@ import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { binaryEnv, FORGE_TOKEN_ENV, terragruntExec } from "../src/binary-env";
 import { spawnAsync, stateIsEmpty } from "../src/report/stage";
+import { defaultPolicyExec } from "../src/report/policy";
 import { tmp } from "./helpers";
 
 const TOKENS = { TG_TOKEN: "job-token-1234", TG_MERGE_TOKEN: "merge-token-5678", GITHUB_TOKEN: "gh", GH_TOKEN: "gh2", GITLAB_TOKEN: "job-token-1234", CI_JOB_TOKEN: "ci", FORGEJO_TOKEN: "fj", GITEA_TOKEN: "gt", ACTIONS_RUNTIME_TOKEN: "rt", MY_BOT_TOKEN: "merge-token-5678" };
@@ -37,6 +38,17 @@ describe("the binary's environment", () => {
       expect(tg.stdout).toMatch(/^TG_TF_PATH=tofu$/m);
       const { readFileSync } = await import("node:fs");
       forgeFree(readFileSync(join(dir, "seen"), "utf-8"));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("check-root's validate and the policy engine start without the forge tokens", async () => {
+    for (const [k, v] of Object.entries(TOKENS)) vi.stubEnv(k, v);
+    try {
+      const r = await defaultPolicyExec("env", [], tmp());
+      expect(r.status).toBe(0);
+      forgeFree(r.stdout);
     } finally {
       vi.unstubAllEnvs();
     }

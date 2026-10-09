@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createServer, type IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,7 +8,7 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { agentRunScript } from "../src/render-agent";
-import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planScript, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { git, tmp } from "./helpers";
 
@@ -28,8 +29,12 @@ describe("the check job", () => {
     expect(run).toContain("terragucci check-policy || failed=1");
     expect(run).toContain('exit "$failed"');
     expect(run).not.toContain("validate -no-color");
-    // Without `policy:` the clone is shallow; with it the policy tests have the history.
-    expect(check.steps[0].with).toBeUndefined();
+    // Without `policy:` the clone is shallow; with it the policy tests have the history. Neither keeps credentials.
+    expect(check.steps[0].with).toEqual({ "persist-credentials": false });
+    // The check runs the branch's code, so the job and its step hold no forge token.
+    expect(JSON.stringify(check)).not.toContain("TG_TOKEN:");
+    expect(check.permissions).toBeUndefined();
+    expect(run.split("\n")[0]).toBe(dropForgeTokens("sh"));
     const withPolicy = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content).jobs.check;
     expect(withPolicy.steps[0].with["fetch-depth"]).toBe(0);
     expect(check.env.TG_BRANCH).toBe("${{ github.event.repository.default_branch }}");
@@ -156,30 +161,35 @@ describe("the comment trigger", () => {
     for (const line of text.split("\n").filter((l) => l.includes("github.event.comment"))) expect(line.trim()).toMatch(/^if: /);
   });
 
-  it("the re-plan script checks the comment before it asks for credentials, then plans the pull request's head", () => {
-    const script = planScript("tofu", layers, "github", OIDC, {}, true);
-    const at = (s: string): number => script.indexOf(s);
-    expect(at("terragucci comment")).toBeGreaterThan(-1);
-    expect(at("terragucci comment")).toBeLessThan(at("tg oidc"));
-    expect(at("git checkout --quiet --detach")).toBeLessThan(at("terragucci stage tf-plan"));
-    expect(script).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
-    expect(planScript("tofu", layers, "github", OIDC)).not.toContain("terragucci comment");
+  it("the re-plan decides from the comment with the token, before the head is checked out, and plans the head with no token", () => {
+    const decide = replanDecideScript(layers, "github");
+    expect(decide).toContain("terragucci comment --layers");
+    expect(decide).toContain('[ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"');
+    expect(decide).toContain('>>"$GITHUB_OUTPUT"');
+    const job = body(render("github")).jobs.replan;
+    const names = job.steps.map((s: any) => s.id ?? s.uses ?? s.name);
+    expect(names.indexOf("decide")).toBeLessThan(names.lastIndexOf("actions/checkout@v4"));
+    expect(job.steps.find((s: any) => s.id === "decide").env).toEqual({ TG_TOKEN: "${{ github.token }}" });
+    const plan = job.steps.find((s: any) => typeof s.run === "string" && s.run.includes("terragucci stage tf-plan"));
+    expect(plan.env.TG_TOKEN).toBeUndefined();
+    expect(plan.run).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
+    expect(plan.run.split("\n")[0]).toBe(dropForgeTokens());
+    expect(JSON.stringify(job.env ?? {})).not.toContain("TG_TOKEN");
+    for (const s of job.steps.filter((s: any) => s.uses === "actions/checkout@v4")) expect(s.with["persist-credentials"]).toBe(false);
   });
 
-  it("a re-plan of a root the change does not reach replies that it is not affected, and leaves the note and status", () => {
-    const script = planScript("tofu", layers, "github", OIDC, {}, true);
-    expect(script).toContain('tg reply "$TG_ROOT is not affected by this pull request, so nothing was planned."');
-    expect(script.indexOf("tg reply")).toBeLessThan(script.indexOf("tg note"));
-    expect(script).toContain('[ -n "${TG_ROOT:-}" ] || tg status terragucci/plan pending');
-    expect(planScript("tofu", layers, "github", OIDC)).not.toContain("tg reply");
+  it("a re-plan of a root the change does not reach is answered by the replan-note job, which leaves the note and status", () => {
+    const doc = body(render("github"));
+    expect(doc.jobs["replan-note"].needs).toBe("replan");
+    expect(doc.jobs["replan-note"].steps.at(-1).run).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
+    expect(doc.jobs["plan-note"].steps.at(-1).run).not.toContain("--root");
   });
 
   it("forgejo: the re-plan reads the commenter's permission from the event, and checks out the pull request's head by number", () => {
-    const script = planScript("tofu", layers, "forgejo", OIDC, {}, true);
-    expect(script).toMatch(/terragucci comment --layers [^\n]* --forge forgejo --out /);
-    expect(planScript("tofu", layers, "github", OIDC, {}, true)).not.toContain("--forge");
-    expect(script).toContain('git fetch --quiet origin "refs/pull/$TG_PR/head"');
-    expect(script.indexOf('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(script.indexOf("tg status terragucci/plan pending"));
+    expect(replanDecideScript(layers, "forgejo")).toMatch(/terragucci comment --layers [^\n]* --forge forgejo --out /);
+    expect(replanDecideScript(layers, "github")).not.toContain("--forge");
+    const job = body(render("forgejo")).jobs.replan;
+    expect(JSON.stringify(job.steps)).toContain("refs/pull/${{ steps.decide.outputs.pr }}/head");
   });
 
   it.each(["github", "forgejo"] as const)("%s: `/terragucci apply` starts the apply-comment job, with the apply role, under the apply lock", (forge) => {
@@ -454,7 +464,7 @@ describe("locks: plan", () => {
     // Pushes, plans and applies do not run on the new trigger: every other job names its own event or needs check.
     for (const [name, j] of Object.entries(doc.jobs) as [string, any][]) {
       if (name === "pr-lock") continue;
-      expect(String(j.if ?? "") + String(j.needs ?? ""), name).toMatch(/event_name == '(push|pull_request|issue_comment|pull_request_review|schedule)'|check|apply-wave|confirm/);
+      expect(String(j.if ?? "") + String(j.needs ?? ""), name).toMatch(/event_name == '(push|pull_request|issue_comment|pull_request_review|schedule)'|check|apply-wave|confirm|replan/);
     }
     if (forge === "forgejo") expect(doc.concurrency.group).toContain("github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number)");
   });
@@ -977,12 +987,13 @@ describe("credentials", () => {
     expect(never.jobs["apply-wave-1"].permissions.contents).toBe("read");
   });
 
-  it("github: with a drift schedule the plan and re-plan jobs read the drift job's runs, and without one they do not", () => {
+  it("github: with a drift schedule the note jobs read the drift job's runs, and without one they do not", () => {
     const drift = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *" }).content);
-    expect(drift.jobs.plan.permissions.actions).toBe("read");
-    expect(drift.jobs.replan.permissions.actions).toBe("read");
+    expect(drift.jobs["plan-note"].permissions.actions).toBe("read");
+    expect(drift.jobs["replan-note"].permissions.actions).toBe("read");
+    expect(drift.jobs.plan.permissions.actions).toBeUndefined();
     expect(drift.jobs.drift.permissions.actions).toBeUndefined();
-    expect(body(render("github")).jobs.plan.permissions.actions).toBeUndefined();
+    expect(body(render("github")).jobs["plan-note"].permissions.actions).toBeUndefined();
   });
 
   it("forgejo: the jobs that assume a role set enable-openid-connect, and the token comes from the runner's OIDC endpoint", () => {
@@ -1222,7 +1233,12 @@ describe("the plan stage", () => {
     const doc = body(render("gitlab"));
     expect(doc.plan.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
     expect(doc.plan.script.join("\n")).toContain('tg note "$note"');
-    expect(doc.check.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
+    // The check holds no token of its own and drops the ones GitLab hands it; the fmt job pushes the formatting.
+    expect(doc.check.variables.TG_TOKEN).toBeUndefined();
+    expect(doc.check.script.join("\n")).toMatch(/^unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN CI_JOB_TOKEN\n/);
+    expect(doc.check.after_script).toBeUndefined();
+    expect(doc.fmt).toMatchObject({ stage: "check", needs: ["check"], variables: { TG_TOKEN: "$GITLAB_TOKEN" } });
+    expect(doc.fmt.rules[0].when).toBe("on_failure");
     expect(doc.comments).toBeUndefined();
   });
 
@@ -1277,7 +1293,7 @@ describe("the plan stage", () => {
 
   it("the plan, re-plan and Terragrunt plan scripts turn off the step's -e, since each reads the stage's exit code", () => {
     expect(planScript("tofu", layers, "github").split("\n")[0]).toBe(READS_EXIT);
-    expect(planScript("tofu", layers, "forgejo", OIDC, {}, true).split("\n")[0]).toBe(READS_EXIT);
+    expect(planFilesScript("tofu", layers, "forgejo", OIDC, {}, { replan: true }).split("\n")[0]).toBe(READS_EXIT);
     expect(planScript("tofu", layers, "github", undefined, { terragrunt: { prelude: "true" } }).split("\n")[0]).toBe(READS_EXIT);
     // GitLab runs the script in its own bash from a heredoc; the first line is the same there.
     expect(body(render("gitlab")).plan.script.join("\n")).toContain(`bash <<'PLAN' || exit $?\n${READS_EXIT}\n`);
@@ -2231,8 +2247,10 @@ describe("approval: pr-review", () => {
   it.each(["github", "forgejo"] as const)("%s: the plan job posts terragucci/approval after the note, and a review of the head re-posts it", (forge) => {
     const doc = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, prReview: true }).content);
     expect(Object.keys(doc.on)).toContain("pull_request_review");
-    const plan = doc.jobs.plan.steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-plan")).run as string;
-    expect(plan.indexOf(`terragucci approval-status --forge ${forge} --report terragucci-report`)).toBeGreaterThan(plan.indexOf('tg note "$note"'));
+    // The plan job holds no token; its note job posts the note, then terragucci/approval from the same report.
+    expect(doc.jobs["plan-note"].steps.at(-1).run).toContain(`terragucci plan-note --forge ${forge} --report terragucci-report`);
+    expect(doc.jobs["plan-note"].steps.at(-1).run).toContain("--approval-status");
+    expect(doc.jobs["replan-note"].steps.at(-1).run).toContain("--approval-status");
     expect(doc.jobs.approval.if).toContain("github.event_name == 'pull_request_review'");
     // Forgejo reads no job permissions, so its dialect writes none.
     if (forge === "github") expect(doc.jobs.approval.permissions).toEqual({ contents: "read", statuses: "write", "pull-requests": "read" });
@@ -2247,5 +2265,108 @@ describe("approval: pr-review", () => {
     const gitlab = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, prReview: true }).content;
     expect(gitlab).not.toContain("approval-status");
     expect(validateConfig({ forge: "gitlab", approval: "pr-review" }, "t")).toEqual({ forge: "gitlab", approval: "pr-review" });
+  });
+});
+
+describe("no forge token where the change's code runs", () => {
+  const OIDC = { plan_role: "arn:aws:iam::1:role/plan", apply_role: "arn:aws:iam::1:role/apply" };
+  it.each(["github", "forgejo"] as const)("%s: the plan job posts the pending status before the checkout, and plans with no token and no credentials in the checkout", (forge) => {
+    const plan = body(render(forge, OIDC)).jobs.plan;
+    expect(plan.env.TG_TOKEN).toBeUndefined();
+    const steps = plan.steps as { name?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }[];
+    const checkout = steps.findIndex((s) => String(s.uses).endsWith("actions/checkout@v4"));
+    // Only the step before the checkout holds the token.
+    expect(steps.findIndex((s) => s.env?.TG_TOKEN)).toBe(0);
+    expect(steps.filter((s) => s.env?.TG_TOKEN)).toHaveLength(1);
+    expect(checkout).toBe(1);
+    expect(steps[checkout].with!["persist-credentials"]).toBe(false);
+    const run = steps.find((s) => s.run?.includes("terragucci stage tf-plan"))!.run!;
+    expect(run.split("\n")[0]).toBe(dropForgeTokens());
+    expect(run).not.toContain("tg note");
+    expect(run).not.toContain("tg status");
+    expect(run).toContain(">terragucci-report/plan-status.txt");
+    if (forge === "github") expect(plan.permissions).toEqual({ contents: "read", statuses: "write", "id-token": "write" });
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the plan-note job runs after the plan, checks nothing out and posts from the report", (forge) => {
+    const note = body(render(forge)).jobs["plan-note"];
+    expect(note.needs).toBe("plan");
+    expect(note.if).toContain("needs.plan.result == 'success' || needs.plan.result == 'failure'");
+    expect(note.env).toMatchObject({ TG_TOKEN: "${{ github.token }}", TG_PLAN_RESULT: "${{ needs.plan.result }}" });
+    expect(JSON.stringify(note.steps)).not.toContain("actions/checkout");
+    expect(note.steps.at(-1).if).toBe("always()");
+    expect(note.steps.at(-1).run).toContain(`terragucci plan-note --forge ${forge} --report terragucci-report`);
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the formatting is committed by a job of its own after a failed check", (forge) => {
+    const doc = body(render(forge));
+    expect(doc.jobs.fmt.needs).toBe("check");
+    expect(doc.jobs.fmt.if).toContain("needs.check.result == 'failure' && github.event_name == 'push'");
+    expect(doc.jobs.fmt.env.TG_TOKEN).toBe("${{ github.token }}");
+    expect(doc.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply");
+    expect(JSON.stringify(doc.jobs.check)).not.toContain("respond fmt");
+    expect(body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, respond: { fmt: "off" } }).content).jobs.fmt).toBeUndefined();
+  });
+
+  it("the step that runs the change's code starts again without the runner's token variables, and keeps the OIDC ones", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "drop-"));
+    const script = join(dir, "step.sh");
+    writeFileSync(script, `${dropForgeTokens()}\nenv | sort > "${dir}/env"\ncat /proc/$$/environ 2>/dev/null | tr '\\0' '\\n' > "${dir}/proc" || true\n`);
+    const r = spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", script], { env: { PATH: process.env.PATH, GITHUB_TOKEN: "x1", GITEA_TOKEN: "x2", ACTIONS_RUNTIME_TOKEN: "x3", TG_TOKEN: "x4", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "keep" }, encoding: "utf-8" });
+    expect(r.status, r.stderr).toBe(0);
+    const env = readFileSync(join(dir, "env"), "utf-8");
+    expect(env).not.toMatch(/^(GITHUB_TOKEN|GITEA_TOKEN|ACTIONS_RUNTIME_TOKEN|TG_TOKEN)=/m);
+    expect(env).toContain("ACTIONS_ID_TOKEN_REQUEST_TOKEN=keep");
+    // Where /proc exists, the shell's own process environment no longer holds them either.
+    const proc = readFileSync(join(dir, "proc"), "utf-8");
+    if (proc) expect(proc).not.toMatch(/x[1-4]/);
+  });
+});
+
+describe("the check step's restart line, for every binary", () => {
+  const TG = { version: "0.99.0", parallelism: 4, exclude: [], installs: [] };
+  const checkRun = (forge: "github" | "forgejo", binary: "tofu" | "terraform" | "choudoufu", tg: boolean): string =>
+    body(renderPipeline({ forge, binary, version: "1.13.1", image: "img:1", layers: tg ? [["live/dev/app"]] : layers, env: {}, ...(tg ? { terragrunt: TG } : {}) }).content)
+      .jobs.check.steps.find((s: { run?: string }) => typeof s.run === "string" && s.run.includes(" fmt ")).run as string;
+  const cases = [["tofu", false], ["terraform", false], ["choudoufu", false], ["tofu", true]] as const;
+  const tokens = { GITHUB_TOKEN: "x1", GITEA_TOKEN: "x2", ACTIONS_RUNTIME_TOKEN: "x3", TG_TOKEN: "x4" };
+  const after = 'echo "reached ${GITHUB_TOKEN:-none} ${GITEA_TOKEN:-none} ${ACTIONS_RUNTIME_TOKEN:-none} ${TG_TOKEN:-none}"';
+
+  it.each(cases)("%s (terragrunt: %s): under sh -c, with or without a PATH, the step runs on without the tokens", (binary, tg) => {
+    for (const forge of ["github", "forgejo"] as const) {
+      const first = checkRun(forge, binary, tg).split("\n")[0];
+      expect(first).toBe(dropForgeTokens("sh"));
+      // `sh -c` makes $0 "sh", which is no script file, and an empty environment has no PATH for env.
+      for (const [shell, env] of [["/bin/sh", { ...tokens }], ["sh", { PATH: process.env.PATH, ...tokens }]] as const) {
+        const r = spawnSync(shell, ["-c", `${first}\n${after}`], { env, encoding: "utf-8" });
+        expect(r.stderr).not.toMatch(/cannot (open|execute)/);
+        expect(r.status, r.stderr).toBe(0);
+        expect(r.stdout.trim()).toBe("reached none none none none");
+      }
+    }
+  });
+
+  it.each(cases)("%s (terragrunt: %s): run as the runner runs it, sh -e <file>, the shell starts again without the tokens", (binary, tg) => {
+    const dir = mkdtempSync(join(tmpdir(), "restart-"));
+    const script = join(dir, "step.sh");
+    writeFileSync(script, `${checkRun("forgejo", binary, tg).split("\n")[0]}\n${after} "\${TG_NO_FORGE_TOKEN:-}"\n`);
+    const r = spawnSync("sh", ["-e", script], { env: { PATH: process.env.PATH, ...tokens }, encoding: "utf-8" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("reached none none none none 1");
+  });
+});
+
+describe("the resume and rollout workflows run merged code only", () => {
+  it.each(["github", "forgejo"] as const)("%s: each starts on its schedule or by hand, never on a pull request or a comment, from the default branch", (forge) => {
+    const r = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gate: "always", resume: 15, rollouts: "*/15 * * * *" });
+    expect(r.extra).toHaveLength(2);
+    for (const f of r.extra!) {
+      const doc = body(f.content);
+      expect(Object.keys(doc.on).sort(), f.path).toEqual(["schedule", "workflow_dispatch"]);
+      for (const job of Object.values(doc.jobs) as { steps: { with?: Record<string, unknown> }[] }[]) {
+        // The checkout is the scheduled run's: the default branch, never a pull request's ref.
+        for (const s of job.steps) expect(String(s.with?.ref ?? ""), f.path).not.toContain("refs/pull");
+      }
+    }
   });
 });

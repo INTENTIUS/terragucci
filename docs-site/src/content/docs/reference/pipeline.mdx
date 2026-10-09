@@ -256,6 +256,23 @@ With `reports.bucket` set, the report upload's credentials come from:
 
 [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) lists the secrets.
 
+### GitLab-managed state
+
+The binary never gets `CI_JOB_TOKEN` ([forge tokens](/terragucci/reference/environment/#forge-tokens)), and a `TF_` variable passes as set. So pass the `http` backend's credentials as `TF_` variables in `env:`:
+
+```yaml
+env:
+  TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/infra"
+  TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/infra/lock"
+  TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/infra/lock"
+  TF_HTTP_LOCK_METHOD: POST
+  TF_HTTP_UNLOCK_METHOD: DELETE
+  TF_HTTP_USERNAME: gitlab-ci-token
+  TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
+```
+
+GitLab expands the references in each job. This names one state, `infra`, for a root with an empty `backend "http" {}` block. With several roots, give each root's `backend "http"` block its own `address`, `lock_address` and `unlock_address`, and keep the credentials in `env:`.
+
 ### The agent comment
 
 With `agent.comment` set on GitHub or Forgejo, `/terragucci agent <ask>` on a pull request starts the two jobs below. Neither gets a cloud role.

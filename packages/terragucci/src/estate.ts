@@ -10,10 +10,12 @@
  * `reports.role` of its own); the page goes to the bucket under `defaults`.
  * In a single repo the projects are the ones the top-of-prefix index lists.
  *
- * It reads `index.json` and nothing else: never a report, a plan's text or a
- * root's plan JSON (see report/estate.ts). The one other object it reads is
- * `audit.json`, the summary `terragucci audit` writes beside the page
- * (./audit.ts), so the page can link the audit trail.
+ * It reads each project's `index.json`, `inventory.json` and `changes.json`,
+ * and never a report, a plan's text or a root's plan JSON (see
+ * report/estate.ts). Beside the page it reads `audit.json`, the summary
+ * `terragucci audit` writes (./audit.ts), so the page can link the audit
+ * trail, and, when an apply changed a resource, the record `audit.jsonl`,
+ * for the approver of each apply in `history.html` (report/history.ts).
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -21,7 +23,10 @@ import { ConfigError, resolveProject, resolveRepo, type TerragucciConfig } from 
 import { age, buildEstate, renderEstateHtml, type Estate, type ProjectIndex } from "./report/estate";
 import { storeFromEnv } from "./report/bucket";
 import { bucketUrl, parseReportsBucket, PRESIGN_MAX_SECONDS, StoreError, type ObjectStore, type StoreFetch } from "./report/object-store";
-import { reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
+import { AUDIT_FILES, readRecord, type AuditEntry } from "./report/audit";
+import { buildHistory, CHANGES_SCHEMA, historyId, renderHistoryHtml, type ChangeRow, type Changes, type History } from "./report/history";
+import { INVENTORY_SCHEMA, type Inventory } from "./report/inventory";
+import { changesKey, inventoryKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
 
@@ -99,12 +104,53 @@ async function readProject(project: string, reports: Reports | undefined, out: R
   const served = reportsBase(reports);
   const base = sameBucket(reports, out) ? `${project}/` : served ? `${served}/${project}/` : undefined;
   const at = key(reports.prefix ?? "", project, "index.json");
+  let rows: IndexEntry[] | undefined;
   try {
     const text = await client(reports).get(at);
-    return { project, ...(text === undefined ? {} : { reports: parseIndex(text, at) }), ...(base !== undefined ? { base } : {}) };
+    rows = text === undefined ? undefined : parseIndex(text, at);
   } catch (e) {
     if (!(e instanceof StoreError) && !(e instanceof TypeError)) throw e;
     return { project, error: e.message, ...(base !== undefined ? { base } : {}) };
+  }
+  const inventory = rows ? await readInventoryOf(client(reports), inventoryKey(project, reports.prefix ?? "")) : undefined;
+  const changes = rows ? await readChangesOf(client(reports), changesKey(project, reports.prefix ?? "")) : undefined;
+  return { project, ...(rows ? { reports: rows } : {}), ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(base !== undefined ? { base } : {}) };
+}
+
+/** A project's resource changes, when an apply wrote them; unreadable ones leave the project without a history. */
+async function readChangesOf(store: ObjectStore, at: string): Promise<ChangeRow[] | undefined> {
+  try {
+    const text = await store.get(at);
+    if (text === undefined) return undefined;
+    const parsed = JSON.parse(text) as Partial<Changes>;
+    return parsed.schema === CHANGES_SCHEMA && Array.isArray(parsed.changes) ? parsed.changes : undefined;
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
+    throw e;
+  }
+}
+
+/** The audit trail's entries, for the approver of each apply; undefined when there is no record or it cannot be read. */
+async function auditEntries(store: ObjectStore, prefix: string): Promise<AuditEntry[] | undefined> {
+  try {
+    const text = await store.get(key(prefix, AUDIT_FILES.record));
+    return text === undefined ? undefined : readRecord(text).entries;
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError) return undefined;
+    throw e;
+  }
+}
+
+/** A project's inventory, when an apply wrote one; one that cannot be read leaves the project without a resource list, never without its runs. */
+async function readInventoryOf(store: ObjectStore, at: string): Promise<Inventory | undefined> {
+  try {
+    const text = await store.get(at);
+    if (text === undefined) return undefined;
+    const parsed = JSON.parse(text) as Partial<Inventory>;
+    return parsed.schema === INVENTORY_SCHEMA && Array.isArray(parsed.roots) ? (parsed as Inventory) : undefined;
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
+    throw e;
   }
 }
 
@@ -138,6 +184,23 @@ async function auditTrail(store: ObjectStore, prefix: string): Promise<Estate["a
   }
 }
 
+/** The history's files, beside the estate page. */
+export const HISTORY_FILES = { json: "history.json", page: "history.html" } as const;
+
+/** Point the page at the history: its count, and each listed resource that has one at its section. */
+function linkHistory(page: Estate, history: History): void {
+  const ids = new Set(history.resources.map((r) => r.id));
+  page.history = { page: HISTORY_FILES.page, resources: history.resources.length, generated: history.generated };
+  for (const p of page.projects) {
+    for (const root of p.inventory?.roots ?? []) {
+      for (const r of root.resources) {
+        const id = historyId(p.project, root.root, r.address);
+        if (ids.has(id)) r.history = `${HISTORY_FILES.page}#${id}`;
+      }
+    }
+  }
+}
+
 export async function estate(cwd: string, config: TerragucciConfig, options: EstateOptions = {}): Promise<EstateResult> {
   const env = options.env ?? process.env;
   const now = options.now ?? new Date();
@@ -152,7 +215,16 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
     const trail = await auditTrail(client(out), out.prefix ?? "");
     if (trail) page.audit = trail;
   }
-  const files = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page) };
+  // The history of every address an apply changed, with each wave's approver from the audit trail, on a page of its own.
+  let history: History | undefined;
+  const changed = indexes.filter((p) => p.changes && p.changes.length > 0);
+  if (changed.length > 0) {
+    const audit = out?.bucket ? await auditEntries(client(out), out.prefix ?? "") : undefined;
+    history = buildHistory(changed.map((p) => ({ project: p.project, changes: p.changes!, ...(p.base !== undefined ? { base: p.base } : {}) })), audit, now);
+    linkHistory(page, history);
+  }
+  const files: Record<string, string> = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page) };
+  if (history) Object.assign(files, { [HISTORY_FILES.json]: JSON.stringify(history, null, 2) + "\n", [HISTORY_FILES.page]: renderHistoryHtml(history) });
   const dir = resolve(cwd, options.out ?? "terragucci-estate");
   mkdirSync(dir, { recursive: true });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
@@ -174,6 +246,9 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
+/** "a and b", "a, b and c". */
+const listed = (items: string[]): string => (items.length < 3 ? items.join(" and ") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`);
+
 /** What the command prints. */
 export function describeEstate(r: EstateResult, cwd: string): string {
   const t = r.estate.totals;
@@ -183,8 +258,8 @@ export function describeEstate(r: EstateResult, cwd: string): string {
     if (p.drifted > 0) lines.push(`  ${p.project}: ${plural(p.drifted, "root", "roots")} drifted`);
     if (p.status === "error") lines.push(`  ${p.project}: the index could not be read: ${p.error}`);
   }
-  lines.push(`wrote ${r.files.map((f) => (f.startsWith(cwd + "/") ? f.slice(cwd.length + 1) : f)).join(" and ")}`);
-  if (r.uploaded) lines.push(`copied to ${named(r.uploaded.bucket)}/${r.uploaded.keys.join(" and ")}`);
+  lines.push(`wrote ${listed(r.files.map((f) => (f.startsWith(cwd + "/") ? f.slice(cwd.length + 1) : f)))}`);
+  if (r.uploaded) lines.push(`copied to ${named(r.uploaded.bucket)}/${listed(r.uploaded.keys)}`);
   if (r.link) lines.push(`link, until ${r.link.expires}:`, r.link.url);
   return lines.join("\n");
 }

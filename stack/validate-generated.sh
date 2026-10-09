@@ -86,6 +86,12 @@
 #              request adds to its own pipeline finds GITLAB_TOKEN empty, the
 #              plan job plans, and the comments schedule's play posts the
 #              plan note and terragucci/plan on the head.
+#   gl-check-token  gitlab: GITLAB_TOKEN an unprotected variable, as by
+#              default. A branch's synth command, the branch's own code in the
+#              check job, finds no forge token variable, and the check passes.
+#   gl-managed-state  gitlab: a root on GitLab-managed state, its backend
+#              password passed as TF_HTTP_PASSWORD from the job token. The push
+#              to main applies it and GitLab holds its state.
 #   gl-review-bot  gitlab: approval: pr-review and gate: always. A Developer's
 #              merge request is approved after its last push by the user the
 #              pipeline's token acts as, and merged: wave 1 still waits, says
@@ -117,7 +123,10 @@
 # pr-apply-trust names the merge request's own head, so it applies.
 # gl-token-protected leaves GITLAB_TOKEN unprotected, so the merge request's
 # job sees it; gl-review-bot has another Developer approve in place of the
-# token's user, so wave 1 applies.
+# token's user, so wave 1 applies. gl-check-token drops the check job's
+# unset line, so the synth command sees GITLAB_TOKEN and the check fails;
+# gl-managed-state leaves TF_HTTP_PASSWORD out, so the backend has no
+# credential (the scrub keeps CI_JOB_TOKEN from the binary) and the apply fails.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -136,12 +145,12 @@ log()  { echo "[validate $FORGE $CLAIM] $*"; }
 fail() { log "FAIL: $*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 || { echo "SKIP: Docker is not available"; exit 0; }
-case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule|pr-apply|pr-apply-stale|pr-apply-lock|pr-apply-trust|gl-token-protected|gl-review-bot) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
+case "$CLAIM" in check|apply|reconcile|tg-check|tg-apply|cdf-check|cdf-apply|gate-wait|own-jobs|pr-review|approve|gl-comment-plan|gl-comment-apply|gl-comment-drift-schedule|pr-apply|pr-apply-stale|pr-apply-lock|pr-apply-trust|gl-token-protected|gl-review-bot|gl-check-token|gl-managed-state) ;; *) echo "claim '$CLAIM' is not implemented for $FORGE (check, apply, reconcile, tg-check, tg-apply, cdf-check, cdf-apply, gate-wait, own-jobs, pr-review, pr-apply)" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:pr-apply*) ;; *:pr-apply*) echo "$CLAIM is gitlab's here; the smoke claims of that name run it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:approve) ;; *:approve) echo "approve is implemented for gitlab here; the approve-command smoke claim runs it on Forgejo" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in forgejo:pr-review|gitlab:pr-review) ;; *:pr-review) echo "pr-review is implemented for forgejo and gitlab here" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gate-wait) ;; *:gate-wait) echo "gate-wait is gitlab's: it checks how GitLab ends a waiting wave's job and status" >&2; exit 2 ;; esac
-case "$FORGE:$CLAIM" in gitlab:gl-token-protected|gitlab:gl-review-bot) ;; *:gl-token-protected|*:gl-review-bot) echo "$CLAIM is gitlab's: it checks GitLab's variables and approvals" >&2; exit 2 ;; esac
+case "$FORGE:$CLAIM" in gitlab:gl-token-protected|gitlab:gl-review-bot|gitlab:gl-check-token|gitlab:gl-managed-state) ;; *:gl-token-protected|*:gl-review-bot|*:gl-check-token|*:gl-managed-state) echo "$CLAIM is gitlab's: it checks GitLab's variables, approvals and state" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:gl-comment-*) ;; *:gl-comment-*) echo "$CLAIM is gitlab's: it checks the comments schedule" >&2; exit 2 ;; esac
 case "$FORGE:$CLAIM" in gitlab:own-jobs) ;; *:own-jobs) echo "own-jobs is gitlab's: it checks the include init adds to a repo's own .gitlab-ci.yml" >&2; exit 2 ;; esac
 
@@ -921,6 +930,65 @@ YML
   log "the comments play posted !$iid's plan note and terragucci/plan success on ${head:0:8}"
 }
 
+# The check job runs a branch's code with no forge token variable, though
+# GitLab hands it GITLAB_TOKEN, an unprotected variable by default.
+run_check_token() {
+  local repo=validate-check-token dir="$WORK/check-token" f sha
+  forge_reset_repo "$repo"
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
+  mkdir -p "$dir"
+  cp -R "$FIXTURE/infra" "$dir/"
+  # synth runs in the check job's shell, where the branch's code runs; it says only whether a token reached it.
+  # shellcheck disable=SC2016 # expanded in the job
+  printf '%s\n' 'forge: gitlab' 'synth: '"'"'[ "$CI_JOB_NAME" != check ] || [ -z "${GITLAB_TOKEN:-}${TG_TOKEN:-}${CI_JOB_TOKEN:-}" ] || { echo "token-probe: the check job runs this with a forge token"; exit 1; }'"'" > "$dir/terragucci.yml"
+  (cd "$dir" && git init -q -b main && "$TERRAGUCCI" init --forge gitlab --binary tofu >/dev/null) || fail "init failed with the synth probe"
+  f="$dir/$PIPELINE_FILE"
+  grep -q 'unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN CI_JOB_TOKEN' "$f" || fail "the check job does not drop the forge token variables"
+  if [ -n "$BREAK" ]; then
+    grep -v 'unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN CI_JOB_TOKEN' "$f" > "$f.new" && mv "$f.new" "$f"
+  fi
+  sha="$(forge_push "$dir" "$repo" validate/check-token "$(msg)")"
+  forge_run "$repo" validate/check-token "$sha"
+  if grep -q "token-probe: the check job runs this with a forge token" "$RUN_LOG"; then forge_logs; fail "the check job's synth command found a forge token"; fi
+  [ "$RUN_STATUS" = success ] || { forge_logs; fail "the branch's run ended '$RUN_STATUS'"; }
+  log "the check job ran the branch's synth command with no forge token variable"
+}
+
+# GitLab-managed state with the scrub: the backend's password reaches the
+# binary as TF_HTTP_PASSWORD, which passes as set, never as CI_JOB_TOKEN.
+run_managed_state() {
+  local repo=validate-managed-state dir="$WORK/managed-state" sha state
+  forge_reset_repo "$repo"
+  forge_ci_var "$repo" GITLAB_TOKEN "$TOKEN"
+  mkdir -p "$dir/infra"
+  printf 'terraform {\n  backend "http" {}\n}\n\nresource "terraform_data" "state" {\n  input = "gitlab-managed"\n}\n' > "$dir/infra/main.tf"
+  {
+    echo 'forge: gitlab'
+    echo 'gate: never'
+    echo 'env:'
+    # shellcheck disable=SC2016 # GitLab expands these in the job
+    echo '  TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/infra"'
+    # shellcheck disable=SC2016
+    echo '  TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/infra/lock"'
+    # shellcheck disable=SC2016
+    echo '  TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/infra/lock"'
+    echo '  TF_HTTP_LOCK_METHOD: POST'
+    echo '  TF_HTTP_UNLOCK_METHOD: DELETE'
+    if [ -z "$BREAK" ]; then
+      echo '  TF_HTTP_USERNAME: gitlab-ci-token'
+      # shellcheck disable=SC2016
+      echo '  TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"'
+    fi
+  } > "$dir/terragucci.yml"
+  (cd "$dir" && git init -q -b main && "$TERRAGUCCI" init --forge gitlab --binary tofu >/dev/null) || fail "init failed with GitLab-managed state"
+  sha="$(forge_push "$dir" "$repo" main "$(msg)")"
+  forge_run "$repo" main "$sha"
+  [ "$RUN_STATUS" = success ] || { forge_logs; fail "the push to main on GitLab-managed state ended '$RUN_STATUS'"; }
+  state="$(glapi "$URL/api/v4/projects/$(pid "$repo")/terraform/state/infra" 2>/dev/null || true)"
+  grep -q 'gitlab-managed' <<<"$state" || fail "GitLab holds no state for infra with the applied resource"
+  log "the apply on GitLab-managed state wrote its state through TF_HTTP_PASSWORD"
+}
+
 # approval: pr-review: an approval by the user the pipeline's token acts as
 # never releases a wave.
 run_review_bot() {
@@ -985,6 +1053,8 @@ case "$CLAIM" in
   pr-apply-trust) run_pr_apply_trust_gitlab ;;
   gl-token-protected) run_token_protected ;;
   gl-review-bot) run_review_bot ;;
+  gl-check-token) run_check_token ;;
+  gl-managed-state) run_managed_state ;;
   reconcile)
     p="tg-reconcile-$FORGE"
     for name in two-roots in-line; do forge_reset_repo "$name"; done
@@ -1018,11 +1088,13 @@ provider "aws" {
     mk "$WORK/in-line" "inline-$FORGE" "$p-inline"
     # in-line's pipeline is rendered with the same settings the control repo
     # hands every project (they change the pipeline: token_env adds the plan
-    # job's token), so the claim cannot drift from the renderer.
+    # job's token), so the claim cannot drift from the renderer. Its
+    # terragucci.yml stays: the jobs read token_env there, and reconcile
+    # leaves a project's own file alone when it holds the control repo's value.
     DEFAULTS="forge: $FORGE
 binary: tofu
 token_env: $FORGE_TOKEN_ENV"
-    (cd "$WORK/in-line" && git init -q -b main && echo "$DEFAULTS" > terragucci.yml && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
+    (cd "$WORK/in-line" && git init -q -b main && echo "$DEFAULTS" > terragucci.yml && "$TERRAGUCCI" init >/dev/null)
     # Pushed as init writes it, digests and all, so reconcile finds it in line;
     # the github forge_run drops the digests from the clone it runs.
     TG_KEEP_DIGESTS=1 forge_push "$WORK/in-line" in-line main "Two roots, pipeline in line" >/dev/null

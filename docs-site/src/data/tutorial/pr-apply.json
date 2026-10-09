@@ -1,9 +1,9 @@
 {
   "step": "pr-apply",
-  "source_hash": "197b083215a6a023",
+  "source_hash": "c6909fe377b97186",
   "commands": [],
   "shots": {
-    "reply-light": "9687c03492988a53",
+    "reply-light": "5a316fb8f20502a2",
     "reply-dark": "de2f0430c827cec9",
     "lock-light": "a81dc907cb208af5",
     "lock-dark": "8a9a03fbc8784a29",

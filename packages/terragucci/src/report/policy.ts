@@ -32,6 +32,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { CONFIG_NAMES, loadConfig, parsePolicySource, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
+import { binaryEnv } from "../binary-env";
 import { redactPlan } from "./redact";
 import { REDACTED, type ReportPolicy, type ReportRootPolicy } from "./schema";
 
@@ -60,9 +61,10 @@ export const OPA_SHA256: Record<string, string> = {
   arm64: "9a1f3625529c6f01240fe68286dde06aa0b23c5253da700ac48f4d943ff8a4de",
 };
 
+/** Runs the policy engine, and in `check-root` the binary's validate and live-check, with the job's environment less its forge tokens. */
 export const defaultPolicyExec: PolicyExec = (file, args, cwd) =>
   new Promise((done) => {
-    const child = spawn(file, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: binaryEnv(process.env) });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let failed: Error | undefined;

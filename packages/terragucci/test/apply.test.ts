@@ -252,6 +252,25 @@ describe("a wave behind its gate", () => {
     expect(wave().approval).toBe("not-required");
   });
 
+  it("the wave's report lists the resources a root holds only once it applied, and never a value", async () => {
+    const { work, origin, bin } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const secret = "s3cr3t-in-the-plan";
+    writeFileSync(join(work, "..", "plans", "a.json"), JSON.stringify({
+      resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", provider_name: "terraform.io/builtin/terraform", change: { actions: ["create"], before: null, after: { input: secret }, after_unknown: {}, after_sensitive: { input: true } } }],
+      planned_values: { root_module: { resources: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", provider_name: "terraform.io/builtin/terraform", values: { input: secret }, sensitive_values: { input: true } }] } },
+    }));
+    const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
+    const report = () => readFileSync(join(work, "terragucci-report", "report.json"), "utf-8");
+    expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+    expect(JSON.parse(report()).roots[0].resources).toBeUndefined();
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+    expect(await applyWave(work, { ...opts, now: T(3) })).toBe(0);
+    expect(JSON.parse(report()).roots[0].resources).toEqual([{ address: "terraform_data.x", type: "terraform_data", provider: "terraform.io/builtin/terraform" }]);
+    expect(report()).not.toContain(secret);
+  });
+
   it("ends the ledger with a newline, so a line another writer appends stays its own record", async () => {
     const { work, origin, bin } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});
