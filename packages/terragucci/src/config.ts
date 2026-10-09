@@ -342,9 +342,12 @@ export interface ProjectSettings {
    * Notifications: the names of the secrets holding a Slack or Teams
    * incoming webhook, and a generic webhook's address with the key that
    * signs its body. An apply job whose wave waits, is refused or fails posts
-   * to each (notify.ts).
+   * to each (notify.ts), and the drift job posts drift to Slack and Teams.
+   * `relay` names the customer's relay (relay.ts): a waiting wave's Slack
+   * message gets Approve and Decline buttons, its Teams card the reply
+   * `@<relay> approve wave-<k> <digest>`.
    */
-  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /**
    * Cost estimates per root in the plan note: Infracost on the customer's
    * own key (`key_secret`, default INFRACOST_API_KEY), or a `command` that
@@ -583,11 +586,16 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.notify !== undefined) {
     const n = s.notify;
-    const keys = ["slack", "teams", "webhook", "webhook_key"];
+    const keys = ["slack", "teams", "webhook", "webhook_key", "relay"];
     if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: ${keys.join(", ")})`);
     else {
       for (const [k, v] of Object.entries(n)) {
         if (!keys.includes(k)) problems.push(`${where}.notify.${k} is not a setting (settings: ${keys.join(", ")})`);
+        else if (k === "relay") {
+          // The relay's name, as Teams shows its outgoing webhook: not a secret.
+          if (typeof v !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(v)) problems.push(`${where}.notify.relay must name your relay as your Teams outgoing webhook is named, such as terragucci`);
+          else if (n.slack === undefined && n.teams === undefined) problems.push(`${where}.notify.relay needs notify.slack or notify.teams: the buttons go on their messages`);
+        }
         else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the ${k === "webhook_key" ? "key that signs the webhook's body, such as WEBHOOK_KEY; never the key" : `webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address`} itself`);
       }
       // A generic webhook is always signed, so its receiver can tell terragucci's posts from anyone's.

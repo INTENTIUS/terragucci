@@ -124,6 +124,7 @@ export default defineConfig({
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
+								{ label: 'Approve from Slack and Teams', slug: 'guides/approve-from-chat' },
 								{ label: 'Estimate the cost of a change', slug: 'guides/estimate-cost' },
 								{ label: 'Run steps around a stage', slug: 'guides/run-steps' },
 							],

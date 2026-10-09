@@ -1419,6 +1419,30 @@
       "commit": "2d19653"
     },
     {
+      "claim": "chat-approve",
+      "says": "a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
+      "claim": "chat-approve-teams",
+      "says": "a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
+      "claim": "chat-replan",
+      "says": "with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,

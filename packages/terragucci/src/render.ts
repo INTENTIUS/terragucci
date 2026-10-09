@@ -130,7 +130,7 @@ export interface PipelineInput {
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
-  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
   cost?: { keySecret: string; install: boolean; approveAbove?: boolean };
   env: Record<string, string>;
@@ -1470,7 +1470,7 @@ export function publishScript(forge: ForgeName): string {
  * -refresh-only, writes the plan report, and keeps the drift issue. A root
  * that cannot be refreshed fails the job; drift alone does not.
  */
-export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }): string {
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -1490,10 +1490,12 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
+    ...(pullRequest || notify ? ["rc=$?"] : []),
+    // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
+    ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
     // The drift pull request: a person reviews and merges it, or closes it.
-    ...(pullRequest
-      ? ["rc=$?", ...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`, 'exit "$rc"']
-      : []),
+    ...(pullRequest ? [...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`] : []),
+    ...(pullRequest || notify ? ['exit "$rc"'] : []),
   ].join("\n");
 }
 
@@ -1621,6 +1623,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       .filter(([k]) => input.notify?.[k])
       .map(([k, v]) => [v, forge === "gitlab" ? `$${input.notify![k]}` : `\${{ secrets.${input.notify![k]} }}`]),
   );
+  // notify.relay: the relay's name, a plain value, so a waiting wave's message offers its buttons.
+  if (input.notify?.relay) notifyEnv.TERRAGUCCI_RELAY = input.notify.relay;
+  // The drift job posts drift to Slack and Teams: their secrets alone, never the generic webhook's.
+  const driftNotifyEnv = Object.fromEntries(Object.entries(notifyEnv).filter(([k]) => k === "TERRAGUCCI_SLACK_WEBHOOK" || k === "TERRAGUCCI_TEAMS_WEBHOOK"));
+  const driftNotify = Object.keys(driftNotifyEnv).length > 0;
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destroy";
@@ -1854,12 +1861,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("drift", new GitLabJob({
         stage: "drift",
         image: jobImage,
-        variables: gitlabEnv,
+        variables: { ...gitlabEnv, ...driftNotifyEnv },
         // The comments, resume and rollouts schedules' pipelines carry TERRAGUCCI_SCHEDULE=comments, resume or rollouts; any other schedule, with or without a variable, is drift's.
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume && writesLedger ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}` })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
-        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))],
+        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify))],
         artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
     }
@@ -2308,9 +2315,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...headersEnv,
         ...driftDecideEnv,
         ...reportKeyEnv(forge, input.reports),
+        ...driftNotifyEnv,
       },
       steps: [
-        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr) }), true, false, awsStep),
+        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify) }), true, false, awsStep),
         new Step({
           name: "Keep the drift report",
           if: "always()",
