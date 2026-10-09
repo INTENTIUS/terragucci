@@ -269,7 +269,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "7d260b59"
+      "commit": "380413b9"
     },
     {
       "claim": "tg-mock-trap",
@@ -670,7 +670,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "7d260b59"
+      "commit": "380413b9"
     },
     {
       "claim": "policy-source",
@@ -1239,7 +1239,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "7d260b59"
+      "commit": "380413b9"
     },
     {
       "claim": "tg-preview-gate",
@@ -1247,7 +1247,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "7d260b59"
+      "commit": "380413b9"
     },
     {
       "claim": "tf-terraform",
