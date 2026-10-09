@@ -23,8 +23,10 @@
  * `terragucci audit` lists each record as a `state-export` entry.
  *
  * The record holds the version id and the digest of what was written, never
- * a state's contents. The first version reads states in s3 backends that
- * keep versions, and refuses Terragrunt units and roots with a `cloud` block.
+ * a state's contents. It reads states in s3 backends that keep versions, and
+ * refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
+ * migration prepares one (unitPlace): Terragrunt inits it, and the backend is
+ * the one that init recorded in the directory Terragrunt ran the binary in.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -37,7 +39,7 @@ import { approvalRule } from "./approval";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
 import { detectBinary } from "./detect";
-import { refusal, runBinary, type BinaryExec } from "./migrate";
+import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { sealRefusal } from "./seal";
 
@@ -92,6 +94,8 @@ export interface ExportOptions {
   config?: string;
   env?: NodeJS.ProcessEnv;
   exec?: BinaryExec;
+  /** How a Terragrunt unit is prepared (MigrateOptions.terragrunt). */
+  terragrunt?: MigrateOptions["terragrunt"];
   fetch?: S3Fetch;
   now?: string;
   log?: (line: string) => void;
@@ -155,9 +159,9 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const now = options.now ?? new Date().toISOString();
   const root = options.root.replace(/\/+$/, "");
   if (!root) throw new ConfigError("state export takes the root whose state to export: terragucci state export <root> [--version <id>]");
-  // migrate.ts takes Terragrunt units (it prepares each through Terragrunt); an export reads the backend from the root's own files, so a unit stays refused here.
-  const why = existsSync(join(repo, root, "terragrunt.hcl")) ? `${root} is a Terragrunt unit, and state export reads the state of Terraform and OpenTofu roots only` : refusal(repo, root);
+  const why = refusal(repo, root);
   if (why) throw new ConfigError(`state export: ${why}`);
+  const unit = existsSync(join(repo, root, "terragrunt.hcl"));
   const by = options.actor || git(repo, ["config", "user.name"]) || git(repo, ["config", "user.email"]);
   if (!by) throw new ConfigError("state export names who asks: set git's user.name, or pass --actor <name>");
   const configPath = options.config ?? findConfig(repo);
@@ -165,13 +169,19 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const binary = options.binary ?? settings?.binary ?? detectBinary(repo, [root]).value;
 
   // The backend, read by an init in a data dir of the export's own: the checkout's .terraform is left alone.
+  // A Terragrunt unit's backend is what Terragrunt makes of its remote_state: Terragrunt inits it where it runs the binary, as a migration prepares it.
   const data = mkdtempSync(join(tmpdir(), "terragucci-export-data-"));
   let object: StateObject;
   try {
-    const benv = { ...env, TF_DATA_DIR: data };
-    const init = await exec(binary, ["init", "-input=false", "-no-color"], join(repo, root), benv);
-    if (init.code !== 0) throw new ConfigError(`init in ${root} failed: ${init.out.trim().split("\n").slice(-4).join(" ").slice(0, 400)}`);
-    object = stateObject(join(repo, root), benv);
+    if (unit) {
+      const place = await unitPlace(repo, root, binary, env, data, options.terragrunt);
+      object = stateObject(place.dir, place.env);
+    } else {
+      const benv = { ...env, TF_DATA_DIR: data };
+      const init = await exec(binary, ["init", "-input=false", "-no-color"], join(repo, root), benv);
+      if (init.code !== 0) throw new ConfigError(`init in ${root} failed: ${init.out.trim().split("\n").slice(-4).join(" ").slice(0, 400)}`);
+      object = stateObject(join(repo, root), benv);
+    }
   } finally {
     rmSync(data, { recursive: true, force: true });
   }
