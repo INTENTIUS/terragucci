@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { main } from "../src/cli";
 import { readInlineReport } from "../src/report/html";
-import { affectedRoots, eachLimited, emptyStateText, rootsParallelism, runStage } from "../src/report/stage";
+import { affectedRoots, eachLimited, emptyStateText, providerDownloads, rootsParallelism, runStage } from "../src/report/stage";
 import { tmp, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
 
@@ -85,6 +85,25 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan", () => {
     expect(ok).toMatchObject({ schema: 1, command: "stage", exit: 0, status: "ok", results: { stage: "tf-plan", uploaded: null } });
     expect(existsSync(ok.results.files.html)).toBe(true);
     expect(JSON.parse(out[1])).toMatchObject({ command: "stage", exit: 2, status: "usage" });
+  });
+});
+
+describe("provider downloads", () => {
+  it("names each provider init downloaded, and none it took from the cache", () => {
+    const downloaded = `Initializing provider plugins...
+- Reusing previous version of hashicorp/null from the dependency lock file
+- Installing hashicorp/null v3.2.4 to the shared cache directory...
+- Installed hashicorp/null v3.2.4 (signed, key ID 0C0AF313E5FD9F80)
+- Using hashicorp/null v3.2.4 from the shared cache directory
+- Installing hashicorp/aws v6.67.0...
+- Installed hashicorp/aws v6.67.0 (signed by HashiCorp)
+`;
+    expect(providerDownloads(downloaded)).toEqual(["hashicorp/null v3.2.4", "hashicorp/aws v6.67.0"]);
+    const cached = `- Reusing previous version of hashicorp/null from the dependency lock file
+- Detected previously-installed hashicorp/null v3.2.4 in the shared cache directory
+- Using hashicorp/null v3.2.4 from the shared cache directory
+`;
+    expect(providerDownloads(cached)).toEqual([]);
   });
 });
 
