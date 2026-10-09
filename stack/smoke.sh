@@ -329,6 +329,7 @@ cdktn-apply|with synth set each apply wave synthesizes the CDK Terrain stacks an
 cdktn-tips|with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out|
 cdktn-refused|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
 apply-branches|with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved|
+own-jobs-kept|with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes|
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
@@ -721,6 +722,57 @@ claim_apply_branches() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "main applied the fleet roots and never canary/one; release applied canary/one alone, once its wave was approved"
+  return $rc
+}
+
+claim_own_jobs_kept() {
+  # The gated-waves fixture under gate: never, with own_jobs: ci/own-jobs.yml
+  # naming one job that needs check and prints a marker. init runs twice; the
+  # pipeline still holds the job as the file has it, and on the push the job
+  # runs and passes, its log carrying the marker.
+  # BREAK: the second init runs without own_jobs, as init did before the key,
+  # so it drops the job.
+  log() { echo "[smoke own-jobs-kept] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/own-jobs-kept" wf image sha job id marker="own job ran for own-jobs-kept" rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo own-jobs-kept || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  image="$(awk '/^  check:/{c=1} c && /image:/{print $2; exit}' "$wf")"
+  [ -n "$image" ] || { log "no image on the check job"; drop_work "$work"; return 1; }
+  sed 's#^gate: always#gate: never#' "$work/tree/terragucci.yml" > "$work/tree/terragucci.yml.new" && mv "$work/tree/terragucci.yml.new" "$work/tree/terragucci.yml"
+  mkdir -p "$work/tree/ci"
+  cat > "$work/tree/ci/own-jobs.yml" <<EOF
+own-job:
+  needs: check
+  runs-on: ubuntu-latest
+  container:
+    image: $image
+  steps:
+    - name: Say the job ran
+      run: echo "$marker on \${{ github.ref_name }}"
+EOF
+  printf 'own_jobs: ci/own-jobs.yml\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "the first init failed"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    grep -v '^own_jobs:' "$work/tree/terragucci.yml" > "$work/tree/terragucci.yml.new" && mv "$work/tree/terragucci.yml.new" "$work/tree/terragucci.yml"
+  fi
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "the second init failed"; drop_work "$work"; return 1; }
+  grep -q '^  own-job:$' "$wf" || { log "after the second init the pipeline has no own-job"; rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "own-jobs-kept: init twice")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    job="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -c '[.[] | select(.name == "own-job")][0] // {}')"
+    log "own-job: $(jq -r '.status // "none"' <<<"$job")"
+    [ "$(jq -r '.status // ""' <<<"$job")" = success ] || { log "own-job did not run and pass"; rc=1; }
+    id="$(jq -r '.id // ""' <<<"$job")"
+    [ -n "$id" ] && { api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null | grep -q "$marker on main" || { log "own-job's log has no marker"; rc=1; }; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "init ran twice and kept own-job, which ran after check and passed"
   return $rc
 }
 
@@ -13079,6 +13131,7 @@ cdktn-apply          runner self! weight=300
 cdktn-tips           runner self! weight=200
 cdktn-refused        weight=60
 wave-jobs            runner self! weight=250
+own-jobs-kept        runner self! weight=120
 apply-branches       runner self! weight=300
 steps-before-plan    runner self! weight=200
 steps-stop           runner self! weight=150

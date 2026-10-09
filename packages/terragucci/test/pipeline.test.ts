@@ -1629,6 +1629,39 @@ describe("a GitHub wave whose push is no longer the branch tip", () => {
   });
 });
 
+describe("own_jobs", () => {
+  // The explain-refusal job of each tab of the agent-refused-wave guide, as its own-jobs file.
+  const guide = readFileSync(join(__dirname, "../../../docs-site/src/content/docs/guides/agent-refused-wave.mdx"), "utf-8");
+  const tab = (label: string): string => {
+    const from = guide.indexOf(`<TabItem label="${label}">`);
+    const block = guide.slice(guide.indexOf("```yaml", from) + "```yaml".length, guide.indexOf("```\n", guide.indexOf("```yaml", from) + 7));
+    const lines = block.split("\n").filter((l) => l.trim() !== "");
+    const cut = Math.min(...lines.map((l) => l.match(/^ */)![0].length));
+    return lines.map((l) => l.slice(cut)).join("\n") + "\n";
+  };
+
+  it.each([["github", "GitHub"], ["forgejo", "Forgejo"], ["gitlab", "GitLab"]] as const)("%s: the guide's explain-refusal job goes into the pipeline with every key and value it has, after terragucci's jobs", (forge, label) => {
+    const own = parseYAML(tab(label)) as Record<string, Record<string, unknown>>;
+    expect(Object.keys(own)).toEqual(["explain-refusal"]);
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ownJobs: own }).content;
+    const doc = body(text);
+    const jobs = forge === "gitlab" ? doc : doc.jobs;
+    expect(jobs["explain-refusal"]).toEqual(own["explain-refusal"]);
+    expect(Object.keys(jobs).at(-1)).toBe("explain-refusal");
+    // Without own_jobs the pipeline is the one it was.
+    expect(text.startsWith(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {} }).content)).toBe(true);
+  });
+
+  it("refuses a name terragucci gives a job, and on GitLab a keyword", () => {
+    expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ownJobs: { "apply-wave-1": { "runs-on": "x" } } })).toThrow("own_jobs.apply-wave-1: terragucci writes a job of that name");
+    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ownJobs: { stages: { script: ["x"] } } })).toThrow("own_jobs.stages: GitLab reads stages as a keyword");
+    expect(validateConfig({ own_jobs: "ci/own-jobs.yml" }, "t")).toEqual({ own_jobs: "ci/own-jobs.yml" });
+    expect(() => validateConfig({ own_jobs: "../jobs.yml" }, "t")).toThrow("config.own_jobs must be a map of job name to job, or the path of a .yml file in the repo");
+    expect(() => validateConfig({ own_jobs: { "bad name": { x: 1 } } }, "t")).toThrow('config.own_jobs: "bad name" is not a job name');
+    expect(() => validateConfig({ own_jobs: { ok: "text" } }, "t")).toThrow("config.own_jobs.ok must be a job");
+  });
+});
+
 describe("apply.branches", () => {
   const branches = { release: ["prod/*"] };
   const tree = [["dev/net", "prod/net"], ["dev/app", "prod/app"]];

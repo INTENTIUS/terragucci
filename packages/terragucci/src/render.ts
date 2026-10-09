@@ -201,6 +201,8 @@ export interface PipelineInput {
   locksPlan?: boolean;
   /** `apply.branches`: a push to a named branch runs the apply waves for that branch's roots alone, and the default branch skips them. Plain roots, `apply.when: merge`. */
   applyBranches?: Record<string, string[]>;
+  /** `own_jobs`: jobs of the repo's own, written after terragucci's as they are (ownJobsYAML). */
+  ownJobs?: Record<string, Record<string, unknown>>;
 }
 
 export interface RenderedPipeline {
@@ -1588,6 +1590,28 @@ function header(image: string, fromConfig?: boolean): string {
   ].join("\n");
 }
 
+/** Keys of a GitLab pipeline that are not jobs, so no job of your own may take one as its name. */
+const GL_KEYWORDS_NOT_JOBS = ["default", "include", "stages", "variables", "workflow", "image", "services", "cache", "before_script", "after_script", "pages", "spec"];
+
+/** The line above the jobs `own_jobs` adds, which says where they come from. */
+export const OWN_JOBS_LINE = "# Your own jobs, from own_jobs in terragucci.yml, as they are there.";
+
+/**
+ * `own_jobs`, after the jobs terragucci writes: on GitHub and Forgejo under
+ * the workflow's `jobs:`, which the serializer writes last, and on GitLab as
+ * top-level jobs. Each job is written as it is. A name terragucci already
+ * gives a job, or one GitLab reads as a keyword, is refused.
+ */
+export function ownJobsYAML(own: PipelineInput["ownJobs"], ours: string[], forge: ForgeName): string {
+  if (!own || Object.keys(own).length === 0) return "";
+  for (const name of Object.keys(own)) {
+    if (ours.includes(name)) throw new RenderError(`own_jobs.${name}: terragucci writes a job of that name; give yours another`);
+    if (forge === "gitlab" && GL_KEYWORDS_NOT_JOBS.includes(name)) throw new RenderError(`own_jobs.${name}: GitLab reads ${name} as a keyword, not a job; give yours another name`);
+  }
+  const indent = forge === "gitlab" ? 0 : 1;
+  return [`${forge === "gitlab" ? "" : "  "}${OWN_JOBS_LINE}`, ...Object.entries(own).map(([name, job]) => emitYAMLEntry(name, job, indent))].join("\n") + "\n";
+}
+
 function text(result: string | { primary: string }): string {
   return typeof result === "string" ? result : result.primary;
 }
@@ -1951,7 +1975,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
     });
-    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out };
+    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge) };
   }
 
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
@@ -2400,7 +2424,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(resume)) });
   }
   if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined))) });
-  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(entities)), ...(extra.length ? { extra } : {}) };
+  return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(entities)) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), ...(extra.length ? { extra } : {}) };
 }
 
 /**

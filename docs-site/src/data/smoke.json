@@ -1514,6 +1514,13 @@
       "break": "caught"
     },
     {
+      "claim": "own-jobs-kept",
+      "says": "with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
       "claim": "wave-jobs",
       "says": "with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once",
       "needs": null,
