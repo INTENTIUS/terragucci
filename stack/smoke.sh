@@ -13142,7 +13142,7 @@ try_lock() {
   local holder="$1" l res mode f p busy=""
   shift
   lock_mutex
-  for f in "$SMOKE_LOCKS"/*/*.s "$SMOKE_LOCKS"/*/*.x; do
+  for f in "$SMOKE_LOCKS"/*/*.s "$SMOKE_LOCKS"/*/*.x "$SMOKE_LOCKS"/*/*.w; do
     [ -f "$f" ] || continue
     p=""; read -r p 2>/dev/null <"$f" || true
     if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then rm -f "$f"; fi
@@ -13154,6 +13154,16 @@ try_lock() {
       case "$f" in "$SMOKE_LOCKS/$res/$holder".[sx]) continue ;; esac
       if [ "$mode" = x ] || [ "${f##*.}" = x ]; then busy="$busy $res"; break; fi
     done
+    # A run waiting to hold the resource alone (its .w marker) goes first: a
+    # shared hold queues behind it, so a steady stream of shared runs from
+    # other worktrees never starves it.
+    if [ "$mode" = s ]; then
+      for f in "$SMOKE_LOCKS/$res"/*.w; do
+        [ -f "$f" ] || continue
+        case "$f" in "$SMOKE_LOCKS/$res/$holder".w) continue ;; esac
+        busy="$busy $res"; break
+      done
+    fi
   done
   if [ -z "$busy" ]; then
     for l in "$@"; do
@@ -13161,6 +13171,7 @@ try_lock() {
       mkdir -p "$SMOKE_LOCKS/$res"
       echo "$$" >"$SMOKE_LOCKS/$res/$holder.$mode"
     done
+    rm -f "$SMOKE_LOCKS"/*/"$holder".w
   fi
   unlock_mutex
   [ -z "$busy" ] || { echo "$busy"; return 1; }
@@ -13169,7 +13180,7 @@ try_lock() {
 unlock_holder() { # holder
   [ -d "$SMOKE_LOCKS" ] || return 0
   lock_mutex
-  rm -f "$SMOKE_LOCKS"/*/"$1".s "$SMOKE_LOCKS"/*/"$1".x
+  rm -f "$SMOKE_LOCKS"/*/"$1".s "$SMOKE_LOCKS"/*/"$1".x "$SMOKE_LOCKS"/*/"$1".w
   unlock_mutex
 }
 
@@ -13178,7 +13189,7 @@ release_mine() {
   local f p
   [ -d "$SMOKE_LOCKS" ] || return 0
   lock_mutex
-  for f in "$SMOKE_LOCKS"/*/*.s "$SMOKE_LOCKS"/*/*.x; do
+  for f in "$SMOKE_LOCKS"/*/*.s "$SMOKE_LOCKS"/*/*.x "$SMOKE_LOCKS"/*/*.w; do
     [ -f "$f" ] || continue
     p=""; read -r p 2>/dev/null <"$f" || true
     if [ "$p" = "$$" ]; then rm -f "$f"; fi
@@ -13191,9 +13202,19 @@ hold_locks() { # holder, lock... : wait until every lock is held
   local holder="$1" busy said=""
   shift
   until busy="$(try_lock "$holder" "$@")"; do
-    [ "$busy" = "$said" ] || { echo "[smoke] waiting for:$busy" >&2; said="$busy"; }
+    [ "$busy" = "$said" ] || { echo "[smoke] waiting for:$busy" >&2; said="$busy"; mark_waiting "$holder" "$@"; }
     sleep 2
   done
+}
+
+mark_waiting() { # holder, lock... : leave a .w marker for each lock wanted alone
+  local holder="$1" l
+  shift
+  lock_mutex
+  for l in "$@"; do
+    case "$l" in *!) mkdir -p "$SMOKE_LOCKS/${l%!}"; echo "$$" >"$SMOKE_LOCKS/${l%!}/$holder.w" ;; esac
+  done
+  unlock_mutex
 }
 
 with_lock() { # resource, command... : run the command holding the resource alone
@@ -13552,7 +13573,9 @@ if [ "${1:-}" = --record ]; then
   # back what it changed, so this boots afresh only when something was left.
   # `up --fresh` recreates floci under every run on the stack, so it waits for
   # the stack alone: runs from other worktrees share the locks and finish first.
-  [ "$SMOKE_FORGE" != forgejo ] || with_lock stack settle_example
+  # Most records end with the example intact: verify only reads, so it needs
+  # no lock, and only a broken example waits for the stack alone.
+  [ "$SMOKE_FORGE" != forgejo ] || "$HERE/example.sh" verify >&2 || with_lock stack settle_example
   disk_check "$disk_start"
   new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
   # The rows' order: each Forgejo claim in CLAIMS order with its GitLab row
