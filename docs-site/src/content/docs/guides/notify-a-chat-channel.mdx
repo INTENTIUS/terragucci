@@ -19,7 +19,7 @@ A message in your channel each time an apply job stops at a wave. A message appr
 | You want | You set up |
 |---|---|
 | a notice in Slack or Teams, and under `approval: pr-review` a link straight to the review that approves the wave | `notify:` and an incoming webhook for the channel. Nothing to install or host. |
-| a chat click that becomes an approval on `chant/lifecycle` | a relay of your own: a bot or a function that receives the [signed event](#send-events-to-your-own-webhook) and, for the person who clicked, runs `terragucci approve wave-<k> --plan <digest>` with the digest the event named, so plans that moved since are never approved. The wave then resumes: with the relay's token, or within [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) minutes |
+| a chat click that becomes an approval on `chant/lifecycle` | a relay of your own that receives the [signed event](#send-events-to-your-own-webhook) and runs `terragucci approve wave-<k> --plan <digest>` for the person who clicked ([below](#send-events-to-your-own-webhook)) |
 
 | The wave | Exit | The message says |
 |---|---|---|
@@ -89,6 +89,7 @@ A message in your channel each time an apply job stops at a wave. A message appr
    ```text
    terragucci: wave 2 of github.com/acme/infra waits for an approval
    Roots: envs/prod/app, envs/prod/db
+   Digest: jcs1-sha256:9f2c...
    Approve: chant approve tf-apply wave-2 --plan jcs1-sha256:9f2c... (or npx terragucci approve wave-2 --plan jcs1-sha256:9f2c...)
    Run: https://github.com/acme/infra/actions/runs/42
    ```
@@ -173,6 +174,11 @@ For a program rather than a channel, such as a chat bot, an incident tool or a r
 </Steps>
 
 The event carries the wave's outcome as the stage wrote it ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
+
+| A relay that approves from chat | |
+|---|---|
+| Runs | `terragucci approve wave-<k> --plan <digest>` for the person who clicked, with the digest the event named, so plans that moved since are never approved |
+| Then | the wave resumes with the relay's token, or within [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) minutes |
 
 ## Next
 

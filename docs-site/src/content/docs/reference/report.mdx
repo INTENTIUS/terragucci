@@ -42,7 +42,14 @@ To run the stage yourself, from the repo:
 npx terragucci stage tf-plan
 ```
 
-With no base it plans every root. On a pull request, or with `--base <ref>` or `TG_BASE`, it plans only the roots the change reaches (directory, local modules, var files, or state read from a changed root). A change that reaches none plans nothing, and the note says so. With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#which-stacks-a-pull-request-plans) the roots are not in git, so it runs the command on the base too and plans the roots whose synthesized files or local modules differ, new and removed ones, and the roots that read their state; the note counts the unchanged ones. When the base cannot be synthesized, every root plans and the note says why. It writes to `terragucci-report/`.
+| Case | Roots planned |
+|---|---|
+| no base | every root |
+| a pull request, `--base <ref>` or `TG_BASE` | the roots the change reaches: its directory, local modules, var files, or state read from a changed root; none, and the note says so |
+| with [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#which-stacks-a-pull-request-plans) | the command runs on the base too: roots whose synthesized files or local modules differ, new and removed ones, and the roots that read their state; the note counts the unchanged ones |
+| with `synth`, when the base cannot be synthesized | every root, and the note says why |
+
+It writes to `terragucci-report/`.
 
 | File | What it is |
 |---|---|
@@ -68,7 +75,7 @@ With no base it plans every root. On a pull request, or with `--base <ref>` or `
 
 ## The plan note
 
-The note comments the plan back to the pull request, as Atlantis does, grouped. A group of two roots shows one diff:
+The note comments the plan back to the pull request, grouped. A group of two roots shows one diff:
 
 ```diff
   # terraform_data.cfg will be updated in-place

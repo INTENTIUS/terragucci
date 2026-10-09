@@ -9,14 +9,14 @@ terragucci 0.4.3 is on npm as `@intentius/terragucci@0.4.3`, and its [GitHub rel
 |---|---|
 | Each repo | `npx @intentius/terragucci@0.4.3 init`, then merge the pipeline it writes |
 
-## Approvals and chat
+## Approvals, chat and webhooks
 
 | What | Where |
 |---|---|
-| `terragucci approve` pushes an approval to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) with your token, and a scheduled resume job starts the wave it approves | [Approve with chant](/terragucci/guides/approve-a-wave/#approve-with-chant) |
+| `terragucci approve` pushes an approval to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) and restarts the waiting wave with your token; the scheduled resume job applies any wave it could not restart | [Approve with chant](/terragucci/guides/approve-a-wave/#approve-with-chant) |
 | `terragucci approve --plan <digest>` approves only that plan digest | [Approve with chant](/terragucci/guides/approve-a-wave/#approve-with-chant) |
-| Under `approval: pr-review`, a waiting wave's chat message links the pull request's review | [Approve from the message](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) |
-| `notify` posts a signed, versioned JSON event to a webhook of your own | [Send events to your own webhook](/terragucci/guides/notify-a-chat-channel/#send-events-to-your-own-webhook) |
+| Under `approval: pr-review`, a waiting wave's chat message links the pull request's review; the message itself approves nothing | [Approve from the message](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) |
+| `notify` posts a signed, versioned JSON event to a webhook of your own, which a relay you run can act on | [Send events to your own webhook](/terragucci/guides/notify-a-chat-channel/#send-events-to-your-own-webhook) |
 | An approval's audit entry records who relayed it | [Audit trail](/terragucci/reference/audit-trail/) |
 
 ## Modules
