@@ -52,6 +52,24 @@ The gate policy decides which waves wait for a person.
 
 A waiting wave exits with code 3 and prints the approval command; run it, then rerun the stage. A rerun resumes after the approval or failed root and never applies a root twice.
 
+## A wide wave across jobs
+
+`parallelism` bounds what one job runs at once, and every wave gets a single job, so a wave of a few hundred roots keeps one runner busy while the rest idle. Set `waves.jobs` to spread it over several (plain roots, GitHub and Forgejo):
+
+```yaml
+waves:
+  jobs: 3
+```
+
+| Job | What it does |
+|---|---|
+| `apply-wave-<n>` | plans every root, runs the policy, decides the gate on the set digest and records the approval it uses, then hands each plan digest to the shares and changes nothing |
+| `apply-wave-<n>-share-<s>` | plans its part again and applies it if each digest matches what `apply-wave-<n>` decided; otherwise exits 4 and changes nothing |
+
+Shares run side by side as far as runners are free, and the next wave starts after the last of them. The gate, its ledger record and the approve command stay per wave. Each share copies its report to the bucket under `tf-apply-wave-<n>-share-<s>`.
+
+`init` refuses the key on GitLab, in a Terragrunt repo and under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
+
 ## One apply at a time
 
 A project applies one push at a time. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#one-apply-at-a-time).

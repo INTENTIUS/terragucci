@@ -52,6 +52,10 @@ PER_REPO="${TGSCALE_ROOTS_PER_REPO:-100}"
 # Roots each job plans and applies at once. Every one starts an AWS provider of
 # about 800 MB, so 4 in each of three jobs at once is some 10 GB.
 PARALLELISM="${TGSCALE_PARALLELISM:-4}"
+# waves.jobs for every repo: the most jobs one wave's roots spread across.
+# Unset leaves the key out, so a release without it still runs; a release
+# with it splits the platform repo's wide waves across that many jobs.
+WAVE_JOBS="${TGSCALE_WAVE_JOBS:-}"
 CHOUDOUFU_REF="${TGSCALE_CHOUDOUFU_REF:-1c8ede26372fcb0b653084574d1b326f1c58d935}"
 STATE_BUCKET=terralith-state
 REPORT_BUCKET=terralith-reports
@@ -357,7 +361,9 @@ run_scale() { # scale
   done
   mkdir -p "$work/control"
   {
-    printf 'defaults:\n  forge: forgejo\n  binary: tofu\n  token_env: TERRAGUCCI_FORGEJO_TOKEN\n  reports:\n    bucket: s3://%s\nprojects:\n' "$REPORT_BUCKET"
+    printf 'defaults:\n  forge: forgejo\n  binary: tofu\n  token_env: TERRAGUCCI_FORGEJO_TOKEN\n  reports:\n    bucket: s3://%s\n' "$REPORT_BUCKET"
+    [ -z "$WAVE_JOBS" ] || printf '  waves:\n    jobs: %s\n' "$WAVE_JOBS"
+    printf 'projects:\n'
     for repo in $repos; do
       printf '  localhost/%s/%s:\n    url: %s/%s/%s\n    reports:\n      bucket: s3://%s\n      prefix: %s\n' "$ADMIN_USER" "$repo" "$URL" "$ADMIN_USER" "$repo" "$REPORT_BUCKET" "$repo"
     done

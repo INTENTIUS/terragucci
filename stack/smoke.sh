@@ -294,6 +294,7 @@ alerts-fire|with short thresholds every alert init writes fires on its signal, a
 blob-gcs-key|with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key|
 blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key|
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
+note-footer|the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
 cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
 apply-outcome|stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root|
@@ -304,11 +305,13 @@ audit-control|terragucci audit in a control repo fetches each project ledger fro
 inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
 resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
 state-versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
+dora|terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each|
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
-cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|'
+cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
+wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -628,6 +631,75 @@ claim_waves() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
+  return $rc
+}
+
+claim_wave_jobs() {
+  # The gated-waves fixture with waves.jobs: 2. Wave 1 (canary/one) is one root
+  # and one job; wave 2 (fleet/*, four roots) gets apply-wave-2, which plans
+  # and gates the wave, and two share jobs of two roots each. Push, approve
+  # wave 1, push: wave 1 applies and wave 2 waits at its one gate, its shares
+  # skipped. Approve wave 2 once and push: each share applies its own two
+  # roots, and the ledger holds one approval of wave 2, used once.
+  # BREAK: the share jobs lose --shares 2 --share <s>, so each one plans,
+  # gates and applies the whole wave: each applies all four roots and records
+  # the approval as used again.
+  log() { echo "[smoke wave-jobs] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/wave-jobs" sha applied rc=0 wf s want got ledger used approvals
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo wave-jobs || { drop_work "$work"; return 1; }
+  echo "  jobs: 2" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init with waves.jobs: 2 failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  apply-wave-2-share-2:' "$wf" || { log "init wrote no share jobs for wave 2"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed 's# --shares 2 --share [0-9]##' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  job_log() { # run id, job name
+    local id
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '.[] | select(.name == $n) | .id' | head -1)"
+    [ -n "$id" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null
+  }
+  job_status() { # run id, job name
+    api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '[.[] | select(.name == $n)][0].status // "missing"'
+  }
+  sha="$(push_tree "$work/tree" "$repo" main "wave-jobs: first")"
+  wait_run "$repo" "$sha"
+  gated_approve wave-jobs 1 || rc=1
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "wave-jobs: after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied wave-jobs)"
+    log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}; share jobs $(job_status "$RUN_ID" apply-wave-2-share-1), $(job_status "$RUN_ID" apply-wave-2-share-2)"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting at its gate"; rc=1; }
+    job_log "$RUN_ID" apply-wave-2 | grep "chant approve tf-apply wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve wave-jobs 2 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "wave-jobs: after wave 2 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied wave-jobs)"
+    log "after wave 2's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run ended $RUN_STATUS"; rc=1; }
+    [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "expected every root to have state"; rc=1; }
+    # Wave 2's roots in wave order, dealt out in turn: share 1 gets five and three, share 2 four and two.
+    for s in 1 2; do
+      want="$([ $s = 1 ] && echo "fleet/five fleet/three" || echo "fleet/four fleet/two")"
+      got="$(job_log "$RUN_ID" "apply-wave-2-share-$s" | sed -n 's#.*applied \(fleet/[a-z]*\): .*#\1#p' | sort | tr '\n' ' ' | sed 's/ $//')"
+      log "apply-wave-2-share-$s applied: ${got:-nothing}"
+      [ "$got" = "$want" ] || { log "apply-wave-2-share-$s should have applied $want alone"; rc=1; }
+    done
+    job_log "$RUN_ID" apply-wave-2 | grep "applied fleet/" >/dev/null && { log "apply-wave-2 applied a root itself"; rc=1; }
+    ledger="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl)"
+    used="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply/applied.jsonl | jq -s '[.[] | select(.gate == "wave-2")] | length')"
+    approvals="$(jq -s '[.[] | select(.gate == "wave-2" and .kind != "pending")] | length' <<<"$ledger")"
+    log "wave 2 on the ledger: $approvals approval(s), used $used time(s)"
+    { [ "$approvals" = 1 ] && [ "$used" = 1 ]; } || { log "expected one approval of wave 2, used once"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 2 waited at one gate, then its two share jobs each applied their own roots under that one approval"
   return $rc
 }
 
@@ -1133,6 +1205,22 @@ collector_up() {
   return 1
 }
 
+# otel_trace SPAN COMMIT FILE -> prints the trace id of the SPAN span whose
+# vcs.ref.head.revision is COMMIT, and leaves the collector's traces in FILE.
+# The file exporter writes on its own schedule, and later under load, so it
+# polls for up to OTEL_TRACE_WAIT seconds (default 60); empty when none comes.
+otel_trace() {
+  local span="$1" commit="$2" out="$3" t="" i
+  for i in $(seq 1 "${OTEL_TRACE_WAIT:-60}"); do
+    docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$out" || true
+    t="$(jq -rs --arg s "$span" --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
+      | select(.name == $s and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$out" 2>/dev/null)"
+    [ -n "$t" ] && break
+    sleep 1
+  done
+  echo "$t"
+}
+
 claim_traces() {
   # One plan run. Its trace is found by the commit on the stage span; it must
   # hold one root span per root in the report, and OpenTofu's own spans (sent
@@ -1150,10 +1238,7 @@ claim_traces() {
   REPORT_ENV="$env" report_run "$work/run" module-bump || true
   commit="$(git -C "$work/run" rev-parse HEAD)"
   roots="$(jq '.roots | length' "$work/run/terragucci-report/report.json" 2>/dev/null || echo 0)"
-  sleep 3   # the file exporter writes on its own schedule
-  docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$work/traces.jsonl" || true
-  trace="$(jq -rs --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
-    | select(.name == "terragucci tf-plan" and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$work/traces.jsonl" 2>/dev/null)"
+  trace="$(otel_trace "terragucci tf-plan" "$commit" "$work/traces.jsonl")"
   if [ -z "$trace" ]; then
     log "no trace for commit $commit"; rc=1
   else
@@ -2980,10 +3065,7 @@ HCL
       attempts="$(jq '[.roots[] | select(.path == "lock") | .timings.lock_waits[]? | .attempts // 0] | max // 0' "$report")"
       ms="$(jq '[.roots[] | select(.path == "lock") | .timings.lock_waits[]? | .ms] | max // 0' "$report")"
       [ "$attempts" -ge 2 ] || { log "the report's longest lock wait took $attempts attempt(s) and ${ms}ms: the plan never waited"; rc=1; }
-      sleep 3   # the file exporter writes on its own schedule
-      docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$work/traces.jsonl" || true
-      trace="$(jq -rs --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
-        | select(.name == "terragucci tf-apply" and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$work/traces.jsonl" 2>/dev/null)"
+      trace="$(otel_trace "terragucci tf-apply" "$commit" "$work/traces.jsonl")"
       if [ -z "$trace" ]; then
         log "no tf-apply trace for commit $commit"; rc=1
       else
@@ -4211,6 +4293,12 @@ pr_open() { # repo, branch, title -> prints the number of the pull request into 
     api -o /dev/null "$URL/api/v1/repos/$1/branches/$2" 2>/dev/null && break
     sleep 2
   done
+  # terragucci refuses a pull request into a branch that is not the default,
+  # so a repo whose first push Forgejo took for another branch is a broken
+  # setup, not a refusal the claim is about.
+  local def
+  def="$(api "$URL/api/v1/repos/$1" | jq -r '.default_branch // empty')"
+  [ "$def" = main ] || { log "$1's default branch is ${def:-unknown}, not main"; return 1; }
   n="$(api -H 'content-type: application/json' -X POST -d "$(jq -cn --arg h "$2" --arg t "$3" '{head: $h, base: "main", title: $t}')" "$URL/api/v1/repos/$1/pulls" | jq -r '.number // empty')"
   [ -n "$n" ] || { log "no pull request opened from $2"; return 1; }
   echo "$n"
@@ -7854,6 +7942,49 @@ statuses_of() { # repo, sha, context -> how many statuses carry it
   api "$URL/api/v1/repos/$1/commits/$2/statuses?limit=100" | jq --arg c "$3" '[.[] | select(.context == $c)] | length'
 }
 
+claim_note_footer() {
+  # A scratch repo with two roots and a pull request that changes app. Its
+  # plan note's last line is the footer, Forgejo's Markdown renderer makes an
+  # image of the footer's taco, and the image answers 200 with a PNG.
+  # BREAK: the plan job points the note's footer at an image the site does
+  # not serve, so the note has a broken taco.
+  log() { echo "[smoke note-footer] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/note-footer" wf head pr i note footer img html got magic rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo note-footer || return 1
+  if [ -n "${BREAK:-}" ]; then
+    wf="$work/tree/.forgejo/workflows/terragucci.yml"
+    sed 's#\(cat terragucci-report/note.md; } >terragucci-report/plan-note.md\)$#\1; sed -i -e "s|brand/taco-small.png|brand/taco-gone.png|" terragucci-report/plan-note.md#' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'taco-gone' "$wf" || { log "BREAK found no line that writes the plan note"; drop_work "$work"; return 1; }
+  fi
+  echo 2 > "$work/tree/app/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" footer-change "note-footer: change app")" || return 1
+  pr="$(pr_open "$repo" footer-change "note-footer: change app")" || return 1
+  for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+    [ -n "$note" ] && break
+    sleep 3
+  done
+  [ -n "$note" ] || { log "pull request $pr has no plan note"; rc=1; }
+  if [ $rc = 0 ]; then
+    footer="$(printf '%s\n' "$note" | sed '/^[[:space:]]*$/d' | tail -1)"
+    log "last line: $footer"
+    [[ "$footer" == "<sub><img "*"Posted by [terragucci]("*"</sub>" ]] || { log "the note's last line is not the footer"; rc=1; }
+    img="$(grep -o 'src="[^"]*"' <<<"$footer" | head -1 | sed 's/^src="//; s/"$//' || true)"
+    html="$(api -H 'content-type: application/json' -X POST -d "$(jq -n --arg t "$footer" --arg c "$URL/$repo" '{Text: $t, Mode: "gfm", Context: $c}')" "$URL/api/v1/markdown" || true)"
+    grep -qE "<img [^>]*src=\"$img\"" <<<"$html" || { log "Forgejo does not render the footer's image: $html"; rc=1; }
+    got="$(curl -sS -m 20 -o "$work/taco.png" -w '%{http_code} %{content_type}' "$img" 2>/dev/null || true)"
+    magic="$(head -c 8 "$work/taco.png" 2>/dev/null | od -An -tx1 | tr -d ' \n' || true)"
+    log "$img answers ${got:-nothing}"
+    [[ "$got" == "200 image/png"* ]] && [ "$magic" = 89504e470d0a1a0a ] || { log "the footer's image is not a PNG that answers 200"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $pr: the note ends with the footer, Forgejo renders its taco, and $img is a PNG"
+  return $rc
+}
+
 claim_comment_refused() {
   # A scratch repo with two roots and a pull request that changes app. Once
   # its own plan finished, the admin comments /terragucci approve, merge,
@@ -10375,6 +10506,130 @@ claim_resource_history() {
   return $rc
 }
 
+claim_dora() {
+  # A repo with one root, app, holding an SQS queue in floci with a timeout
+  # of 30, reports in the bucket. Change 1 is planned, waits at wave 1's gate
+  # (gate always), smoke-approver approves it and the next run applies.
+  # Change 2 is planned and applies with no gate. Change 3 is broken HCL and
+  # its apply fails; change 4 fixes it and applies app again. Then the queue's
+  # timeout is set to 45 in floci: a drift check finds app drifted, the
+  # timeout goes back to 30 and the next check finds none. After terragucci
+  # audit, terragucci estate writes dora.json, which holds to its schema:
+  # three deployments, two changes with a lead time (one held at the gate),
+  # four applies of which one failed and one drifted, a 50% change failure
+  # rate, and two restores, the failed apply and the drift, none open. The
+  # estate page shows the Delivery section.
+  # BREAK: the failed apply's entry is dropped from audit.jsonl before the
+  # estate job runs, so the record has three applies, none failed, and the
+  # numbers change.
+  log() { echo "[smoke dora] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="dora-$STAMP" queue="dora-$STAMP" url n dora page project code
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  dora_root() { # extra HCL -> app/main.tf, a queue with a tag, so floci reads no tags drift
+    printf 'terraform {\n  required_providers {\n    aws = {\n      source  = "hashicorp/aws"\n      version = "6.67.0"\n    }\n  }\n\n  backend "local" {}\n}\n\nprovider "aws" {\n  region = "us-east-1"\n}\n\nresource "aws_sqs_queue" "jobs" {\n  name                       = "%s"\n  visibility_timeout_seconds = 30\n  tags                       = { owner = "smoke" }\n%s}\n' "$queue" "$1" > "$work/wave/app/main.tf"
+  }
+  dora_commit() { git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "$1"; }
+  dora_stage() { # stage args... -> AUDIT_CODE
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage "$@" --layers app > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    grep -E 'wave 1|FAILED|drift' "$work/run.log" >&2 || true
+    clean_mounted "$work/wave" "$image"
+  }
+  mkdir -p "$work/wave/app"
+  dora_root ""
+  cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/wave/app/"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  # Change 1: planned, waits at the gate, approved, applied.
+  dora_stage tf-plan
+  [ "$AUDIT_CODE" = 0 ] || { log "the plan of change 1 exited $AUDIT_CODE"; rc=1; }
+  if [ $rc = 0 ]; then
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 3 ] || { log "change 1: wave 1 exited $AUDIT_CODE, not 3: it did not wait"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 0 ] || { log "change 1: the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  # Change 2: planned, applied with no gate.
+  if [ $rc = 0 ]; then
+    dora_root '  delay_seconds              = 1
+'
+    dora_commit "change 2: a delay"
+    dora_stage tf-plan
+    [ "$AUDIT_CODE" = 0 ] || { log "the plan of change 2 exited $AUDIT_CODE"; rc=1; }
+    audit_wave "$work" never
+    [ "$AUDIT_CODE" = 0 ] || { log "change 2: wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  # Change 3 fails to apply; change 4 fixes it and applies app again.
+  if [ $rc = 0 ]; then
+    printf 'resource "aws_sqs_queue" "broken" {\n' > "$work/wave/app/broken.tf"
+    dora_commit "change 3: broken HCL"
+    audit_wave "$work" never
+    [ "$AUDIT_CODE" = 1 ] || { log "change 3: wave 1 exited $AUDIT_CODE, not 1: the apply did not fail"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    : > "$work/wave/app/broken.tf"
+    dora_commit "change 4: the fix"
+    audit_wave "$work" never
+    [ "$AUDIT_CODE" = 0 ] || { log "change 4: wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  # A drift cycle: the timeout moves outside OpenTofu, then back.
+  if [ $rc = 0 ]; then
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+    [ -n "$url" ] || { log "$queue is not in floci"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null || { log "could not change the timeout"; rc=1; }
+    dora_stage tf-drift
+    jq -e '[.roots[] | select(.path == "app" and (.changes | length > 0))] | length == 1' "$work/wave/terragucci-report/report.json" >/dev/null 2>&1 || { log "the drift check did not find app drifted"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"30\"}}" >/dev/null || { log "could not set the timeout back"; rc=1; }
+    dora_stage tf-drift
+    jq -e '[.roots[].changes[]] | length == 0' "$work/wave/terragucci-report/report.json" >/dev/null 2>&1 || { log "the second drift check still found drift"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/audit.jsonl" | jq -c 'select(.result != "failed")' \
+      | curl -fsS -o /dev/null -X PUT -H 'content-type: application/x-ndjson' --data-binary @- "$FLOCI/$REPORT_BUCKET/$prefix/audit.jsonl" || { log "could not drop the failed apply"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    curl -fsS -o "$work/dora.json" "$FLOCI/$REPORT_BUCKET/$prefix/dora.json" || { log "no dora.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    (cd "$HERE/.." && npx tsx scripts/schema-check.ts packages/terragucci/dist/dora.schema.json "$work/dora.json") >&2 || { log "dora.json does not hold to dora.schema.json"; rc=1; }
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    dora="$(jq -c --arg p "$project" '.projects[] | select(.project == $p) | {deployments, lead: .lead_time.changes, gated: (.lead_time.at_gate_seconds != null and .lead_time.after_gate_seconds > 0), change_failure, restore}' "$work/dora.json")"
+    log "dora: $dora"
+    jq -e '.deployments == 3 and .lead == 2 and .gated and .change_failure == {applies: 4, failed: 1, drifted: 1, rate: 0.5} and .restore.restored == 2 and .restore.apply_restored == 1 and .restore.drift_restored == 1 and .restore.open == 0' <<<"$dora" >/dev/null \
+      || { log "the metrics are not three deployments, two lead times one of them gated, a failed and a drifted apply of four, and two restores"; rc=1; }
+    jq -e '.estate.deployments == 3 and .estate.change_failure.rate == 0.5 and (.weeks as $w | .estate.trend | length == $w) and (([.estate.trend[].deployments] | add) == 3)' "$work/dora.json" >/dev/null \
+      || { log "the estate's metrics or this week's row do not match the project's"; rc=1; }
+    grep -q '<table id="dora">' <<<"$page" && grep -q 'Change failure rate' <<<"$page" || { log "estate.html has no Delivery section"; rc=1; }
+  fi
+  n="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" 2>/dev/null | jq -r '.QueueUrl // empty')"
+  [ -z "$n" ] || sqs DeleteQueue "{\"QueueUrl\":\"$n\"}" >/dev/null 2>&1 || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "dora.json counts three deployments, a 50% change failure rate from the failed apply and the drift, lead times with the gate's share, and both restores"
+  return $rc
+}
+
 claim_notify_chat() {
   # The gated fixture (gate: always) with approval: pr-review and notify
   # naming two secrets, which hold the addresses of a webhook stand-in: one
@@ -10839,6 +11094,7 @@ alerts-fire          otel self! weight=300
 blob-gcs-key         gcs! weight=120
 blob-azure-key       azurite! weight=120
 index-writes         self! weight=90
+note-footer          runner self! weight=150
 cdf-shared-bucket    weight=120
 cdktn-synth          runner self! weight=200
 audit                weight=150
@@ -10849,11 +11105,13 @@ audit-control        weight=150
 inventory            weight=150
 resource-history     weight=200
 state-versions       weight=150
+dora                 weight=250
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
+wave-jobs            runner self! weight=250
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
