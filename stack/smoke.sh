@@ -278,7 +278,7 @@ blob-azure-key|with AZURE_STORAGE_KEY the job writes the report and both indexes
 index-writes|two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition|
 cdf-shared-bucket|with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change|
 cdktn-synth|with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches|
-audit|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
+audit|terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page|
 audit-override|the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it|
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
@@ -9208,15 +9208,15 @@ audit_run() { # work, flags... -> AUDIT_OUT and AUDIT_CODE of terragucci audit, 
   clean_mounted "$work/wave" "$(image_tag tofu)"
 }
 
-audit_approve() { # origin.git, clone dir, actor, gate, [digest] -> an approval line on chant/lifecycle: the digest given, else the gate's newest pending one
-  local origin="$1" clone="$2" actor="$3" gate="$4" digest="${5:-}"
+audit_approve() { # origin.git, clone dir, actor, gate, [digest], [relayer] -> an approval line on chant/lifecycle: the digest given, else the gate's newest pending one; with a relayer, written by it for the actor (relayedBy)
+  local origin="$1" clone="$2" actor="$3" gate="$4" digest="${5:-}" relayer="${6:-}"
   if [ -d "$clone" ]; then git -C "$clone" pull -q --ff-only origin chant/lifecycle || return 1
   else git clone -q -b chant/lifecycle "$origin" "$clone" || return 1; fi
   [ -n "$digest" ] || digest="$(jq -rs --arg g "$gate" '[.[] | select(.kind == "pending" and .gate == $g)] | last | .planDigest // empty' "$clone/_gates/tf-apply.jsonl")"
   [ -n "$digest" ] || { echo "no pending line for $gate" >&2; return 1; }
   # The approval is stamped to the second and must be newer than the pending line, which carries milliseconds.
   sleep 1
-  printf '%s\n' "$(jq -cn --arg d "$digest" --arg g "$gate" --arg a "$actor" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: $g, resolvedBy: $a, timestamp: $t, planDigest: $d}')" >> "$clone/_gates/tf-apply.jsonl"
+  printf '%s\n' "$(jq -cn --arg d "$digest" --arg g "$gate" --arg a "$actor" --arg r "$relayer" --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{version: 1, kind: "resolution", op: "tf-apply", gate: $g, resolvedBy: $a, timestamp: $t, planDigest: $d} + (if $r == "" then {} else {relayedBy: $r} end)')" >> "$clone/_gates/tf-apply.jsonl"
   git -C "$clone" -c user.name="$actor" -c user.email="$actor@localhost" -c commit.gpgsign=false commit -qam "approve $gate" && git -C "$clone" push -q origin chant/lifecycle
 }
 
@@ -9235,7 +9235,9 @@ claim_audit() {
   # terragucci audit, run in the repo, writes audit.jsonl, audit.html and
   # audit.json to the prefix with a presigned link. Every approval line on the
   # ledger has an entry with its approver, digest and time, the request has
-  # one, and the apply names the approval it applied under. terragucci audit
+  # one, and the apply names the approval it applied under. The approval is
+  # relayed: smoke-relay wrote it for smoke-approver, and its entry says so in
+  # detail.relayed_by. terragucci audit
   # --check passes, and terragucci estate links audit.html from its page.
   # BREAK: an approval of wave-2 lands on the ledger after the record was
   # written, so the record lacks it, and --check names it and exits 1.
@@ -9251,7 +9253,7 @@ claim_audit() {
   audit_repo "$work" "$prefix"
   audit_wave "$work" always
   [ "$AUDIT_CODE" = 3 ] || { log "the first run exited $AUDIT_CODE, not 3: wave 1 did not wait"; rc=1; }
-  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
+  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 "" smoke-relay || { log "could not approve wave 1"; rc=1; }; fi
   if [ $rc = 0 ]; then
     audit_wave "$work" always
     [ "$AUDIT_CODE" = 0 ] || { log "the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
@@ -9271,6 +9273,8 @@ claim_audit() {
     jq -se '[.[] | select(.schema == "terragucci.audit/v1" and .kind == "approval-requested" and .what == "wave-1" and (.digest | type == "string"))] | length >= 1' "$work/audit.jsonl" >/dev/null \
       || { log "the record has no entry for the request of wave 1"; rc=1; }
     approval="$(jq -rs '[.[] | select(.kind == "approval" and .who == "smoke-approver" and .what == "wave-1")] | last | .id // empty' "$work/audit.jsonl")"
+    jq -se --arg a "$approval" '[.[] | select(.id == $a and .detail.relayed_by == "smoke-relay")] | length == 1' "$work/audit.jsonl" >/dev/null \
+      || { log "the approval's entry does not say smoke-relay relayed it: $(jq -c 'select(.kind == "approval") | {who, detail}' "$work/audit.jsonl")"; rc=1; }
     jq -se --arg a "$approval" '[.[] | select(.kind == "apply" and .result == "applied" and .who == "smoke-approver" and .detail.approval == $a and .evidence.source == "report")] | length == 1' "$work/audit.jsonl" >/dev/null \
       || { log "the apply of wave 1 does not name the approval it applied under: $(jq -c 'select(.kind == "apply") | {who, result, detail}' "$work/audit.jsonl")"; rc=1; }
     curl -fsS -o /dev/null "$FLOCI/$REPORT_BUCKET/$prefix/audit.html" || { log "no audit.html at $REPORT_BUCKET/$prefix"; rc=1; }
