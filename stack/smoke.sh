@@ -324,7 +324,9 @@ cdktn-affected|with synth set a pull request that changes one CDK Terrain stack 
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
-steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|'
+steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
+unlock-state|terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies|
+tip-moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -11740,6 +11742,205 @@ YAML
   return $rc
 }
 
+# ── a state lock a killed apply left ──────────────────────────────────────
+
+unlock_in() { # dir, bundle, command... -> runs it in the CI image in DIR, with the forge token as FORGEJO_TOKEN
+  local dir="$1" bundle="$2"; shift 2
+  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e FORGEJO_TOKEN="$TOKEN" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$(image_tag tofu)" "$@"
+}
+
+claim_unlock_state() {
+  # stack/fixtures/unlock-state: one root, slow, whose terraform_data runs a
+  # local-exec that sleeps for the seconds in hold.txt (600) while its apply
+  # holds slow's lock file in floci, gate: never. A push to main runs its
+  # wave. While that apply holds the lock and its run is going, terragucci
+  # unlock-state slow (in the CI image, from a clone, with the forge token)
+  # must refuse, naming the run, and leave the lock. The apply's job
+  # container is then killed. Once the run has ended, unlock-state waits for
+  # an approval (exit 3) and leaves the lock; smoke-approver approves the
+  # digest it printed with chant approve tf-unlock, and unlock-state then
+  # releases the lock, and _gates/tf-unlock/done.jsonl on chant/lifecycle
+  # names the lock's ID, the approver and who released it. A push that sets
+  # hold.txt to 0 then applies.
+  # BREAK: the bundle unlock-state runs asks the forge for no run states, so
+  # its liveness check passes while the apply is still running: approved, it
+  # frees the lock the running job holds, and the claim catches the lock gone
+  # while the run is alive.
+  log() { echo "[smoke unlock-state] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local name=unlock-state work repo="$USER/unlock-state" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" sha run="" status="" lock id="" out code digest done i job task rc=0
+  local inner="http://${USER}:${TOKEN}@forgejo:3000/$USER/unlock-state.git" host="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/unlock-state.git"
+  lock="$FLOCI/shop-terraform-state/$name/slow.tfstate.tflock"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  build_cli || return 1
+  if [ -n "${BREAK:-}" ]; then
+    # Cut the liveness check: the run states it asks Forgejo for become none.
+    [ "$(grep -o '\["running","waiting","blocked"\]' "$bundle" | wc -l | tr -d ' ')" = 1 ] || { log "the bundle has no single list of live run states to cut, so BREAK proves nothing"; drop_work "$work"; return 0; }
+    sed 's/\["running","waiting","blocked"\]/[]/' "$bundle" > "$work/terragucci.mjs" && chmod +x "$work/terragucci.mjs"
+    bundle="$work/terragucci.mjs"
+  fi
+  gated_repo "$name" unlock-state || { drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "unlock-state: slow sleeps 600s")" || { drop_work "$work"; return 1; }
+  # The kill and the end of the run, whatever happens: a job left sleeping holds a runner slot for ten minutes.
+  kill_apply() {
+    [ -n "$run" ] || return 0
+    for job in $(api "$URL/api/v1/repos/$repo/actions/runs/$run/jobs" 2>/dev/null | jq -r '.[] | select(.status == "running") | .task_id'); do
+      for task in $(docker ps -q --filter "name=FORGEJO-ACTIONS-TASK-${job}_"); do docker kill "$task" >/dev/null 2>&1 || true; done
+    done
+  }
+  run_status() { api "$URL/api/v1/repos/$repo/actions/runs/$run" 2>/dev/null | jq -r '.status // empty'; }
+  # Wait for the apply to take the lock while its run is going.
+  for i in $(seq 1 120); do
+    [ -n "$run" ] || run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" | jq -r '.workflow_runs[0].id // empty')"
+    status="$( [ -n "$run" ] && run_status)"
+    case "$status" in success|failure|cancelled|skipped) break ;; esac
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" = 200 ] && [ "$status" = running ] && break
+    sleep 5
+  done
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" != 200 ] || [ "$status" != running ]; then
+    log "the apply never held slow's lock in a running run (run ${run:-none}: ${status:-no status})"
+    [ -n "$run" ] && print_logs "$repo" "$run" | tail -40 >&2
+    kill_apply; drop_work "$work"; return 1
+  fi
+  id="$(curl -fsS "$lock" | jq -r '.ID')"
+  log "run $run is applying and holds lock $id"
+  git clone -q "$host" "$work/clone" && git -C "$work/clone" remote set-url origin "$inner" || { kill_apply; drop_work "$work"; return 1; }
+  # 1. While the run is going: refused, the lock left. Under BREAK it waits for an approval instead.
+  code=0; out="$(unlock_in "$work/clone" "$bundle" terragucci unlock-state slow --actor smoke-operator 2>&1)" || code=$?
+  printf '%s\n' "$out" >&2
+  clean_mounted "$work/clone"
+  if [ -n "${BREAK:-}" ]; then
+    digest="$(sed -n 's/.*chant approve tf-unlock slow --plan \([^ ]*\).*/\1/p' <<<"$out" | head -1)"
+    if [ "$code" != 3 ] || [ -z "$digest" ]; then log "unlock-state exited $code without an approval to wait for, so BREAK proves nothing"; kill_apply; drop_work "$work"; return 0; fi
+    git clone -q "$host" "$work/approver-clone" && git -C "$work/approver-clone" config user.name smoke-approver && git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
+    (cd "$work/approver-clone" && "$CHANT" approve tf-unlock slow --plan "$digest" --approver smoke-approver) >&2 || { log "chant approve failed, so BREAK proves nothing"; kill_apply; drop_work "$work"; return 0; }
+    code=0; out="$(unlock_in "$work/clone" "$bundle" terragucci unlock-state slow --actor smoke-operator 2>&1)" || code=$?
+    printf '%s\n' "$out" >&2
+    clean_mounted "$work/clone"
+    status="$(run_status)"
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" = 404 ] && [ "$status" = running ]; then
+      log "lock $id was freed while run $run, which holds it, is still running"; rc=1
+    else
+      log "the lock is $(curl -s -o /dev/null -w '%{http_code}' "$lock") and run $run is $status, so BREAK proves nothing"
+    fi
+    kill_apply; drop_work "$work"; return $rc
+  fi
+  [ "$code" = 1 ] && grep -q "run $run (running" <<<"$out" || { log "unlock-state exited $code and did not refuse for run $run"; rc=1; }
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" = 200 ] || { log "the lock is gone while run $run holds it"; rc=1; }
+  # 2. The apply is killed mid-run; the lock stays.
+  kill_apply
+  for i in $(seq 1 60); do status="$(run_status)"; case "$status" in success|failure|cancelled|skipped) break ;; esac; sleep 3; done
+  log "after the kill, run $run is $status"
+  case "$status" in failure|cancelled) ;; *) log "run $run did not end after its apply was killed"; rc=1 ;; esac
+  [ $rc = 0 ] && { [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" = 200 ] || { log "the killed apply left no lock to release"; rc=1; }; }
+  # 3. No run alive: it waits for an approval, and the lock stays until then.
+  if [ $rc = 0 ]; then
+    code=0; out="$(unlock_in "$work/clone" "$bundle" terragucci unlock-state slow --actor smoke-operator 2>&1)" || code=$?
+    printf '%s\n' "$out" >&2
+    clean_mounted "$work/clone"
+    digest="$(sed -n 's/.*chant approve tf-unlock slow --plan \([^ ]*\).*/\1/p' <<<"$out" | head -1)"
+    [ "$code" = 3 ] && [ -n "$digest" ] || { log "unlock-state exited $code and printed no approval to wait for"; rc=1; }
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" = 200 ] || { log "the lock was freed before any approval"; rc=1; }
+  fi
+  # 4. Approved: released, and recorded.
+  if [ $rc = 0 ]; then
+    git clone -q "$host" "$work/approver-clone" && git -C "$work/approver-clone" config user.name smoke-approver && git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
+    (cd "$work/approver-clone" && "$CHANT" approve tf-unlock slow --plan "$digest" --approver smoke-approver) >&2 || { log "chant approve tf-unlock failed"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code=0; out="$(unlock_in "$work/clone" "$bundle" terragucci unlock-state slow --actor smoke-operator 2>&1)" || code=$?
+    printf '%s\n' "$out" >&2
+    clean_mounted "$work/clone"
+    [ "$code" = 0 ] || { log "unlock-state exited $code after the approval"; rc=1; }
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$lock")" = 404 ] || { log "the lock is still held after the approved release"; rc=1; }
+    git clone -q -b chant/lifecycle "$host" "$work/ledger" 2>/dev/null || true
+    done="$(cat "$work/ledger/_gates/tf-unlock/done.jsonl" 2>/dev/null)"
+    [ "$(jq -r 'select(.gate == "slow") | [.lock.ID, .approvedBy, .releasedBy, .planDigest] | join(" ")' <<<"$done" 2>/dev/null)" = "$id smoke-approver smoke-operator $digest" ] \
+      || { log "done.jsonl does not record lock $id released by smoke-operator under smoke-approver's approval: $done"; rc=1; }
+  fi
+  # 5. The next wave applies.
+  if [ $rc = 0 ]; then
+    echo 0 > "$work/tree/slow/hold.txt"
+    sha="$(push_tree "$work/tree" "$repo" main "unlock-state: slow sleeps 0s")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" push || rc=1; }
+    [ $rc = 0 ] && [ "$RUN_STATUS" = success ] || { log "the next run ended ${RUN_STATUS:-unknown}"; [ -n "${RUN_ID:-}" ] && print_logs "$repo" "$RUN_ID" | tail -40 >&2; rc=1; }
+    [ $rc = 0 ] && { [ "$(curl -fsS "$FLOCI/shop-terraform-state/$name/slow.tfstate" | jq -r '[.resources[].instances[].attributes.input] | join(",")')" = 0 ] || { log "slow's state does not hold the applied resource"; rc=1; }; }
+  fi
+  kill_apply
+  drop_work "$work"
+  [ $rc = 0 ] && log "unlock-state refused while run $run held lock $id, waited for its approval once the killed run ended, released it, recorded it, and the next wave applied"
+  return $rc
+}
+
+# ── a rename's moved block ────────────────────────────────────────────────
+
+claim_tip_moved() {
+  # A root, app, holding terraform_data.old is applied, its state in floci.
+  # On a branch, rename, the block is renamed new with the same input:
+  # stage tf-plan plans a destroy and a create, and its report carries the
+  # terragucci-moved tip for app. respond tips --report --branch rename then
+  # opens a pull request into rename that adds the moved block to
+  # app/main.tf; merged, stage tf-plan of rename plans a move of
+  # terraform_data.old to terraform_data.new and destroys nothing.
+  # BREAK: respond.tips is off, so no pull request opens and rename's plan
+  # still destroys terraform_data.old.
+  log() { echo "[smoke tip-moved] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tip-moved" tree out pr base files plan rc=0
+  local host="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/tip-moved.git"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo tip-moved || return 1
+  tree="$work/tree"
+  mkdir -p "$tree/app"
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "tip-moved/%s/app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "old" {\n  input = "tip-moved-%s"\n}\n' "$STAMP" "$STAMP" > "$tree/app/main.tf"
+  printf 'binary: tofu\nforge: forgejo\nurl: http://forgejo:3000/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' "$repo" > "$tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] && printf 'respond:\n  tips: off\n' >> "$tree/terragucci.yml"
+  printf 'terragucci-report*/\n.terraform/\n' > "$tree/.gitignore"
+  git -C "$tree" init -q -b main
+  git -C "$tree" remote add origin "http://$USER:$TOKEN@forgejo:3000/$repo.git"
+  push_tree "$tree" "$repo" main "terraform_data.old" >/dev/null || { drop_work "$work"; return 1; }
+  in_image "$tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; drop_work "$work"; return 1; }
+  perl -pi -e 's/"terraform_data" "old"/"terraform_data" "new"/' "$tree/app/main.tf"
+  push_tree "$tree" "$repo" rename "rename terraform_data.old to new" >/dev/null || { drop_work "$work"; return 1; }
+  out="$(in_image "$tree" sh -c 'terragucci stage tf-plan --binary tofu --out terragucci-report >/dev/null 2>&1; terragucci respond tips --mode apply --report terragucci-report --branch rename' 2>&1)" || true
+  printf '%s\n' "$out" >&2
+  clean_mounted "$tree"
+  jq -e '[.tips[]? | select(.rule == "terragucci-moved" and .root == "app")] | length == 1' "$tree/terragucci-report/report.json" >/dev/null \
+    || { log "the plan's report has no terragucci-moved tip for app"; rc=1; }
+  [ "$(jq '[.resource_changes[] | select(.change.actions == ["delete"])] | length' "$tree/terragucci-report/roots/app/plan.json")" = 1 ] \
+    || { log "the plan of the rename does not destroy terraform_data.old"; rc=1; }
+  [ $rc = 0 ] || { drop_work "$work"; return 1; }
+  pr="$(open_pr "$repo" terragucci/tip/moved-app)"
+  if [ -n "$pr" ]; then
+    base="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.base.ref')"
+    files="$(pr_files "$repo" "$pr")"
+    [ "$base" = rename ] && [ "$files" = app/main.tf ] || { log "pull request $pr goes into $base and changes $files, not rename and app/main.tf"; drop_work "$work"; return 1; }
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "could not merge pull request $pr"; drop_work "$work"; return 1; }
+    log "merged pull request $pr into rename"
+  else
+    log "no pull request from terragucci/tip/moved-app"
+  fi
+  git -C "$tree" fetch -q "$host" rename && git -C "$tree" checkout -q -B rename FETCH_HEAD || { drop_work "$work"; return 1; }
+  in_image "$tree" terragucci stage tf-plan --binary tofu --out terragucci-report-merged >/dev/null 2>&1 || true
+  clean_mounted "$tree"
+  plan="$tree/terragucci-report-merged/roots/app/plan.json"
+  [ -f "$plan" ] || { log "the plan of rename wrote no plan"; drop_work "$work"; return 1; }
+  if [ "$(jq '[.resource_changes[] | select(.change.actions | index("delete"))] | length' "$plan")" != 0 ]; then
+    log "the plan of rename still destroys: $(jq -c '[.resource_changes[] | {address, actions: .change.actions}]' "$plan")"; rc=1
+  fi
+  [ "$(jq -r '[.resource_changes[] | select(.address == "terraform_data.new" and .previous_address == "terraform_data.old" and .change.actions == ["no-op"])] | length' "$plan")" = 1 ] \
+    || { log "the plan of rename does not move terraform_data.old to terraform_data.new"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the tip's pull request $pr added the moved block, and rename now plans a move with no destroy"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -11984,6 +12185,8 @@ wave-jobs            runner self! weight=250
 steps-before-plan    runner self! weight=200
 steps-stop           runner self! weight=150
 steps-gate           runner self! weight=200
+unlock-state         runner self! weight=300
+tip-moved            self! weight=150
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

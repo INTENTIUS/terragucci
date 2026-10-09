@@ -60,6 +60,7 @@ terragucci respond apply-failed --log apply.log
 terragucci respond drift --mode apply
 terragucci respond drift --root envs/prod/orders --import aws_sqs_queue.extra=https://sqs.us-east-1.amazonaws.com/123456789012/extra --mode apply
 terragucci respond tips --mode apply
+terragucci respond tips --report terragucci-report --branch my-change --mode apply
 terragucci respond fmt --branch my-change --mode apply
 terragucci respond publish --module modules/network
 terragucci respond version-bump --module modules/network --mode apply
@@ -178,6 +179,9 @@ Each tip is its own pull request.
 | a provider taken by a range | pins it in `required_providers` at the version the lock file holds, so the next plan changes nothing |
 | a root with no lock file | adds one written by `providers lock`, with hashes for Linux and macOS on amd64 and arm64 unless `--platform` names others |
 | no canary | adds `waves.canary` |
+| a rename (`--report`) | adds a `moved` block for each resource the plan destroys and creates with the same configuration ([terragucci-moved](/terragucci/reference/tips/#terragucci-moved)), after the new block, in a pull request into `--branch` |
+
+With `--report`, `tips` reads the plans of a `stage tf-plan` report and proposes only the `moved` blocks; run it in a checkout of the branch that renamed the resources, after its plan. The generated tips job runs without it, after the applies, from the default branch.
 
 <Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
 

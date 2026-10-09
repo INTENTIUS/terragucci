@@ -24,7 +24,7 @@ import { codify, driftOf, hasQuery, importBlocks, type Codified, type Left } fro
 import { checkDescription } from "./intent";
 import { moduleNotes } from "./notes";
 import { describeRefused, refusedDiff } from "./refused";
-import { tipProposals } from "./tips";
+import { movedProposals, reportRenames, tipProposals } from "./tips";
 import { versionBumps } from "./version-bump";
 import type { DecideFetch } from "../decide";
 import { describeTriage, triage } from "./triage";
@@ -40,7 +40,7 @@ export interface RespondOptions {
   mode?: "dry-run" | "apply";
   /** Where the response writes its files. Default `terragucci-respond`. */
   out?: string;
-  /** plan: the report directory. */
+  /** plan and description: the report directory. tips: a `stage tf-plan` report, whose plans' renames get a moved block each. */
   report?: string;
   /** wave-refused: the approved plan's report and the current one, each report.json or its directory. */
   approved?: string;
@@ -54,7 +54,7 @@ export interface RespondOptions {
   imports?: { address: string; id: string }[];
   /** tips: the platforms a new lock file holds hashes for. */
   platforms?: string[];
-  /** fmt: the pull request's branch. */
+  /** fmt: the pull request's branch. tips with --report: the branch the moved blocks' pull request goes into (default the default branch). */
   branch?: string;
   /** publish: one module's path, and a version of it. */
   module?: string;
@@ -197,7 +197,11 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const proposed = await propose(repo, settings, d.files.size ? [{ branch: "terragucci/drift", title: "Codify drift", body: `A refresh-only plan found drift. Merging this accepts the change made outside Terraform.\n\n${body}`, files: d.files }] : [], { mode, env, fetch: o.fetch });
     r = { text: [body || "no drift", ...proposed.map(said)].join("\n"), data: { codified: d.codified, imports: d.imports, left: d.left, ...(attributing ? { attributions: d.attributions, notes: d.notes } : {}) }, proposals: proposed };
   } else if (ev === "tips") {
-    const proposed = await propose(repo, settings, tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms }), { mode, env, fetch: o.fetch });
+    // With a plan's report, the tips its plans show (a rename's moved block), into --branch; otherwise the repo's own.
+    const proposals = o.report
+      ? movedProposals(repo, reportRenames(resolve(repo, o.report)).filter((x) => !o.root || globMatch(o.root, x.root)), o.branch)
+      : tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms });
+    const proposed = await propose(repo, settings, proposals, { mode, env, fetch: o.fetch });
     r = { text: proposed.map(said).join("\n") || "no tip to fix", proposals: proposed };
   } else if (ev === "fmt") {
     r = await fmt(repo, settings, binary(), mode, o, env);
