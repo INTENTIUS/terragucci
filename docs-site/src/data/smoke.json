@@ -195,9 +195,9 @@
       "claim": "traces",
       "says": "each plan run is one trace, with a span per root and the binary spans inside it",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4553cee"
     },
     {
       "claim": "metrics",
@@ -363,9 +363,9 @@
       "claim": "lock-wait",
       "says": "a plan that waits for a state lock another plan holds shows the wait as a State lock wait span, in its report and its trace",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4553cee"
     },
     {
       "claim": "dash-pipeline",
@@ -419,9 +419,9 @@
       "claim": "dash-slos",
       "says": "the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4553cee"
     },
     {
       "claim": "drill-down",
@@ -1224,6 +1224,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "df3c5bf"
+    },
+    {
+      "claim": "note-footer",
+      "says": "the plan note on a pull request ends with the terragucci footer, Forgejo renders its taco image, and the image answers 200 with a PNG",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4553cee"
     },
     {
       "claim": "note-footer",
