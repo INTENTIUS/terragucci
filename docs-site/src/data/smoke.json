@@ -1713,6 +1713,14 @@
       "commit": "80c81384"
     },
     {
+      "claim": "tg-apply-branches",
+      "says": "with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4f7cd0b4"
+    },
+    {
       "claim": "tg-stacks",
       "says": "the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them",
       "needs": null,
