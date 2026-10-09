@@ -1132,6 +1132,22 @@ collector_up() {
   return 1
 }
 
+# otel_trace SPAN COMMIT FILE -> prints the trace id of the SPAN span whose
+# vcs.ref.head.revision is COMMIT, and leaves the collector's traces in FILE.
+# The file exporter writes on its own schedule, and later under load, so it
+# polls for up to OTEL_TRACE_WAIT seconds (default 60); empty when none comes.
+otel_trace() {
+  local span="$1" commit="$2" out="$3" t="" i
+  for i in $(seq 1 "${OTEL_TRACE_WAIT:-60}"); do
+    docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$out" || true
+    t="$(jq -rs --arg s "$span" --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
+      | select(.name == $s and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$out" 2>/dev/null)"
+    [ -n "$t" ] && break
+    sleep 1
+  done
+  echo "$t"
+}
+
 claim_traces() {
   # One plan run. Its trace is found by the commit on the stage span; it must
   # hold one root span per root in the report, and OpenTofu's own spans (sent
@@ -1149,10 +1165,7 @@ claim_traces() {
   REPORT_ENV="$env" report_run "$work/run" module-bump || true
   commit="$(git -C "$work/run" rev-parse HEAD)"
   roots="$(jq '.roots | length' "$work/run/terragucci-report/report.json" 2>/dev/null || echo 0)"
-  sleep 3   # the file exporter writes on its own schedule
-  docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$work/traces.jsonl" || true
-  trace="$(jq -rs --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
-    | select(.name == "terragucci tf-plan" and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$work/traces.jsonl" 2>/dev/null)"
+  trace="$(otel_trace "terragucci tf-plan" "$commit" "$work/traces.jsonl")"
   if [ -z "$trace" ]; then
     log "no trace for commit $commit"; rc=1
   else
@@ -2979,10 +2992,7 @@ HCL
       attempts="$(jq '[.roots[] | select(.path == "lock") | .timings.lock_waits[]? | .attempts // 0] | max // 0' "$report")"
       ms="$(jq '[.roots[] | select(.path == "lock") | .timings.lock_waits[]? | .ms] | max // 0' "$report")"
       [ "$attempts" -ge 2 ] || { log "the report's longest lock wait took $attempts attempt(s) and ${ms}ms: the plan never waited"; rc=1; }
-      sleep 3   # the file exporter writes on its own schedule
-      docker cp terragucci-otel-collector:/out/traces.jsonl - 2>/dev/null | tar -xO > "$work/traces.jsonl" || true
-      trace="$(jq -rs --arg c "$commit" '[.[].resourceSpans[].scopeSpans[].spans[]
-        | select(.name == "terragucci tf-apply" and any(.attributes[]; .key == "vcs.ref.head.revision" and .value.stringValue == $c))][0].traceId // empty' "$work/traces.jsonl" 2>/dev/null)"
+      trace="$(otel_trace "terragucci tf-apply" "$commit" "$work/traces.jsonl")"
       if [ -z "$trace" ]; then
         log "no tf-apply trace for commit $commit"; rc=1
       else
