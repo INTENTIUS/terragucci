@@ -1,7 +1,7 @@
 ---
 title: Estimate the cost of a change
 description: Put the monthly cost change of each root, and the total, in the plan note, from Infracost on your own key.
-claims: [cost-estimate]
+claims: [cost-estimate, cost-gate, cost-policy]
 prompt: |
   Read https://intentius.io/terragucci/guides/estimate-cost/.
   Add `cost: true` to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request.
@@ -74,8 +74,9 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
    | Job | Gets |
    |---|---|
    | plan, and a `/terragucci plan` re-plan | `INFRACOST_API_KEY` from the secret, and an install step that fetches Infracost 0.10.45 and checks it against the release's checksum |
+   | each apply wave, `/terragucci apply`, and the resume job | the same: a wave prices its own plans for the policy and `approve_above` |
    | confirm (`apply.when: pull-request`) | nothing: it runs `tf-plan --no-cost` |
-   | apply, drift, check | nothing |
+   | drift, check | nothing |
 
 4. Open a pull request. After each root plans, the job runs Infracost over its stored plan:
 
@@ -94,7 +95,52 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 | `report.json`, `cost` | the estimator, the currency, the change and the totals, and each root's figures; see [Report JSON schema](/terragucci/reference/report-schema/) |
 | `roots/<root>/cost.json` | Infracost's own output for the root, beside its `plan.json` |
 
-An estimate that fails never fails the plan.
+An estimate that fails never fails the plan. A wave's report keeps its own estimate the same way, with the wave's change under `waves[].cost`.
+
+## Hold a wave over an amount
+
+`approve_above` makes a wave wait for an approval when its monthly change is over the amount, in the estimator's currency, whatever `gate` says:
+
+```yaml
+gate: never
+cost:
+  key_secret: COST_KEY
+  approve_above: 100
+```
+
+| Case | The wave |
+|---|---|
+| the change over its roots is more than the amount | waits for an approval of its digest, as under `gate: always`, and its log names the change, the amount and the commit it was read at |
+| the change is the amount or less, or the wave lowers the cost | applies under the gate it has |
+| a root of the wave could not be estimated | waits, naming the root |
+| the wave changes nothing | applies nothing, so it waits for nothing |
+
+The amount is read from the config at base: the commit before the one applied, or the pull request's base with `apply.when: pull-request`. A change that raises or drops the amount waits under the old one, and its log says which amount counts.
+
+The amount, the currency and the wave's change join the wave's set digest. An approval of the plans at one cost does not apply them at another: a wave priced differently after its approval applies nothing, exits 4 and names `(monthly cost)` as what moved, as it names a root whose plan moved. [Approve a wave](/terragucci/guides/approve-a-wave/) has the commands.
+
+Each wave's change is set against the amount at base in the plan note:
+
+```text
+Against `cost.approve_above` at base, 100.00 USD a month: wave 1 +20.00 USD, within it; wave 2 +140.00 USD, over it: it waits for an approval whatever the gate.
+```
+
+A wave the amount holds says "waits for an approval" in the note's wave table, with the command that approves its digest.
+
+## Cost in the policy
+
+With `cost` set, a policy reads the figures as `input.cost`, in `tf-plan` and in each `tf-apply` wave. [Policy](/terragucci/reference/policy/#cost) has the fields; this one denies a root that adds more than 50 a month:
+
+```rego
+package main
+
+import rego.v1
+
+deny contains msg if {
+  input.cost.root.monthly_delta > 50
+  msg := sprintf("this root adds %v %s a month; the most is 50", [input.cost.root.monthly_delta, input.cost.currency])
+}
+```
 
 ## Another estimator
 

@@ -21,14 +21,16 @@ packages/terragucci/src/render-agent.ts   comment-agent
 packages/terragucci/src/agent-comment.ts  comment-agent
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-*
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-estimate rollout-continue policy-source reconcile-parallelism wave-jobs
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-*
 packages/terragucci/src/synth.ts          cdktn-*
+packages/terragucci/src/steps.ts          steps-*
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-* token-scrub plan-token-free check
-packages/terragucci/src/install.ts        pinned-install tf-terraform tg-terraform cdf-* cost-estimate
+packages/terragucci/src/pins.ts           root-pins pinned-install tf-terraform check zero-config note-* report
+packages/terragucci/src/install.ts        root-pins pinned-install tf-terraform tg-terraform cdf-* cost-*
 packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate-control audit-control
@@ -43,7 +45,7 @@ packages/terragucci/src/approval.ts       sealed* ledger-default approval-* appr
 packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command approve-plan resume-approve signer-trust pending-expiry tg-sealed tg-gate-*
 packages/terragucci/src/resume.ts         resume-*
 packages/terragucci/src/seal.ts           sealed* approval-at-base approve-command signer-trust tg-sealed
-packages/terragucci/src/review.ts         pr-review* notify-chat
+packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate
 
 # Pull request comments (GitLab's files run in the GitLab claims, not here).
 packages/terragucci/src/comment-gitlab.ts
@@ -53,16 +55,18 @@ packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift
 packages/terragucci/src/gitlab-ci.ts
 packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard
 packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard
+packages/terragucci/src/import/guide.ts   import-atlantis comment-*
+packages/terragucci/src/import/          import-atlantis
 
 # Reports and what reads them.
-packages/terragucci/src/report/policy.ts  policy policy-* tg-policy check check-diagnostics
+packages/terragucci/src/report/policy.ts  policy policy-* tg-policy check check-diagnostics cost-policy
 packages/terragucci/src/report/drift      drift drift-* tg-drift respond-drift
 packages/terragucci/src/report/estate.ts  estate estate-* front-door audit* reader-contracts inventory resource-history dora
 packages/terragucci/src/report/inventory.ts inventory reader-contracts
 packages/terragucci/src/report/history.ts resource-history reader-contracts
 packages/terragucci/src/report/dora.ts    dora reader-contracts
 packages/terragucci/src/report/store.ts   report highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* reader-contracts inventory resource-history wave-jobs dora
-packages/terragucci/src/report/report.schema.json reader-contracts
+packages/terragucci/src/report/report.schema.json reader-contracts root-pins
 packages/terragucci/src/report/report-index.schema.json reader-contracts
 packages/terragucci/src/report/estate.schema.json reader-contracts
 packages/terragucci/src/report/audit.schema.json reader-contracts
@@ -74,11 +78,11 @@ packages/terragucci/src/report/audit.ts   audit*
 packages/terragucci/src/report/highlight.ts highlight*
 packages/terragucci/src/report/azure-blob.ts blob-azure*
 packages/terragucci/src/report/gcs.ts     blob-gcs*
-packages/terragucci/src/report/cost.ts   cost-estimate
+packages/terragucci/src/report/cost.ts   cost-*
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-*
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue
@@ -101,5 +105,6 @@ stack/bootstrap.sh                        ALL
 stack/docker-compose.yml                  ALL
 stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-*
+stack/fixtures/cost-policy                cost-gate cost-policy
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat notify-webhook cost-estimate
 example-terragrunt/                       tg-*

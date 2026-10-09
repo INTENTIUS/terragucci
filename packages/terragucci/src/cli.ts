@@ -2,6 +2,7 @@
  * The terragucci command.
  *
  *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
+ *   terragucci import atlantis|digger [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -14,6 +15,8 @@
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
+  terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
+ *   terragucci binary <root> [--binary <b>] [--config <file>]   (print the binary a root runs, installing the version it pins; run by the generated pipeline)
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
@@ -48,7 +51,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
+import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
@@ -61,7 +64,9 @@ import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
+import { describeImport, importConfig, IMPORT_SOURCES, type ImportSource } from "./import";
 import { assertLinux, install, type Tool } from "./install";
+import { describeBinary, RootBinaries } from "./pins";
 import { plan } from "./plan";
 import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
@@ -83,6 +88,7 @@ import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
+  terragucci import atlantis|digger [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -95,6 +101,7 @@ const USAGE = `usage:
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
+  terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
@@ -201,6 +208,24 @@ export async function main(argv: string[]): Promise<number> {
         if (json) return emit(envelope("init", 0, initJson(cwd, result, flags["dry-run"] === true)));
         console.log(describeInit(cwd, result, flags["dry-run"] === true));
         if (flags["dry-run"] === true) console.log("dry run: nothing was written");
+        return 0;
+      }
+      case "import": {
+        const [source, file, extra] = args;
+        if (!IMPORT_SOURCES.includes(source as ImportSource)) throw new ConfigError(`import reads ${IMPORT_SOURCES.join(" or ")}: \`terragucci import atlantis [atlantis.yaml]\` or \`terragucci import digger [digger.yml]\``);
+        if (extra !== undefined) throw new ConfigError("import reads one file");
+        const forge = str(flags, "forge");
+        if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
+        const when = str(flags, "apply-when");
+        if (when && !APPLY_WHEN.includes(when as ApplyWhen)) throw new ConfigError(`--apply-when must be one of ${APPLY_WHEN.join(", ")}`);
+        const result = importConfig(cwd, source as ImportSource, {
+          ...(file ? { file } : {}),
+          ...(forge ? { forge: forge as ForgeName } : {}),
+          ...(when ? { applyWhen: when as ApplyWhen } : {}),
+          force: flags.force === true,
+          dryRun: flags["dry-run"] === true,
+        });
+        console.log(describeImport(result));
         return 0;
       }
       case "reconcile": {
@@ -315,6 +340,18 @@ export async function main(argv: string[]): Promise<number> {
       case "auth-provider": {
         // Terragrunt runs this in each unit's directory and reads the credentials it prints.
         console.log(JSON.stringify(authProviderOutput(cwd, process.env)));
+        return 0;
+      }
+      case "binary": {
+        // tf-check's per-root step, when roots pin their own version: the binary the root runs, installed when the job's is not it.
+        const root = args[0];
+        if (!root) throw new ConfigError("usage: terragucci binary <root> [--binary <b>] [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const binaries = new RootBinaries(cwd, str(flags, "binary") ?? settings.binary ?? "tofu", settings.version);
+        const b = await binaries.resolve(root);
+        console.error(`${root}: ${describeBinary(b)}`);
+        console.log(b.path);
         return 0;
       }
       case "install": {

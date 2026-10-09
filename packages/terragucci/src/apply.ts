@@ -93,7 +93,9 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
-import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
+import { binaryText, type ReportCost, type ReportPolicy, type ReportRootBinary, type ReportRootPolicy, type ReportWave, type ReportWaveCost } from "./report/schema";
+import { RootBinaries, type Installer, type RootBinary } from "./pins";
+import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
@@ -103,10 +105,13 @@ import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, override
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
-import { sealRefusal } from "./seal";
+import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
 import { binaryEnv, terragruntExec } from "./binary-env";
+import { readSteps, runSteps, stepsUsed, STEPS_NOT_TERRAGRUNT, waveStepsBase, type StepWhen } from "./steps";
+import type { StepSettings } from "./config";
+import type { ReportStep } from "./report/schema";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -470,6 +475,29 @@ interface PlannedRoot {
   error?: string;
   /** The policy's verdict on its plan, when `policy` is on. */
   policy?: ReportRootPolicy;
+  /** What it planned with, which its apply runs too: the job's binary or the version it pins. */
+  binary: string;
+  /** That binary as the report names it. */
+  bin: ReportRootBinary;
+  /** The steps that ran for it. */
+  steps: ReportStep[];
+  /** Its `on_failure: approve` steps that failed: the wave waits for an approval. */
+  holds: string[];
+}
+
+/** The steps a wave runs, and the context its roots run them in. */
+interface WaveSteps {
+  steps: StepSettings[];
+  env: NodeJS.ProcessEnv;
+}
+
+/** Run one moment's steps for a planned root, keeping what they came to on it. The error when one failed the root. */
+async function rootSteps(repo: string, p: Pick<PlannedRoot, "root" | "steps" | "holds">, ws: WaveSteps | undefined, when: StepWhen, planFile?: string): Promise<string | undefined> {
+  if (!ws || ws.steps.length === 0) return undefined;
+  const o = await runSteps(ws.steps, when, { repo, root: p.root, stage: "tf-apply", env: ws.env, ...(planFile ? { planFile } : {}), log: (l) => console.log(l) });
+  p.steps.push(...o.runs);
+  p.holds.push(...o.holds);
+  return o.error;
 }
 
 /** How long a plan or an apply waits for a state lock unless the job set a `-lock-timeout` of its own. */
@@ -500,24 +528,42 @@ function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
   return { dir: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "cache-")), initTurn: oneAtATime() };
 }
 
-async function planRoot(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache): Promise<PlannedRoot> {
+async function planRoot(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, cache: WaveCache, ws?: WaveSteps): Promise<PlannedRoot> {
   const timing = observer.root(root);
   try {
-    return await planTimed(repo, binary, root, work, i, observer, timing, cache);
+    return await planTimed(repo, binaries, root, work, i, observer, timing, cache, ws);
   } finally {
     observer.endRoot(timing);
   }
 }
 
-async function planTimed(repo: string, binary: string, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache): Promise<PlannedRoot> {
+async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps): Promise<PlannedRoot> {
   const dir = join(repo, root);
   const env = { ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir };
   const planFile = join(work, `${i}.tfplan`);
-  const base = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "" };
+  const expected = binaries.expected(root);
+  const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
+  let resolved: RootBinary;
+  try {
+    resolved = await binaries.resolve(root);
+  } catch (e) {
+    return { ...failed, error: (e as Error).message };
+  }
+  const binary = resolved.path;
+  const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
+  if (bin.pin) console.log(`${root}: ${binaryText(bin)}`);
+  const base = { ...failed, binary, bin };
+  const stepEnv = ws ? { ...ws, env: { ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir } } : undefined;
+  let stepError = await rootSteps(repo, base, stepEnv, "before-init");
+  if (stepError) return { ...base, error: stepError };
   const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir));
   if (init.code !== 0) return { ...base, error: `init failed\n${init.out}` };
+  stepError = (await rootSteps(repo, base, stepEnv, "after-init")) ?? (await rootSteps(repo, base, stepEnv, "before-plan"));
+  if (stepError) return { ...base, error: stepError };
   const plan = await timed(observer, timing, binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`], env, dir);
   if (plan.code !== 0) return { ...base, error: `plan failed\n${plan.out}` };
+  stepError = await rootSteps(repo, base, stepEnv, "after-plan", planFile);
+  if (stepError) return { ...base, error: stepError };
   const show = spawnSync(binary, [`-chdir=${dir}`, "show", "-json", planFile], { encoding: "utf-8", env: binaryEnv(env), maxBuffer: 512 * 1024 * 1024 });
   let json: unknown;
   try {
@@ -537,15 +583,30 @@ async function planTimed(repo: string, binary: string, root: string, work: strin
   };
 }
 
-async function applyRoot(repo: string, binary: string, p: PlannedRoot, observer: StageObserver): Promise<boolean> {
+async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, ws?: WaveSteps): Promise<boolean> {
+  const stepEnv = ws ? { ...ws, env: { ...ws.env, TF_PLUGIN_CACHE_DIR: p.env.TF_PLUGIN_CACHE_DIR } } : undefined;
+  const before = await rootSteps(repo, p, stepEnv, "before-apply", p.planFile);
+  if (before) {
+    console.log(`FAILED ${p.root}: nothing applied`);
+    console.log(indent(before));
+    p.error = before;
+    return false;
+  }
   observer.reopen(p.timing);
   let r: Run;
   try {
-    r = await timed(observer, p.timing, binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.env, join(repo, p.root));
+    r = await timed(observer, p.timing, p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.env, join(repo, p.root));
   } finally {
     observer.endRoot(p.timing);
   }
   if (r.code === 0) {
+    const after = await rootSteps(repo, p, stepEnv, "after-apply");
+    if (after) {
+      console.log(`FAILED ${p.root}: applied, then a step after the apply failed`);
+      console.log(indent(after));
+      p.error = after;
+      return false;
+    }
     console.log(`applied ${p.root}: ${[...r.out.matchAll(/Resources: .*destroyed/g)].pop()?.[0] ?? "done"}`);
     return true;
   }
@@ -587,6 +648,10 @@ export interface ApplyWaveOptions {
   share?: number;
   /** The decision file the wave's job writes and its shares read. Default: terragucci-wave/wave-<k>.json in the checkout. */
   decided?: string;
+  /** How a version a root pins is installed. Default: the release, checked against its SHA256SUMS. */
+  installer?: Installer;
+  /** Runs the cost estimator, with `cost` set; tests pass one. */
+  costRunner?: CostRunner;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
@@ -657,6 +722,16 @@ interface WaveRun {
   decided?: boolean;
   /** The share of a wave split across jobs this job applies. */
   share?: number;
+  /** The roots whose `on_failure: approve` step failed, which hold the wave at its gate. */
+  heldBySteps?: string[];
+  /** The estimate of the wave's plans, with `cost` set. */
+  cost?: ReportCost;
+  /** The wave's monthly cost, and with `cost.approve_above` at base whether it waits for it. */
+  waveCost?: ReportWaveCost;
+  /** Where `cost.approve_above` was read. */
+  costSource?: string;
+  /** The estimator's output per root, kept beside the plans in the report. */
+  costOutputs?: Map<string, string>;
 }
 
 /**
@@ -681,13 +756,15 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     roots: w.planned.map((p) => {
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
-      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
+      const steps = p.steps?.length ? { steps: p.steps } : {};
+      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps };
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
+  if (w.cost) report.cost = w.cost;
   w.observer.addTimings(report, ["plan", "apply"]);
   const dir = join(repo, "terragucci-report");
   // An absolute address, as the plan report has: the bucket's copy once reports.url says where the bucket is served, else the job's artifact.
@@ -696,6 +773,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   Object.assign(report.run, links.run);
   w.observer.reportUrl = links.run.report_url;
   writeReportDir(dir, report, plans, links.note);
+  if (w.costOutputs) writeCostFiles(dir, w.costOutputs);
   const slowest = report.timings?.roots[0];
   if (slowest) console.log(`wave ${wave}: report in terragucci-report/, slowest root ${slowest.root} (${slowest.seconds}s)`);
   if (settings.reports?.bucket && w.decided) {
@@ -736,6 +814,33 @@ async function waveSettings(repo: string, options: ApplyWaveOptions, configPath:
   return { settings: { ...rest, ...(checkout.policy ? { policy: checkout.policy } : {}) } };
 }
 
+/**
+ * The steps a wave runs: those in terragucci.yml at base (the base the wave
+ * was given, else the applied commit's first parent), never the applied
+ * commit's own, so a change cannot add a step that runs with the apply
+ * credentials it is applied with. A base that cannot be read runs no steps
+ * when the checkout names none, and fails the wave when it names some.
+ */
+async function waveSteps(repo: string, options: ApplyWaveOptions, configPath: string | undefined, checkout: StepSettings[] | undefined): Promise<{ ws?: WaveSteps } | { error: string }> {
+  let base: string;
+  try {
+    base = waveStepsBase(repo, options.base);
+  } catch (e) {
+    if (!checkout?.length) return {};
+    return { error: `steps are read from the config at base, and base could not be found (${(e as Error).message})` };
+  }
+  try {
+    const read = await readSteps(repo, base, checkout, configPath ? { config: configPath } : {});
+    if (read.note) console.log(read.note);
+    const steps = stepsUsed(read.steps, "tf-apply");
+    if (steps.length === 0) return {};
+    console.log(`steps: ${steps.length} read from terragucci.yml at ${read.from.length === 40 ? read.from.slice(0, 8) : read.from}`);
+    return { ws: { steps, env: options.env ?? process.env } };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
 async function runWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun, facts: WaveFacts = {}): Promise<number> {
   const { wave, binary, gate } = options;
   if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
@@ -746,7 +851,14 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     throw new ConfigError("--share must be a share number from 1 to --shares");
   }
   if (options.terragrunt && options.shares !== undefined) throw new ConfigError("--shares splits a wave of plain roots; a Terragrunt wave applies its units with one run --all");
-  if (options.terragrunt) return runTerragruntWave(repo, options, work, w, facts);
+  if (options.terragrunt) {
+    const cfg = options.config ?? findConfig(repo);
+    if (cfg && resolveRepo(await loadConfig(cfg)).steps?.length) {
+      console.log(`wave ${wave}: ${STEPS_NOT_TERRAGRUNT}`);
+      return EXIT.failed;
+    }
+    return runTerragruntWave(repo, options, work, w, facts);
+  }
   const waves = applyWaves(options.layers, options.canary);
   const whole = waves[wave - 1];
   if (!whole) {
@@ -767,6 +879,12 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     return EXIT.failed;
   }
   const settings = (w.settings = read.settings);
+  const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
+  if ("error" in stepsRead) {
+    console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const ws = stepsRead.ws;
   let limit: { value: number; reason: string };
   if (options.parallelism !== undefined) {
     limit = { value: options.parallelism, reason: "--parallelism" };
@@ -778,8 +896,9 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
   const cache = waveCache(work, process.env);
+  const binaries = new RootBinaries(repo, binary, settings.version, options.env ?? process.env, options.installer);
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binary, r, work, i, w.observer, cache);
+    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws);
   });
   w.planned = planned;
   w.roots = roots;
@@ -790,20 +909,27 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
     return EXIT.failed;
   }
+  const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, planned, w);
+  if (unpriced !== undefined) return unpriced;
   const refusedByPolicy = await policyGate(repo, options, { label, settings, configPath }, planned, w);
   if (refusedByPolicy !== undefined) return refusedByPolicy;
   // The set digest covers the roots whose plan changes something, as a Terragrunt wave's and the plan note's do, so the digest a
   // pull request's note shows is the one this wave asks approval for when nothing moved.
   const all = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
-  const members = all.filter((m) => changing.has(m.member));
-  const digest = waveSetDigest(members.length > 0 ? members : all);
+  // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
+  const priced = costMember(w.waveCost);
+  const members = [...all.filter((m) => changing.has(m.member)), ...(priced && changing.size > 0 ? [priced] : [])];
+  const digest = waveSetDigest(members.length > 0 ? members : [...all, ...(priced ? [priced] : [])]);
   const changes = planned.reduce((n, p) => n + p.changes, 0);
   const destroys = planned.reduce((n, p) => n + p.destroys, 0);
   console.log(`${label}: set digest ${digest}, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
 
   if (changes === 0) facts.nothing = true;
-  const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys }, facts, w);
+  const heldBySteps = planned.filter((p) => p.holds.length > 0).map((p) => p.root).sort();
+  for (const p of planned) if (p.holds.length) console.log(`${label}: ${p.root}: step ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
+  if (heldBySteps.length) w.heldBySteps = heldBySteps;
+  const held = await gateWave(repo, options, { label, roots, planned, members, digest, changes, destroys, heldBySteps }, facts, w);
   if (held !== undefined) return held;
   recordOverridesUsed(repo, options, planned);
 
@@ -834,7 +960,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
   const ok: boolean[] = new Array(planned.length);
   await eachLimited(planned, limit.value, async (p, i) => {
-    ok[i] = await applyRoot(repo, binary, p, w.observer);
+    ok[i] = await applyRoot(repo, p, w.observer, ws);
   });
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   if (ok.includes(false)) {
@@ -900,14 +1026,21 @@ async function runShare(
     return EXIT.failed;
   }
   const settings = (w.settings = read.settings);
+  const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
+  if ("error" in stepsRead) {
+    console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const ws = stepsRead.ws;
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   const planned: PlannedRoot[] = new Array(roots.length);
   w.started = new Date().toISOString();
   await w.observer.collectSpans((l) => console.log(l));
   const cache = waveCache(work, process.env);
+  const binaries = new RootBinaries(repo, binary, settings.version, options.env ?? process.env, options.installer);
   await eachLimited(roots, limit.value, async (r, i) => {
-    planned[i] = await planRoot(repo, binary, r, work, i, w.observer, cache);
+    planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws);
   });
   w.planned = planned;
   w.roots = roots;
@@ -917,6 +1050,14 @@ async function runShare(
     for (const p of failed) console.log(indent(p.error!));
     console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
     return EXIT.failed;
+  }
+  // A step that asks for an approval holds the share unless the wave's job decided under one.
+  const holding = planned.filter((p) => p.holds.length > 0).map((p) => p.root).sort();
+  if (holding.length > 0 && decision.approval !== "approved") {
+    w.heldBySteps = holding;
+    console.log(`${label}: a step of ${holding.join(", ")} asks for an approval, and wave ${wave} decided without one, so nothing in this share was applied; run the pipeline again so the wave's job holds it at its gate`);
+    writeOutcome(options.env, `wave ${wave} share ${share} held by a step of ${holding.join(", ")}`, w);
+    return EXIT.refused;
   }
   const moved = planned.filter((p) => !samePlanDigest(decided.get(p.root), p.member!.planDigest)).map((p) => p.root).sort();
   if (moved.length > 0) {
@@ -928,7 +1069,7 @@ async function runShare(
   }
   const ok: boolean[] = new Array(planned.length);
   await eachLimited(planned, limit.value, async (p, i) => {
-    ok[i] = await applyRoot(repo, binary, p, w.observer);
+    ok[i] = await applyRoot(repo, p, w.observer, ws);
   });
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   if (ok.includes(false)) {
@@ -941,7 +1082,58 @@ async function runShare(
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
-type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy">;
+type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "policy"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
+
+/**
+ * Price a wave's plans, with `cost` set (at the checkout or at base): the
+ * estimator over each plan, redacted as the report keeps it, as tf-plan runs
+ * it. `cost.approve_above` is read at base: `--base`, else the commit before
+ * the one applied, so a change cannot raise the amount its own apply is
+ * judged by. Leaves the figures on the wave for the policy, the gate and the
+ * report. Returns the exit code when the amount cannot be read, so whether
+ * the wave waits cannot be decided; undefined to go on. An estimate that
+ * fails fails nothing; under an amount the wave then waits.
+ */
+async function priceWave(
+  repo: string,
+  options: ApplyWaveOptions,
+  ctx: { label: string; settings: ResolvedSettings; configPath: string | undefined; work: string },
+  planned: WavePlan[],
+  w: WaveRun,
+): Promise<number | undefined> {
+  const { label, settings, configPath, work } = ctx;
+  const env = options.env ?? process.env;
+  const own = settings.cost;
+  let base: string | undefined = options.base;
+  if (!base) {
+    try {
+      base = baseCommit(repo);
+    } catch (e) {
+      if (approveAbove(own) !== undefined) {
+        console.log(`${label}: cost.approve_above is read from the commit before this one, and ${(e as Error).message}, so nothing in it was applied`);
+        writeOutcome(options.env, `wave ${options.wave}: cost.approve_above could not be read at base`, w);
+        return EXIT.failed;
+      }
+    }
+  }
+  const rule = await costRule(repo, own, base, configPath ? { config: configPath } : {});
+  if (rule.error) {
+    console.log(`${label}: ${rule.error}, so whether it waits cannot be decided and nothing in it was applied`);
+    writeOutcome(options.env, `wave ${options.wave}: cost.approve_above could not be read at base`, w);
+    return EXIT.failed;
+  }
+  if (rule.note) console.log(`${label}: ${rule.note}`);
+  if (!rule.setting) return undefined;
+  const stored = planned.filter((p) => p.plan !== undefined).map((p) => ({ root: p.root, json: JSON.stringify(redactPlan(p.plan).plan) }));
+  if (stored.length === 0) return undefined;
+  const dir = mkdtempSync(join(work, "cost-"));
+  const estimate = await estimateCosts(stored, costCommand(rule.setting), env, dir, repo, (l) => console.log(`${label}: ${l}`), options.costRunner);
+  w.cost = estimate.cost;
+  w.costOutputs = estimate.outputs;
+  w.waveCost = waveCost(estimate.cost, planned.map((p) => p.root), rule.approveAbove);
+  if (rule.source) w.costSource = rule.source;
+  return undefined;
+}
 
 /**
  * Run the policy over a wave's plans, when `policy` is on. Returns the exit
@@ -965,7 +1157,9 @@ async function policyGate(
   if (governing.note) console.log(governing.note);
   if (governing.policy) {
     const runAt = runFacts(repo, policyEnv, settings.forge);
-    const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
+    // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
+    const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
+    const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit });
     const denied = found.failed;
     w.policy = found.policy;
     for (const p of planned) {
@@ -1114,15 +1308,18 @@ function recordOverridesUsed(repo: string, options: ApplyWaveOptions, applying: 
 async function gateWave(
   repo: string,
   options: ApplyWaveOptions,
-  ctx: { label: string; roots: string[]; planned: WavePlan[]; members: WaveMember[]; digest: string; changes: number; destroys: number },
+  ctx: { label: string; roots: string[]; planned: WavePlan[]; members: WaveMember[]; digest: string; changes: number; destroys: number; heldBySteps?: string[] },
   facts: WaveFacts,
   w: WaveRun,
 ): Promise<number | undefined> {
   const { wave, binary, gate } = options;
   const { label, roots, planned, members, digest, changes, destroys } = ctx;
   let mode: Approval = "ledger";
-  // A wave with nothing to change has nothing to approve.
-  const gated = changes > 0 && (gate === "always" || (gate === "on-destroy" && destroys > 0));
+  // A wave with nothing to change has nothing to approve. A step that asks for an approval, or a change over cost.approve_above at base, holds it whatever the gate policy says.
+  const byGate = gate === "always" || (gate === "on-destroy" && destroys > 0) || (ctx.heldBySteps?.length ?? 0) > 0;
+  const byCost = w.waveCost?.over === true;
+  const gated = changes > 0 && (byGate || byCost);
+  if (changes > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${gate}`}`);
   w.approval = gated ? "waiting" : "not-required";
   w.digest = digest;
   if (gated) {
@@ -1154,7 +1351,8 @@ async function gateWave(
       const env = options.env ?? process.env;
       const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
       const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-      const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })));
+      const priced = costMember(w.waveCost);
+      const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
       const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest });
       if (r.kind === "approved") {
         appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: r.by.join(","), timestamp: now, planDigest: digest, via: "pr-review", pr: r.pr, head: r.head, reviewers: r.by }, {}, `Approved by the review of pull request ${r.pr}: ${APPLY_OP} ${name}`);
