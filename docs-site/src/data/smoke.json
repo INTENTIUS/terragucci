@@ -17,7 +17,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "2d19653"
     },
     {
       "claim": "affected",
@@ -887,7 +887,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "2d19653"
     },
     {
       "claim": "note-report-link",
@@ -943,7 +943,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "2d19653"
     },
     {
       "claim": "root-pins",
@@ -951,7 +951,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "2d19653"
     },
     {
       "claim": "drift-close",
@@ -1384,7 +1384,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "795df59"
+      "commit": "2d19653"
     },
     {
       "claim": "steps-stop",
@@ -1392,7 +1392,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "795df59"
+      "commit": "2d19653"
     },
     {
       "claim": "steps-gate",
@@ -1400,7 +1400,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "795df59"
+      "commit": "2d19653"
     },
     {
       "claim": "mr-widget",
