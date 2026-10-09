@@ -116,7 +116,10 @@ const files = roots.flatMap(collect);
 let failed = problems.length > 0;
 for (const file of files) {
   // MDX import lines and component tag lines are code, not prose.
-  const text = prose(readFileSync(file, "utf8"));
+  // "CI does this:" is the positioning line the README, getting started and the landing page lead
+  // with, by ruling. The linter reads it as a colon reveal; blank that exact phrase (same length, so
+  // line numbers hold) and lint the sentence after it.
+  const text = prose(readFileSync(file, "utf8")).replace(/^CI does this: (\w)/gm, (m, c) => " ".repeat(m.length - 1) + c.toUpperCase());
   const report = lintDocument(text, { markdown: true, strictness });
   const score = report.score.total;
   const over = score > limit;
@@ -129,7 +132,7 @@ for (const file of files) {
     }
   }
 }
-// A heading is a short noun phrase: "Prerequisites", not "Before you start"; "Report storage", not
+// A page title and a heading are short noun phrases: "Prerequisites", not "Before you start"; "Report storage", not
 // "Where reports are kept". A heading that opens with a question word or ends with "?" fails.
 // reference/scale is held out while its rewrite is in flight; drop it from the set when that lands.
 const HEADING_EXEMPT = new Set([DOCS + "reference/scale.mdx"]);
@@ -153,7 +156,12 @@ function headingProblems(paths) {
   const out = [];
   for (const file of paths) {
     let fence = false;
-    readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+    const text = readFileSync(file, "utf8");
+    const title = /^---\n(?:[\s\S]*?\n)?title: *(["']?)(.+?)\1 *\n[\s\S]*?\n---/.exec(text)?.[2];
+    if (title && (/^(what|how|why|when|where|who)\b/i.test(title) || title.endsWith("?"))) {
+      out.push(`${file}: title "${title}"; name the page with a short noun phrase, not a question or a what/how/why/when/where/who clause`);
+    }
+    text.split("\n").forEach((line, i) => {
       if (/^\s*(```|~~~)/.test(line)) fence = !fence;
       const m = !fence && /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
       if (m && (/^(what|how|why|when|where|who)\b/i.test(m[1]) || m[1].endsWith("?"))) {

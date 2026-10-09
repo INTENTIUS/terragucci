@@ -4,9 +4,11 @@
 
 One workflow, one audit trail and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests, with a trace of every run.
 
+CI does this: each job runs in your forge's CI and lands in your git and your bucket, with no account to create and no platform to sign in to.
+
 | You get | How |
 |---|---|
-| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#components) | Every job runs in your forge's CI, with no account to create and no platform to sign in to. State, plan reports and approvals stay in your git and your bucket. |
+| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#components) | Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket. |
 | [Built for many roots](https://intentius.io/terragucci/concepts/why-plans-are-grouped/) | One grouped note for 200 plans. Canary roots apply first, then the rest in [waves](https://intentius.io/terragucci/concepts/waves-and-approvals/). An approval covers exactly the plans it was shown, and a plan that changed after it is refused. |
 | [A trace of every run](https://intentius.io/terragucci/guides/send-traces-and-metrics/) | One OpenTelemetry trace per stage run, with a span per root and the binary's own spans inside it (lock waits and slow provider calls with choudoufu). Metrics and dashboards come with it. |
 
@@ -24,7 +26,7 @@ npm i -D @intentius/terragucci
 npx terragucci init
 ```
 
-The site is [intentius.io/terragucci](https://intentius.io/terragucci/); [How terragucci works](https://intentius.io/terragucci/concepts/how-it-works/) follows one change through its lifecycle.
+The site is [intentius.io/terragucci](https://intentius.io/terragucci/); [Architecture](https://intentius.io/terragucci/concepts/how-it-works/) follows one change through its lifecycle.
 
 ## For agents
 
