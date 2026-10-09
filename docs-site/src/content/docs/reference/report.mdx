@@ -10,7 +10,7 @@ prompt: |
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one report. The report is a JSON document, and everything a person reads is rendered from it.
+Each `tf-plan`, `tf-apply` wave and `tf-drift` run writes one report, a JSON document from which everything a person reads is rendered.
 
 ## Running it
 
@@ -36,7 +36,7 @@ The plan job writes the report for every pull request and merge request. Its not
 
 With [a served bucket](#report-storage) the copy there is linked instead.
 
-To run the stage yourself, from the repo:
+Run the stage yourself from the repo:
 
 ```bash
 npx terragucci stage tf-plan
@@ -62,7 +62,7 @@ It writes to `terragucci-report/`.
 | `roots/<root>/plan.json` | the same plan as `show -json`, with sensitive values redacted |
 | `roots/<root>/cost.json` | with `cost` set, the estimator's output for the root |
 
-[CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the body of the drift issue, and `issue.json`, what it did to the issue (`opened`, `updated`, `closed`, `left-open` or `none`) with its number and address; see [Drift](/terragucci/reference/stages/#drift).
+[CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the drift issue's body, and `issue.json`, what the run did to the issue (`opened`, `updated`, `closed`, `left-open` or `none`) with its number and address; see [Drift](/terragucci/reference/stages/#drift).
 
 ## Reviewer view
 
@@ -128,8 +128,6 @@ Presigned links live 7 days at most. An S3 link signed with a role's session sto
 
 ## Open and folded sections
 
-The report opens on what a reviewer looks for and folds the rest away.
-
 <Shot step="report" view="top" alt="The top of an HTML report for a change to a shared module: twelve roots, the roots to read first, and eleven identical plans folded into one group" optional />
 
 | Item | Shown as |
@@ -144,7 +142,7 @@ The report opens on what a reviewer looks for and folds the rest away.
 | value known only after apply | folded |
 | root with no changes | folded |
 
-The types highlighted, and the reason the report gives:
+Highlighted types, and the reason the report gives:
 
 | Types | Why |
 |---|---|
@@ -158,7 +156,7 @@ A change to one of these that only touches tags stays folded.
 
 ## Back to the full plan
 
-Every root's full plan is kept beside the report, both as printed and as JSON. The HTML report ties every group, root and named change to its plan and job.
+Every root's full plan is kept beside the report, as printed and as JSON, and the HTML report links each group, root and named change to its plan and job.
 
 <Shot step="report" view="root" alt="One root's row in the HTML report, envs/prod/payments, with its links to plan, plan.json and the job" optional />
 
@@ -182,7 +180,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 ## Sensitive values
 
-`show -json` prints sensitive values in plain text. Before a plan is kept, each one becomes `(sensitive, redacted by terragucci)`. The report page counts them.
+`show -json` prints sensitive values in plain text; before a plan is kept, each becomes `(sensitive, redacted by terragucci)`, and the report page counts them.
 
 | Value | In the report |
 |---|---|
@@ -197,7 +195,7 @@ Digests are taken before redaction, so an approval binds the plan as planned.
 
 ## Report storage
 
-By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. To keep them longer, name a bucket in `terragucci.yml`, then run `npx terragucci init` again.
+By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. To keep reports longer, name a bucket in `terragucci.yml`, then run `npx terragucci init` again.
 
 | `reports.bucket` | Store | API |
 |---|---|---|
@@ -235,7 +233,7 @@ reports:
   role: arn:aws:iam::123456789012:role/terragucci-reports
 ```
 
-`url` is the address that serves the bucket to a browser; terragucci never derives it from the bucket name. With it the note links the bucket's `report.html` and `report.json` records it as `run.report_url`. Without it the note links the bucket's copy presigned; see [Where the note links](#note-links).
+`url` is the bucket's browser address; terragucci never derives it from the bucket name. With it the note links the bucket's `report.html` and `report.json` records it as `run.report_url`. Without it the note links the bucket's copy presigned; see [Where the note links](#note-links).
 
 A run's report and plans land under one path holding the full commit SHA, so links are relative and work in the bucket:
 
@@ -267,7 +265,7 @@ Every upload rewrites `index.html` and `index.json`.
 | Retention | your bucket's lifecycle rule |
 
 :::caution
-Served as a static site, the index publishes every report in the bucket: put the site behind your identity provider and keep the bucket private. [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index) has the choices.
+A static site serving the index publishes every report in the bucket, so put the site behind your identity provider and keep the bucket private. [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index) has the choices.
 :::
 
 <Shot step="report" view="index" alt="A project's report index: one row per plan run with its commit, stage, root count, changes and destroys, each linked to its report" optional />

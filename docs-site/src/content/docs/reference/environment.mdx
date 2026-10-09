@@ -33,7 +33,7 @@ The config names variables and never holds a value. Put secrets in your forge's 
 | `TG_TOKEN` | the comment, status, note and respond steps | set by the job; set it yourself outside a pipeline |
 | `GITEA_TOKEN` | nothing | dropped with the other runner tokens from every step that runs a pull request's code |
 
-`token_env` renames the variable. That token needs no merge rights; those commands never merge.
+`token_env` renames the variable. Those commands never merge, so the token needs no merge rights.
 
 | Never reaches the binary or Terragrunt | Where |
 |---|---|
@@ -61,7 +61,7 @@ On GitLab the check job drops `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITLAB_TOKEN` (or t
 
 ### GitLab-managed state
 
-The binary never gets `CI_JOB_TOKEN`, so the `http` backend takes its credentials from `TF_` variables in `env:`. [The pipeline reference](/terragucci/reference/pipeline/#gitlab-managed-state) has them.
+The binary never gets `CI_JOB_TOKEN`, so the `http` backend takes its credentials from `TF_` variables in `env:` ([pipeline reference](/terragucci/reference/pipeline/#gitlab-managed-state)).
 
 ## Reports
 
@@ -83,8 +83,6 @@ Set these on the plan job when `reports.bucket` is set, and in the environment `
 | `AZURE_AUTHORITY_HOST` | Entra ID's address for that token; `https://login.microsoftonline.com` when not set |
 
 ## Secrets the config names
-
-Each names a secret in your forge's store.
 
 | Config key | Default name | Holds |
 |---|---|---|
@@ -157,7 +155,7 @@ oidc:
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
-With `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`, and the stage sets `AWS_ROLE_ARN` for each root's binary, its steps and its state version read, assumed with the job's token. A role per environment keeps each environment's roots from reaching another's state; [Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/) has the steps, and `config check` warns when a role reaches another environment's state.
+With `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`, and the stage sets `AWS_ROLE_ARN`, assumed with the job's token, for each root's binary, steps and state version read. A role per environment keeps each environment's roots out of another's state ([Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/)); `config check` warns when a role reaches another environment's state.
 
 Your role's trust policy must accept the forge's issuer and your repo. Forgejo needs version 15 and Runner 12.5 or later. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
 
@@ -181,7 +179,7 @@ A repo with Actions on before Forgejo 16 keeps `repo:<owner>/<repo>` until Actio
 
 On an older Forgejo or runner, leave `oidc` unset and give the runner static credentials.
 
-In a Terragrunt repo, roles can follow unit paths. See [The generated pipeline](/terragucci/reference/pipeline/#terragrunt).
+In a Terragrunt repo, roles can follow unit paths ([The generated pipeline](/terragucci/reference/pipeline/#terragrunt)).
 
 ## Agent integrations
 

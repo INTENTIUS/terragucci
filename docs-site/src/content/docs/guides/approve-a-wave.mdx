@@ -39,7 +39,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 | `pr-review` | the merged pull request's approval of its head, by a reviewer other than its author with write access, when the wave plans what the review saw; and any `chant approve` of the digest, as under `ledger` | on GitHub or Forgejo, optionally require `terragucci/approval` in branch protection; on GitLab, an approval rule | a writer other than the author approved the head whose plans these are. An approval by the user the pipeline's token acts as never counts. A `chant approve` still proves only the plans. |
 | `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
 
-A wave reads the mode at base, like the signers file ([Which commit the rule is read from](#rule-commit)), and `terragucci config check` prints the mode in force and its source.
+A wave reads the mode at base, like the signers file ([Rule commit](#rule-commit)). `terragucci config check` prints the mode in force and its source.
 
 | `terragucci.yml` | Mode in force |
 |---|---|
@@ -49,11 +49,11 @@ A wave reads the mode at base, like the signers file ([Which commit the rule is 
 
 ## Approve by review (`approval: pr-review`)
 
-Every forge. GitLab's merge request approvals name no commit, so there an approval counts only when it came after the merge request's latest push.
+Works on every forge. GitLab's merge request approvals name no commit, so there an approval counts only after the merge request's latest push.
 
 <Steps>
 
-1. Open the pull request's plan note. Its waves table has each wave's digest of its changes and whether the gate will hold it; the note keeps the digests for the apply to compare.
+1. Open the pull request's plan note. Its waves table lists each wave's change digest, which the apply compares against, and whether the gate will hold the wave.
 
 2. Read the plans, then approve the pull request on its head.
 
@@ -65,11 +65,11 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
        Approve on the merge request, as a member with the Developer role or higher, after its last push. An approval the author gives, or one withdrawn later, never counts.
      </TabItem>
      <TabItem label="Forgejo">
-       Files changed > Review > Approve. Forgejo marks the review official when you have write access, and only an official one counts.
+       Files changed > Review > Approve. Only an official review counts, and Forgejo makes a review official when its author has write access.
      </TabItem>
    </Tabs>
 
-   The author's own approval never counts. A push after your review needs a fresh one, since a review counts only on the commit it names (on GitLab, only after the latest push), and a latest review that asks for changes holds every wave back.
+   The author's own approval never counts. A review counts only on the commit it names (on GitLab, only after the latest push), so a push after your review needs a fresh one; a latest review that asks for changes holds every wave back.
 
 3. Keep unreviewed changes from merging.
 
@@ -87,7 +87,7 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | another digest (the plans moved after the review) | applies nothing, exits 4 and prints the `chant approve` command for the new digest |
    | no row for the wave in the note, no approving review, or a direct push | waits for a `chant approve`, as under `ledger` |
 
-5. A wave that waits for want of a review can still take one. On GitHub and Forgejo, approve the merged pull request on its head; on GitLab, approve the merge request while it is open, since GitLab takes no approval after the merge. Then run the wave again ([step 4 below](#approve-with-chant)): it finds the review and applies. With [`notify`](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) set, the waiting wave's chat message links the review page.
+5. A wave waiting for a review can still get one. On GitHub and Forgejo, approve the merged pull request on its head; on GitLab, approve the merge request while it is open, since GitLab takes no approval after the merge. Then run the wave again ([step 4 below](#approve-with-chant)): it finds the review and applies. With [`notify`](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) set, the waiting wave's chat message links the review page.
 
 </Steps>
 
@@ -160,17 +160,15 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | `--dry-run` | prints the command and runs nothing |
    | `--no-resume` | records the approval and starts nothing |
 
-   The approval binds that digest only; a wave that plans differently is refused as changed.
-
    <Captured step="wave-refused" cmd="just example approve" optional />
 
-   The approval is one line appended to `_gates/tf-apply.jsonl` on `chant/lifecycle`, in a commit of its own. The example's line is sealed because it runs `approval: sealed`:
+   The approval is one line appended to `_gates/tf-apply.jsonl` on `chant/lifecycle` in its own commit. The example runs `approval: sealed`, so its line is sealed:
 
    <Shot step="approved" view="record" alt="The approval commit on chant/lifecycle in Forgejo, Gate resolution record: it appends one line to _gates/tf-apply.jsonl, a human approval of wave 4 resolved by terragucci-admin, binding the plan digest of the pending line above it and sealed with an ssh signature" />
 
 4. Let the wave run again.
 
-   `terragucci approve` starts it again right after it records the approval, with your forge token; without one it says so.
+   `terragucci approve` restarts it with your forge token once the approval is recorded, and says so when it has no token.
 
    | Forge | Token `terragucci approve` reads |
    |---|---|
@@ -178,7 +176,7 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | GitLab | `GITLAB_TOKEN` |
    | Forgejo | `FORGEJO_TOKEN` |
 
-   With [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) set, the resume job applies the wave within that many minutes of the approval, whoever recorded it. Otherwise, or after a pull request review under `approval: pr-review`, run it again by hand:
+   With [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) set, the resume job applies the wave within that many minutes of any approval. Otherwise, or after a pull request review under `approval: pr-review`, re-run it by hand:
 
    | Situation | How to re-run |
    |---|---|
@@ -210,7 +208,7 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
 
 ## Roots on HCP Terraform
 
-terragucci's gate reads neither HCP Terraform's run approvals nor its locks. Set workspaces to local execution. Remote execution adds HCP's own approvals and locks.
+terragucci's gate reads neither HCP Terraform's run approvals nor its locks, so set workspaces to local execution; remote execution adds HCP's own approvals and locks.
 
 ## Set up the signers file
 
@@ -237,7 +235,7 @@ Only `approval: sealed` reads it. With that key in `terragucci.yml`, `terragucci
 
    To move the file, set its path in `.chant/trust.json`, e.g. `{"schema": 1, "signers": "security/allowed_signers"}`. The agent comment refuses changes to it.
 
-2. List people only. An agent's or CI job's key does not belong here.
+2. List people only, never an agent's or CI job's key.
 
 3. Protect `chant/lifecycle` against force pushes and deletion (next section).
 
@@ -245,7 +243,7 @@ Only `approval: sealed` reads it. With that key in `terragucci.yml`, `terragucci
 
 ### Rule commit
 
-The `approval` key in `terragucci.yml`, the signers file, `.chant/trust.json` and `chant.workspace.json` are read from base, the applied commit's first parent. A pull request's change to them governs only later merges: one that switches `sealed` to `ledger` is still judged sealed.
+The `approval` key in `terragucci.yml`, the signers file, `.chant/trust.json` and `chant.workspace.json` are read from base (the applied commit's first parent), so a pull request's change to them governs only later merges. A pull request that switches `sealed` to `ledger` is still judged sealed.
 
 | Merge method | Base is | Safe |
 |---|---|---|
@@ -283,7 +281,7 @@ Protection keeps history from being rewritten.
 
 ## If the wave refuses instead
 
-When any root's plan changed after you approved and before the wave applied, the wave applies nothing. Once it has applied, the next change waits for a new approval instead. [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) covers that.
+If any root's plan changed between your approval and the apply, the wave applies nothing ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)). After a wave has applied, the next change waits for a new approval.
 
 <Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, and the roots whose plans moved" optional />
 

@@ -71,9 +71,9 @@ const pillars = [
 		<h1 class="claim">One workflow, one audit trail and one place to enforce policy for every Terraform, OpenTofu and Terragrunt repo, run in your own CI.</h1>
 
 		<p class="lede">
-			CI does this: plan, approve and apply hundreds of roots from pull requests, with a trace of every run. Each job runs in
-			your GitHub, GitLab or Forgejo CI and lands in your git and your bucket, with no account to create and no platform to sign
-			in to. Turn policy on and OPA checks every plan in every repo against one pinned policy source, and <a href={`${base}/reference/audit-trail/`}>one audit trail</a> in your bucket records every approval, apply, override and refused wave.
+			Plan, approve and apply hundreds of roots from pull requests, with a trace of every run. Each job runs in
+			your GitHub, GitLab or Forgejo CI and lands in your git and your bucket, with no account to create or platform to sign
+			in to. With policy on, OPA checks every plan in every repo against one pinned policy source, and <a href={`${base}/reference/audit-trail/`}>one audit trail</a> in your bucket records every approval, apply, override and refused wave.
 		</p>
 
 		<p class="proof">
@@ -95,7 +95,7 @@ const pillars = [
 	</ul>
 ) : (
 	<section class="tg-landing tg-agent not-content">
-		<AgentPrompt text={setupPrompt} label="Optional: hand the setup to your coding agent" note="Setup works by hand too: install terragucci and run init, as the getting started page shows." />
+		<AgentPrompt text={setupPrompt} label="Optional: hand the setup to your coding agent" note="Or set up by hand: install terragucci and run init, as the getting started page shows." />
 	</section>
 )}
 

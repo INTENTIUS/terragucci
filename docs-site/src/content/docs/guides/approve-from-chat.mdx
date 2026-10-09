@@ -13,15 +13,15 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-A waiting wave's Slack message has an Approve and a Decline button. In Teams, the card gives the reply that approves, `@terragucci approve wave-2 <digest>`, because Teams sends a card's buttons only to a registered bot. A click or a reply goes to `terragucci relay`, which you run in your own cloud. terragucci hosts nothing.
+A waiting wave's Slack message has an Approve and a Decline button. A Teams card gives the approving reply, `@terragucci approve wave-2 <digest>`, since Teams sends card buttons only to a registered bot. Clicks and replies go to `terragucci relay`, which you run in your own cloud; terragucci hosts nothing.
 
 | A click by | Under `approval: ledger` or `pr-review` | Under `approval: sealed` |
 |---|---|---|
-| a chat user the signers file lists beside their principal | the relay records the approval of the digest the message showed, as that principal, relayed by the relay, and says so in the thread; the resume job applies the wave | refused: only the approver's own key seals an approval, so they run `terragucci approve --sign` |
+| a chat user the signers file lists beside their principal | the relay records an approval of the digest the message showed, as that principal and marked relayed, and says so in the thread; the resume job applies the wave | refused: only the approver's own key seals an approval, so they run `terragucci approve --sign` |
 | a chat user no line lists | refused in the thread; nothing is recorded | the same |
 | anyone, after the plans moved | refused, naming the digest waiting now; nothing is recorded | the same |
 
-Decline records nothing. The relay says in the thread who declined, and the wave keeps waiting until someone approves its plans.
+Decline records nothing; the relay names who declined in the thread, and the wave waits until someone approves its plans.
 
 ## Prerequisites
 
@@ -104,7 +104,7 @@ Decline records nothing. The relay says in the thread who declined, and the wave
      </TabItem>
    </Tabs>
 
-   The log names the repo, its default branch and the user it pushes as. A token that can do more than approve stops it there, naming why.
+   The log names the repo, its default branch and the user it pushes as. A token that can do more than approve stops it there, with the reason.
 
 5. Name the relay in `terragucci.yml`, write the pipeline again and merge it:
 
@@ -120,7 +120,7 @@ Decline records nothing. The relay says in the thread who declined, and the wave
    npx terragucci init
    ```
 
-   `relay` is the name Teams shows the outgoing webhook by, and not a secret. The next waiting wave's message carries the buttons.
+   `relay` is the outgoing webhook's name in Teams, not a secret. The next waiting wave's message carries the buttons.
 
 </Steps>
 
@@ -133,7 +133,7 @@ Decline records nothing. The relay says in the thread who declined, and the wave
 | The mode | the default branch's `approval` is `sealed` |
 | The digest | no wave waits for the digest the button or reply names |
 
-Slack waits three seconds for the relay to answer a click. When fetching the repo and pushing the approval takes longer, Slack shows the person a timeout, and the reply in the thread still says what was recorded.
+Slack waits three seconds for the relay to answer a click. If fetching the repo and pushing the approval take longer, Slack shows a timeout, but the thread reply still says what was recorded.
 
 The approval line carries `relayedBy` and `via: slack` or `via: teams`, and the [audit trail](/terragucci/reference/audit-trail/) shows who relayed it. The [threat model](/terragucci/reference/threat-model/#the-chat-relay) says what the relay is trusted with.
 

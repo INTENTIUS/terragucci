@@ -10,7 +10,7 @@ prompt: |
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-[`terragucci estate`](/terragucci/guides/see-every-project/#delivery-metrics) computes the four DORA metrics for each project and for the whole estate, and writes them to `dora.json` beside `estate.json` and to the Delivery section of `estate.html`. The numbers come from records already in your bucket: the [audit trail](/terragucci/reference/audit-trail/) (`audit.jsonl`) and each project's `index.json`.
+[`terragucci estate`](/terragucci/guides/see-every-project/#delivery-metrics) writes the four DORA metrics for each project and the whole estate to `dora.json` beside `estate.json` and to the Delivery section of `estate.html`, from records already in your bucket: the [audit trail](/terragucci/reference/audit-trail/) (`audit.jsonl`) and each project's `index.json`.
 
 ## The metrics
 
@@ -21,7 +21,7 @@ prompt: |
 | Change failure rate | failed applies, plus applied waves whose roots drifted within 7 days, over all applies | `apply` entries with result `failed`, and `tf-drift` rows that found drift |
 | Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none | `apply` entries, and `tf-drift` rows |
 
-A refused wave is the gate working: it is not an apply, and it never counts as a failure. A wave still waiting for its approval is not an apply yet.
+A refused wave is the gate working, so it is neither an apply nor a failure; a wave still waiting for its approval is not an apply yet.
 
 Infrastructure ships less often than an application. The page shows frequency per project as a trend and never rates a project against DORA's performance tiers.
 

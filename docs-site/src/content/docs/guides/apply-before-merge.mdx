@@ -30,7 +30,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 <Steps>
 
-1. Turn it on. Add the `apply` block to `terragucci.yml`:
+1. Add the `apply` block to `terragucci.yml`:
 
    ```yaml
    apply:
@@ -39,7 +39,7 @@ An open change that applies from its head in the same waves and gates as a merge
      merge_token_env: MERGE_TOKEN
    ```
 
-   Leave `waves.jobs` unset: `config check` refuses it with `apply.when: pull-request`.
+   Leave `waves.jobs` unset, since `config check` refuses it with `apply.when: pull-request`.
 
    With `merge: auto`, add that secret, holding a token of a user who may push to the default branch. Only `pr-merge`, which runs none of the change's code, gets it.
 
@@ -81,7 +81,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
    [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, `terragucci/plan` must pass on the head, the change must leave the pipeline file alone, and no other open pull request may hold a lock on a root it reaches.
 
-5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives the command that approves it; [Approve a waiting wave](/terragucci/guides/approve-a-wave/) covers it. Then comment `/terragucci apply` again.
+5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives the command that approves it ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)). Then comment `/terragucci apply` again.
 
 6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
 
@@ -109,7 +109,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 ## On GitLab
 
-GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothing in it applies. The apply runs in a pipeline of the default branch.
+GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothing applies there; the apply runs in a default-branch pipeline.
 
 | Step | Job | What happens |
 |---|---|---|
@@ -123,7 +123,7 @@ GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothi
 
 ## Config source
 
-An open change's apply reads its settings from the default branch. Edits to `terragucci.yml` in the change count once it merges.
+An open change's apply reads its settings from the default branch, so edits to `terragucci.yml` in the change count only once it merges.
 
 | Setting | Read from |
 |---|---|

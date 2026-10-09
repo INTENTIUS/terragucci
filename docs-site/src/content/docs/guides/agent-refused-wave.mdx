@@ -13,11 +13,11 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-This is one of the four features that run a model; the others are the [`/terragucci agent` comment](/terragucci/guides/agent-change-a-pull-request/), the [drift agent](/terragucci/guides/agent-fix-drift/) and the [pull request review](/terragucci/guides/agent-review-a-pull-request/). It is off until you add its job by hand, and every other feature runs with no agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
+One of four features that run a model; the others are the [`/terragucci agent` comment](/terragucci/guides/agent-change-a-pull-request/), the [drift agent](/terragucci/guides/agent-fix-drift/) and the [pull request review](/terragucci/guides/agent-review-a-pull-request/). It is off until you add its job by hand; every other feature runs without an agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
 
 ## Result
 
-One comment saying what changed between the approved plan and the plan that was refused. The agent never approves, applies or merges, and its prompt forbids running [chant](/terragucci/concepts/glossary/#chant) or terragucci.
+One comment on what changed between the approved plan and the refused one. The agent never approves, applies or merges, and its prompt forbids running [chant](/terragucci/concepts/glossary/#chant) or terragucci.
 
 ## Prerequisites
 
@@ -32,7 +32,7 @@ One comment saying what changed between the approved plan and the plan that was 
 
 <Steps>
 
-1. Produce the diff without a model. This needs no model and is the agent's input:
+1. Produce the diff, the agent's input, without a model:
 
    ```bash
    npx terragucci respond wave-refused --approved terragucci-report/approved --current terragucci-report/current --wave 2 --json
@@ -40,7 +40,7 @@ One comment saying what changed between the approved plan and the plan that was 
 
    The envelope holds each root whose plan digest moved, with what moved inside it.
 
-2. Add the job to a file of your own jobs, and name the file in `terragucci.yml`. `init` rewrites the pipeline file it wrote, and writes every job the file holds after its own, as the file has it, each time it runs. `reconcile` does the same in each project of a control repo.
+2. Add the job to a file of your own jobs, and name the file in `terragucci.yml`. Each time `init` rewrites its pipeline file, it writes every job the file holds after its own, unchanged. `reconcile` does the same in each project of a control repo.
 
    ```yaml
    # terragucci.yml
@@ -90,7 +90,7 @@ One comment saying what changed between the approved plan and the plan that was 
        ```
      </TabItem>
      <TabItem label="GitLab">
-       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. It runs after the wave's job, and the artifact unpacks at `terragucci-report/`. Its rule is the apply jobs' own, so a branch's pipeline, which has no `apply-wave-2`, does not need it. Give it `ANTHROPIC_API_KEY` as a masked variable. The job posts nothing: read the summary in its log.
+       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. It runs after the wave's job, and the artifact unpacks at `terragucci-report/`. It shares the apply jobs' rule, so a branch's pipeline, which has no `apply-wave-2`, does not need it. Give it `ANTHROPIC_API_KEY` as a masked variable. The job posts nothing; the summary is in its log.
 
        ```yaml
        explain-refusal:
@@ -144,7 +144,7 @@ One comment saying what changed between the approved plan and the plan that was 
 
    Then run `npx terragucci init` and commit the pipeline with the file. A job name `init` already gives one of its own jobs is refused.
 
-3. Read the summary, then decide. Choose between approving the new plan and reverting the change. The choice and the approval ([`terragucci approve`](/terragucci/reference/cli/#approve)) are yours.
+3. Read the summary and choose between approving the new plan and reverting the change. The choice and the approval ([`terragucci approve`](/terragucci/reference/cli/#approve)) are yours.
 
 </Steps>
 

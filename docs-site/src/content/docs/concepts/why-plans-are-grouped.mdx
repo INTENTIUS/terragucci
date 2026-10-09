@@ -18,7 +18,7 @@ terragucci normalizes each root's changes and groups the roots whose changes are
 destroys: prod-eu/db (delete aws_db_instance.main)
 ```
 
-A hundred and eighty identical updates become one line with a count. The reviewer reads the change once, and reads the 20 roots that differ.
+A hundred and eighty identical updates become one line with a count, so the reviewer reads the change once, then the 20 roots that differ.
 
 <Shot step="one-note" view="pull" alt="The plan note on a module change's pull request: twelve roots planned, eleven in one group, and prod payments on its own" />
 
@@ -35,7 +35,7 @@ A hundred and eighty identical updates become one line with a count. The reviewe
 | values known after apply | folded |
 | roots with no changes | folded |
 
-Each root and group in the report links to its full plan, kept as printed and as JSON. Approvals bind the plan digests, taken before redaction or rendering, so the summary's wording never changes what was approved.
+The report links each root and group to its full plan as printed and as JSON. Approvals bind the plan digests, taken before redaction or rendering, so the summary's wording never changes what was approved.
 
 ## Next
 

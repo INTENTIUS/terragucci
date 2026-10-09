@@ -12,7 +12,7 @@ terragucci reads `terragucci.yml`, `.yaml`, `.json` or `.ts` from the repo root;
 
 ## Defaults with no file
 
-With no `terragucci.yml`, `init` starts from these defaults:
+`init` starts from these defaults:
 
 | Setting | Default |
 |---|---|
@@ -192,7 +192,7 @@ version:
 
 A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
 
-A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version. A Terragrunt unit is pinned the same ways, and an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` pins the Terragrunt release that runs it, installed the same way. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-a-root-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`; `choudoufu` takes one version. A Terragrunt unit is pinned the same ways, and an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` pins the Terragrunt release that runs it, installed the same way. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-each-directory-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
 
 ## Apply before merge
 
@@ -266,7 +266,7 @@ apply:
     staging: ["envs/staging/*"]
 ```
 
-Each key is a branch, and its list holds root globs. A push to `release` runs the apply waves for the roots under `envs/prod/` and no others. The waves, the gate and the approval are the ones a push to the default branch gets: `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. A push to the default branch skips every root a glob here matches, and so does `/terragucci apply` on a pull request merged into it. A push to any other branch applies nothing.
+Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. Waves, gate and approval work as on the default branch, and `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
 
 | On a push to | Applies |
 |---|---|
@@ -387,7 +387,7 @@ agent:
     timeout: 30
 ```
 
-Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. The agent's jobs get no cloud credentials; `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
+Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. As with the comment agent, its jobs get no cloud credentials and `init` refuses it on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
 
 ## The review
 

@@ -17,7 +17,7 @@ import Shot from '../../../components/Shot.astro';
 
 ## Result
 
-Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Pick your forge in any tab; the other forge tabs on the site follow.
+A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. Pick your forge in any tab and the other forge tabs on the site follow.
 
 <Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green, with the check report and each wave's report as artifacts" />
 
@@ -38,7 +38,7 @@ Self-managed GitLab works the same. See [one apply at a time](/terragucci/refere
 
 ## Agent features
 
-No agent is needed to set up or run terragucci. Setup and every pull request feature are plain CI jobs; two opt-in features run a coding agent.
+Setup and every pull request feature are plain CI jobs that need no agent; two opt-in features run a coding agent.
 
 | CI jobs, no agent | Page |
 |---|---|
@@ -96,7 +96,7 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
    no terragucci.yml needed (defaults fit)
    ```
 
-   The jobs go in `.gitlab/terragucci.yml`. Your `.gitlab-ci.yml` stays yours:
+   The jobs go in `.gitlab/terragucci.yml`, and `init` touches your `.gitlab-ci.yml` only like this:
 
    | Your `.gitlab-ci.yml` | `init` |
    |---|---|
@@ -124,7 +124,7 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
 
    On a host the table does not list, pass `--forge` once and `init` records it in `terragucci.yml`.
 
-   Terragrunt repo? `init` finds the units and writes the same files; [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
+   In a Terragrunt repo, `init` finds the units and writes the same files; [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
 
 2. Give the pipeline a token.
 
@@ -233,7 +233,7 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
 
    <Shot step="github" view="required" alt="A GitHub ruleset named terragucci/plan required, active on the default branch, requiring the status check terragucci/plan" />
 
-   A failed check fails the run:
+   When the check fails, so does the run:
 
    <Shot step="github" view="check" alt="A GitHub Actions run for a change pushed without tofu fmt: the check job failed and the plan and apply jobs after it were skipped" />
 
@@ -255,14 +255,14 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
 
    <Shot step="statuses" view="checks" alt="A pull request's commit statuses in Forgejo, opened out: terragucci/plan with its counts of roots, groups and destroys, beside the status of each pipeline job" />
 
-   A failed check shows as a red cross on the commit:
+   The failed check is a red cross on the commit:
 
    <Shot step="check" view="pull" alt="A pull request in Forgejo whose commit carries a red cross from its failed check, above its plan note" />
 
    </TabItem>
    </Tabs>
 
-6. Make approval possible. A wave that destroys something waits for a person, who approves it with `npx terragucci approve` from a checkout, which runs [chant](/terragucci/concepts/glossary/#chant) (`npm i -D @intentius/chant`), or with a review of the pull request under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes). Signing is optional: only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
+6. Make approval possible. A wave that destroys something waits for a person to approve it, with `npx terragucci approve` from a checkout (it runs [chant](/terragucci/concepts/glossary/#chant), so `npm i -D @intentius/chant`) or with a review of the pull request under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes). Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
 
 </Steps>
 

@@ -52,7 +52,7 @@ A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or appl
    npx terragucci init
    ```
 
-   `init` finds each stack by the backend or provider in its `cdk.tf.json` and names `cdktf.out/stacks/<stack>` as a root. With no stacks on disk it stops and says to run the synth command first. Run both again when you add or remove a stack.
+   `init` finds each stack by the backend or provider in its `cdk.tf.json` and names `cdktf.out/stacks/<stack>` as a root. With no stacks on disk it stops and asks you to run the synth command first. Run both again when you add or remove a stack.
 
 4. Read the step `init` wrote. It comes after the checkout and before any cloud credential:
 
@@ -128,7 +128,7 @@ A command that fails ends the job; the plan job also sets `terragucci/plan` to f
 
 ## Stack edits
 
-The stacks' files are the app's output: git does not hold them, and the next synth writes them again. A response that would edit them has nothing to edit, so the change belongs in the app.
+The stacks' files are the app's output. Git does not hold them and the next synth rewrites them, so a change a response would make to them belongs in the app.
 
 | Feature | With `synth` |
 |---|---|

@@ -35,11 +35,11 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
    npx terragucci init --dry-run
    ```
 
-   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. An explicit stack (`terragrunt.stack.hcl`) is generated with `terragrunt stack generate` before discovery, so its units are found and cut into waves like any other; every job generates it again, so the generated `.terragrunt-stack` directories stay out of the repo. Generating a stack needs Terragrunt on the path, and without it `init` stops with an error naming the stack file.
+   Each unit `terragrunt find` lists is a root, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. An explicit stack (`terragrunt.stack.hcl`) goes through `terragrunt stack generate` before discovery so its units get waves like any other. Every job generates it again, so the generated `.terragrunt-stack` directories stay out of the repo. This needs Terragrunt on the path; without it `init` stops with an error naming the stack file.
 
    Without Terragrunt on the path, `init` reads the units' `dependency` and `dependencies` paths to cut the waves; the apply jobs check them with `terragrunt find`.
 
-2. Name the tool Terragrunt calls. `binary` names the tool Terragrunt runs underneath, `tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu):
+2. Name the tool Terragrunt runs underneath with `binary`: `tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu).
 
    ```yaml
    binary: tofu
@@ -47,7 +47,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 
    With `choudoufu` the jobs run in the choudoufu image and install Terragrunt beside it.
 
-3. Tune it, if you need to. An optional `terragrunt:` block sets version, parallelism, roles by unit path, excluded units and how dependents are planned; see [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block).
+3. Tune it if you need to. A `terragrunt:` block sets the version, parallelism, roles by unit path, excluded units and how dependents are planned ([terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block)).
 
    ```yaml
    terragrunt:
@@ -112,7 +112,7 @@ terragucci applies a change one dependency layer at a time, and every layer appl
 
 ## Later layers
 
-A pull request's plan plans the units of every layer the change reaches. A unit whose `dependency` block reads a unit planned in an earlier layer of the same plan is planned on the outputs that plan makes, not on the ones the upstream last applied. terragucci gives Terragrunt those values as the answer to the binary's `output -json` for the upstream, so Terragrunt evaluates the unit's `dependency` blocks, includes and inputs itself.
+A pull request's plan covers the units of every layer the change reaches. A unit whose `dependency` block reads a unit planned in an earlier layer of the same plan is planned on that plan's outputs instead of the upstream's last applied ones. terragucci gives Terragrunt those values as the answer to the binary's `output -json` for the upstream, so Terragrunt evaluates the unit's `dependency` blocks, includes and inputs itself.
 
 | A unit that reads | In the pull request's plan |
 |---|---|
@@ -121,11 +121,11 @@ A pull request's plan plans the units of every layer the change reaches. A unit 
 | an upstream that has no plan in this run: it failed, or waits for its own upstream | not planned, and the note says which upstream |
 | an upstream whose plan changes no output, or that the change does not reach | planned on the upstream's applied outputs, which stand |
 
-No unit is planned on a stand-in for a value nobody knows yet, and none on `mock_outputs`. A unit whose plan reads its upstream without asking the binary, as Terragrunt does with `TG_DEPENDENCY_FETCH_OUTPUT_FROM_STATE`, is not shown as a preview, and the note says so.
+No unit is planned on a placeholder for an unknown value or on `mock_outputs`. A unit that reads its upstream without asking the binary (as Terragrunt does with `TG_DEPENDENCY_FETCH_OUTPUT_FROM_STATE`) gets no preview; the note says so.
 
-With a base branch, the plan covers the units the change reaches. Their dependents are listed as planned once what they wait for applies; with `dependents: plan` they are previewed the same way, layer by layer, provisional and outside every digest.
+With a base branch, the plan covers the units the change reaches. Their dependents are listed as planned once what they wait for applies; with `dependents: plan` they are previewed the same way layer by layer, as provisional plans outside every digest.
 
-After the merge, each wave still plans again on the state the waves before it left, and its gate binds that plan. When a unit's plan then differs from the preview in the merged pull request's plan note, the wave says so before it prints its approve command, naming each resource and attribute that moved:
+After the merge, each wave plans again on the state the earlier waves left, and its gate binds that plan. When a unit's plan differs from the preview in the merged pull request's plan note, the wave names each resource and attribute that moved before it prints its approve command:
 
 ```text
 wave 2 of 3: pull request 12 previewed live/app on the planned outputs of the waves before; this unit plans differently now:

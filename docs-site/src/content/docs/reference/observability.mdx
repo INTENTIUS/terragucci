@@ -9,7 +9,7 @@ prompt: |
 
 import Shot from '../../../components/Shot.astro';
 
-Each stage run sends one trace and a set of metrics over OTLP to your collector or any backend with an OTLP endpoint. Nothing is sent unless an endpoint is set.
+Each stage run sends one trace and its metrics over OTLP to your collector or any backend with an OTLP endpoint, and sends nothing until an endpoint is set.
 
 ## Turning it on
 
@@ -59,7 +59,7 @@ Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/te
 
 <Shot step="trace" view="trace" alt="One tf-plan run's trace in Grafana's Explore, read from Tempo: the terragucci tf-plan stage span, the root span for envs/dev/orders, the tofu init, plan and show spans under it, and OpenTofu's own provider and resource spans inside the plan" optional />
 
-The binary's exporter goes to a loopback receiver that forwards batches to your collector. It takes OTLP over HTTP only.
+The binary exports to a loopback receiver, OTLP over HTTP only, which forwards batches to your collector.
 
 ## Timings
 
@@ -67,7 +67,7 @@ With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([se
 
 ### Report contents
 
-Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where the run spent its time, endpoint or not:
+Every `tf-plan`, `tf-drift` and `tf-apply` wave report lists where the time went, with or without an endpoint:
 
 - the slowest roots, with each root's wall time, its plan's and, in a wave, its apply's;
 - in each root, the slowest resource instances and their refresh time;
@@ -77,7 +77,7 @@ Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where t
 
 Past a span budget (`CHOUDOUFU_TRACE_DETAIL`, `CHOUDOUFU_TRACE_SPAN_BUDGET`) choudoufu sums timings by resource type or provider method, and the report says so.
 
-The report can also list these two:
+choudoufu adds two more:
 
 | Timing | Sent by | Spans | In `report.json` |
 |---|---|---|---|
@@ -95,7 +95,7 @@ The report can also list these two:
 
 ### State lock waits
 
-With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait shows as a `State lock wait` span with its attempts. The report lists it and `terragucci_lock_wait_seconds` carries it.
+With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), on a root whose backend locks (S3 with `use_lockfile`, say), each wait is a `State lock wait` span with its attempts, listed in the report and carried by `terragucci_lock_wait_seconds`.
 
 | Run | State lock wait |
 |---|---|
@@ -176,7 +176,7 @@ observability/terragucci/
 
 ### Dashboards
 
-Nine dashboards are written: the six below, and one for each of the three SLOs.
+The nine dashboards are the six below and one for each of the three SLOs.
 
 | Dashboard | Shows |
 |---|---|
@@ -196,7 +196,7 @@ Nine dashboards are written: the six below, and one for each of the three SLOs.
 
 ### SLOs and alerts
 
-There are three SLOs over 28 days: plans finish within ten minutes 95% of the time, wave applies succeed 99%, drift is corrected within a day 90%.
+The SLOs, over 28 days: plans finish within ten minutes 95% of the time, wave applies succeed 99%, drift is corrected within a day 90%.
 
 <Shot step="see-runs" view="slos" alt="The plan time SLO dashboard for the example: the SLI over 28 days at 100% against a 95% objective, all of the error budget left, no burn-rate alert firing, and the burn rate by alert window" />
 
@@ -223,7 +223,7 @@ Mount `grafana/provisioning/` under `/etc/grafana/provisioning/`, `grafana/dashb
 
 ### Span metrics
 
-These read span metrics from a `spanmetrics` connector in your collector:
+The dashboards read span metrics from a `spanmetrics` connector in your collector:
 
 ```yaml
 connectors:

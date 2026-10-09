@@ -14,7 +14,7 @@ import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Result
 
-The commands an approver and an on-call engineer use, in one place. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) walks through a first sign-off.
+The commands an approver or on-call engineer runs. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) walks through a first sign-off.
 
 The ledger is `_gates/tf-apply.jsonl` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch: a `"kind":"pending"` line is a wave asking, any other line an approval. Each waiting wave's report is at `_gates/tf-apply/wave-<k>/<digest>.json`. A wave that applies under an approval first marks it used in `_gates/tf-apply/applied.jsonl`; a used approval refuses no later plan.
 
@@ -36,7 +36,7 @@ The ledger is `_gates/tf-apply.jsonl` on the [`chant/lifecycle`](/terragucci/con
 
 ## Set up signers
 
-Under `approval: sealed` only. Once per repo, in a reviewed pull request to the default branch.
+Only under `approval: sealed`, once per repo, in a reviewed pull request to the default branch.
 
 <Steps>
 
@@ -48,7 +48,7 @@ Under `approval: sealed` only. Once per repo, in a reviewed pull request to the 
 
 2. Set `approval: sealed` and run `terragucci init`. It lists each wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson); then an approval counts only when its seal verifies against the signers file at base ([why](/terragucci/guides/approve-a-wave/#rule-commit)).
 
-3. Only people go in the file. An agent's or CI job's key does not.
+3. List only people in the file; leave out agents' and CI jobs' keys.
 
 4. Add or remove a person by pull request. The change first governs the apply of the next merge.
 
@@ -71,11 +71,11 @@ A waiting wave exits with code 3; its command is in the job log, the `terragucci
   </TabItem>
 </Tabs>
 
-The example below runs `approval: sealed`, so its line carries a seal; under `ledger` it would not.
+The example below runs under `approval: sealed`, so its line carries a seal that `ledger` would leave out.
 
 <Shot step="approved" view="record" alt="The approval commit on chant/lifecycle in Forgejo, Gate resolution record: it appends one line to _gates/tf-apply.jsonl, a human approval of wave 4 resolved by terragucci-admin, binding the plan digest of the pending line above it and sealed with an ssh signature" />
 
-It runs `chant approve tf-apply wave-2 --plan <digest>` for the digest the wave planned, then restarts the waiting wave; `--dry-run` prints that command instead. If it could not restart the wave, re-run the job, or comment `/terragucci apply` on the pull request (merged, or open with `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
+It runs `chant approve tf-apply wave-2 --plan <digest>` for the digest the wave planned, then restarts the waiting wave; `--dry-run` prints that command instead. If it could not restart the wave, re-run the job or comment `/terragucci apply` on the pull request (merged, or open with `apply.when: pull-request`). On GitLab the comment needs `comments:` set, and the comments job answers it on its next run.
 
 ## Approve by review
 
@@ -83,17 +83,17 @@ Under `approval: pr-review`, approve the pull request on its head before it merg
 
 <Tabs syncKey="forge">
   <TabItem label="GitHub">
-    Files changed > Review changes > Approve, with write access. `terragucci/approval` on the head turns success.
+    Files changed > Review changes > Approve, with write access.
   </TabItem>
   <TabItem label="GitLab">
     Approve the merge request after its last push, as a Developer or higher. An approval before a push counts for nothing.
   </TabItem>
   <TabItem label="Forgejo">
-    Files changed > Review > Approve, as an official reviewer. `terragucci/approval` on the head turns success.
+    Files changed > Review > Approve, as an official reviewer.
   </TabItem>
 </Tabs>
 
-A wave whose plans moved after the review exits 4 with the `chant approve` command for the new digest. The ledger line it records for a review carries `"via": "pr-review"`, the pull request, its head and the reviewers.
+On GitHub and Forgejo, `terragucci/approval` on the head then turns success. A wave whose plans moved after the review exits 4 with the `chant approve` command for the new digest. The ledger line it records for a review carries `"via": "pr-review"`, the pull request, its head and the reviewers.
 
 ## Override a policy denial
 
@@ -135,7 +135,7 @@ This needs [`policy.override`](/terragucci/reference/policy/#overriding-a-denial
 | exits 4 and applies nothing | the plan or its rules changed before any run applied the override; the next run records the new denial to override |
 | exits 1 with a new `terragucci override` command | a run applied the override, and the root's plan changed since: the new plan needs its own override |
 
-The ledger is `_gates/policy-override.jsonl`, one gate per root. Overrides that went out are listed in `_gates/policy-override/applied.jsonl`, so a changed plan of that root asks for a fresh override. Revoke an override as an approval: delete its line before the wave runs.
+The ledger is `_gates/policy-override.jsonl`, one gate per root. Overrides that went out are listed in `_gates/policy-override/applied.jsonl`, so a changed plan of that root asks for a fresh override. Revoke an override like an approval, by deleting its line before the wave runs.
 
 ## List the waves waiting for an approval
 

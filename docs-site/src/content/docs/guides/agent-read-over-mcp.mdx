@@ -10,7 +10,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-`terragucci mcp` is a Model Context Protocol server on stdio. It serves what terragucci already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and the repo, and nothing else: every tool reads. It runs no model of its own.
+`terragucci mcp` is a read-only Model Context Protocol server on stdio. It serves only what terragucci already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and the repo, and runs no model of its own.
 
 ## Result
 
@@ -41,9 +41,15 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
 
 <Steps>
 
-1. Give the server read access. Use an identity that can read the bucket and nothing more, in the variables [Reports](/terragucci/reference/environment/#reports) lists: for S3 `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` or a role, for GCS `GOOGLE_APPLICATION_CREDENTIALS`, for Azure Blob `AZURE_STORAGE_KEY` or an Entra ID identity. The server never writes, so a write grant buys nothing.
+1. Give the server an identity that can read the bucket and nothing more, in the variables [Reports](/terragucci/reference/environment/#reports) lists.
 
-2. Add the server to your MCP client. The command line, from the repo's root, where it reads `terragucci.yml`:
+   | Store | Identity |
+   |---|---|
+   | S3 | `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or a role |
+   | GCS | `GOOGLE_APPLICATION_CREDENTIALS` |
+   | Azure Blob | `AZURE_STORAGE_KEY`, or an Entra ID identity |
+
+2. Add the server to your MCP client. From the repo's root, where it reads `terragucci.yml`, the command line is:
 
    ```bash
    npx -y @intentius/terragucci mcp
@@ -55,7 +61,7 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
    npx -y @intentius/terragucci mcp --bucket s3://acme-plan-reports --bucket-prefix terragucci
    ```
 
-   A client starts a stdio server with a few variables of its own, not your whole shell, so name the bucket's in the server's `env`. In a client that expands variables in its config, such as Claude Code's `.mcp.json`, the values stay in your shell:
+   A client starts a stdio server with only a few variables of its own, so name the bucket's credentials in the server's `env`. In a client that expands variables in its config, such as Claude Code's `.mcp.json`, the values stay in your shell:
 
    ```json
    {
@@ -95,7 +101,7 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
 | an argument the tool does not list, such as `token` | an error; credentials come from the server's environment |
 | a `report` path outside the bucket's prefix | an error |
 
-The `waiting` tool prints the `terragucci approve` command for each waiting wave. A person runs it; the server cannot. [CLI commands](/terragucci/reference/cli/#mcp) lists each tool's arguments.
+The `waiting` tool prints each waiting wave's `terragucci approve` command for a person to run; the server cannot run it. [CLI commands](/terragucci/reference/cli/#mcp) lists each tool's arguments.
 
 ## MCP or `--json`
 

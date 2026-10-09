@@ -13,7 +13,7 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-`terragucci audit` writes one audit trail for every project: each approval, apply, policy override and refused wave as one JSON line, in your reports bucket. It builds the lines from two records you already own: the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo, and the wave reports in your bucket. No terragucci server or account holds a copy.
+`terragucci audit` writes each approval, apply, policy override and refused wave across your projects as one JSON line in your reports bucket, built from two records you already own: the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo, and the wave reports in your bucket. No terragucci server or account holds a copy.
 
 ## Write it
 
@@ -39,7 +39,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
    | `<prefix>/<project>/**/tf-apply-wave-*/report.json` | every apply and its result, every refused wave |
    | `<prefix>/audit.jsonl`, and writes it, `audit.html` and `audit.json` | the record, its page and its summary |
 
-   The forge token is read from the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`. It needs read access to the repo and nothing else.
+   The forge token is read from the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`; read access to the repo is all it needs.
 
 3. Read the log:
 
@@ -151,7 +151,7 @@ Every line is `terragucci.audit/v1`, whose JSON Schema ships in the package as `
   </TabItem>
 </Tabs>
 
-Fetch it with the store's own CLI, such as `aws s3 cp s3://acme-terragucci/reports/audit.jsonl .`, or open the link the job prints for the page.
+Fetch the record with the store's own CLI, such as `aws s3 cp s3://acme-terragucci/reports/audit.jsonl .`, or open the link the job prints for the page.
 
 ## The records it reads
 

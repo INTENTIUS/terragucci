@@ -13,7 +13,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-`terragucci generate` writes these files from `terragucci.yml`:
+`terragucci generate` writes three files from `terragucci.yml`.
 
 | File | Holds |
 |---|---|
@@ -21,7 +21,7 @@ import { Steps } from '@astrojs/starlight/components';
 | `providers.tf` | a `provider` block per configuration that sets an argument, aliases included |
 | `versions.tf` | `required_version`, and `required_providers` from each provider's `source` and `version` |
 
-Each is plain HCL in the layout `fmt` keeps, with a first line that says terragucci wrote it. Only the binary reads them. A directory keeps working as ordinary Terraform or OpenTofu, by hand or after you drop `generate`.
+Each is plain HCL in `fmt`'s layout, and its first line says terragucci wrote it. Only the binary reads them; a directory stays ordinary Terraform or OpenTofu that works by hand or without `generate`.
 
 `tf-check` holds the files to the config. The check job fails, naming the file, when a generated file:
 
@@ -110,7 +110,7 @@ Values are literals. A `${` in a value is written as `$${`, so nothing interpola
 
 ## The version each directory declares
 
-With no `required_version` at any level, `versions.tf` takes the release `version` in `terragucci.yml` gives that path: the first matching glob of [the version map](/terragucci/reference/config/#a-version-per-root), or the one release. The version a job runs and the one the code declares then come from the same key.
+With no `required_version` at any level, `versions.tf` takes the release `version` in `terragucci.yml` gives that path: the first matching glob of [the version map](/terragucci/reference/config/#a-version-per-root), or the one release. The version a job runs and the version the code declares then share one key.
 
 An exact `required_version` that disagrees with the pin stops `generate`. A range such as `">= 1.6"` is kept as written. `required_version: null` writes none. Under `binary: choudoufu`, `version` names a [choudoufu](/terragucci/concepts/glossary/#choudoufu) release, which is not a `required_version`.
 

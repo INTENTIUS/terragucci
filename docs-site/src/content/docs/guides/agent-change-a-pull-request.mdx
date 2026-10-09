@@ -12,11 +12,11 @@ prompt: |
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-This is one of the four features that run a model; the others are [summarizing a refused wave](/terragucci/guides/agent-refused-wave/), [fixing drift](/terragucci/guides/agent-fix-drift/) and [reviewing a pull request](/terragucci/guides/agent-review-a-pull-request/). It is off unless `agent.comment` is set, and every other feature runs with no agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
+One of four features that run a model; the others are [summarizing a refused wave](/terragucci/guides/agent-refused-wave/), [fixing drift](/terragucci/guides/agent-fix-drift/) and [reviewing a pull request](/terragucci/guides/agent-review-a-pull-request/). It is off unless `agent.comment` is set; every other feature runs without an agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
 
 ## Result
 
-A comment such as this one on a pull request:
+A pull request comment such as:
 
 ```text
 /terragucci agent rename var.bucket to var.bucket_name in app and its callers
@@ -79,7 +79,7 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 
    `token_env` names the secret with the agent's token. `comment: true` takes every default, listed in [terragucci.yml keys](/terragucci/reference/config/#the-agent-comment).
 
-3. Check the file and write the pipeline, then merge the result to the default branch, where comment workflows run from:
+3. Check the file and write the pipeline, then merge to the default branch, which comment workflows run from:
 
    ```bash
    npx terragucci config check
@@ -90,7 +90,7 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 
    <Shot step="agent" view="reply" alt="terragucci's reply on a Forgejo pull request: it pushed a commit to agent-change, changing app/rev.txt; the push plans the pull request again, and nothing was applied, approved or merged" />
 
-   The commit names who asked, on which pull request, and the ask:
+   The commit names who asked on which pull request, with the ask:
 
    <Shot step="agent" view="commit" alt="The agent's commit in Forgejo: Change asked for by terragucci-admin on the pull request, with the ask set app's rev to 3, authored by terragucci agent, changing app/rev.txt from 1 to 3" />
 

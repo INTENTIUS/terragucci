@@ -6,7 +6,7 @@
 - Pins shared by both workflows live in `workflows/shared.ts`.
 - The site is for customers. Notes about this repo stay out of it, and so do issue links and build details such as capture dates. Contributor material goes in CONTRIBUTING.md.
 - Docs live in `docs-site/src/content/docs/`. `just lint-docs` must pass, and `just site` must build.
-- Every page describes what works today and is true as written. Nothing a user reads says a feature is coming: not the site, not `llms.txt`, not a CLI message. A feature that does not work stays out of the docs and out of config validation until it does.
+- Every page describes what works today and is true as written. Nothing a user reads (the site, `llms.txt`, a CLI message) says a feature is coming. A feature that does not work stays out of the docs and out of config validation until it does.
 - The docs never mention Temporal.
 - Prove a change with `just claims-affected`: it runs the claims the change can affect, plain and under `BREAK=1`, in parallel, and writes their rows into `smoke.json`. `just claims <name>...` runs named claims the same way. Never run claims one at a time in a loop of `stack/smoke.sh <claim>`; that form is for debugging one claim. `just smoke-record` (every claim) and `just tutorial-capture` (every capture) are for a release, after the image digests move.
 - GitLab runs on its own lab: boot it with `just gitlab-lab up` only on a quiet host, and stop it with `just gitlab-lab down` when done.
