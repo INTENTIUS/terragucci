@@ -115,10 +115,18 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-capture.XXXXXX")"
 STEP=""
 trap 'rc=$?; [ "$rc" = 0 ] || [ -z "$STEP" ] || log "FAIL: the $STEP step stopped the capture (exit $rc)"; drop_work "$STAGE"' EXIT
 
-# The example's hash: every file under example/, path and content. A capture
-# older than the example it came from fails `just tutorial-check`.
+# The example's hash: every file under example/, path and content, with the
+# pipeline's image references left out (a release moves them, and no capture
+# shows them). A capture older than the example it came from fails
+# `just tutorial-check`, which hashes the same way.
 SOURCE_HASH="$(cd "$ROOT" && find example -type f ! -path '*/.terraform/*' | LC_ALL=C sort | while read -r f; do
-  printf '%s\0' "$f"; cat "$f"; done | shasum -a 256 | cut -c1-16)"
+  printf '%s\0' "$f"
+  case "$f" in
+    example/.forgejo/*) sed -E -e 's/^# Every job runs in .*$/# Every job runs in the image/' \
+      -e "s#ghcr\.io/intentius/terragucci-([a-z]+):[^[:space:]\"']+#ghcr.io/intentius/terragucci-\1#g" "$f" ;;
+    *) cat "$f" ;;
+  esac
+done | shasum -a 256 | cut -c1-16)"
 
 claims_pass() { # claim...
   local c

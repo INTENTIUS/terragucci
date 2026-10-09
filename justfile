@@ -299,7 +299,15 @@ capture *args:
 diff-guard base="origin/main" head="HEAD":
     scripts/diff-guard.sh {{base}} {{head}}
 
-[doc("Name the commit a release tags: the newest on main that passed CI (chant ci last-green), at VERSION. TERRAGUCCI_RELEASE_SKIP_GREEN=1 skips the green check.")]
+[doc("Move the package and the images' version labels to VERSION, and regenerate the Dockerfiles, both examples' pipelines and patches, and the cli-json goldens with the bare new tags.")]
+version-bump version:
+    npx tsx scripts/release.ts bump {{version}}
+
+[doc("Record this version's image digests from GHCR (checked against the images workflow's RUN log when given) and regenerate the same files pinned by digest.")]
+record-digests run="":
+    npx tsx scripts/release.ts digests {{ if run == "" { "" } else { "--run " + run } }}
+
+[doc("Name the commit a release tags:the newest on main that passed CI (chant ci last-green), at VERSION. TERRAGUCCI_RELEASE_SKIP_GREEN=1 skips the green check.")]
 release-preflight version commit="":
     scripts/release-preflight.sh {{version}} {{commit}}
 
