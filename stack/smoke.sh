@@ -4210,6 +4210,12 @@ pr_open() { # repo, branch, title -> prints the number of the pull request into 
     api -o /dev/null "$URL/api/v1/repos/$1/branches/$2" 2>/dev/null && break
     sleep 2
   done
+  # terragucci refuses a pull request into a branch that is not the default,
+  # so a repo whose first push Forgejo took for another branch is a broken
+  # setup, not a refusal the claim is about.
+  local def
+  def="$(api "$URL/api/v1/repos/$1" | jq -r '.default_branch // empty')"
+  [ "$def" = main ] || { log "$1's default branch is ${def:-unknown}, not main"; return 1; }
   n="$(api -H 'content-type: application/json' -X POST -d "$(jq -cn --arg h "$2" --arg t "$3" '{head: $h, base: "main", title: $t}')" "$URL/api/v1/repos/$1/pulls" | jq -r '.number // empty')"
   [ -n "$n" ] || { log "no pull request opened from $2"; return 1; }
   echo "$n"
