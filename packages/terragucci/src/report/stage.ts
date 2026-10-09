@@ -53,6 +53,8 @@ import { costCommand, estimateCosts, writeCostFiles, type CostRunner } from "./c
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
+import { readSteps, runSteps, stepsUsed, STEPS_NOT_TERRAGRUNT, type StepWhen } from "../steps";
+import type { ReportStep } from "./schema";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
@@ -369,6 +371,8 @@ interface RootOutcome {
   attributed?: Attributed;
   redacted?: number;
   deferred?: ReportDeferred;
+  /** The names of its `on_failure: approve` steps that failed: its wave waits for an approval. */
+  holds?: string[];
 }
 
 const GITLAB_STATE = /\/api\/v4\/projects\/[^"\s]*\/terraform\/state\//;
@@ -660,6 +664,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
   if (options.terragrunt ?? detectTerragrunt(repo) !== undefined) {
+    if (settings.steps?.length) throw new ConfigError(STEPS_NOT_TERRAGRUNT);
     return runTerragruntStage(repo, settings, options, env, log, drift);
   }
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
@@ -684,6 +689,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
   } else if (base) {
     selected = affectedRoots(repo, base, all, layers.flat(), log);
   }
+  // steps: read at base, so the change under review cannot add, edit or remove one. Drift has no base: the default branch's own.
+  const stepsRead = await readSteps(repo, base, settings.steps, { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) });
+  if (stepsRead.note) log(stepsRead.note);
+  const steps = stepsUsed(stepsRead.steps, stage);
+  if (steps.length > 0) log(`steps: ${steps.length} read from terragucci.yml at ${stepsRead.from}`);
   const planLayers = selected ? layers.map((l) => l.filter((r) => selected.has(r))).filter((l) => l.length > 0) : layers;
   const roots = planLayers.flat();
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
@@ -724,6 +734,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const deferred: ReportDeferred[] = [];
   const held = new Set<string>();
   const upstreamState = new Map<string, boolean | undefined>();
+  const heldBySteps = new Set<string>();
   const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
   let redacted = 0;
 
@@ -743,15 +754,26 @@ export async function runStage(stage: string, repo: string, options: StageOption
     let path = binary;
     const run = (...args: string[]) =>
       observer.commandAsync(timing, path, args, binEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+    const ran: ReportStep[] = [];
+    const holds: string[] = [];
+    /** Run one moment's steps; the error when one failed the root. */
+    const step = async (when: StepWhen, file?: string): Promise<string | undefined> => {
+      if (steps.length === 0) return undefined;
+      const o = await runSteps(steps, when, { repo, root, stage: drift ? "tf-drift" : "tf-plan", env: binEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
+      ran.push(...o.runs);
+      holds.push(...o.holds);
+      return o.error;
+    };
     const failed = (error: string, line: string): RootOutcome => {
       lines.push(line);
-      return { root, lines, input: { path: root, planner, binary: bin, error, preventDestroy: new Set() } };
+      return { root, lines, ...(holds.length ? { holds } : {}), input: { path: root, planner, binary: bin, error, preventDestroy: new Set(), ...(ran.length ? { steps: ran } : {}) } };
     };
     const refused = pinRefusals.get(root);
     if (refused) {
       observer.endRoot(timing);
       return failed(refused.join("\n"), `${root}: refused by modules.require: attested`);
     }
+    const planStep = drift ? "drift" : "plan";
     try {
       try {
         const resolved = await binaries.resolve(root);
@@ -761,12 +783,18 @@ export async function runStage(stage: string, repo: string, options: StageOption
         return failed((e as Error).message, `${root}: ${(e as Error).message}`);
       }
       if (bin.pin) lines.push(`${root}: ${describeBinary(bin)}`);
+      let stepError = await step("before-init");
+      if (stepError) return failed(stepError, `${root}: a step before init failed`);
       const init = await initTurn(() => run("init", "-input=false", "-no-color"));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
+      if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
       // A refresh-only plan compares the state with the real objects and ignores the code.
       const p = await run("plan", ...(drift ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
       if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
+      stepError = await step(`after-${planStep}`, planFile);
+      if (stepError) return failed(stepError, `${root}: a step after ${planStep} failed`);
       const json = await run("show", "-json", planFile);
       const text = await run("show", "-no-color", planFile);
       let plan: unknown;
@@ -786,12 +814,12 @@ export async function runStage(stage: string, repo: string, options: StageOption
       }
       lines.push(drift ? `${root}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
       return {
-        root, lines, redacted: safe.values,
+        root, lines, redacted: safe.values, ...(holds.length ? { holds } : {}),
         // The binary masks what the plan marks sensitive; a value copied into an unmarked attribute is masked here too.
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir) },
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(ran.length ? { steps: ran } : {}) },
       };
     } finally {
       observer.endRoot(timing);
@@ -806,6 +834,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       held.add(o.root);
     }
     if (o.input) inputs.push(o.input);
+    if (o.holds?.length) heldBySteps.add(o.root);
     if (o.plan) plans.set(o.root, o.plan);
     if (o.names) names.set(o.root, o.names);
     if (o.attributed) attributions.set(o.root, o.attributed);
@@ -843,7 +872,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     ? []
     : applyWaves(full, options.canary ?? settings.waves?.canary)
         .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
-        .filter((w) => w.roots.length > 0);
+        .filter((w) => w.roots.length > 0)
+        .map((w) => {
+          const holding = w.roots.filter((r) => heldBySteps.has(r));
+          return holding.length ? { ...w, heldBySteps: holding } : w;
+        });
 
   return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}) });
 }

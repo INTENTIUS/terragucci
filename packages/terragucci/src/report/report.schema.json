@@ -72,7 +72,7 @@
         "properties": {
           "path": { "type": "string" },
           "binary": {
-            "description": "The binary the root ran, its version, and where the root pinned that version when it did (minor 17).",
+            "description": "The binary the root ran, its version, and where the root pinned that version when it did (minor 18).",
             "type": "object",
             "required": ["name"],
             "properties": {
@@ -200,6 +200,21 @@
                 "previous_address": { "type": "string" }
               }
             }
+          },
+          "steps": {
+            "description": "The steps that ran for the root, in the order they ran (minor 17). failed: the root failed; approval: an on_failure: approve step failed, so the root's wave waits for an approval.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "when", "status", "exit", "seconds"],
+              "properties": {
+                "name": { "type": "string" },
+                "when": { "enum": ["before-init", "after-init", "before-plan", "after-plan", "before-apply", "after-apply", "before-drift", "after-drift"] },
+                "status": { "enum": ["passed", "failed", "approval"] },
+                "exit": { "type": ["integer", "null"] },
+                "seconds": { "type": "number" }
+              }
+            }
           }
         }
       }
@@ -241,6 +256,11 @@
               "pull_request": { "type": "integer" },
               "url": { "type": "string" }
             }
+          },
+          "held_by_steps": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "The roots whose on_failure: approve step failed: the gate holds the wave whatever the gate policy says, when it changes anything (minor 17)."
           }
         }
       }
