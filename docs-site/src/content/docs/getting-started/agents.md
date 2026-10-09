@@ -4,7 +4,7 @@ description: How a coding agent adopts terragucci in a repository, and the promp
 prompt: setup
 ---
 
-Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only two opt-in features [run one](/terragucci/#opt-in-coding-agent).
+Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only three opt-in features [run a model](/terragucci/#opt-in-coding-agent).
 
 This page is for a coding agent setting terragucci up, and the person handing it the task. Run your coding agent in the repository and paste it the prompt above. The repository can hold Terraform, OpenTofu or Terragrunt roots.
 
@@ -43,4 +43,4 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 ## Next
 
-After setup, see [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token) and [change a pull request](/terragucci/guides/agent-change-a-pull-request/).
+After setup, see [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token), [change a pull request](/terragucci/guides/agent-change-a-pull-request/), and [review a pull request](/terragucci/guides/agent-review-a-pull-request/).

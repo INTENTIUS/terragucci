@@ -47,6 +47,7 @@ jobs:
           terragrunt hcl fmt --check --diff --no-color
           terragrunt hcl validate --inputs --no-color --filter '!./catalog/**' --filter '!./**/.terragrunt-cache/**'
           echo "every unit is formatted and its inputs match its module"
+          terragucci check-pins
           terragucci check-policy
       - name: Keep the check report
         if: always()

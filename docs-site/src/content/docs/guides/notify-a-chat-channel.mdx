@@ -1,7 +1,7 @@
 ---
 title: Tell a chat channel when a wave stops
-description: Post a Slack or Microsoft Teams message, or a signed JSON event to a webhook, when a wave waits for approval, is refused, or fails, with its roots, the approve command and the run.
-claims: [notify-chat, notify-webhook]
+description: Post a Slack or Microsoft Teams message, or a signed JSON event to a webhook, when a wave waits for approval, is refused, or fails, with its roots, the approve command and the run, and post drift with a Re-plan button.
+claims: [notify-chat, notify-webhook, chat-replan]
 prompt: |
   Read https://intentius.io/terragucci/guides/notify-a-chat-channel/.
   Add a `notify:` block to terragucci.yml naming the secret SLACK_WEBHOOK_URL (or TEAMS_WEBHOOK_URL), run
@@ -14,12 +14,12 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## What you end up with
 
-A message in your channel each time an apply job stops at a wave. A message approves nothing. A person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). Under `approval: pr-review` an approving review of the pull request counts too.
+A message in your channel each time an apply job stops at a wave, and each time the drift job finds drift. A message approves nothing. A person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). Under `approval: pr-review` an approving review of the pull request counts too.
 
 | You want | You set up |
 |---|---|
 | a notice in Slack or Teams, and under `approval: pr-review` a link straight to the review that approves the wave | `notify:` and an incoming webhook for the channel. Nothing to install or host. |
-| a chat click that becomes an approval on `chant/lifecycle` | a relay of your own that receives the [signed event](#send-events-to-your-own-webhook) and runs `terragucci approve wave-<k> --plan <digest>` for the person who clicked ([below](#send-events-to-your-own-webhook)) |
+| Approve and Decline buttons that record the approval on `chant/lifecycle` as the person who clicked | `terragucci relay`, in your own cloud ([Approve from Slack and Teams](/terragucci/guides/approve-from-chat/)) |
 
 | The wave | Exit | The message says |
 |---|---|---|
@@ -80,7 +80,7 @@ A message in your channel each time an apply job stops at a wave. A message appr
    npx terragucci init
    ```
 
-   Each apply job gets the secret as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK`, and runs `terragucci notify` when its wave stops. No plan job gets it.
+   Each apply job gets the secret as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK`, and runs `terragucci notify` when its wave stops. With a [drift schedule](/terragucci/guides/turn-on-drift-checks/) the drift job gets it too. No plan job gets it.
 
 5. Read the next message.
 
@@ -107,6 +107,26 @@ A message in your channel each time an apply job stops at a wave. A message appr
 | answers an error, or not within 10 seconds | logs the status and goes on; the wave's own exit code stands |
 
 A comment that applies (`/terragucci apply`) posts the same messages from its job.
+
+## Drift, with a Re-plan button
+
+With a [drift schedule](/terragucci/guides/turn-on-drift-checks/), the drift job posts to Slack and Teams when its refresh-only plans find drift, or a root cannot be refreshed. A run that finds nothing posts nothing.
+
+```text
+terragucci: drift in github.com/acme/infra: 1 root changed outside Terraform
+Drifted: envs/prod/app
+Run: https://github.com/acme/infra/actions/runs/57
+```
+
+The Re-plan button opens the page where you run the drift check again, with your own login. It holds no token and starts nothing itself.
+
+| Forge | Re-plan opens |
+|---|---|
+| GitHub | the workflow's page, where Run workflow is |
+| Forgejo | the workflow's runs, where Run workflow is |
+| GitLab | the pipeline schedules, where each schedule has a run button |
+
+The generic webhook gets no drift event: its events are a wave's.
 
 ## Approve from the message, by review
 
@@ -175,12 +195,10 @@ For a program rather than a channel, such as a chat bot, an incident tool or a r
 
 The event carries the wave's outcome as the stage wrote it ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
 
-| A relay that approves from chat | |
-|---|---|
-| Runs | `terragucci approve wave-<k> --plan <digest>` for the person who clicked, with the digest the event named, so plans that moved since are never approved |
-| Then | the wave resumes with the relay's token, or within [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) minutes |
+To approve from a chat click, [`terragucci relay`](/terragucci/guides/approve-from-chat/) does it without this event: the buttons carry the wave and its digest, and the relay checks who clicked.
 
 ## Next
 
+- [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/)
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
 - [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)
