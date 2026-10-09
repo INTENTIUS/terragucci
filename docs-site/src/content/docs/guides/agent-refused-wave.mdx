@@ -13,7 +13,7 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-This is one of the three features that run a model; the others are the [`/terragucci agent` comment](/terragucci/guides/agent-change-a-pull-request/) and the [pull request review](/terragucci/guides/agent-review-a-pull-request/). It is off until you add its job by hand, and every other feature runs with no agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
+This is one of the four features that run a model; the others are the [`/terragucci agent` comment](/terragucci/guides/agent-change-a-pull-request/), the [drift agent](/terragucci/guides/agent-fix-drift/) and the [pull request review](/terragucci/guides/agent-review-a-pull-request/). It is off until you add its job by hand, and every other feature runs with no agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
 
 ## What you end up with
 
@@ -147,6 +147,13 @@ One comment saying what changed between the approved plan and the plan that was 
 3. Read the summary, then decide. Choose between approving the new plan and reverting the change. The choice and the approval ([`terragucci approve`](/terragucci/reference/cli/#approve)) are yours.
 
 </Steps>
+
+## MCP or `--json`
+
+| Where the agent runs | What it uses |
+|---|---|
+| in the explain-refusal job | `respond wave-refused --json` from the shell, on the wave's artifact: the job has the two reports and no bucket credentials |
+| at your desk | [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/): `run_view` for where each wave of the commit stands, `report` for the refused wave's report, and `waiting` for each wave that waits for an approval, with the command a person runs to approve it |
 
 ## Next
 
