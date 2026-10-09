@@ -11,8 +11,8 @@
 #   stack/gitlab/gitlab.sh down    remove its containers, job containers, network
 #                                  and volumes
 #
-# GitLab is heavy: about 4 GB of memory and 3 GB of image, and several minutes
-# to boot under emulation. Nothing starts it but `up`. up refuses when the
+# GitLab is heavy: about 4.5 GB of memory, a 3.7 GB image, and over two
+# minutes to boot under emulation. Nothing starts it but `up`. up refuses when the
 # data volume has less than TGLAB_MIN_FREE_GB (40) free.
 set -euo pipefail
 
