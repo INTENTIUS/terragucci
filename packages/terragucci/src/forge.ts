@@ -91,7 +91,19 @@ export async function openPullRequest(
   }
   const owner = t.path.split("/")[0];
   const query = t.forge === "github" ? `?state=open&head=${encodeURIComponent(`${owner}:${pr.head}`)}` : `?state=open`;
-  const open = (await call(fetch, t, "GET", `/repos/${t.path}/pulls${query}`)) as Array<{ html_url: string; number: number; head?: { ref?: string } }>;
+  type Open = Array<{ html_url: string; number: number; head?: { ref?: string } }>;
+  const list = () => call(fetch, t, "GET", `/repos/${t.path}/pulls${query}`) as Promise<Open>;
+  let open: Open;
+  try {
+    open = await list();
+  } catch (e) {
+    // Forgejo answers 404 for the pull requests of a repo it still counts as empty, which it
+    // does for a moment after the first push: that repo has none. By the time the repo is
+    // read it may have stopped counting as empty, so the list is asked once more.
+    if (!(t.forge === "forgejo" && e instanceof ForgeError && e.status === 404)) throw e;
+    if (((await call(fetch, t, "GET", `/repos/${t.path}`)) as { empty?: boolean }).empty === true) open = [];
+    else open = await list();
+  }
   const mine = open.find((p) => t.forge === "github" || p.head?.ref === pr.head);
   if (mine) return { url: mine.html_url, number: mine.number, existing: true };
   const created = (await call(fetch, t, "POST", `/repos/${t.path}/pulls`, { head: pr.head, base: pr.base, title: pr.title, body: pr.body })) as {
