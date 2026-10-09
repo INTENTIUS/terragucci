@@ -1,6 +1,6 @@
 {
   "step": "pin",
-  "source_hash": "b4a6bbf4c012d06a",
+  "source_hash": "c6909fe377b97186",
   "commands": [
     {
       "cmd": "just example change pin",
@@ -9,8 +9,8 @@
     }
   ],
   "shots": {
-    "pull-light": "08774ee271556dc6",
-    "pull-dark": "39cf15dbb69ad3d4",
+    "pull-light": "7c1fed9a8f25b02f",
+    "pull-dark": "b687de086a49c184",
     "files-light": "bb9242b27e869efe",
     "files-dark": "a1516d206fc8852b"
   }

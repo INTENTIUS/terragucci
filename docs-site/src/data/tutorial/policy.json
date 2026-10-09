@@ -1,11 +1,11 @@
 {
   "step": "policy",
-  "source_hash": "b4a6bbf4c012d06a",
+  "source_hash": "c6909fe377b97186",
   "commands": [],
   "shots": {
-    "pull-light": "2661b671f06f0d7e",
-    "pull-dark": "9a2d04bc150463d8",
-    "log-light": "df2aca392618d263",
+    "pull-light": "01ed7efaeffd8570",
+    "pull-dark": "ab9689dad6bdc8dc",
+    "log-light": "5a7495edecc6a347",
     "log-dark": "5c540dbd453e066a"
   }
 }
