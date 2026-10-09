@@ -130,6 +130,7 @@ oidc:
 | `plan_role` | the read-only role the plan job assumes |
 | `apply_role` | the write role, for apply jobs only, including [apply before merge](/terragucci/reference/pipeline/#apply-before-merge) |
 | `audience` | the AWS token's audience; `sts.amazonaws.com` when omitted |
+| `roles` | AWS roles by root glob, `{ plan, apply }` each: a root plans and applies with the pair of the first glob it matches, and a root no glob matches with `plan_role` and `apply_role`, which are then optional. Plain roots only; a Terragrunt repo sets [`terragrunt.credentials`](/terragucci/reference/pipeline/#credentials) |
 | `gcp.workload_identity_provider` | `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
 | `gcp.plan_service_account`, `gcp.apply_service_account` | the service accounts the plan and apply jobs impersonate |
 | `gcp.token_url` | the STS endpoint; `https://sts.googleapis.com/v1/token` when omitted |
@@ -138,6 +139,8 @@ oidc:
 | `azure.plan_client_id`, `azure.apply_client_id` | the identities plan and apply sign in as |
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
+
+With `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`, and the stage sets `AWS_ROLE_ARN` for each root's binary, its steps and its state version read, assumed with the job's token. A role per environment keeps each environment's roots from reaching another's state; [Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/) has the steps, and `config check` warns when a role reaches another environment's state.
 
 Your role's trust policy must accept the forge's issuer and your repo. Forgejo needs version 15 and Runner 12.5 or later. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
 
@@ -229,6 +232,7 @@ Internal; a value set in `env:` is overwritten.
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
 | `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc` |
+| `TERRAGUCCI_ROOT_ROLES` | jobs with `oidc.roles`: the stage's roles by root glob, as JSON `[[glob, role], ...]`; each root's `AWS_ROLE_ARN` comes from it |
 | `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent comment's job: the prompt file and the turn limit |
 | `TF_HTTP_ADDRESS`, `TF_PLUGIN_CACHE_DIR` | read from your job: GitLab state lowers parallelism; the roots of a stage share the cache, or one of the stage's own when it is unset |
 

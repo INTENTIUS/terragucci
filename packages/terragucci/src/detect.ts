@@ -205,7 +205,7 @@ export function hostOfRemote(remote: string): string | undefined {
 
 // ── order ────────────────────────────────────────────────────────────────────
 
-interface StateRef {
+export interface StateRef {
   bucket?: string;
   key: string;
 }
@@ -223,7 +223,8 @@ function attr(body: string, name: string): string | undefined {
   return body.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1];
 }
 
-function stateOf(repo: string, root: string): { own?: StateRef; reads: StateRef[] } {
+/** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code. */
+export function stateOf(repo: string, root: string): { own?: StateRef; reads: StateRef[] } {
   let own: StateRef | undefined;
   const reads: StateRef[] = [];
   for (const f of tfFiles(join(repo, root))) {

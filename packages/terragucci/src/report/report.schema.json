@@ -201,6 +201,18 @@
               }
             }
           },
+          "reads": {
+            "description": "The roots whose state it reads, from its code: a terraform_remote_state block whose backend names another root's state, or a Terragrunt unit's dependency and dependencies blocks (minor 21). Absent when it reads none.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["root", "via"],
+              "properties": {
+                "root": { "type": "string" },
+                "via": { "enum": ["terraform_remote_state", "dependency"] }
+              }
+            }
+          },
           "state": {
             "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20).",
             "type": "object",

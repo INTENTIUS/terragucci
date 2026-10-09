@@ -129,7 +129,34 @@
         "failed": { "type": "integer", "description": "Roots that failed in the latest plan, drift check and apply waves." },
         "overridden": { "type": "integer", "description": "Roots the newest commit's apply waves applied under a policy override. Absent when none." },
         "inventory": { "$ref": "#/$defs/inventory", "description": "The resources its roots hold, from its inventory.json. Absent until an apply records them." },
-        "states": { "type": "array", "description": "Each root's state versions, from its states.json. Absent until an apply records them.", "items": { "$ref": "#/$defs/stateRoot" } }
+        "states": { "type": "array", "description": "Each root's state versions, from its states.json. Absent until an apply records them.", "items": { "$ref": "#/$defs/stateRoot" } },
+        "edges": { "type": "array", "description": "Each cross-state edge, from its edges.json: a consumer root, the producer root whose state it reads, the consumer's last plan and the producer's last apply that changed it. Absent until a run records an edge.", "items": { "$ref": "#/$defs/edge" } }
+      }
+    },
+    "edgeRun": {
+      "type": "object",
+      "required": ["stage", "commit", "finished"],
+      "properties": {
+        "stage": { "type": "string" },
+        "commit": { "type": "string" },
+        "finished": { "type": "string" },
+        "wave": { "type": "integer" },
+        "pull_request": { "type": "string" },
+        "version_id": { "type": "string" },
+        "report": { "type": "string", "description": "The run's report.html, when the page can link it." }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "description": "One root reading another's state. stale: the producer applied a change after the consumer's last plan; current: the consumer's last plan is newer than that apply; unknown: either run is not recorded.",
+      "required": ["consumer", "producer", "via", "status"],
+      "properties": {
+        "consumer": { "type": "string" },
+        "producer": { "type": "string" },
+        "via": { "enum": ["terraform_remote_state", "dependency"] },
+        "consumer_planned": { "$ref": "#/$defs/edgeRun" },
+        "producer_applied": { "$ref": "#/$defs/edgeRun" },
+        "status": { "enum": ["current", "stale", "unknown"] }
       }
     },
     "stateRoot": {

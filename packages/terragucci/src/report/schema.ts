@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 20;
+export const REPORT_MINOR = 21;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -291,6 +291,19 @@ export interface ReportRoot {
   state?: ReportStateVersion;
   /** The steps that ran for it (minor 17), in the order they ran. Absent when none did. */
   steps?: ReportStep[];
+  /**
+   * The roots whose state it reads (minor 21): through a
+   * `terraform_remote_state` block whose backend names another root's state,
+   * or a Terragrunt unit's `dependency` and `dependencies` blocks. Read from
+   * the code, never from a state. Absent when it reads none.
+   */
+  reads?: ReportRead[];
+}
+
+/** One root whose state a root reads (minor 21). */
+export interface ReportRead {
+  root: string;
+  via: "terraform_remote_state" | "dependency";
 }
 
 /** When a step runs: before or after a root's init, plan, apply or drift (minor 17). */
