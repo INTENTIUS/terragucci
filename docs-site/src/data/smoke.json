@@ -81,7 +81,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "79c43672"
     },
     {
       "claim": "rollout",
@@ -999,7 +999,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "79c43672"
     },
     {
       "claim": "tg-generate",
@@ -1007,7 +1007,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fc315e08"
+      "commit": "79c43672"
     },
     {
       "claim": "root-pins",
@@ -1400,7 +1400,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "3ff8578a"
+      "commit": "79c43672"
     },
     {
       "claim": "resource-history",
@@ -1432,7 +1432,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "3ff8578a"
+      "commit": "79c43672"
     },
     {
       "claim": "state-edges",
@@ -1582,7 +1582,8 @@
       "says": "with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "79c43672"
     },
     {
       "claim": "apply-branches-drift",
@@ -1590,7 +1591,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "39b07c05"
+      "commit": "79c43672"
     },
     {
       "claim": "own-jobs-kept",
@@ -1718,7 +1719,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "9c86b8a9"
+      "commit": "79c43672"
     },
     {
       "claim": "tg-state-export",
@@ -1726,7 +1727,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "80c81384"
+      "commit": "79c43672"
     },
     {
       "claim": "tg-apply-branches",
@@ -1734,7 +1735,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4f7cd0b4"
+      "commit": "79c43672"
     },
     {
       "claim": "tg-stacks",
