@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError, validateConfig } from "../src/config";
-import { checkRoot } from "../src/check";
+import { checkRoot, checkUnitPins } from "../src/check";
+import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { publish } from "../src/publish";
 import { checkedSources, checkRootPins, governingModules, normalizeSource, pinChecker, splitGitSource } from "../src/publish/require";
 import { runStage } from "../src/report/stage";
@@ -222,5 +223,69 @@ describe("tf-check and tf-plan", () => {
     expect(r.ok).toBe(false);
     expect(r.log.join("\n")).toContain("FAILED envs/dev: modules.require: attested refused 1 module pin");
     expect(r.report.join("\n")).toMatch(/- refused: `envs\/dev`: module.service .* at modules\/service\/v0.1.1/);
+  });
+});
+
+/** Terragrunt with no dependencies: `render` finds none, and `run --all` gives each unit it is filtered to a plan and a succeeded row. */
+function fakeRunAll(calls: string[][]): TerragruntExec {
+  return async (_file, args) => {
+    calls.push([...args]);
+    if (args[0] === "render") return { code: 0, stdout: JSON.stringify({ dependency: {} }), stderr: "" };
+    const at = (flag: string) => args[args.indexOf(flag) + 1]!;
+    const units = args.flatMap((a, i) => (args[i - 1] === "--filter" && a.startsWith("{./") ? [a.slice(3, -1)] : []));
+    for (const u of units) {
+      for (const [dir, f, body] of [[at("--out-dir"), "tfplan.tfplan", "binary"], [at("--json-out-dir"), "tfplan.json", JSON.stringify({ format_version: "1.2", resource_changes: [] })]] as const) {
+        mkdirSync(join(dir, u), { recursive: true });
+        writeFileSync(join(dir, u, f), body);
+      }
+    }
+    mkdirSync(dirname(at("--report-file")), { recursive: true });
+    writeFileSync(at("--report-file"), JSON.stringify(units.map((u) => ({ Name: u, Result: "succeeded" }))));
+    return { code: 0, stdout: "", stderr: "" };
+  };
+}
+
+describe("Terragrunt units", () => {
+  const pair = keyPair();
+
+  /** live/dev pins the attested 0.1.0 in its terraform source, live/prod a 0.1.1 tagged by hand. */
+  async function units() {
+    const { repo, url } = await published(pair);
+    handTag(repo, "0.1.1");
+    const unit = (version: string) => `terraform {\n  source = "git::${url}.git//modules/service?ref=modules/service/v${version}"\n}\n`;
+    write(repo, { "root.hcl": "", "live/dev/terragrunt.hcl": unit("0.1.0"), "live/prod/terragrunt.hcl": unit("0.1.1") });
+    commit(repo, "units");
+    return repo;
+  }
+
+  it("tf-plan refuses a unit whose source pins an unattested release before its wave runs, and plans the attested one", { timeout: 60_000 }, async () => {
+    const repo = await units();
+    const calls: string[][] = [];
+    const lines: string[] = [];
+    const result = await runStage("tf-plan", repo, { binary: "tofu", terragrunt: true, layers: [["live/dev", "live/prod"]], terragruntExec: fakeRunAll(calls), env: { PATH: process.env.PATH }, noCost: true, out: join(tmp(), "out") }, (l) => lines.push(l));
+    expect(result.failed).toBe(true);
+    const byPath = Object.fromEntries(result.report.roots.map((r) => [r.path, r]));
+    expect(byPath["live/dev"].error).toBeUndefined();
+    expect(byPath["live/dev"].status).toBe("planned");
+    expect(byPath["live/prod"]).toMatchObject({ status: "failed", terragrunt: { run_result: "not run" } });
+    expect(byPath["live/prod"].error).toMatch(/refused: live\/prod: terraform \(live\/prod\/terragrunt.hcl\) pins .* at modules\/service\/v0.1.1, which modules.require: attested refuses: .*not in the release ledger/);
+    expect(lines.join("\n")).toContain("live/prod: refused by modules.require: attested");
+    expect(lines.join("\n")).toMatch(/live\/dev: attested terraform .*modules\/service\/v0.1.0/);
+    const runs = calls.filter((c) => c[0] === "run");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toContain("{./live/dev}");
+    expect(runs[0]).not.toContain("{./live/prod}");
+  });
+
+  it("tf-check's pin step names the refused unit and passes the attested one", async () => {
+    const repo = await units();
+    const pins = (await pinChecker(repo, settings, undefined, {}, { parser: await parser() }))!;
+    const r = await checkUnitPins(["live/dev", "live/prod"], pins);
+    expect(r.ok).toBe(false);
+    const log = r.log.join("\n");
+    expect(log).toContain("FAILED live/prod: modules.require: attested refused 1 module pin");
+    expect(log).toMatch(/attested live\/dev: terraform .*modules\/service\/v0.1.0/);
+    expect(r.report.join("\n")).toMatch(/### live\/prod\n\n- refused: `live\/prod`: terraform .* at modules\/service\/v0.1.1/);
+    expect((await checkUnitPins(["live/dev"], pins)).ok).toBe(true);
   });
 });

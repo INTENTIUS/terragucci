@@ -6,13 +6,14 @@
  * One project failing does not stop the others.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch, type ForgeTarget } from "./forge";
 import { findRoots } from "./detect";
 import { init, type FileChange } from "./init";
+import { planGenerate, projectGenerate } from "./generate";
 import { loadHclParser } from "./rollout/parser";
 import type { ReportTip } from "./report/schema";
 import { describeTips, repoTips } from "./tips";
@@ -74,6 +75,17 @@ async function tipsOf(dir: string, settings: ResolvedSettings): Promise<ReportTi
   }
 }
 
+/** The project's generated files, written into its clone; a file at a generated path that terragucci did not write fails the project. */
+function writeGenerated(dir: string, settings: ResolvedSettings): FileChange[] {
+  const plan = planGenerate(dir, settings);
+  if (plan.foreign.length) throw new ConfigError(plan.foreign.join("; "));
+  for (const f of plan.files) {
+    if (f.status === "removed") unlinkSync(f.path);
+    else if (f.status !== "unchanged") writeFileSync(f.path, f.content);
+  }
+  return plan.files;
+}
+
 export async function reconcile(config: TerragucciConfig, options: ReconcileOptions): Promise<ProjectOutcome[]> {
   if (!config.projects || Object.keys(config.projects).length === 0) {
     throw new ConfigError("reconcile needs a control repo config with projects; in a single repo, run terragucci init");
@@ -97,8 +109,11 @@ export async function reconcile(config: TerragucciConfig, options: ReconcileOpti
 
       const dir = join(work, "repo");
       git(work, ["clone", "-q", "--depth", "1", withToken(cloneUrl, token), dir], token);
-      const result = await init(dir, { settings: { ...settings, forge }, name: pk.name, dryRun: options.mode === "dry-run" });
-      const changes = result.files.map((f) => ({ ...f, path: relative(dir, f.path) }));
+      // generate: each root's backend, provider and version files, written into the clone first (a dry run's clone is thrown away too), so init finds the roots they make.
+      const projectSettings = { ...settings, forge, ...(settings.generate ? { generate: projectGenerate(settings) } : {}) };
+      const generated = settings.generate ? writeGenerated(dir, projectSettings) : [];
+      const result = await init(dir, { settings: projectSettings, name: pk.name, dryRun: options.mode === "dry-run" });
+      const changes = [...generated, ...result.files].map((f) => ({ ...f, path: relative(dir, f.path) }));
       const changed = changes.filter((f) => f.status !== "unchanged");
 
       // A dry run also says what the project's setup could do better.

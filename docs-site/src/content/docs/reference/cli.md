@@ -14,6 +14,7 @@ prompt: |
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `import` | writes `terragucci.yml` from an `atlantis.yaml` or a `digger.yml`, and prints what became of each setting |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
+| `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/); `--check` refuses one that differs, and the generated `tf-check` job runs it |
 | `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
@@ -29,10 +30,11 @@ prompt: |
 | `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and runs `chant approve policy-override <root> --plan <digest> --note <reason>`; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
-| `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names; the generated apply jobs run it |
+| `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
+| `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
-| `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
@@ -97,6 +99,14 @@ terragucci reconcile [--config <file>] [--mode dry-run|apply] [--project <host/p
 ```
 
 `--config` defaults to the config file in the working directory and `--mode` to `dry-run`. `--mode apply` opens a pull request per changed project and never runs `terraform apply` ([glossary](/terragucci/concepts/glossary/#words-that-mean-something-else-in-terraform)). `--project` limits the run to one project.
+
+## generate
+
+```bash
+terragucci generate [--check] [--dry-run] [--config <file>]
+```
+
+Writes `backend.tf`, `providers.tf` and `versions.tf` in each root from `terragucci.yml`'s `generate` key, and removes a generated file the key no longer asks for. It never overwrites a file it did not write, and refuses a Terragrunt repo. `--dry-run` prints what it would write. `--check` writes nothing and fails on each generated file that differs from what it would write, is missing, or is no longer asked for, with the lines that differ. See [Generate backend and provider files](/terragucci/guides/generate-root-files/).
 
 ## estate
 
@@ -279,6 +289,22 @@ On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments`
 
 [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
 
+## review
+
+```text
+terragucci review prompt --report <dir> [--instructions <path>]
+terragucci review post --dir <dir>
+```
+
+The two halves of the [review](/terragucci/guides/agent-review-a-pull-request/), run by the generated `review` and `review-note` jobs.
+
+| Command | Does |
+|---|---|
+| `review prompt` | reads the pull request from the event file, the diff of its base and head from git, and the plan note and policy results from the report in `--report`; reads the instructions (`--instructions`, default `.terragucci/review.md`) from `origin/<default branch>` with `git show`, never from the checkout; writes the prompt to `/tmp/terragucci-review/prompt.md` and unpacks the default branch's files into `/tmp/terragucci-review/work` |
+| `review post` | reads the review and its command's exit code from `--dir` and posts them as one note on the pull request `TG_PR` names, with the head `TG_SHA` names; edits the note the pipeline posted before |
+
+`review prompt` exits 2 when the event names no pull request, or the checkout has no default branch ref. `review post` exits 0 even when the forge refuses the note, and says why.
+
 ## pr-lock
 
 ```text
@@ -359,6 +385,32 @@ Posts one wave's outcome to `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOO
 | `--outcome`, the stage's `TG_OUTCOME` line | the outcome line the message quotes |
 | `--report` (default `terragucci-report`) | the project, the report's link, and the wave's roots when there is no outcome |
 | `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`, or `CI_JOB_URL` | the run's link |
+| `TERRAGUCCI_RELAY` | the relay a waiting wave's Approve and Decline buttons (Slack) and reply (Teams) reach |
+
+```text
+terragucci notify drift [--report <dir>]
+```
+
+Posts the drift job's findings to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK`: the roots the refresh-only plans found drifted and the roots that could not be refreshed, read from `--report` (default `terragucci-report`), with a Re-plan button. The button opens the page where a person runs the drift check again with their own login: the workflow's page on GitHub and Forgejo, where Run workflow is, and the pipeline schedules on GitLab. With no drift and every root refreshed it posts nothing. The generic webhook gets no drift event. The generated drift job runs it when `notify` names `slack` or `teams`.
+
+## relay
+
+```text
+terragucci relay [--port <n>]
+```
+
+Serves `POST /slack`, `POST /teams` and `GET /healthz`, with its settings from [the environment](/terragucci/reference/environment/#the-relay). It checks the token first and does not start with one that can do more than approve. [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) sets it up.
+
+| A request | The relay |
+|---|---|
+| whose signature does not verify, or a Slack one more than five minutes old | answers 401 and records nothing |
+| from a chat user no line of the signers file on the default branch lists | answers in the thread that it refused, and records nothing |
+| Approve, for the digest a wave waits for, under `approval: ledger` or `pr-review` | records the approval of that digest on `chant/lifecycle` as the person's principal, `relayedBy` the relay, and says so in the thread |
+| Approve, for a digest no wave waits for | records nothing, and names the digest waiting |
+| Approve, under `approval: sealed` | records nothing: only the approver's own key seals an approval |
+| Decline | records nothing, and says in the thread who declined; the wave keeps waiting |
+
+It runs until stopped; an error in a request never stops it.
 
 A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.
 
@@ -443,14 +495,15 @@ envs/prod/app: its plan jcs1-sha256:4c1e09d2... was denied by main.deny_public_b
 running: chant approve policy-override envs/prod/app --plan sha256:9b0f2a71... --note 'the incident needs the bucket public until 18:00' --actor github:alice
 ```
 
-## check-root and check-policy
+## check-root, check-pins and check-policy
 
 ```bash
 terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
+terragucci check-pins [--config <file>] [--base <ref>]
 terragucci check-policy [--config <file>] [--base <ref>]
 ```
 
-`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-policy` runs the policy's tests when `policy` is set. Both append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
+`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-pins` does the same pin check for each unit of a Terragrunt repo, on its `terraform { source }`, and prints nothing without `modules.require: attested`. `check-policy` runs the policy's tests when `policy` is set. Each appends to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 
@@ -480,6 +533,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 |---|---|---|---|---|---|
 | `init` | done | | an existing config file needs a line added | | |
 | `reconcile` | done | a project failed | | | |
+| `generate` | written, or with `--check` every generated file matches | with `--check`, a generated file out of line | a file it did not write is in the way, or a root's own files declare what it would write | | |
 | `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
 | `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one | `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
 | `publish` | done | | OCI tag exists already; git tag exists with different content | | |
@@ -489,12 +543,13 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | | |
 | `pr-merge` | merged | not merged | | | |
 | `config check` | `ok` | | problems found | | |
-| `check-root`, `check-policy` | passed | failed | | | |
+| `check-root`, `check-pins`, `check-policy` | passed | failed | | | |
 | `install` | done | | not a Linux host | | |
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
 | `verify-release` | every target verified | a target refused | | | |
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
+| `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
 
 Code 4 comes only from `stage tf-apply`, which has no `--json`.

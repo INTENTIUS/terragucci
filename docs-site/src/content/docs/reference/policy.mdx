@@ -122,6 +122,29 @@ deny contains msg if {
 }
 ```
 
+### Review
+
+With [`review.agent`](/terragucci/guides/agent-review-a-pull-request/) set, `input.review` holds the model's review of the pull request a `tf-apply` wave applies, beside `cost`. `tf-plan` runs before the review, so it has none.
+
+| Field | Value |
+|---|---|
+| `review.found` | whether the pull request has a review note of its head, posted by the pipeline's own token |
+| `review.risk` | `low`, `medium` or `high` from that note; `unknown` when none was found, the model gave none, or its command failed |
+| `review.pull_request`, `review.head` | the pull request the commit merged, or the one applied before merge, and its head; `null` for a commit no pull request made |
+
+The wave reads the note from the pull request when it runs, and counts only a note posted by the pipeline's own token: one anyone else posts is ignored. A pull request's own workflow runs with that token, so a writer can still post one ([threat model](/terragucci/reference/threat-model/#the-review)). GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
+
+```rego
+package main
+
+import rego.v1
+
+deny contains msg if {
+  input.review.risk == "high"
+  msg := sprintf("the review of pull request %d says risk high", [input.review.pull_request])
+}
+```
+
 ### Which rules count
 
 | Rule | Effect |

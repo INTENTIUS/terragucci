@@ -176,12 +176,12 @@ The `lock-wait` claim needs choudoufu, because OpenTofu sends no span for a lock
 | floci | `ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813` (`iam-boundary`, resolved 2026-10-03, amd64 and arm64) |
 | Forgejo | `codeberg.org/forgejo/forgejo:16.0.5` |
 | forgejo-runner | `data.forgejo.org/forgejo/runner:13.2.0` |
-| job image | `node:22-bookworm` |
+| job image | `public.ecr.aws/docker/library/node:22-bookworm` |
 | OpenTofu | 1.13.1, in the fixture workflow's `TOFU_VERSION` |
 | AWS provider | `hashicorp/aws` 6.67.0, with `.terraform.lock.hcl` for linux_arm64, linux_amd64 and darwin_arm64 |
-| mock GitHub | `node:22-bookworm` running `mock-github/server.mjs` |
+| mock GitHub | `public.ecr.aws/docker/library/node:22-bookworm` running `mock-github/server.mjs` |
 | act | 0.2.89 on the host |
 | GitLab | `gitlab/gitlab-ce:17.11.0-ce.0`, `gitlab/gitlab-runner:v17.11.0`, in the gitlab profile and the lab |
-| fountain | `ghcr.io/managoat/fountain:v0.21.0@sha256:c90f8ceb…` (amd64 and arm64), `postgres:16`, the fountain 0.21.0 CLI from its GitHub release in `terragucci-fountain-steward:local` |
+| fountain | `ghcr.io/managoat/fountain:v0.21.0@sha256:c90f8ceb…` (amd64 and arm64), `public.ecr.aws/docker/library/postgres:16`, the fountain 0.21.0 CLI from its GitHub release in `terragucci-fountain-steward:local` |
 
 Jobs fetch `actions/checkout@v4` from data.forgejo.org and OpenTofu from GitHub releases, so the forgejo profile needs network access. The github and gitlab pipelines run in terragucci's tofu image, built into the local daemon by `bootstrap.sh` when it is missing; they download the AWS provider on every run.

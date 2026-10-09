@@ -26,6 +26,7 @@
  * is the directory inside that repo. The key itself is still read at the
  * base, so a pull request cannot point it at another repo or ref.
  */
+import type { PolicyReview } from "../review-agent";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -261,6 +262,8 @@ export interface PolicyRunContext {
   pullRequest?: string;
   /** The root's and its wave's monthly cost, when `cost` is on: `input.cost`, and with `input: hcp` also `input.run.cost_estimate`. */
   cost?: PolicyCost;
+  /** The review of the merged pull request's head, in a `tf-apply` wave with `review.agent` on: `input.review`. */
+  review?: PolicyReview;
 }
 
 /** One set of monthly figures, in the estimator's currency. Null where the estimator gave none. */
@@ -326,15 +329,16 @@ export function hcpRun(context: PolicyRunContext): Record<string, unknown> {
 /** What the engine reads as `input`: the plan as it is, or `{plan, run}` with `input: hcp`. */
 export function policyInput(policy: PolicySettings, planJson: string, context?: PolicyRunContext): string {
   const cost = context?.cost;
+  const review = context?.review;
   if ((policy.input ?? "plan") !== "hcp") {
-    if (!cost) return planJson;
-    // The plan JSON has no `cost` key of its own: the figures sit beside the plan's keys, where a policy reads `input.cost`.
+    if (!cost && !review) return planJson;
+    // The plan JSON has no `cost` or `review` key of its own: they sit beside the plan's keys, where a policy reads `input.cost` and `input.review`.
     const plan = JSON.parse(planJson) as Record<string, unknown>;
-    return JSON.stringify({ ...plan, cost });
+    return JSON.stringify({ ...plan, ...(cost ? { cost } : {}), ...(review ? { review } : {}) });
   }
   const run = hcpRun(context ?? { root: "" });
   if (cost) run.cost_estimate = hcpCostEstimate(cost);
-  return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}}`;
+  return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}${review ? `,"review":${JSON.stringify(review)}` : ""}}`;
 }
 
 /** The engine's arguments for one input file. */
