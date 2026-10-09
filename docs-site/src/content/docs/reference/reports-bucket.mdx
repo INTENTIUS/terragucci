@@ -21,7 +21,7 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/<project>/migrations/<name>.json` | wave 1 of `tf-apply`, when it runs a [state migration](/terragucci/reference/migration-files/) | the migration's record: each root's state version and digest before and after, never a state's contents |
 | `<prefix>/<project>/states.json` | a `tf-apply` wave's upload | the state version id each root's applies left, newest first; never a state's contents |
 | `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-<n>]/` | every upload | one run's report directory, below |
-| `<prefix>/<project>/runs/<commit>/run.json`, `run.html` | each `tf-apply` wave job | the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view): every wave of the commit's apply, its roots and what they read, and where it stands |
+| `<prefix>/<project>/runs/<commit>/run.json`, `run.html` | each `tf-apply` wave job | the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view): every wave of the commit's apply, its roots and what they read, where it stands, its blast radius and its timeline; `terragucci estate` reads it for the dependency graph |
 | `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
 | `<prefix>/estate.json`, `estate.html` | [`terragucci estate`](/terragucci/guides/see-every-project/) | every project's latest plan, drift check and apply waves |
 | `<prefix>/history.json`, `history.html` | [`terragucci estate`](/terragucci/guides/see-every-project/#change-history) | every resource address with each apply that changed it |

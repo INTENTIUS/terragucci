@@ -1,13 +1,16 @@
 /**
  * Tips as pull requests: each fix a tip names, one small pull request per
  * tip. Pin a provider at the version its lock file holds, add a lock file
- * for the declared platforms, and add a canary wave.
+ * for the declared platforms, and add a canary wave. From a plan's report,
+ * add the moved blocks that make a rename a move.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { CONFIG_NAMES } from "../config";
+import { CONFIG_NAMES, ConfigError } from "../config";
 import { LOCK_FILE, readLock, namesProvider } from "../rollout/lock";
+import type { Report } from "../report/schema";
+import { appendBlocks, declaringFile, movedBlocks, renamesIn, type Rename } from "../tips/moved";
 import type { Proposal } from "./change";
 
 /** The platforms a lock file holds hashes for: the CI images' and the usual workstations'. */
@@ -144,4 +147,51 @@ export function tipProposals(repo: string, roots: string[], binary: string, opts
     }
   }
   return { proposals: out, left };
+}
+
+/** The renames a `stage tf-plan` report's plans show: each root's `plan.json` beside its report.json. */
+export function reportRenames(dir: string): Rename[] {
+  const file = join(dir, "report.json");
+  if (!existsSync(file)) throw new ConfigError(`no report at ${file}; --report names the directory terragucci stage tf-plan wrote`);
+  const report = JSON.parse(readFileSync(file, "utf-8")) as Report;
+  const out: Rename[] = [];
+  for (const root of report.roots) {
+    if (root.status !== "planned" || !root.plan?.json) continue;
+    const plan = join(dir, root.plan.json);
+    if (existsSync(plan)) out.push(...renamesIn(root.path, JSON.parse(readFileSync(plan, "utf-8"))));
+  }
+  return out;
+}
+
+/**
+ * One pull request per root whose plan renames a resource: the moved blocks,
+ * written after the block of each new address. It goes into `base` (the
+ * branch that renamed the resource), or the default branch. `repo`, the
+ * checkout the plan was made from, names the files for a dry run.
+ */
+export function movedProposals(repo: string, renames: readonly Rename[], base?: string): Proposal[] {
+  const byRoot = new Map<string, Rename[]>();
+  for (const r of renames) byRoot.set(r.root, [...(byRoot.get(r.root) ?? []), r]);
+  return [...byRoot].map(([root, rs]): Proposal => {
+    const files = [...new Set(rs.map((r) => posix.join(root, declaringFile(join(repo, root), r.to) ?? "main.tf")))];
+    return {
+      branch: `terragucci/tip/moved-${root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || "root"}`,
+      title: `Move ${rs.length === 1 ? `${rs[0]!.from} to ${rs[0]!.to}` : `${rs.length} renamed resources`} in ${root} instead of replacing ${rs.length === 1 ? "it" : "them"}`,
+      body: `The plan of \`${root}\` destroys and creates each of these with the same configuration, so the blocks were renamed. These moved blocks make the plan move them, and destroy nothing:\n\n${rs.map((r) => `- \`${r.from}\` to \`${r.to}\``).join("\n")}`,
+      files: new Map(),
+      expect: files,
+      ...(base ? { base } : {}),
+      run: (dir) => {
+        const written = new Set<string>();
+        for (const r of rs) {
+          const at = declaringFile(join(dir, root), r.to);
+          if (!at) throw new ConfigError(`${root}: no .tf file on ${base ?? "the default branch"} declares ${r.to}, so the moved block has no resource to move to`);
+          const path = join(dir, root, at);
+          writeFileSync(path, appendBlocks(readFileSync(path, "utf-8"), movedBlocks([r])));
+          written.add(posix.join(root, at));
+        }
+        return [...written];
+      },
+    };
+  });
 }
