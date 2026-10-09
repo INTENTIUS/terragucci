@@ -342,7 +342,7 @@ A webhook that fails or does not answer within 10 seconds leaves a line in the l
 terragucci config check [--config <file>]
 ```
 
-Lists every problem. [The config keys](/terragucci/reference/config/) names the files it reads.
+Lists every problem. [The config keys](/terragucci/reference/config/) names the files it reads. A repo with [migration files](/terragucci/reference/migration-files/) is also a problem when its generated GitHub pipeline has an apply job that may not write `chant/lifecycle`; the message names the jobs and `terragucci init`, which writes the pipeline again.
 
 ```text
 terragucci.yml: ok

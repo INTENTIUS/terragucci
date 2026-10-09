@@ -1360,7 +1360,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f5213e4"
+      "commit": "5f8f330"
     },
     {
       "claim": "migrate-split",
@@ -1368,7 +1368,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f5213e4"
+      "commit": "5f8f330"
     },
     {
       "claim": "dora",
