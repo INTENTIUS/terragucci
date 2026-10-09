@@ -34,6 +34,7 @@
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
+ *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
@@ -52,6 +53,7 @@ import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
 import { approvalStatus } from "./review";
+import { postPlanNoteFromReport } from "./plan-note";
 import { approve, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
@@ -103,6 +105,7 @@ const USAGE = `usage:
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
+  terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
   terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
@@ -144,7 +147,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
     if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
     } else args.push(a);
   }
@@ -492,6 +495,15 @@ export async function main(argv: string[]): Promise<number> {
         const result = jsonFile ? readOutcome(resolve(cwd, jsonFile)) : undefined;
         const report = str(flags, "report");
         for (const line of await notify(waveNotice(event, wave, { ...(outcome ? { outcome } : {}), ...(result ? { result } : {}), reportDir: resolve(cwd, report ?? "terragucci-report") }))) console.log(`terragucci notify: ${line}`);
+        return 0;
+      }
+      case "plan-note": {
+        const forge = str(flags, "forge") ?? "github";
+        if (forge !== "github" && forge !== "forgejo") throw new ConfigError("plan-note's --forge is github or forgejo");
+        const report = str(flags, "report") ?? "terragucci-report";
+        const root = str(flags, "root");
+        const said = await postPlanNoteFromReport({ forge, report: resolve(cwd, report), planResult: str(flags, "plan-result") ?? "", ...(root ? { root } : {}), ...(flags["approval-status"] === true ? { approval: true } : {}) });
+        for (const line of said) console.log(line);
         return 0;
       }
       case "approval-status": {

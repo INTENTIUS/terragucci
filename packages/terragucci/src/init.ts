@@ -349,7 +349,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (settings.gitlab?.token === "protected" && forgeChoice.value === "gitlab") {
     // A pipeline is built from its branch's own files, so any variable that is not protected reaches a merge request's code.
     const token = settings.token_env ?? "GITLAB_TOKEN";
-    notes.push(`gitlab.token is protected: under Settings > CI/CD > Variables, edit ${token} and tick Protect variable and Mask variable, and keep the default branch protected; merge request and branch pipelines then never see the token, the plan job stops if it does, the comments job posts the plan notes, and the check job commits no formatting`);
+    notes.push(`gitlab.token is protected: under Settings > CI/CD > Variables, edit ${token} and tick Protect variable and Mask variable, and keep the default branch protected; merge request and branch pipelines then never see the token, the plan job stops if it does, the comments job posts the plan notes, and no fmt job commits formatting`);
   }
   if (settings.waves?.canary?.length && terragrunt) {
     notes.push("waves.canary is set; the canary units' layers apply first, then the layers of the rest, each wave behind its gate");

@@ -262,6 +262,7 @@ pr-guard|with apply.when: pull-request a pull request that changes the pipeline 
 pr-close-release|with apply.when: pull-request closing a pull request releases the roots it locked|
 tg-lock-fanout|in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none|
 token-scrub|the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set|
+plan-token-free|the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan|
 fork-no-plan|a pull request from a fork runs check and no plan job|
 highlight-sensitive|IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy|
 approval-revoke|removing an approval line from chant/lifecycle makes its wave wait again|
@@ -8145,6 +8146,74 @@ TF
   return $rc
 }
 
+claim_plan_token_free() {
+  # A scratch repo with two roots. A pull request adds to app an external data
+  # source, the change's own code, which looks for a forge token where it
+  # runs: the forge token variables in its environment and in each parent
+  # process's, by name, and a credential in the checkout's git config. It
+  # prints only the names it found and fails the plan when it finds one. The
+  # pull request's run and a /terragucci plan re-plan must both go green, and
+  # the plan-note job must post the plan note and terragucci/plan success.
+  # BREAK: the pushed workflow gives the plan job TG_TOKEN and its plan step
+  # keeps the runner's token variables, as the plan job did before, so the
+  # probe finds the token and the plan fails.
+  log() { echo "[smoke plan-token-free] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/plan-token-free" wf head pr n rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  two_root_repo plan-token-free || return 1
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then
+    grep -v 'TG_NO_FORGE_TOKEN=1 bash' "$wf" | awk '
+      /^  plan:$/ { inplan = 1 } /^  [a-z-]+:$/ && !/^  plan:$/ { inplan = 0 }
+      { print } inplan && /^    env:$/ && !done { print "      TG_TOKEN: ${{ github.token }}"; done = 1 }' > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'TG_TOKEN: \${{ github.token }}' "$wf" || { log "could not give the plan job TG_TOKEN"; return 1; }
+    MAIN_SHA="$(push_tree "$work/tree" "$repo" main "plan-token-free: the plan job holds the token")" || return 1
+    wait_run "$repo" "$MAIN_SHA" || return 1
+  fi
+  git -C "$work/tree" checkout -q -B probe
+  cat > "$work/tree/app/probe.sh" <<'SH'
+#!/bin/sh
+# Names only: which forge token variables and git credentials this process can reach.
+found=""
+names="TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN GITEA_TOKEN FORGEJO_TOKEN ACTIONS_RUNTIME_TOKEN"
+for v in $names; do
+  eval "x=\${$v:-}"
+  [ -z "$x" ] || found="$found env:$v"
+done
+p="$PPID"
+while [ -n "$p" ] && [ "$p" -gt 1 ] && [ -r "/proc/$p/environ" ]; do
+  for v in $names; do
+    tr '\0' '\n' < "/proc/$p/environ" | grep -q "^$v=." && found="$found parent:$v"
+  done
+  p="$(awk '/^PPid:/ { print $2 }' "/proc/$p/status")"
+done
+git -C "$1" config --get-regexp '^http\..*extraheader$' >/dev/null 2>&1 && found="$found git-config:extraheader"
+git -C "$1" remote get-url origin 2>/dev/null | grep -q '://[^/@]*@' && found="$found git-config:remote"
+if [ -n "$found" ]; then echo "token-probe: reachable:$found" >&2; exit 1; fi
+echo '{"probe":"clean"}'
+SH
+  chmod +x "$work/tree/app/probe.sh"
+  # shellcheck disable=SC2016 # HCL interpolation
+  printf 'terraform {\n  required_providers {\n    external = {\n      source  = "hashicorp/external"\n      version = "~> 2.3"\n    }\n  }\n}\n\ndata "external" "probe" {\n  program = ["sh", "${path.module}/probe.sh", abspath(path.root)]\n}\n\nresource "terraform_data" "probe" {\n  input = data.external.probe.result\n}\n' > "$work/tree/app/probe.tf"
+  head="$(push_tree "$work/tree" "$repo" probe "plan-token-free: the change's code looks for a token")" || return 1
+  pr="$(pr_open "$repo" probe "plan-token-free: probe")" || return 1
+  wait_run "$repo" "$head" pull_request || return 1
+  [ "$RUN_STATUS" = success ] || { log "the pull request's run ended '$RUN_STATUS'"; run_logs "$repo" "$RUN_ID" | grep -E 'token-probe|terragucci' | tail -20 >&2; rc=1; }
+  [ "$(api "$URL/api/v1/repos/$repo/commits/$head/statuses?limit=100" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // empty')" = success ] || { log "terragucci/plan on ${head:0:8} is not success"; rc=1; }
+  n="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=100" | jq '[.[] | select(.body | startswith("<!-- terragucci:plan roots="))] | length')"
+  [ "$n" = 1 ] || { log "pull request $pr has $n plan notes; expected 1"; rc=1; }
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"body":"/terragucci plan"}' "$URL/api/v1/repos/$repo/issues/$pr/comments" || return 1
+    wait_run "$repo" "$MAIN_SHA" issue_comment || return 1
+    [ "$RUN_STATUS" = success ] || { log "the re-plan's run ended '$RUN_STATUS'"; run_logs "$repo" "$RUN_ID" | grep -E 'token-probe|terragucci' | tail -20 >&2; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the plan and the re-plan ran the change's code with no forge token in reach, and the note jobs posted the note and terragucci/plan"
+  return $rc
+}
+
 # Forgejo has no API to approve the held run of a fork pull request; a
 # maintainer does it on the pull request page, which posts trust=once to
 # /<repo>/pulls/<n>/action-user-trust. This signs in as the admin, with the
@@ -10438,6 +10507,7 @@ pr-guard             runner self! weight=300
 pr-close-release     runner self! weight=200
 tg-lock-fanout       runner self! weight=200
 token-scrub          weight=60
+plan-token-free      runner self! weight=250
 fork-no-plan         runner self! weight=250
 highlight-sensitive  weight=90
 approval-revoke      runner self! weight=250
