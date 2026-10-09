@@ -44,8 +44,8 @@ writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
 
 // The JSON Schemas of what terragucci writes, published so a reader can validate
-// terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1, terragucci.audit/v1, terragucci.inventory/v1, terragucci.changes/v1, terragucci.history/v1, terragucci.dora/v1, terragucci.state-versions/v1 and terragucci.run/v1.
-for (const f of ["report.schema.json", "report-index.schema.json", "estate.schema.json", "audit.schema.json", "inventory.schema.json", "changes.schema.json", "history.schema.json", "dora.schema.json", "state-versions.schema.json", "run.schema.json"]) {
+// terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1, terragucci.audit/v1, terragucci.inventory/v1, terragucci.changes/v1, terragucci.history/v1, terragucci.dora/v1, terragucci.state-versions/v1, terragucci.run/v1 and terragucci.state-edges/v1.
+for (const f of ["report.schema.json", "report-index.schema.json", "estate.schema.json", "audit.schema.json", "inventory.schema.json", "changes.schema.json", "history.schema.json", "dora.schema.json", "state-versions.schema.json", "run.schema.json", "state-edges.schema.json"]) {
   copyFileSync(join(pkg, "src/report", f), join(stage, f));
 }
 // The generic webhook's event, terragucci.notify/v1, for a receiver to validate.

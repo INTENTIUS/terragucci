@@ -847,7 +847,12 @@ gitlab_claim_estate_job() {
     snippet="$(awk '/^  id_tokens:$/ { skip = 1; next } skip && /^    / { next } { skip = 0; print }' <<<"$snippet")"
     grep -q id_tokens <<<"$snippet" && { log "could not cut id_tokens"; drop_work "$work"; return 1; }
   fi
-  printf '\n%s\n' "$snippet" >> "$work/tree/.gitlab-ci.yml"
+  # The page's steps: the job in a file of its own, named by own_jobs, and init again.
+  mkdir -p "$work/tree/ci"
+  printf '%s\n' "$snippet" > "$work/tree/ci/own-jobs.yml"
+  printf 'own_jobs: ci/own-jobs.yml\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init with own_jobs failed"; drop_work "$work"; return 1; }
+  grep -q '^explain-refusal:$' "$work/tree/.gitlab/terragucci.yml" || { log "init did not write the job into the pipeline"; drop_work "$work"; return 1; }
   gl_planned_mr "$work/tree" "$project" "smoke estate-job" || rc=1
   [ $rc = 1 ] || gl_report_landed "$project" "$(git -C "$work/tree" rev-parse HEAD)" || rc=1
   if [ $rc = 0 ]; then
@@ -874,8 +879,8 @@ gitlab_claim_estate_job() {
 
 gitlab_claim_explain_refusal() {
   # Two roots, a (the canary, wave 1) and b (wave 2), and the explain-refusal
-  # job of agent-refused-wave's GitLab tab pasted as it is into
-  # .gitlab-ci.yml, with a stand-in for Claude Code ahead of it on the PATH:
+  # job of agent-refused-wave's GitLab tab in ci/own-jobs.yml, which own_jobs
+  # names and init writes into the pipeline, with a stand-in for Claude Code ahead of it on the PATH:
   # it reads refusal.json and prints the roots in it. A change replaces b's
   # resource, so wave 2 waits; smoke-approver approves it; another change
   # moves b's plan, and wave 2 is refused. The job runs after the refusal,

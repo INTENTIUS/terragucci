@@ -6,7 +6,7 @@ import { ConfigError, validateConfig } from "../src/config";
 import { init as initRepo } from "../src/init";
 import { renderNote } from "../src/report/views";
 import { runStage } from "../src/report/stage";
-import { readSteps, runSteps, stepName, stepsAt, STEPS_NOT_TERRAGRUNT } from "../src/steps";
+import { readSteps, runSteps, runUnitSteps, stepName, stepsAt, STEPS_AFTER_INIT_TERRAGRUNT, terragruntStepsRefusal } from "../src/steps";
 import { git, tmp, write } from "./helpers";
 
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
@@ -270,13 +270,39 @@ describe("a wave with steps", () => {
 });
 
 describe("init with steps and image", () => {
-  it("writes the image terragucci.yml names into every job, and refuses steps in a Terragrunt repo", async () => {
+  it("writes the image terragucci.yml names into every job; in a Terragrunt repo it takes steps and refuses only after: init", async () => {
     const repo = write(tmp(), { "app/main.tf": 'terraform {\n  backend "local" {}\n}\n', "terragucci.yml": "forge: github\nimage: registry.example.com/infra/tg:1\n" });
     const r = await initRepo(repo, { dryRun: true });
     const wf = r.files.find((f) => f.path.endsWith("terragucci.yml") && f.path.includes(".github"))!.content;
     expect(wf).toContain("# Every job runs in registry.example.com/infra/tg:1, the image terragucci.yml names.");
     expect(wf).not.toContain("ghcr.io/intentius/terragucci-");
     const tg = write(tmp(), { "root.hcl": "", "app/terragrunt.hcl": "", "terragucci.yml": "forge: github\nsteps:\n  - run: x\n    before: plan\n" });
-    await expect(initRepo(tg, { dryRun: true })).rejects.toThrow(STEPS_NOT_TERRAGRUNT);
+    await expect(initRepo(tg, { dryRun: true, terragrunt: "/nonexistent/terragrunt" })).resolves.toBeDefined();
+    const late = write(tmp(), { "root.hcl": "", "app/terragrunt.hcl": "", "terragucci.yml": "forge: github\nsteps:\n  - name: late\n    run: x\n    after: init\n" });
+    await expect(initRepo(late, { dryRun: true, terragrunt: "/nonexistent/terragrunt" })).rejects.toThrow(`steps late: ${STEPS_AFTER_INIT_TERRAGRUNT}`);
+  });
+});
+
+describe("steps around a Terragrunt wave's run --all", () => {
+  it("refuses only after: init, naming the steps", () => {
+    expect(terragruntStepsRefusal(undefined)).toBeUndefined();
+    expect(terragruntStepsRefusal([{ run: "x", before: "init" }, { run: "y", after: "plan" }, { run: "z", before: "apply" }])).toBeUndefined();
+    expect(terragruntStepsRefusal([{ name: "a", run: "x", after: "init" }, { run: "echo b", after: "init" }])).toBe(`steps a, echo b: ${STEPS_AFTER_INIT_TERRAGRUNT}`);
+  });
+
+  it("runs a moment once per unit its globs match, in the unit's directory, with the unit's saved plan", async () => {
+    const repo = write(tmp(), { "live/a/terragrunt.hcl": "", "live/b/terragrunt.hcl": "", "other/c/terragrunt.hcl": "" });
+    const lines: string[] = [];
+    const steps = [
+      { name: "where", run: 'echo "$TG_ROOT $(basename "$PWD") $TG_PLAN_FILE"', after: "plan" as const, roots: ["live/*"] },
+      { name: "held", run: "exit 2", after: "plan" as const, roots: ["live/b"], on_failure: "approve" as const },
+    ];
+    const out = await runUnitSteps(steps, "after-plan", ["live/a", "live/b", "other/c"], { repo, stage: "tf-apply", env: {}, log: (l) => lines.push(l), planFile: (u) => `/plans/${u}/tfplan.tfplan` });
+    expect([...out.keys()]).toEqual(["live/a", "live/b"]);
+    expect(lines).toContain("live/a: after-plan where: live/a a /plans/live/a/tfplan.tfplan");
+    expect(lines).toContain("live/b: after-plan where: live/b b /plans/live/b/tfplan.tfplan");
+    expect(out.get("live/a")!.holds).toEqual([]);
+    expect(out.get("live/b")!.holds).toEqual(["held"]);
+    expect(out.get("live/b")!.error).toBeUndefined();
   });
 });

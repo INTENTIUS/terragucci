@@ -937,6 +937,16 @@ describe("publish job", () => {
     for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("COSIGN");
   });
 
+  it.each(["github", "forgejo"] as const)("%s: with modules.registry in a bucket, the publish job alone gets the bucket's key secrets", (forge) => {
+    expect(JSON.stringify(body(withPublish(forge)).jobs.publish)).not.toContain("AWS_ACCESS_KEY_ID");
+    const jobs = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, publishBucket: "s3://acme-modules" }).content).jobs;
+    expect(jobs.publish.env.AWS_ACCESS_KEY_ID).toBe("${{ secrets.AWS_ACCESS_KEY_ID }}");
+    expect(jobs.publish.env.AWS_SECRET_ACCESS_KEY).toBe("${{ secrets.AWS_SECRET_ACCESS_KEY }}");
+    const azure = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, publishBucket: "az://acmemods/modules" }).content).jobs;
+    expect(azure.publish.env.AZURE_STORAGE_KEY).toBe("${{ secrets.AZURE_STORAGE_KEY }}");
+    for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("AWS_ACCESS_KEY_ID");
+  });
+
   it("gitlab: a publish job after apply, on the default branch, with full history", () => {
     const doc = body(withPublish("gitlab"));
     expect(doc.publish.needs).toEqual(["apply-wave-2"]);
@@ -1629,6 +1639,88 @@ describe("a GitHub wave whose push is no longer the branch tip", () => {
   });
 });
 
+describe("own_jobs", () => {
+  // The explain-refusal job of each tab of the agent-refused-wave guide, as its own-jobs file.
+  const guide = readFileSync(join(__dirname, "../../../docs-site/src/content/docs/guides/agent-refused-wave.mdx"), "utf-8");
+  const tab = (label: string): string => {
+    const from = guide.indexOf(`<TabItem label="${label}">`);
+    const block = guide.slice(guide.indexOf("```yaml", from) + "```yaml".length, guide.indexOf("```\n", guide.indexOf("```yaml", from) + 7));
+    const lines = block.split("\n").filter((l) => l.trim() !== "");
+    const cut = Math.min(...lines.map((l) => l.match(/^ */)![0].length));
+    return lines.map((l) => l.slice(cut)).join("\n") + "\n";
+  };
+
+  it.each([["github", "GitHub"], ["forgejo", "Forgejo"], ["gitlab", "GitLab"]] as const)("%s: the guide's explain-refusal job goes into the pipeline with every key and value it has, after terragucci's jobs", (forge, label) => {
+    const own = parseYAML(tab(label)) as Record<string, Record<string, unknown>>;
+    expect(Object.keys(own)).toEqual(["explain-refusal"]);
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ownJobs: own }).content;
+    const doc = body(text);
+    const jobs = forge === "gitlab" ? doc : doc.jobs;
+    expect(jobs["explain-refusal"]).toEqual(own["explain-refusal"]);
+    expect(Object.keys(jobs).at(-1)).toBe("explain-refusal");
+    // Without own_jobs the pipeline is the one it was.
+    expect(text.startsWith(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {} }).content)).toBe(true);
+  });
+
+  it("refuses a name terragucci gives a job, and on GitLab a keyword", () => {
+    expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ownJobs: { "apply-wave-1": { "runs-on": "x" } } })).toThrow("own_jobs.apply-wave-1: terragucci writes a job of that name");
+    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ownJobs: { stages: { script: ["x"] } } })).toThrow("own_jobs.stages: GitLab reads stages as a keyword");
+    expect(validateConfig({ own_jobs: "ci/own-jobs.yml" }, "t")).toEqual({ own_jobs: "ci/own-jobs.yml" });
+    expect(() => validateConfig({ own_jobs: "../jobs.yml" }, "t")).toThrow("config.own_jobs must be a map of job name to job, or the path of a .yml file in the repo");
+    expect(() => validateConfig({ own_jobs: { "bad name": { x: 1 } } }, "t")).toThrow('config.own_jobs: "bad name" is not a job name');
+    expect(() => validateConfig({ own_jobs: { ok: "text" } }, "t")).toThrow("config.own_jobs.ok must be a job");
+  });
+});
+
+describe("apply.branches", () => {
+  const branches = { release: ["prod/*"] };
+  const tree = [["dev/net", "prod/net"], ["dev/app", "prod/app"]];
+  const pipeline = (forge: ForgeName, extra: Record<string, unknown> = {}) =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: tree, env: {}, applyBranches: branches, ...extra } as never).content;
+
+  it.each(["github", "forgejo"] as const)("%s: the waves run on the default branch and on release, each passing the map and the branch it runs on", (forge) => {
+    const doc = body(pipeline(forge));
+    for (const j of ["apply-wave-1", "apply-wave-2"]) {
+      expect(doc.jobs[j].if).toBe("(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.ref == 'refs/heads/release')");
+      const run = doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+      expect(run).toContain(`--branches 'release=prod/*' --branch "$GITHUB_REF_NAME"`);
+    }
+    // The apply a comment starts is of a merge into the default branch: it passes the map, and no branch.
+    const comment = doc.jobs["apply-comment"].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+    expect(comment).toContain("--branches 'release=prod/*'");
+    expect(comment).not.toContain("--branch ");
+    // Tips, publish and the like stay on the default branch.
+    expect(doc.jobs.check.if).toBe("github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)");
+  });
+
+  it("on GitLab the apply jobs run on release too, and read the branch from CI_COMMIT_BRANCH", () => {
+    const doc = body(pipeline("gitlab"));
+    expect(doc["apply-wave-1"].rules).toEqual([{ if: '($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH == "release")' }]);
+    expect(JSON.stringify(doc["apply-wave-2"].script)).toContain(`--branches 'release=prod/*' --branch \\"$CI_COMMIT_BRANCH\\"`);
+  });
+
+  it("renders as before without the map, and is refused in a Terragrunt repo and with apply.when: pull-request", () => {
+    for (const forge of FORGES) {
+      expect(pipeline(forge, { applyBranches: undefined })).not.toContain("--branches");
+      expect(pipeline(forge, { applyBranches: {} })).toBe(pipeline(forge, { applyBranches: undefined }));
+    }
+    expect(() => pipeline("forgejo", { terragrunt: { installs: [] } })).toThrow(/apply\.branches: a Terragrunt wave/);
+    expect(() => pipeline("forgejo", { applyWhen: "pull-request" })).toThrow(/apply\.branches: apply\.when: pull-request/);
+  });
+
+  it("is checked by config check", () => {
+    expect(validateConfig({ apply: { branches: { release: ["envs/prod/*"], "env/dr": ["envs/dr/*"] } } }, "t")).toEqual({ apply: { branches: { release: ["envs/prod/*"], "env/dr": ["envs/dr/*"] } } });
+    expect(() => validateConfig({ apply: { branches: [] } }, "t")).toThrow("config.apply.branches must map branch names to lists of root globs");
+    expect(() => validateConfig({ apply: { branches: { release: [] } } }, "t")).toThrow("config.apply.branches.release must be a list of root globs");
+    expect(() => validateConfig({ apply: { branches: { "rel ease": ["a"] } } }, "t")).toThrow("is not a branch name terragucci takes");
+    expect(() => validateConfig({ apply: { branches: { "a/../b": ["a"] } } }, "t")).toThrow("is not a branch name terragucci takes");
+    expect(() => validateConfig({ apply: { branches: { release: ["a,b"] } } }, "t")).toThrow("must be a list of root globs");
+    expect(() => validateConfig({ apply: { branches: { release: ["envs/prod/*"], hotfix: ["envs/prod/*"] } } }, "t")).toThrow("envs/prod/* is under both release and hotfix");
+    expect(() => validateConfig({ apply: { when: "pull-request", branches: { release: ["a"] } } }, "t")).toThrow("config.apply.branches: apply.when: pull-request");
+    expect(() => validateConfig({ terragrunt: { version: "0.99.1" }, apply: { branches: { release: ["a"] } } }, "t")).toThrow("config.apply.branches: a Terragrunt wave");
+  });
+});
+
 describe("a wave split across jobs (waves.jobs)", () => {
   const wide = [["net"], ["a", "b", "c", "d", "e"]];
   const pipeline = (forge: ForgeName, extra: Record<string, unknown> = {}) =>
@@ -1687,15 +1779,37 @@ describe("a wave split across jobs (waves.jobs)", () => {
     expect(doc.jobs["apply-wave-2"].needs).toEqual(["apply-wave-1-share-1", "apply-wave-1-share-2"]);
   });
 
-  it("is refused on GitLab, in a Terragrunt repo and with apply.when: pull-request, by config check and by init", () => {
+  it.each(["github", "forgejo"] as const)("%s: a Terragrunt wave splits the same way, and a job after the last wave's shares runs any later wave with --rest", (forge) => {
+    const tg = { version: "0.99.0", parallelism: 4, exclude: [], installs: [] };
+    const doc = pipeline(forge, { layers: [["live/net"], ["live/a", "live/b", "live/c"]], terragrunt: tg });
+    const names = Object.keys(doc.jobs).filter((j) => /^apply-(wave|done|rest)/.test(j));
+    expect(names).toEqual(["apply-wave-1", "apply-wave-2", "apply-wave-2-share-1", "apply-wave-2-share-2", "apply-rest"]);
+    const step = (j: string): string => doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+    expect(step("apply-wave-1")).not.toContain("--rest");
+    expect(step("apply-wave-1")).not.toContain("--shares");
+    expect(step("apply-wave-2")).toContain("--terragrunt --shares 2");
+    expect(step("apply-wave-2")).not.toContain("--rest");
+    expect(step("apply-wave-2-share-1")).toContain("--terragrunt --shares 2 --share 1");
+    // The job after the shares applies like a wave's: credentials, caches and the stage with --rest from the wave past the pipeline's.
+    expect(doc.jobs["apply-rest"].needs).toEqual(["apply-wave-2-share-1", "apply-wave-2-share-2"]);
+    expect(step("apply-rest")).toContain("terragucci stage tf-apply --wave 3 --layers 'live/net;live/a,live/b,live/c' --binary tofu --gate on-destroy --terragrunt --rest");
+    expect(step("apply-rest")).toContain('tg status terragucci/apply success "every wave of units applied"');
+    expect(step("apply-rest")).toContain('hold_ref="${hold_prefix}apply-rest"');
+    // A Terragrunt wave that is not the last keeps --rest on the last wave's job.
+    const early = pipeline(forge, { layers: [["live/a", "live/b", "live/c"], ["live/z"]], terragrunt: tg });
+    expect(Object.keys(early.jobs).filter((j) => /^apply-(wave|done|rest)/.test(j))).toEqual(["apply-wave-1", "apply-wave-1-share-1", "apply-wave-1-share-2", "apply-wave-2"]);
+    expect(early.jobs["apply-wave-2"].steps.map((x: { run?: string }) => x.run ?? "").join("\n")).toContain("--terragrunt --rest");
+  });
+
+  it("is refused on GitLab and with apply.when: pull-request, by config check and by init", () => {
     expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2 })).toThrow(/waves\.jobs: a wave splits across jobs on GitHub and Forgejo/);
     expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, applyWhen: "pull-request" })).toThrow(/waves\.jobs: apply\.when: pull-request/);
-    expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, terragrunt: { installs: [] } as never })).toThrow(/waves\.jobs: a Terragrunt wave/);
     expect(() => validateConfig({ waves: { jobs: 0 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
     expect(() => validateConfig({ waves: { jobs: 1.5 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
     expect(() => validateConfig({ forge: "gitlab", waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: a wave splits across jobs on GitHub and Forgejo");
     expect(() => validateConfig({ apply: { when: "pull-request" }, waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: apply.when: pull-request");
-    expect(() => validateConfig({ terragrunt: { version: "0.99.1" }, waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: a Terragrunt wave");
+    expect(validateConfig({ terragrunt: { version: "1.1.6" }, waves: { jobs: 3 } }, "t")).toEqual({ terragrunt: { version: "1.1.6" }, waves: { jobs: 3 } });
+    expect(() => validateConfig({ terragrunt: { version: "1.1.6" }, roots: ["live/*"] }, "t")).toThrow("config.roots: a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude");
     expect(validateConfig({ waves: { jobs: 3, canary: ["dev/*"] } }, "t")).toEqual({ waves: { jobs: 3, canary: ["dev/*"] } });
   });
 
@@ -2452,6 +2566,10 @@ describe("no forge token where the change's code runs", () => {
     expect(doc.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply");
     expect(JSON.stringify(doc.jobs.check)).not.toContain("respond fmt");
     expect(body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, respond: { fmt: "off" } }).content).jobs.fmt).toBeUndefined();
+    // A Terragrunt repo gets the job too: respond fmt runs terragrunt hcl fmt beside the binary's.
+    const tg = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/a"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [{ tool: "terragrunt", version: "0.99.0" }] } }).content);
+    expect(tg.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply --binary tofu");
+    expect(tg.jobs.fmt.steps.map((x: { name?: string }) => x.name)).toContain("Install terragrunt 0.99.0");
   });
 
   it("the step that runs the change's code starts again without the runner's token variables, and keeps the OIDC ones", async () => {

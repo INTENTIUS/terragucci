@@ -14,6 +14,11 @@
  * wave waits for an approval of its set digest whatever `gate` says, through
  * the same ledger as every other wave (apply.ts).
  *
+ * In a Terragrunt repo a wave plans and applies its units with one
+ * `run --all` each, so a moment comes once for the wave and each step runs
+ * in every unit its `roots` globs match (runUnitSteps). `after: init` is
+ * refused there: Terragrunt inits each unit inside the plan.
+ *
  * The steps are read from terragucci.yml at base, never from the change
  * being planned or applied: a pull request's plan reads the target branch's
  * file, a pull request applied before it merges reads the base it names, and
@@ -167,8 +172,41 @@ export async function runSteps(steps: readonly StepSettings[], when: StepWhen, c
   return out;
 }
 
-/** Why steps are refused in a Terragrunt repo. */
-export const STEPS_NOT_TERRAGRUNT = "steps run around a root's own init, plan and apply, and a Terragrunt repo runs its units with run --all; use Terragrunt's before_hook and after_hook in terragrunt.hcl, and remove steps";
+/**
+ * Why `after: init` is refused in a Terragrunt repo: Terragrunt inits each
+ * unit inside the wave's `run --all plan`, so nothing runs between a unit's
+ * init and its plan. Every other moment runs (runUnitSteps).
+ */
+export const STEPS_AFTER_INIT_TERRAGRUNT =
+  "a Terragrunt repo inits each unit inside the wave's run --all plan, so no step can run between a unit's init and its plan; use before: plan instead of after: init";
+
+/** The refusal for a Terragrunt repo's steps, or undefined when every step can run. */
+export function terragruntStepsRefusal(steps: readonly StepSettings[] | undefined): string | undefined {
+  const late = (steps ?? []).filter((s) => s.after === "init").map(stepName);
+  return late.length ? `steps ${late.join(", ")}: ${STEPS_AFTER_INIT_TERRAGRUNT}` : undefined;
+}
+
+/**
+ * One moment's steps for the units of a Terragrunt wave, which plans or
+ * applies with one `run --all`: the moment comes once for the whole wave, and
+ * each step runs in the directory of every unit its `roots` globs match, unit
+ * by unit in wave order. `planFile` gives a unit's saved plan, after a plan
+ * and before an apply. The outcome of each unit with a step at this moment.
+ */
+export async function runUnitSteps(
+  steps: readonly StepSettings[],
+  when: StepWhen,
+  units: readonly string[],
+  ctx: Omit<StepContext, "root" | "planFile"> & { planFile?: (unit: string) => string | undefined },
+): Promise<Map<string, StepsOutcome>> {
+  const out = new Map<string, StepsOutcome>();
+  for (const unit of units) {
+    if (stepsAt(steps, when, unit).length === 0) continue;
+    const planFile = ctx.planFile?.(unit);
+    out.set(unit, await runSteps(steps, when, { repo: ctx.repo, root: unit, stage: ctx.stage, env: ctx.env, log: ctx.log, ...(planFile ? { planFile } : {}) }));
+  }
+  return out;
+}
 
 /** The steps a stage of a given kind ever runs (`plan` steps do not run in drift, `drift` steps only there). */
 export function stepsUsed(steps: readonly StepSettings[], stage: StepContext["stage"]): StepSettings[] {

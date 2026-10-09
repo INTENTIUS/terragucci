@@ -1,7 +1,7 @@
 ---
 title: Run steps around a stage
 description: Run your own commands before and after each root's init, plan, apply and drift, hold a wave for an approval when one fails, and run the jobs in your own image.
-claims: [steps-before-plan, steps-stop, steps-gate]
+claims: [steps-before-plan, steps-stop, steps-gate, tg-steps-gate]
 prompt: |
   Read https://intentius.io/terragucci/guides/run-steps/.
   Propose the steps block for terragucci.yml that runs my repo's checks before each plan, with on_failure: approve on any check that should hold a wave for a person rather than fail it.
@@ -29,7 +29,6 @@ Your commands run inside the job that plans, applies or checks drift, around eac
 | You need | Why |
 |---|---|
 | The [pipeline](/terragucci/getting-started/) | the stages run the steps |
-| Plain roots | a Terragrunt repo runs its units with one `run --all`; use Terragrunt's `before_hook` and `after_hook` there, and `init` refuses `steps` |
 | Whatever your commands call, in the job's image | the steps run in the job's container; [your own image](#run-the-jobs-in-your-own-image) can carry it |
 
 ## Steps
@@ -90,6 +89,19 @@ Each step gets the job's environment less its forge tokens, as the binary does, 
 | `TG_PLAN_FILE` | after a plan and before an apply: the saved plan, which `tofu show -json "$TG_PLAN_FILE"` reads |
 
 A step's output goes to the job log, each line after the root and the step's name. The report keeps its name, moment, result, exit code and time, never its output.
+
+## In a Terragrunt repo
+
+A wave of units plans with one `run --all` and applies with another, so each moment comes once for the wave. Each step then runs in the directory of every unit its `roots` globs match, unit by unit, with `TG_ROOT` set to the unit:
+
+| Moment | Runs |
+|---|---|
+| `before-init`, `before-plan` | before the wave's `run --all plan`; on a pull request's plan a unit whose step fails is refused and the rest plan |
+| `after-plan` | after it, with `TG_PLAN_FILE` the unit's saved plan; `on_failure: approve` holds the wave at its gate |
+| `before-apply`, `after-apply` | around the `run --all apply`, for the units that change |
+| `before-drift`, `after-drift` | around the drift job's refresh-only `run --all` |
+
+`after: init` is refused: Terragrunt inits each unit inside the `run --all plan`, so no command can run between a unit's init and its plan. Use `before: plan`. On an apply wave a step that fails fails the wave, and nothing in it applies; one after the apply fails the job though the units applied. A provisional preview of dependents runs no steps.
 
 ## When a step fails
 
