@@ -89,7 +89,7 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
+import { APPROVALS, BRANCHES_NOT_TERRAGRUNT, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
 import { globMatch, remoteStateReads, rootDependencies } from "./detect";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import { wavesOf } from "./planned-outputs";
@@ -146,6 +146,45 @@ export function applyWaves(layers: string[][], canary: readonly string[] = []): 
   const first = layers.map((l) => l.filter(isCanary));
   const rest = layers.map((l) => l.filter((r) => !isCanary(r)));
   return [...first, ...rest].filter((l) => l.length > 0);
+}
+
+/**
+ * `apply.branches` as the pipeline passes it: `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`.
+ */
+export function parseBranches(spec: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const part of spec.split(";").filter(Boolean)) {
+    const eq = part.indexOf("=");
+    const globs = eq > 0 ? part.slice(eq + 1).split(",").filter(Boolean) : [];
+    if (eq <= 0 || globs.length === 0) throw new ConfigError(`--branches takes <branch>=<glob>[,<glob>...][;...], not ${JSON.stringify(part)}`);
+    out[part.slice(0, eq)] = globs;
+  }
+  return out;
+}
+
+/** `apply.branches` for `--branches`. */
+export const branchesArg = (branches: Record<string, string[]>): string =>
+  Object.entries(branches).map(([b, globs]) => `${b}=${globs.join(",")}`).join(";");
+
+/**
+ * The layers a push to `branch` applies under `apply.branches`: on a branch
+ * the map names, only the roots its globs match; anywhere else (the default
+ * branch, and a comment's apply of a merge into it), every root but those
+ * any branch's globs match. Empty layers drop out of the waves.
+ */
+export function branchLayers(layers: string[][], branches: Record<string, string[]>, branch?: string): { layers: string[][]; note: string } {
+  const own = branch !== undefined ? branches[branch] : undefined;
+  const mapped = Object.values(branches).flat();
+  const keep = own
+    ? (r: string): boolean => own.some((g) => globMatch(g, r))
+    : (r: string): boolean => !mapped.some((g) => globMatch(g, r));
+  const out = layers.map((l) => l.filter(keep));
+  const kept = out.flat();
+  const left = layers.flat().filter((r) => !kept.includes(r));
+  const note = own
+    ? `apply.branches: ${branch} applies ${kept.length ? kept.join(", ") : "none of this repo's roots"}`
+    : `apply.branches: ${left.length ? `${left.join(", ")} ${left.length === 1 ? "applies" : "apply"} from ${[...new Set(left.map((r) => Object.keys(branches).find((b) => branches[b].some((g) => globMatch(g, r)))))].join(", ")}, not here` : "no root here is another branch's"}`;
+  return { layers: out, note };
 }
 
 /**
@@ -669,10 +708,24 @@ export interface ApplyWaveOptions {
   installer?: Installer;
   /** Runs the cost estimator, with `cost` set; tests pass one. */
   costRunner?: CostRunner;
+  /** `apply.branches`: the roots another branch applies. With it the layers are cut to the branch's (branchLayers). */
+  branches?: Record<string, string[]>;
+  /** The branch the push applies; unset means the default branch. */
+  branch?: string;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
 export async function applyWave(repo: string, options: ApplyWaveOptions): Promise<number> {
+  if (options.branches && Object.keys(options.branches).length > 0) {
+    if (options.terragrunt) throw new ConfigError(`--branches: ${BRANCHES_NOT_TERRAGRUNT}`);
+    const cut = branchLayers(options.layers, options.branches, options.branch || undefined);
+    console.log(`wave ${options.wave}: ${cut.note}`);
+    if (cut.layers.flat().length === 0) {
+      console.log(`wave ${options.wave}: no root applies from ${options.branch || "this branch"}, so there is nothing to apply`);
+      return EXIT.applied;
+    }
+    options = { ...options, layers: cut.layers, branches: undefined };
+  }
   if (!options.rest) return (await applyOneWave(repo, options)).code;
   if (!options.terragrunt) throw new ConfigError("--rest runs the waves of a Terragrunt repo, so it needs --terragrunt");
   for (let k = options.wave; ; k++) {

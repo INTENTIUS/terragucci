@@ -328,6 +328,7 @@ cdktn-affected|with synth set a pull request that changes one CDK Terrain stack 
 cdktn-apply|with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is|
 cdktn-tips|with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out|
 cdktn-refused|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
+apply-branches|with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved|
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
@@ -657,6 +658,69 @@ claim_waves() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
+  return $rc
+}
+
+claim_apply_branches() {
+  # The gated-waves fixture with apply.branches: {release: ["canary/*"]}.
+  # Push main: its wave 1 is fleet/*, which waits; canary/one is release's.
+  # Approve it and push main again: fleet/* applies and canary/one has no
+  # state. Push the same tree to release: its wave 1 is canary/one alone,
+  # which waits at the same gate. Approve it and push release again:
+  # canary/one applies.
+  # BREAK: the pushed pipeline loses --branches and --branch, so the map is
+  # ignored: main's wave 1 is canary/one, which applies from main.
+  log() { echo "[smoke apply-branches] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/apply-branches" wf sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo apply-branches || { drop_work "$work"; return 1; }
+  printf 'apply:\n  branches:\n    release: ["canary/*"]\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "github.ref == 'refs/heads/release'" "$wf" || { log "the apply jobs do not run on release"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -e "s# --branch \"\$GITHUB_REF_NAME\"##g" -e "s# --branches 'release=canary/\*'##g" "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    ! grep -q -- "--branches" "$wf" || { log "BREAK left --branches in the pipeline"; drop_work "$work"; return 1; }
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "apply-branches: main")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  if [ $rc = 0 ]; then
+    applied="$(gated_applied apply-branches)"
+    log "main, first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a root applied before wave 1 was approved"; rc=1; }
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve apply-branches 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "apply-branches: main, wave 1 approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(gated_applied apply-branches)"
+    log "main, after the approval: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "fleet/five fleet/four fleet/three fleet/two " ] || { log "expected the fleet roots alone to apply from main"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" release "apply-branches: release")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(gated_applied apply-branches)"
+    log "release, first push: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "fleet/five fleet/four fleet/three fleet/two " ] || { log "canary/one applied from release before its wave was approved"; rc=1; }
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -q "apply.branches: release applies canary/one" <<<"$logs" || { log "release's wave did not say it applies canary/one alone"; rc=1; }
+    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "release's wave 1 did not wait for its approval"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve apply-branches 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" release "apply-branches: release, wave 1 approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(gated_applied apply-branches)"
+    log "release, after the approval: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "expected canary/one to apply from release once approved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "main applied the fleet roots and never canary/one; release applied canary/one alone, once its wave was approved"
   return $rc
 }
 
@@ -13015,6 +13079,7 @@ cdktn-apply          runner self! weight=300
 cdktn-tips           runner self! weight=200
 cdktn-refused        weight=60
 wave-jobs            runner self! weight=250
+apply-branches       runner self! weight=300
 steps-before-plan    runner self! weight=200
 steps-stop           runner self! weight=150
 steps-gate           runner self! weight=200

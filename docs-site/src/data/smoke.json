@@ -1507,6 +1507,13 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "apply-branches",
+      "says": "with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
       "claim": "wave-jobs",
       "says": "with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once",
       "needs": null,
