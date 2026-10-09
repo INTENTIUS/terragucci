@@ -113,6 +113,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
     [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
+    [--shares <n> [--share <s>] [--decided <file>]]
 ```
 
 | Flag | Environment | Meaning |
@@ -141,6 +142,9 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--gate` | | `always`, `on-destroy` (the default) or `never` |
 | `--approval` | | the mode when the config at base names none and `chant.workspace.json` there lists no gate; a control repo's pipeline passes it |
 | `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, approval mode, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
+| `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
+| `--share` | | with `--shares`: plan this share's roots and apply them when each plan has the digest in the decision file; exit 4 when one moved |
+| `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
 
 ## publish
 
@@ -389,14 +393,14 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | 1 | one or more projects or roots failed |
 | 2 | a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
-| 4 | a wave's plans changed after an approval or a policy override no run applied, so `stage tf-apply` applied nothing |
+| 4 | a wave's plans changed after an approval or a policy override no run applied, or a share's plans changed after its wave decided, so `stage tf-apply` applied nothing |
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
 | `init` | done | | an existing config file needs a line added | | |
 | `reconcile` | done | a project failed | | | |
 | `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
-| `stage tf-apply` | wave applied | a root failed, or the policy denied one | `--json` | waits for an approval | plans changed after an approval or a policy override no run applied |
+| `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one | `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
 | `publish` | done | | OCI tag exists already; git tag exists with different content | | |
 | `rollout` | complete | stopped | | waiting | |
 | `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |

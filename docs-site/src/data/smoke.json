@@ -1311,6 +1311,14 @@
       "commit": "d316895"
     },
     {
+      "claim": "wave-jobs",
+      "says": "with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "052ff80"
+    },
+    {
       "claim": "note-footer",
       "says": "the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG",
       "needs": null,

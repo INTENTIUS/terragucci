@@ -67,6 +67,8 @@ export interface EstateRun {
   commit: string;
   stage: string;
   wave?: number;
+  /** The share of a wave split across jobs. */
+  share?: number;
   finished: string;
   roots: number;
   changed?: number;
@@ -141,6 +143,7 @@ function run(e: IndexEntry, base: string | undefined): EstateRun {
     commit: e.commit,
     stage: e.stage,
     ...(e.wave !== undefined ? { wave: e.wave } : {}),
+    ...(e.share !== undefined ? { share: e.share } : {}),
     finished: e.finished,
     roots: e.roots,
     ...(e.changed !== undefined ? { changed: e.changed } : {}),
@@ -193,13 +196,14 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
   let apply: EstateProject["apply"];
   const waiting: EstateWaiting[] = [];
   if (last) {
-    const byWave = new Map<number, IndexEntry>();
+    // A wave split across jobs has a row per share, and each share is its own entry.
+    const byWave = new Map<string, IndexEntry>();
     for (const r of applies.filter((x) => x.commit === last.commit)) {
-      const n = r.wave ?? 0;
+      const n = `${r.wave ?? 0}/${r.share ?? 0}`;
       const held = byWave.get(n);
       if (!held || at(r.finished) > at(held.finished)) byWave.set(n, r);
     }
-    const waves = [...byWave.entries()].sort((a, b) => a[0] - b[0]).map(([, r]) => r);
+    const waves = [...byWave.values()].sort((a, b) => (a.wave ?? 0) - (b.wave ?? 0) || (a.share ?? 0) - (b.share ?? 0));
     apply = { commit: last.commit, waves: waves.map((r) => run(r, base)) };
     for (const r of waves) {
       if (r.approval !== "waiting") continue;
@@ -302,7 +306,7 @@ function applyCell(p: EstateProject, now: Date): string {
         : w.applied
           ? "applied"
           : w.approval ?? "ran";
-    return `<li>${link(w.report, `wave ${w.wave ?? 0}`)}: ${state}${w.overridden ? `, <span class="warn">${w.overridden} by policy override</span>` : ""}</li>`;
+    return `<li>${link(w.report, `wave ${w.wave ?? 0}${w.share !== undefined ? `, share ${w.share}` : ""}`)}: ${state}${w.overridden ? `, <span class="warn">${w.overridden} by policy override</span>` : ""}</li>`;
   });
   return `<td><ul>${waves.join("")}</ul><small>${short(p.apply.commit)}</small></td>`;
 }

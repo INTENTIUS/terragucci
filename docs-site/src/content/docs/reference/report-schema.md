@@ -21,6 +21,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `minor` | the minor version of the schema the report was written with |
 | `run` | project, commit, base, stage, binary, runtime, start and finish times, and the job |
 | `run.wave`, `run.terragucci` | the wave a `tf-apply` report is for, and the terragucci version that wrote the report |
+| `run.share` | on a `tf-apply` wave split across jobs (`waves.jobs`), the share the report applied; its `waves[0].roots` are the share's roots |
 | `run.commit_url`, `run.pull_request`, `run.pull_request_url` | the commit's page, and the pull or merge request the run planned with its page |
 | `run.report_url` | where this `report.html` is served from the bucket, when `reports.url` is set |
 | `run.trace_id`, `run.trace_url` | the run's trace, when the stage sent one, and its link when `telemetry.trace_url` is set |
@@ -75,6 +76,7 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON S
 | Row field | What it holds |
 |---|---|
 | `project`, `commit`, `stage`, `wave`, `finished`, `path` | the run, and its directory relative to the index |
+| `share` | the share of a `tf-apply` wave split across jobs; each share has its own row |
 | `roots`, `groups`, `totals`, `refused` | the report's counts |
 | `failed` | roots that failed to plan or apply |
 | `changed` | roots with a change; on a `tf-drift` row, the roots that drifted |

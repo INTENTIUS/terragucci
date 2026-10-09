@@ -69,13 +69,13 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
-import { applyWaves } from "./apply";
+import { applyWaves, DECIDED_DIR, waveShares } from "./apply";
 import { CHECK_DIR } from "./check";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
 import {
@@ -160,6 +160,8 @@ export interface PipelineInput {
   gitlabToken?: GitLabToken;
   /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
   canary?: string[];
+  /** `waves.jobs`: the most jobs one wave's roots spread across. A wave of more roots than one gets a job that decides it and a share job per part (GitHub and Forgejo, plain roots). */
+  waveJobs?: number;
   /** When a wave waits for an approval. Default on-destroy. */
   gate?: Gate;
   /** A control repo's `approval:`, which the project's repo has no config to carry: the waves' `--approval`. */
@@ -582,6 +584,59 @@ export function forgejoLock(standDown = true): string {
 }
 
 /**
+ * The apply lock of a pipeline that splits a wave across jobs (`waves.jobs`),
+ * on GitHub and Forgejo alike: forgejoLock's tag, held by a run rather than a
+ * job, so the share jobs of a wave apply side by side while no other run
+ * applies. Each job first pushes a hold tag naming its run and itself, then
+ * takes the lock, or joins it when its own run holds it. On exit a job drops
+ * its hold, and the last of its run to leave lets go of the lock. Two that
+ * leave at once may each still see the other's hold and both leave the lock
+ * held: the run's next job joins it and lets it go, and once the run ends a
+ * waiter takes it over, as from any run that is gone, and drops that run's
+ * holds.
+ */
+export function sharedApplyLock(job: string): string {
+  const id = "${GITHUB_RUN_ID:-$$}";
+  return [
+    'lock_ref="refs/tags/terragucci-apply-lock"',
+    `hold_prefix="refs/tags/terragucci-apply-hold-${id}-"`,
+    `hold_ref="\${hold_prefix}${job}"`,
+    'empty="$(git mktree </dev/null)"',
+    `mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${id} $(date +%s) ${job}")"`,
+    // The hold goes up before the lock is taken, so a job of this run that leaves never lets go of a lock another still needs.
+    'git push -q --force origin "$mine:$hold_ref" 2>/dev/null || { echo "could not push $hold_ref, so the apply lock cannot be shared" >&2; exit 1; }',
+    "release_lock() {",
+    '  git push -q origin ":$hold_ref" 2>/dev/null || true',
+    '  [ -z "$(git ls-remote origin "${hold_prefix}*")" ] || return 0',
+    '  held="$(git ls-remote origin "$lock_ref" | cut -f1)"',
+    '  { [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; } || return 0',
+    `  [ "$(git log -1 --format=%s "$lock_ref" | cut -d" " -f2)" = "${id}" ] || return 0`,
+    '  git push -q --force-with-lease="$lock_ref:$held" origin ":$lock_ref" 2>/dev/null || true',
+    "}",
+    "trap release_lock EXIT",
+    "tries=0",
+    'until git push -q origin "$mine:$lock_ref" 2>/dev/null; do',
+    '  held="$(git ls-remote origin "$lock_ref" | cut -f1)"',
+    '  if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then',
+    '    lease="$(git log -1 --format=%s "$lock_ref")"',
+    '    holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"',
+    `    if [ "$holder" = "${id}" ]; then echo "this run holds the apply lock; ${job} joins it"; break; fi`,
+    '    if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then',
+    '      echo "the apply lock was held by run $holder, which is gone; taking it over"',
+    '      if git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null; then',
+    '        for gone in $(git ls-remote origin "refs/tags/terragucci-apply-hold-$holder-*" | cut -f2); do git push -q origin ":$gone" 2>/dev/null || true; done',
+    "        break",
+    "      fi",
+    "    fi",
+    "  fi",
+    '  if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi',
+    '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
+    "done",
+    STAND_DOWN,
+  ].join("\n");
+}
+
+/**
  * A push's wave that runs once the branch has moved past its commit stands
  * down, because the newer push applies the whole tree. On Forgejo it runs
  * once the wave holds the lock tag; on GitHub at the top of the wave, which
@@ -624,6 +679,22 @@ export function applyConcurrency(forge: ForgeName): Record<string, unknown> {
  */
 export const READS_EXIT = "set +e -uo pipefail";
 
+/** One apply job of a push: a wave's, a share of a wave split across jobs, or the job after the last wave's shares. */
+interface ApplyJob {
+  name: string;
+  wave: number;
+  /** The jobs it runs after: none for wave 1. */
+  needs: string[];
+  /** Its step's name. */
+  step: string;
+  body: string;
+  /** It decides a wave split across jobs, and hands its decision to the shares. */
+  decides?: boolean;
+  share?: number;
+  /** The job after the last wave's shares. */
+  done?: boolean;
+}
+
 /** Which wave an apply job runs, and how the waves are cut and gated. */
 export interface ApplyWaveInput {
   /** 1-based. */
@@ -643,6 +714,12 @@ export interface ApplyWaveInput {
   notify?: boolean;
   /** `policy:` is set: a denial is recorded on chant/lifecycle for an override, whatever the gate. */
   policy?: boolean;
+  /** `waves.jobs`, on the job of a wave that splits across jobs: it decides the wave, and its share jobs apply. */
+  shares?: number;
+  /** With `shares`: the share this job applies, from 1. */
+  share?: number;
+  /** The pipeline splits a wave across jobs, so every apply job holds the run's shared lock (sharedApplyLock) under this job name. */
+  sharedLock?: string;
 }
 
 /**
@@ -667,10 +744,13 @@ export function applyScript(
   const gate = input.gate ?? "on-destroy";
   const count = applyWaves(layers, input.canary).length;
   const tg = input.terragrunt;
-  const first = input.wave === 1;
-  const last = input.wave === count;
+  // A wave split across jobs: its own job decides (first, as wave 1's always is), and its shares apply; the done job posts the last success.
+  const share = input.shares !== undefined ? input.share : undefined;
+  const first = input.wave === 1 && share === undefined;
+  const last = input.wave === count && input.shares === undefined;
   const triage = responds(input.respond, "apply-failed");
-  const refused = responds(input.respond, "wave-refused");
+  // A share refused for plans that moved since its wave decided has no approved report for respond to compare.
+  const refused = responds(input.respond, "wave-refused") && share === undefined;
   const args = [
     "--wave", String(input.wave),
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
@@ -680,6 +760,8 @@ export function applyScript(
     ...(input.approval ? ["--approval", input.approval] : []),
     ...(tg ? ["--terragrunt"] : []),
     ...(tg && last ? ["--rest"] : []),
+    ...(input.shares !== undefined ? ["--shares", String(input.shares)] : []),
+    ...(share !== undefined ? ["--share", String(share)] : []),
   ];
   // With --rest the wave that stopped may be a later one: its outcome line names it.
   const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
@@ -692,7 +774,7 @@ export function applyScript(
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
       : []),
-    ...(forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
+    ...(input.sharedLock ? [sharedApplyLock(input.sharedLock)] : forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
     // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
     // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
@@ -714,7 +796,17 @@ export function applyScript(
       ? tg
         ? ['tg status terragucci/apply success "every wave of units applied"', 'echo "all units applied"']
         : [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
-      : [`echo "wave ${input.wave} of ${count} applied"`]),
+      : [share !== undefined ? `echo "wave ${input.wave} of ${count}, share ${share}, applied"` : input.shares !== undefined ? `echo "wave ${input.wave} of ${count} decided; its shares apply"` : `echo "wave ${input.wave} of ${count} applied"`]),
+  ].join("\n");
+}
+
+/** The job after the shares of a last wave split across jobs: every share applied, so the commit gets the one success. */
+export function applyDoneScript(layers: string[][], forge: ForgeName = "github"): string {
+  return [
+    READS_EXIT,
+    forgeApi(forge),
+    `tg status terragucci/apply success "${layers.flat().length} roots in ${layers.length} groups applied"`,
+    'echo "all roots applied"',
   ].join("\n");
 }
 
@@ -745,6 +837,8 @@ export interface CommentApplyInput {
   synth?: string;
   /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
   notify?: boolean;
+  /** GitHub, when the pipeline splits a wave across jobs: the apply takes the lock tag those jobs hold, as on Forgejo, since the shares run outside the concurrency group. */
+  lockTag?: boolean;
 }
 
 /**
@@ -978,7 +1072,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     `last=${count}`,
     '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
     'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    ...(forge === "forgejo"
+    ...(forge === "forgejo" || input.lockTag
       ? [
           forgejoLock(false),
           // A push may have applied while this run waited for the lock: decide again, now that nothing else applies.
@@ -1042,7 +1136,7 @@ export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<
     `last=${count}`,
     'TG_WAVE="-"',
     'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    ...(forge === "forgejo" ? [forgejoLock(false)] : []),
+    ...(forge === "forgejo" || input.lockTag ? [forgejoLock(false)] : []),
     'git checkout --quiet --detach "$TG_SHA" || { echo "terragucci: could not check out ${TG_SHA:0:8}" >&2; exit 1; }',
     ...(input.synth ? [synthScript(input.synth)] : []),
     ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
@@ -1457,6 +1551,11 @@ function text(result: string | { primary: string }): string {
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
+  // waves.jobs: a wave of more roots than one job spreads across share jobs, after a job of its own plans it and decides its gate.
+  const waveJobs = input.waveJobs !== undefined && input.waveJobs > 1 ? input.waveJobs : undefined;
+  if (waveJobs && tg) throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_TERRAGRUNT}`);
+  if (waveJobs && forge === "gitlab") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
+  if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
@@ -1508,12 +1607,30 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const gate = input.gate ?? "on-destroy";
   const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
-  const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
-    name: `apply-wave-${i + 1}`,
-    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}) }),
-  }));
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
+  const cut = tg ? [] : applyWaves(layers, input.canary);
+  const sharesOf = (i: number): number => (waveJobs && cut[i] ? waveShares(cut[i], waveJobs).length : 1);
+  // Once one wave splits, every apply job holds the run's shared lock, so the shares apply side by side and no other run applies meanwhile.
+  const split = cut.some((_, i) => sharesOf(i) > 1);
+  const applyJobs: ApplyJob[] = [];
+  let before: string[] = [];
+  for (let i = 0; i < waveCount; i++) {
+    const wave = i + 1;
+    const n = sharesOf(i);
+    const name = `apply-wave-${wave}`;
+    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}) };
+    applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(split ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
+    before = [name];
+    if (n > 1) {
+      before = Array.from({ length: n }, (_, s) => `${name}-share-${s + 1}`);
+      for (const [s, share] of before.entries()) {
+        applyJobs.push({ name: share, wave, share: s + 1, needs: [name], step: `Apply share ${s + 1} of ${n} of wave ${wave}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, share: s + 1, sharedLock: share }) });
+      }
+    }
+  }
+  // The last wave's shares end side by side: one job after them all posts the success.
+  if (before.length > 1) applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true });
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
   if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
   // GitLab: the comments job reads `/terragucci apply` and starts the mr-apply pipeline with the merge token.
@@ -1524,7 +1641,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const pushApplyJobs = prApply ? [] : applyJobs;
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(split && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch.
   const writesLedger = gate !== "never";
   const what = tg ? "unit" : "root";
@@ -1622,11 +1739,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       } as never) as never);
     }
     jobs.set("plan", plan as never);
-    for (const [i, job] of pushApplyJobs.entries()) {
+    for (const job of pushApplyJobs) {
       jobs.set(job.name, new GitLabJob({
         stage: "apply",
         image: jobImage,
-        ...(i > 0 ? { needs: [applyJobs[i - 1].name] } : {}),
+        ...(job.needs.length > 0 ? { needs: job.needs } : {}),
         variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv },
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-apply",
@@ -1803,12 +1920,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       : {}),
   } as never);
   // A plan reads the range from the target branch, so its checkout has the history.
-  const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string, estimator = false): InstanceType<typeof Step>[] => [
+  const steps = (main: InstanceType<typeof Step>, cached = false, history = false, before?: string, estimator = false, fetch?: InstanceType<typeof Step>): InstanceType<typeof Step>[] => [
     new Step({ uses: "actions/checkout@v4", ...(history ? { with: { "fetch-depth": 0 } } : {}) }),
     ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
     ...(estimator && costInstall ? [new Step({ name: `Install Infracost ${INFRACOST_VERSION}`, run: costInstall })] : []),
     ...(before ? [new Step({ name: `Install the AWS CLI ${AWS_CLI.version} unless the job has it`, shell: "bash", run: before })] : []),
     ...(cached && tg ? [new Step({ name: "Cache Terragrunt sources and providers", ...forgeCache(forge) } as never)] : []),
+    ...(fetch ? [fetch] : []),
     main,
   ];
   const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
@@ -1975,7 +2093,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     container: { image },
     if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
     // Before merge it also pushes the root locks and merges (contents: write), and reads the head's checks.
-    permissions: { contents: writesLedger || prApply ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...(needsToken ? { "id-token": "write" } : {}) },
+    permissions: { contents: writesLedger || prApply || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: applyConcurrency(forge),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
@@ -2038,18 +2156,32 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
-  for (const [i, job] of pushApplyJobs.entries()) {
+  const applyIf = `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`;
+  for (const job of pushApplyJobs) {
+    if (job.done) {
+      // After the last wave's shares: it runs no code and holds no credential, and posts the one success.
+      entities.set(job.name, new Job({
+        "runs-on": "ubuntu-latest",
+        container: { image },
+        needs: job.needs,
+        if: applyIf,
+        permissions: { contents: "read", statuses: "write" },
+        env: { TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}" },
+        steps: [new Step({ name: job.step, shell: "bash", run: job.body })],
+      } as never) as never);
+      continue;
+    }
     entities.set(job.name, new Job({
       "runs-on": "ubuntu-latest",
       container: { image },
-      // Each wave needs the one before, so a wave that waits holds back every later one.
-      needs: i === 0 ? "check" : applyJobs[i - 1].name,
-      if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
-      // contents: write only to record a waiting wave's plan on the chant/lifecycle branch.
-      permissions: { contents: writesLedger ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+      // Each wave needs the one before, so a wave that waits holds back every later one; a wave's shares need its own job, which decided it.
+      needs: job.needs.length === 0 ? "check" : job.needs.length === 1 ? job.needs[0] : job.needs,
+      if: applyIf,
+      // contents: write only to record a waiting wave's plan on the chant/lifecycle branch, and with a wave split across jobs to hold the shared lock's tags.
+      permissions: { contents: writesLedger || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
-      // One apply per project at a time; nothing that waits is cancelled (applyConcurrency).
-      concurrency: applyConcurrency(forge),
+      // One apply per project at a time; nothing that waits is cancelled (applyConcurrency). A wave's shares apply side by side, under the run's shared lock.
+      ...(job.share === undefined ? { concurrency: applyConcurrency(forge) } : {}),
       env: {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
@@ -2059,7 +2191,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...notifyEnv,
       },
       steps: [
-        ...steps(new Step({ name: `Apply wave ${i + 1} of ${waveCount}`, shell: "bash", run: job.body }), true),
+        ...steps(new Step({ name: job.step, shell: "bash", run: job.body }), true, false, undefined, false, job.share !== undefined ? new Step({ name: "Fetch the wave's decision", uses: download, with: { name: `${DECIDED_DIR}-${job.wave}`, path: DECIDED_DIR } } as never) : undefined),
+        ...(job.decides ? [new Step({ name: "Hand the decision to the wave's shares", uses: upload, with: { name: `${DECIDED_DIR}-${job.wave}`, path: `${DECIDED_DIR}/`, "if-no-files-found": "error" } })] : []),
         new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-${job.name}`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ...(agentApply
           ? [new Step({ name: "Keep the agent input", if: "failure()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${RESPOND_DIR}-${job.name}`, path: `${RESPOND_DIR}/`, "if-no-files-found": "ignore" } })]
