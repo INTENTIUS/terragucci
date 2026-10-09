@@ -368,6 +368,7 @@ tip-moved|a resource renamed on a branch plans as a destroy and a create, the pl
 mcp-last-apply|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
 drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
 tg-pr-plan|a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo|
+github-drift-issue|on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another|
 runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
@@ -15241,6 +15242,70 @@ claim_plan_lock_fmt() {
   return $rc
 }
 
+claim_github_drift_issue() {
+  # stack/mock-github, as this tree has it, in a container of the claim's own:
+  # it lists a repo's issues as github.com does, pull requests among them, and
+  # answers 422 to a query parameter github.com does not take, such as
+  # type=issues. One root's queue is applied, then its timeout changed in
+  # floci. tf-drift --forge github must open the drift issue on the mock, and
+  # a second run must find that issue and update it: one open drift issue.
+  # BREAK: a bundle whose findIssue sends type=issues on GitHub too
+  # (break_bundle), which the mock refuses, so no issue opens.
+  log() { echo "[smoke github-drift-issue] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work queue="tg-ghdrift-$STAMP" key="github-drift-issue/$STAMP.tfstate" tree url image mock="tgs-mockgh-$STAMP" port issues i rc=0 run
+  local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" gh_token=tg-mock-github-token gh_repo=terragucci-admin/drift
+  image="$(image_tag tofu)"
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" forge.ts 'const only = t.forge === "forgejo" ? "&type=issues" : "";' 'const only = "&type=issues";' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  docker run -d --name "$mock" --network terragucci -p 127.0.0.1::8188 -v "$HERE/mock-github:/srv:ro" \
+    -e PORT=8188 -e MOCK_TOKEN="$gh_token" -e MOCK_PUBLIC_URL="http://$mock:8188" \
+    public.ecr.aws/docker/library/node:22-bookworm node /srv/server.mjs >/dev/null || { log "the mock did not start"; drop_work "$work"; return 1; }
+  port="$(docker port "$mock" 8188/tcp | head -1 | sed 's/.*://')"
+  for i in $(seq 1 30); do curl -fsS -o /dev/null "http://127.0.0.1:$port/__mock/health" 2>/dev/null && break; sleep 1; done
+  ghm() { curl -fsS -H "Authorization: Bearer $gh_token" -H 'content-type: application/json' "$@"; }
+  ghm -o /dev/null -d '{"name":"drift","default_branch":"main"}' "http://127.0.0.1:$port/api/v3/user/repos" || { log "could not make the repo on the mock"; docker rm -f "$mock" >/dev/null 2>&1; drop_work "$work"; return 1; }
+  tree="$work/tree"
+  respond_tree "$work" "$gh_repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+  tags                       = { owner = \"smoke\" }
+}")"
+  in_image "$tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; docker rm -f "$mock" >/dev/null 2>&1; drop_work "$work"; return 1; }
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r .QueueUrl)"
+  sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null || { log "could not change $queue's timeout"; rc=1; }
+  issues() { ghm "http://127.0.0.1:$port/api/v3/repos/$gh_repo/issues?state=open&per_page=100" | jq -c '[.[] | select(.pull_request == null and ((.body // "") | contains("<!-- terragucci:drift -->")))]'; }
+  for run in 1 2; do
+    run_copied --rm --network terragucci -v "$tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+      "${AWS_DOCKER_ENV[@]}" \
+      -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e "GITHUB_REPOSITORY=$gh_repo" -e GITHUB_SERVER_URL=https://github.com -e "GITHUB_API_URL=http://$mock:8188/api/v3" -e "TG_TOKEN=$gh_token" \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage tf-drift --forge github >"$work/drift-$run.log" 2>&1 || true
+    clean_mounted "$tree" "$image"
+    grep -i 'drift issue\|issue' "$work/drift-$run.log" | tail -3 | sed "s/^/[smoke github-drift-issue] run $run: /" >&2 || true
+    log "after run $run: $(issues | jq -r 'map("#\(.number)") | join(", ") | if . == "" then "no drift issue" else "drift issue " + . end')"
+  done
+  if [ "$(issues | jq length)" != 1 ]; then
+    log "expected one open drift issue on the mock after two runs, found $(issues | jq length)"; tail -15 "$work/drift-2.log" >&2; rc=1
+  elif ! grep -q 'drift issue updated' "$work/drift-2.log"; then
+    log "the second run did not update the issue the first opened"; tail -15 "$work/drift-2.log" >&2; rc=1
+  fi
+  sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  docker rm -f "$mock" >/dev/null 2>&1 || true
+  drop_work "$work" "$image" 2>/dev/null || true
+  [ $rc = 0 ] && log "the first run opened the drift issue on the mock and the second updated it: one open drift issue"
+  return $rc
+}
+
 claim_runner_nudge() {
   # Forgejo 16 moves no task version when a run ends with no task reporting
   # (forgejo#14576), so a run queued behind it in a concurrency group waits
@@ -15577,6 +15642,7 @@ tip-moved            self! weight=150
 mcp-last-apply       weight=120
 drift-agent          runner self! weight=250
 runner-nudge         stack! self! weight=200
+github-drift-issue   self! weight=90
 plan-lock-fmt        runner self! weight=200
 tg-pr-plan           tg self! after=tg-waves weight=300
 '
