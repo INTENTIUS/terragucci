@@ -79,6 +79,32 @@ export type Locks = (typeof LOCKS)[number];
 export type ApplyMerge = (typeof APPLY_MERGE)[number];
 export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
 
+/** The stages a step runs before or after (`steps:`). `drift` is the drift job's refresh-only plan. */
+export const STEP_STAGES = ["init", "plan", "apply", "drift"] as const;
+export type StepStage = (typeof STEP_STAGES)[number];
+/** What a step's non-zero exit does: fail the root (the default), or hold its wave for an approval. */
+export const STEP_FAILURES = ["fail", "approve"] as const;
+export type StepFailure = (typeof STEP_FAILURES)[number];
+export const STEP_KEYS = ["name", "run", "before", "after", "roots", "on_failure"] as const;
+
+/**
+ * One entry of `steps:`. `run` is a shell command, run in the root's
+ * directory. Exactly one of `before` and `after` names the stage. `roots`
+ * are globs of the roots it runs for (every root when unset).
+ * `on_failure: approve` turns a non-zero exit into a hold: the root's wave
+ * waits for an approval of its set digest, whatever `gate` says. Only a step
+ * that runs before the gate is decided can hold it: one before or after
+ * init or plan.
+ */
+export interface StepSettings {
+  run: string;
+  name?: string;
+  before?: StepStage;
+  after?: StepStage;
+  roots?: string[];
+  on_failure?: StepFailure;
+}
+
 /**
  * `apply:`: when a change applies. `when: merge` (the default) applies the
  * default branch after a merge. `when: pull-request` applies an open pull
@@ -272,8 +298,11 @@ export interface ProjectSettings {
   roots?: string[];
   /** The binary the pipeline runs. Detected when absent. */
   binary?: Binary;
-  /** The binary's version. Read from the roots' `required_version` when it pins one. */
-  version?: string;
+  /**
+   * The binary's version. Read from the roots' `required_version` when it pins one. As a map of root
+   * glob to release, the version each root it matches runs (tofu and terraform, plain roots only).
+   */
+  version?: string | Record<string, string>;
   /** The forge, for a host terragucci cannot name. */
   forge?: ForgeName;
   /** Where the project lives, for a forge not on https or the default port. */
@@ -296,6 +325,19 @@ export interface ProjectSettings {
    * plan, apply and drift jobs, on their own checkout.
    */
   synth?: string;
+  /**
+   * Commands run before and after a root's init, plan, apply and drift, in
+   * the stage's own job, on its checkout, with its environment less the forge
+   * tokens. Read from terragucci.yml at base, never from the change under
+   * review (./steps.ts).
+   */
+  steps?: StepSettings[];
+  /**
+   * The image every job runs in, in place of terragucci's: one built FROM
+   * the terragucci image for the binary, so the job still has terragucci and
+   * the binary, plus what the steps need.
+   */
+  image?: string;
   /**
    * Notifications: the names of the secrets holding a Slack or Teams
    * incoming webhook, and a generic webhook's address with the key that
@@ -392,7 +434,7 @@ export function responseTo(settings: ProjectSettings, event: RespondEvent): stri
 }
 
 /** `cost: true`, or the secret holding the estimator's key and the command to run instead of Infracost. */
-export type CostSettings = true | { key_secret?: string; command?: string };
+export type CostSettings = true | { key_secret?: string; command?: string; approve_above?: number };
 
 /** The secret Infracost's key is read from when `cost.key_secret` is unset; the job gets it as this variable too. */
 export const COST_KEY_SECRET = "INFRACOST_API_KEY";
@@ -434,6 +476,7 @@ export const PROJECT_FILE_KEYS = [
   "waves",
   "parallelism",
   "synth",
+  "steps",
   "drift",
   "cost",
   "tips",
@@ -476,7 +519,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost", "rollouts", "atlantis_comments",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -494,6 +537,27 @@ function oneOf(v: unknown, allowed: readonly string[], where: string, problems: 
 function stringList(v: unknown, where: string, problems: string[]): void {
   if (v !== undefined && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) {
     problems.push(`${where} must be a list of strings`);
+  }
+}
+
+const RELEASE_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
+
+/** `version`: one release for the repo, or, in a repo's own file, a map of root glob to the release those roots run. */
+function checkVersion(v: unknown, binary: unknown, where: string, problems: string[]): void {
+  if (v === undefined || typeof v === "string") return;
+  if (!isObject(v)) {
+    problems.push(`${where}.version must be a release version, or a map of root glob to release version`);
+    return;
+  }
+  if (where !== "config") {
+    problems.push(`${where}.version: a version per root glob goes in the project's own terragucci.yml, which its jobs read; here, give one release version`);
+    return;
+  }
+  if (binary === "choudoufu") problems.push(`${where}.version: choudoufu runs one release for every root; give one release version`);
+  for (const [glob, release] of Object.entries(v)) {
+    if (typeof release !== "string" || !RELEASE_VERSION.test(release)) {
+      problems.push(`${where}.version["${glob}"] must be a release version such as 1.10.6, quoted when YAML would read it as a number`);
+    }
   }
 }
 
@@ -516,9 +580,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
   if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
   else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
-  for (const k of ["version", "url", "token_env"] as const) {
+  for (const k of ["url", "token_env"] as const) {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
+  checkVersion(s.version, s.binary, where, problems);
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
   }
@@ -536,9 +601,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.cost !== undefined && s.cost !== true) {
-    if (!isObject(s.cost)) problems.push(`${where}.cost must be true or a map (settings: key_secret, command)`);
+    if (!isObject(s.cost)) problems.push(`${where}.cost must be true or a map (settings: key_secret, command, approve_above)`);
     else {
-      for (const k of Object.keys(s.cost)) if (k !== "key_secret" && k !== "command") problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command)`);
+      for (const k of Object.keys(s.cost)) if (k !== "key_secret" && k !== "command" && k !== "approve_above") problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command, approve_above)`);
+      if (s.cost.approve_above !== undefined && !(typeof s.cost.approve_above === "number" && Number.isFinite(s.cost.approve_above) && s.cost.approve_above >= 0)) problems.push(`${where}.cost.approve_above must be an amount of 0 or more, in the estimator's currency a month, such as 100`);
       if (s.cost.key_secret !== undefined && !(typeof s.cost.key_secret === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.cost.key_secret))) problems.push(`${where}.cost.key_secret must name the secret that holds the estimator's key, such as INFRACOST_API_KEY`);
       if (s.cost.command !== undefined && !(typeof s.cost.command === "string" && s.cost.command.trim() !== "")) problems.push(`${where}.cost.command must be a command that prints Infracost's JSON`);
     }
@@ -546,6 +612,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.atlantis_comments !== undefined && typeof s.atlantis_comments !== "boolean") problems.push(`${where}.atlantis_comments must be true or false`);
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
+  }
+  if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
+  if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
+    problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
   }
   if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
     problems.push(`${where}.drift must be a cron schedule or false`);
@@ -655,6 +725,29 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
     else checkModules(s.modules as Record<string, unknown>, `${where}.modules`, problems);
   }
+}
+
+function checkSteps(v: unknown, where: string, problems: string[]): void {
+  if (!Array.isArray(v)) {
+    problems.push(`${where} must be a list of steps, each with run and before or after`);
+    return;
+  }
+  v.forEach((step, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(step)) return void problems.push(`${at} must be a map with run and before or after`);
+    for (const k of Object.keys(step)) if (!(STEP_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a setting (settings: ${STEP_KEYS.join(", ")})`);
+    if (!(typeof step.run === "string" && step.run.trim() !== "")) problems.push(`${at}.run must be the command the step runs`);
+    if (step.name !== undefined && !(typeof step.name === "string" && step.name.trim() !== "")) problems.push(`${at}.name must be a string`);
+    if ((step.before === undefined) === (step.after === undefined)) problems.push(`${at} needs one of before or after, naming ${STEP_STAGES.join(", ")}`);
+    oneOf(step.before, STEP_STAGES, `${at}.before`, problems);
+    oneOf(step.after, STEP_STAGES, `${at}.after`, problems);
+    stringList(step.roots, `${at}.roots`, problems);
+    oneOf(step.on_failure, STEP_FAILURES, `${at}.on_failure`, problems);
+    const stage = step.before ?? step.after;
+    if (step.on_failure === "approve" && (stage === "apply" || stage === "drift")) {
+      problems.push(`${at}.on_failure: approve holds the wave at its gate, which is decided after the plans and before any apply; give it a step before or after init or plan`);
+    }
+  });
 }
 
 const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted"]);

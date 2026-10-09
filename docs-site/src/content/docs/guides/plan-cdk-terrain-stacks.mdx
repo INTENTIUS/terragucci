@@ -141,7 +141,11 @@ The stacks are not in git, so no diff names them. `tf-plan` compares what the ap
 | The merge base cannot be found | every stack plans, and the note says why |
 | No stack differs | nothing plans, and the note says the change reaches no root |
 
-`tf-plan` runs the base's synth after the plan job's credentials are set. That code is the target branch, which the apply jobs already run. A pull request runs the synth twice, so `npm ci` takes its time twice.
+| The base's synth | |
+|---|---|
+| Runs | in `tf-plan`, after the plan job's credentials are set |
+| Code | the target branch, which the apply jobs already run |
+| Cost | a pull request runs the synth twice, so `npm ci` takes its time twice |
 
 ## Next
 

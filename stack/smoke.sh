@@ -261,6 +261,7 @@ description-check|with respond.description: check the plan job flags a destroy t
 decide-backends|decide.backend von, decider and jev each answer the description check through the same client, each pinned to its model, jev with its bearer token from token_env|
 otlp-headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
 pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
+root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
 estate-override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|
@@ -310,9 +311,14 @@ dora|terragucci estate computes the four DORA metrics from the audit trail and t
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
+cost-gate|with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base|
+cost-policy|with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
 cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
-wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|'
+wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
+steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
+steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
+steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -7827,6 +7833,53 @@ JS
   return $rc
 }
 
+claim_root_pins() {
+  # Two roots in one wave: old pins OpenTofu 1.10.6 in its .opentofu-version,
+  # which the tofu image does not carry, and new pins nothing. tf-plan, run in
+  # the tofu image as the plan job runs it, installs 1.10.6 for old, checked
+  # against its SHA256SUMS, and plans new with the image's tofu. Each root's
+  # plan.json says which tofu made it, and the report and the note name each
+  # root's binary and version.
+  # BREAK: old's pin is ignored (the stage never sees it), so both roots plan
+  # with the image's tofu.
+  log() { echo "[smoke root-pins] $*" >&2; }
+  local work rc=0 dir image carried old new r
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  for r in old new; do
+    mkdir -p "$work/repo/$r"
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "%s" {\n  input = "%s"\n}\n' "$r" "$r" > "$work/repo/$r/main.tf"
+  done
+  [ -n "${BREAK:-}" ] || echo 1.10.6 > "$work/repo/old/.opentofu-version"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "two roots, two versions"
+  # One layer, so one wave: the stage plans both roots at once.
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$HERE/../packages/terragucci/dist/terragucci.mjs:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TOFU_INSTALL_DIR=/cache/bin -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --layers 'new,old' --forge github >"$work/plan.log" 2>&1 || { log "the plan run failed"; rc=1; }
+  cat "$work/plan.log" >&2
+  clean_mounted "$work/repo" "$image"
+  dir="$work/repo/terragucci-report"
+  [ -f "$dir/report.json" ] || { log "the plan wrote no report"; drop_work "$work"; return 1; }
+  [ "$(jq -c '[.waves[] | .roots | sort]' "$dir/report.json")" = '[["new","old"]]' ] || { log "old and new are not one wave: $(jq -c '[.waves[].roots]' "$dir/report.json")"; rc=1; }
+  old="$(jq -r '.terraform_version // ""' "$dir/roots/old/plan.json" 2>/dev/null)"
+  new="$(jq -r '.terraform_version // ""' "$dir/roots/new/plan.json" 2>/dev/null)"
+  carried="$(jq -r '.roots[] | select(.path == "new") | .binary.version // ""' "$dir/report.json")"
+  log "old planned with tofu ${old:-?}, new with tofu ${new:-?}; the image carries ${carried:-?}"
+  [ "$old" = 1.10.6 ] || { log "old did not plan with the tofu 1.10.6 its .opentofu-version pins"; rc=1; }
+  [ -n "$new" ] && [ "$new" = "$carried" ] && [ "$new" != 1.10.6 ] || { log "new did not plan with the image's tofu"; rc=1; }
+  [ "$(jq -c '.roots[] | select(.path == "old") | .binary' "$dir/report.json")" = '{"name":"tofu","version":"1.10.6","pin":".opentofu-version"}' ] \
+    || { log "the report does not name old's binary as tofu 1.10.6 pinned by .opentofu-version: $(jq -c '.roots[] | select(.path == "old") | .binary' "$dir/report.json")"; rc=1; }
+  grep -qF "Binaries: tofu 1.10.6 for \`old\` (.opentofu-version); tofu $carried for 1 root." "$dir/note.md" || { log "the note does not name each root's binary and version"; rc=1; }
+  grep -qF 'old: tofu 1.10.6 (.opentofu-version)' "$work/plan.log" || { log "the log does not say old runs tofu 1.10.6"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "one wave planned old with the tofu 1.10.6 it pins, installed and checked in the job, and new with the image's tofu $carried, and the report and the note name both"
+  return $rc
+}
+
 claim_drift_close() {
   # A queue applied with a visibility timeout of 30, then set to 45 in floci
   # outside OpenTofu: tf-drift opens the drift issue naming app. The timeout
@@ -10905,6 +10958,105 @@ JS
   return $rc
 }
 
+claim_cost_gate() {
+  # Two roots, app and net, in one wave, with gate: never and cost naming a
+  # command, cost.mjs, that prices 10.00 a month for each resource a plan
+  # creates, with approve_above: 15. No Infracost key is needed. The push to
+  # main plans app and net, +20.00 a month, and wave 1 waits for an approval
+  # although the gate is never: its log names +20.00 USD, the amount 15.00 USD
+  # and the commit it was read at, and gives the approve command. A pull
+  # request that adds a resource to app gets a plan note that sets wave 1's
+  # change against the amount at base, over it, so the wave waits.
+  # BREAK: terragucci.yml has no approve_above, so the wave applies under
+  # gate: never and the note sets nothing against an amount.
+  log() { echo "[smoke cost-gate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cost-gate" tree sha head pr note logs root rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  fresh_repo cost-gate || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for root in app net; do
+    mkdir -p "$tree/$root"
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "%s" {\n  input = 1\n}\n' "$root" > "$tree/$root/main.tf"
+  done
+  cp "$HERE/fixtures/cost-policy/cost.mjs" "$tree/cost.mjs"
+  printf 'binary: tofu\nforge: forgejo\ngate: never\ncost:\n  command: node cost.mjs\n' > "$tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] || printf '  approve_above: 15\n' >> "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$tree" "$repo" main "cost-gate: two roots")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -E 'cost|waits|approve' <<<"$logs" | grep -v '^\s*$' | tail -12 >&2 || true
+    grep -qE "the monthly cost changes by \+20\.00 USD, over cost\.approve_above 15\.00 USD in the config at [0-9a-f]{40}, so it waits for an approval although gate is never" <<<"$logs" \
+      || { log "wave 1 did not wait for its cost, naming +20.00 USD and the amount 15.00 USD"; rc=1; }
+    grep -qE 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 gave no approve command"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    printf '\nresource "terraform_data" "more" {\n  input = 2\n}\n' >> "$tree/app/main.tf"
+    head="$(push_tree "$tree" "$repo" change "cost-gate: one more resource in app")" || rc=1
+    git -C "$tree" checkout -q main
+  fi
+  [ $rc = 0 ] && { pr="$(pr_open "$repo" change "cost-gate: one more resource in app")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+    grep -E 'Monthly cost|approve_above|^\| [0-9]' <<<"$note" >&2 || true
+    grep -qF 'Against `cost.approve_above` at base, 15.00 USD a month: wave 1 +20.00 USD, over it: it waits for an approval whatever the gate.' <<<"$note" \
+      || { log "the plan note of pull request $pr does not set wave 1's +20.00 USD against the amount at base"; rc=1; }
+    grep -qE '^\| 1 \| [0-9]+ \| .* \| waits for an approval' <<<"$note" || { log "the note's wave table does not say wave 1 waits"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 1 waited under gate: never for its +20.00 USD over 15.00 USD, and the plan note set the change against the amount at base"
+  return $rc
+}
+
+claim_cost_policy() {
+  # stack/fixtures/cost-policy: one root, app, with two resources, gate:
+  # never, an HCP Terraform policy set (engine: opa, input: hcp) whose
+  # mandatory cost_limit policy denies a root whose
+  # input.run.cost_estimate.delta_monthly_cost is over 15 and a wave whose
+  # input.cost.wave.monthly_delta is, and cost naming cost.mjs, which prices
+  # 10.00 a month for each resource a plan creates. The wave exits 1 and
+  # applies nothing; the report denies app with both messages, +20.00.
+  # BREAK: terragucci.yml has no cost, so the policy reads no cost, denies
+  # nothing, and the wave applies.
+  log() { echo "[smoke cost-policy] $*" >&2; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 rc=0 r q
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$HERE/fixtures/cost-policy/." "$work/"
+  [ -n "${BREAK:-}" ] || printf 'cost:\n  command: node cost.mjs\n' >> "$work/terragucci.yml"
+  git -C "$work" init -q -b main
+  git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke cost-policy"
+  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >&2 || code=$?
+  clean_mounted "$work" "$image"
+  r="$work/terragucci-report/report.json"
+  [ "$code" = 1 ] || { log "the wave exited $code, not 1: the cost policy did not deny it"; rc=1; }
+  if [ -f "$work/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$work/app/terraform.tfstate" >/dev/null 2>&1; then
+    log "app has state: the wave applied it"; rc=1
+  fi
+  if [ ! -f "$r" ]; then
+    log "the wave wrote no report"; rc=1
+  else
+    q='.roots[] | select(.path == "app")'
+    jq -e "$q | .policy.result == \"denied\" and (.policy.denials | any(test(\"^cost_limit: app adds 20.00 USD a month, over 15.00\"))) and (.policy.denials | any(test(\"^cost_limit: wave 1 adds 20 USD a month, over 15.00\")))" "$r" >/dev/null \
+      || { log "app is not denied on its cost and its wave's: $(jq -c "$q | .policy" "$r")"; rc=1; }
+    jq -e '.cost.roots[0] | .root == "app" and .monthly_delta == 20' "$r" >/dev/null || { log "the report has no estimate of app at +20.00: $(jq -c '.cost' "$r")"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the policy set read app's +20.00 from input.run.cost_estimate and the wave's from input.cost, and its mandatory policy denied the wave"
+  return $rc
+}
+
 claim_approval_used() {
   # Push the fixture; wave 1 waits. Approve it and push again: canary/one
   # applies, and the wave records on chant/lifecycle that it used the
@@ -10964,6 +11116,138 @@ claim_approval_used() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "the approval wave 1 applied under refused nothing; the moved wave waits for an approval of $second"
+  return $rc
+}
+
+# The gated-waves fixture with gate: never and, unless BREAK, the steps given on
+# stdin appended to its terragucci.yml, and its pipeline written again.
+steps_repo() { # name
+  local steps
+  steps="$(cat)"
+  gated_repo "$1" || return 1
+  sed 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" > "$work/terragucci.yml.new" && mv "$work/terragucci.yml.new" "$work/tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] || printf '%s\n' "$steps" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+}
+
+claim_steps_before_plan() {
+  # The gated-waves fixture with gate: never. canary/one gains a variable,
+  # from_step (default no-step), that a second resource takes as its input,
+  # and a step before plan on canary/* writes step.auto.tfvars setting it to
+  # the stage the step runs in ($TG_STAGE). The push to main applies every
+  # root, canary/one with tf-apply. A pull request that changes canary/one
+  # then plans it with the step at the base: the plan note lists the step as
+  # passed and the plan moves the input from tf-apply to tf-plan, which only
+  # the file the step wrote can say.
+  # BREAK: terragucci.yml has no steps, so nothing writes the file and the
+  # plan keeps the default.
+  log() { echo "[smoke steps-before-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/steps-before-plan" sha head pr note rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  # shellcheck disable=SC2016 # the step's shell expands TG_STAGE
+  steps_repo steps-before-plan <<'YAML' || { drop_work "$work"; return 1; }
+steps:
+  - name: tfvars
+    run: echo "from_step = \"$TG_STAGE\"" > step.auto.tfvars
+    before: plan
+    roots: ["canary/*"]
+YAML
+  printf '\nvariable "from_step" {\n  type    = string\n  default = "no-step"\n}\n\nresource "terraform_data" "step" {\n  input = var.from_step\n}\n' >> "$work/tree/canary/one/main.tf"
+  echo 'step.auto.tfvars' > "$work/tree/.gitignore"
+  sha="$(push_tree "$work/tree" "$repo" main "steps-before-plan: a step writes the tfvars")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  [ $rc = 0 ] && [ "$RUN_STATUS" != success ] && { log "the push to main did not apply: $RUN_STATUS"; rc=1; }
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/canary/one/rev.txt"
+    head="$(push_tree "$work/tree" "$repo" change "steps-before-plan: change canary/one")" || rc=1
+    git -C "$work/tree" checkout -q main
+  fi
+  [ $rc = 0 ] && { pr="$(pr_open "$repo" change "steps-before-plan: change canary/one")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+    grep -E 'Steps|before-plan|tf-apply|tf-plan' <<<"$note" >&2 || true
+    grep -qE '^\| \[?`canary/one`.* \| before-plan \| tfvars \| passed \|$' <<<"$note" || { log "the plan note of pull request $pr does not list the step before plan on canary/one as passed"; rc=1; }
+    grep -qE '"tf-apply" -> "tf-plan"' <<<"$note" || { log "the plan of canary/one does not move from_step from tf-apply to tf-plan"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the step before plan wrote step.auto.tfvars, the plan read it, and the plan note listed the step"
+  return $rc
+}
+
+claim_steps_stop() {
+  # The gated-waves fixture with gate: never and a step before apply on
+  # canary/* that exits 1. The push to main plans wave 1 (canary/one), the
+  # step fails, and the job fails before anything applies: no root has state,
+  # and wave 2 never starts. The job log names the failed step.
+  # BREAK: terragucci.yml has no steps, so every root applies.
+  log() { echo "[smoke steps-stop] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/steps-stop" sha applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  steps_repo steps-stop <<'YAML' || { drop_work "$work"; return 1; }
+steps:
+  - name: stop
+    run: echo "this wave stops here"; exit 1
+    before: apply
+    roots: ["canary/*"]
+YAML
+  sha="$(push_tree "$work/tree" "$repo" main "steps-stop: a step before apply fails")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    applied="$(gated_applied steps-stop)"
+    log "after the push: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$RUN_STATUS" = failure ] || { log "the run did not fail"; rc=1; }
+    [ -z "$applied" ] || { log "a root applied although the step before apply failed"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -E 'canary/one: before-apply (step )?stop' >&2 || { log "the job log does not name the failed step"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the step before apply failed and nothing applied"
+  return $rc
+}
+
+claim_steps_gate() {
+  # The gated-waves fixture with gate: never and a step after plan on canary/*
+  # that exits 1 with on_failure: approve. The push to main stops at wave 1:
+  # the step asks for an approval, so the wave waits at its gate and prints
+  # the chant approve command, and no root has state. Approving wave 1 on the
+  # ledger and pushing again applies every root: canary/one under the
+  # approval, wave 2 with no gate.
+  # BREAK: terragucci.yml has no steps, so the first push applies every root.
+  log() { echo "[smoke steps-gate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/steps-gate" sha applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  steps_repo steps-gate <<'YAML' || { drop_work "$work"; return 1; }
+steps:
+  - name: verify
+    run: echo "no signature for this module"; exit 1
+    after: plan
+    roots: ["canary/*"]
+    on_failure: approve
+YAML
+  sha="$(push_tree "$work/tree" "$repo" main "steps-gate: a step asks for an approval")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    applied="$(gated_applied steps-gate)"
+    log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a root applied before the wave held by the step was approved"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -E 'step verify asks for an approval|chant approve tf-apply wave-1' >&2 || { log "wave 1 did not wait for an approval"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve steps-gate 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "steps-gate: after wave 1 was approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(gated_applied steps-gate)"
+    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "expected every root to apply once wave 1 was approved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the step held wave 1 at its gate under gate: never, and the approval of its digest let it apply"
   return $rc
 }
 
@@ -11147,6 +11431,7 @@ description-check    weight=60
 decide-backends      weight=80
 otlp-headers         weight=60
 pinned-install       weight=60
+root-pins            weight=60
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150
@@ -11196,9 +11481,14 @@ dora                 weight=250
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150
+cost-gate            runner self! weight=200
+cost-policy          weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
 wave-jobs            runner self! weight=250
+steps-before-plan    runner self! weight=200
+steps-stop           runner self! weight=150
+steps-gate           runner self! weight=200
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
@@ -11515,6 +11805,12 @@ runner_prep() {
   echo "[smoke] logs in $SMOKE_LOG_DIR, $SMOKE_JOBS at a time" >&2
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || { echo "[smoke] the CLI did not build" >&2; return 1; }
   export SMOKE_CLI_BUILT=1
+  # This tree's own image tags: a run from another worktree builds its own, so
+  # neither runs the other's bundle (scripts/images.ts, push_tree in lib.sh).
+  if [ "$SMOKE_FORGE" != gitlab ]; then
+    TG_IMAGE_SUFFIX="-t$(cd "$HERE/.." && cat packages/terragucci/dist/terragucci.mjs images/Dockerfile.* | shasum -a 256 | cut -c1-12)"
+    export TG_IMAGE_SUFFIX
+  fi
   SMOKE_TOFU_IMAGE="$(image_tag tofu)"; SMOKE_TG_IMAGE="$(image_tag terragrunt)"
   export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE
   # The lab is never started here: GitLab is heavy, and `just gitlab-lab up`

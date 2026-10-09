@@ -53,10 +53,10 @@ export const APPROVAL_CONTEXT = "terragucci/approval";
 export { changesSomething, destroysSomething } from "./report/changing";
 export { noteMarker, parseMarker, WAVES_MARKER, type NoteWaves } from "./report/marker";
 
-/** The review digest: the set digest over the members whose plan changes something. Null when none does. */
-export function reviewDigest(members: readonly { member: string; planDigest: string; plan: unknown }[]): string | null {
+/** The review digest: the set digest over the members whose plan changes something, and `extra` (the wave's cost under `cost.approve_above`). Null when none does. */
+export function reviewDigest(members: readonly { member: string; planDigest: string; plan: unknown }[], extra: readonly { member: string; planDigest: string }[] = []): string | null {
   const changing = members.filter((m) => changesSomething(m.plan));
-  return changing.length === 0 ? null : changeSetDigest(changing.map(({ member, planDigest }) => ({ member, planDigest })));
+  return changing.length === 0 ? null : changeSetDigest([...changing.map(({ member, planDigest }) => ({ member, planDigest })), ...extra]);
 }
 
 /** A forge's REST API, as the jobs call it with their own token. */

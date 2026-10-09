@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, approvedPath, decideGate, decidedPath, parseApplied as readApplied, waveShares, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
+import type { CostRunner } from "../src/report/cost";
 import { noteMarker } from "../src/review";
 import { refusedDiff } from "../src/respond/refused";
 import { gateSealPayload } from "../src/seal";
@@ -373,6 +374,82 @@ describe("a wave behind its gate", () => {
     git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "approve");
     git(clone, "push", "-q", "origin", "chant/lifecycle");
   }
+
+  describe("cost.approve_above", () => {
+    const yml = (amount: number) => `gate: never\ncost:\n  command: node cost.mjs\n  approve_above: ${amount}\n`;
+    const priced = (delta: number): CostRunner => async () => ({ code: 0, stdout: JSON.stringify({ currency: "USD", totalMonthlyCost: String(delta), pastTotalMonthlyCost: "0", diffTotalMonthlyCost: String(delta) }), stderr: "" });
+    const opts = (bin: string, delta: number) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: {}, costRunner: priced(delta) });
+    const report = (work: string) => JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
+
+    it("holds a wave whose change is over the amount under gate: never, names the amount, and applies one within it", async () => {
+      const { work, origin, bin, log } = setup({ "terragucci.yml": yml(15) });
+      const out = vi.spyOn(console, "log").mockImplementation(() => {});
+      expect(await applyWave(work, { ...opts(bin, 20), now: T(1) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+      const text = out.mock.calls.flat().join("\n");
+      expect(text).toContain("the monthly cost changes by +20.00 USD, over cost.approve_above 15.00 USD in the config at ");
+      expect(text).toContain("so it waits for an approval although gate is never");
+      const pending = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!;
+      expect(pending.members!.map((m) => m.member)).toEqual(["a", "(monthly cost)"]);
+      expect(report(work).waves[0]).toMatchObject({ approval: "waiting", cost: { monthly_delta: 20, approve_above: 15, over: true } });
+      expect(report(work).cost).toMatchObject({ monthly_delta: 20, roots: [{ root: "a", output: "roots/a/cost.json" }] });
+      expect(existsSync(join(work, "terragucci-report", "roots", "a", "cost.json"))).toBe(true);
+      // Within the amount, gate: never applies it.
+      expect(await applyWave(work, { ...opts(bin, 10), now: T(2) })).toBe(0);
+      expect(readFileSync(log, "utf-8")).toContain("applied a");
+      expect(report(work).waves[0]).toMatchObject({ approval: "not-required", cost: { monthly_delta: 10, over: false } });
+    });
+
+    it("binds the cost into the digest: an approval of the plans at one cost does not apply them at another", async () => {
+      const { work, origin, bin, log } = setup({ "terragucci.yml": yml(15) });
+      const out = vi.spyOn(console, "log").mockImplementation(() => {});
+      expect(await applyWave(work, { ...opts(bin, 20), now: T(1) })).toBe(3);
+      const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+      approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
+      // The same plans, priced higher: the approval is of another digest, so nothing applies and the cost is named as what moved.
+      expect(await applyWave(work, { ...opts(bin, 40), now: T(3) })).toBe(4);
+      expect(existsSync(log)).toBe(false);
+      expect(out.mock.calls.flat().join("\n")).toContain("these roots planned differently since: (monthly cost)");
+      // The refusal asked for the new digest; approved again at the first cost, the plans at that cost apply.
+      approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(4), planDigest: digest });
+      expect(await applyWave(work, { ...opts(bin, 20), now: T(5) })).toBe(0);
+      expect(readFileSync(log, "utf-8")).toContain("applied a");
+    });
+
+    it("reads the amount at the commit before the one applied, so a change that raises it still waits", async () => {
+      const { work, bin, log } = setup({ "terragucci.yml": yml(15) });
+      write(work, { "terragucci.yml": yml(1000) });
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "raise the amount");
+      const out = vi.spyOn(console, "log").mockImplementation(() => {});
+      expect(await applyWave(work, { ...opts(bin, 20), now: T(1) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+      const text = out.mock.calls.flat().join("\n");
+      expect(text).toMatch(/approve_above is 1000 here and 15 at [0-9a-f]{40}; the amount at [0-9a-f]{40} counts/);
+      expect(text).toContain("over cost.approve_above 15.00 USD");
+    });
+
+    it("gives the policy each root's cost and the wave's", async () => {
+      const { work, bin } = setup({ "terragucci.yml": `${yml(15)}policy:\n  path: policy\n`, "policy/p.rego": "package main\n" });
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const inputs: Record<string, unknown>[] = [];
+      const deny: PolicyExec = async (_f, args) => {
+        if (args[0] === "--version") return { status: 0, stdout: "", stderr: "" };
+        inputs.push(JSON.parse(readFileSync(args[args.length - 1], "utf-8")));
+        return { status: 1, stdout: JSON.stringify([{ failures: [{ msg: "the wave adds more than 15.00 a month" }] }]), stderr: "" };
+      };
+      expect(await applyWave(work, { ...opts(bin, 20), now: T(1), policy: { exec: deny } })).toBe(1);
+      expect(inputs[0]).toMatchObject({ cost: { currency: "USD", root: { monthly_delta: 20 }, wave: { number: 1, monthly_delta: 20 }, approve_above: 15 } });
+    });
+
+    it("leaves a wave alone, and prices nothing, without cost", async () => {
+      const { work, bin } = setup({ "terragucci.yml": "gate: never\n" });
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      let ran = 0;
+      expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {}, now: T(1), costRunner: async () => (ran++, { code: 1, stdout: "", stderr: "" }) })).toBe(0);
+      expect(ran).toBe(0);
+      expect(report(work).cost).toBeUndefined();
+    });
+  });
 
   describe("when chant.workspace.json names the gate under identity.gates", () => {
     const alice = sshKey();
