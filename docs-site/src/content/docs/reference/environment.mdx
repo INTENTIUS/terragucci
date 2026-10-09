@@ -27,22 +27,31 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 | Variable | Used by | Needs |
 |---|---|---|
-| the run's own token (`github.token` on GitHub and Forgejo) | the generated plan and apply jobs | comments and statuses; apply also writes [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+| the run's own token (`github.token` on GitHub and Forgejo) | the generated jobs that post or push | comments and statuses; apply also writes [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and `fmt` pushes to the branch |
 | `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable; with `comments:` set it also needs the Developer role; with `gitlab.token: protected` it is also a protected variable, and only default-branch jobs get it |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | `reconcile`, `rollout` and `respond --mode apply`, by the project's forge | push branches and open pull requests in the projects they touch |
-| `TG_TOKEN` | the comment, status and respond steps | set by the job; set it yourself outside a pipeline |
-| `GITEA_TOKEN` | nothing | the agent's job clears it with the other runner tokens, so it never reaches the agent |
+| `TG_TOKEN` | the comment, status, note and respond steps | set by the job; set it yourself outside a pipeline |
+| `GITEA_TOKEN` | nothing | dropped with the other runner tokens from every step that runs a pull request's code |
 
 `token_env` renames the variable. That token needs no merge rights; those commands never merge.
 
-In the plan, apply, drift and respond stages, the binary and Terragrunt never get `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, or any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN`. `TF_` variables pass as set, so a provider's token goes in a `TF_VAR_` variable. [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
+The binary and Terragrunt never get `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, or any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN`. That holds in the plan, apply, drift and respond stages, and for `validate`, `live-check` and the policy engine in the check job. `TF_` variables pass as set, so a provider's token goes in a `TF_VAR_` variable. [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
 
-The check job is the exception. It runs `fmt`, `init -backend=false`, `validate` and [choudoufu](/terragucci/concepts/glossary/#choudoufu)'s `live-check` with the job's whole environment, and holds no cloud role.
+### Jobs that run a pull request's code
 
-| The check job's environment holds | When |
+On GitHub and Forgejo these jobs hold no forge token while the change's code runs. Their checkouts keep no credentials in the git config, and the steps that run the change's code start without `TG_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN` or `ACTIONS_RUNTIME_TOKEN`. Forgejo's runner gives every step its token whatever `permissions:` says, so those steps start their shell again without it.
+
+| Job | The token is used by |
 |---|---|
-| `TG_TOKEN`, so the job can push the formatting | `respond.fmt` is `commit` (the default), outside a Terragrunt repo, except on GitLab with `gitlab.token: protected` |
-| `CI_JOB_TOKEN` and the project's variables | on GitLab; `GITLAB_TOKEN` among them unless `gitlab.token: protected` makes it a protected variable |
+| `check` | no step; after a failed check on a branch, the `fmt` job pushes the formatting |
+| `plan` | the step before the checkout, which posts `terragucci/plan` pending; the `plan-note` job then posts the note and the status from the plan report |
+| `replan` | the step that reads the comment, before the head is checked out; the `replan-note` job posts |
+
+On GitLab the check job drops `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITLAB_TOKEN` (or the `token_env` variable) and `CI_JOB_TOKEN` before it runs anything, and the `fmt` job pushes the formatting. The plan job holds `GITLAB_TOKEN` unless `gitlab.token: protected` makes it a protected variable. [Where the scrub ends](/terragucci/reference/threat-model/#where-the-token-scrub-ends).
+
+### GitLab-managed state
+
+The binary never gets `CI_JOB_TOKEN`, so the `http` backend takes its credentials from `TF_` variables in `env:`. [The pipeline reference](/terragucci/reference/pipeline/#gitlab-managed-state) has them.
 
 ## Reports
 
@@ -190,7 +199,7 @@ A local run needs none of these.
 |---|---|
 | GitHub and Forgejo | `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
-| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_STATUS`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
 ## Variables the generated jobs set
 
@@ -202,6 +211,8 @@ Internal; a value set in `env:` is overwritten.
 | `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE`, `TERRAGUCCI_HEAD` | GitLab, `apply.when: pull-request`: the variables the `comments` job starts the `mr-apply` pipeline with, naming the merge request, its note and its head; `mr-apply` reads all three again from GitLab |
 | `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
+| `TG_PLAN_RESULT` | the `plan-note` and `replan-note` jobs: the plan job's result |
+| `TG_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
 | `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc` |

@@ -27,6 +27,7 @@ prompt: |
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and runs `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under `approval: sealed`; a person runs it |
 | `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and runs `chant approve policy-override <root> --plan <digest> --note <reason>`; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
+| `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names; the generated apply jobs run it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |

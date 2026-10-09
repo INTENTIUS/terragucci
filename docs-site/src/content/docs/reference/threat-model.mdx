@@ -34,9 +34,12 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 
 | Job | Runs on | Code | Forge token | Cloud identity |
 |---|---|---|---|---|
-| `check` | a push to any branch; a fork's pull request | the pushed branch | `github.token`, `contents: write`; read-only on a fork's pull request | none |
-| `plan` | a pull request from the repo | the change | `github.token`: contents read, statuses and pull requests write | plan role |
-| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | as `plan` | plan role |
+| `check` | a push to any branch; a fork's pull request | the pushed branch | none | none |
+| `fmt` | a failed `check` of a push to a branch other than the default | the pushed branch's files, formatted, never run | `github.token`, `contents: write` | none |
+| `plan` | a pull request from the repo | the change | `github.token`, `statuses: write`, only in the step before the checkout | plan role |
+| `plan-note` | after `plan` | none of the change's; the plan job's note and status read as data | `github.token`: statuses and pull requests write | none |
+| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | `github.token`: statuses and pull requests write, only in the step that reads the comment, before the head is checked out | plan role |
+| `replan-note` | after `replan` | as `plan-note` | as `plan-note` | none |
 | `apply-wave-<k>` | a push to the default branch | merged code | `github.token`, `contents: write` | apply role |
 | `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | `github.token`, `contents: write` | apply role |
 | `pr-merge` | `apply.merge: auto` | none of the change's | the merge token | none |
@@ -54,7 +57,8 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 
 | Job | Runs on | Code | Forge token | Cloud identity |
 |---|---|---|---|---|
-| `check` | a push to any branch | the pushed branch | `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` | none |
+| `check` | a push to any branch | the pushed branch | `GITLAB_TOKEN` and the job token, dropped before the branch's code runs; no `GITLAB_TOKEN` with `gitlab.token: protected` | none |
+| `fmt` | a failed `check` on a branch other than the default; not with `gitlab.token: protected` | the branch's files, formatted, never run | `GITLAB_TOKEN` | none |
 | `plan` | a merge request from the project | the change | `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` | plan role |
 | `apply-wave-<k>` | a push to the default branch | merged code | `GITLAB_TOKEN` | apply role |
 | `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
@@ -81,9 +85,12 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 
 | Job | Runs on | Code | Forge token | Cloud identity |
 |---|---|---|---|---|
-| `check` | a push to any branch; a fork's pull request | the pushed branch | the run's own | none |
-| `plan` | a pull request from the repo | the change | the run's own | plan role |
-| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | the run's own | plan role |
+| `check` | a push to any branch; a fork's pull request | the pushed branch | the run's own, dropped from the step that runs the branch's code | none |
+| `fmt` | a failed `check` of a push to a branch other than the default | the pushed branch's files, formatted, never run | the run's own | none |
+| `plan` | a pull request from the repo | the change | the run's own, dropped from the step that runs the change's code | plan role |
+| `plan-note` | after `plan` | none of the change's; the plan job's note and status read as data | the run's own | none |
+| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | the run's own, dropped from the step that runs the change's code | plan role |
+| `replan-note` | after `replan` | as `plan-note` | the run's own | none |
 | `apply-wave-<k>` | a push to the default branch | merged code | the run's own | apply role |
 | `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | the run's own | apply role |
 | `pr-merge` | `apply.merge: auto` | none of the change's | the merge token, required | none |
@@ -145,15 +152,18 @@ After the checks, the change's providers, modules and external data sources run 
 
 ## Where the token scrub ends
 
-terragucci starts the binary and Terragrunt without forge tokens, by name and by value ([the list](/terragucci/reference/environment/#forge-tokens)). Elsewhere a change's code can still reach one.
+terragucci starts the binary, Terragrunt and the policy engine without forge tokens, by name and by value ([the list](/terragucci/reference/environment/#forge-tokens)). On GitHub and Forgejo the jobs that run a pull request's code also keep the token away from the steps that run it ([which steps](/terragucci/reference/environment/#jobs-that-run-a-pull-requests-code)). Elsewhere a change's code can still reach one.
 
 | Where | Forge token reachable |
 |---|---|
-| The binary and Terragrunt, started by `terragucci stage` and `respond` | no; a `TF_` variable passes as set, even holding a token |
-| The `check` job: `fmt` and `init -backend=false` from its shell, `validate` from `terragucci check-root` | yes: `TG_TOKEN` is in their environment |
-| The checkout's git config | yes on GitHub and Forgejo, except the agent jobs; on GitLab, the runner's job token in the remote |
-| The parent processes' environments | yes: the job's shell and terragucci hold the token |
-| GitLab's `plan` and `check` jobs | yes: `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` |
+| The binary, Terragrunt and the policy engine, started by `terragucci stage`, `respond`, `check-root` and `check-policy` | no; a `TF_` variable passes as set, even holding a token |
+| On GitHub and Forgejo, the steps of `check`, `plan` and `replan` that run the change's code, their parent processes and their checkout's git config | no |
+| On GitHub, a process the change's code leaves running in the `check`, `plan` or `replan` job's container | no API token: the later steps hold only `ACTIONS_RUNTIME_TOKEN`, which the artifact upload uses |
+| On Forgejo, a process the change's code leaves running in the `check`, `plan` or `replan` job's container | yes: Forgejo's runner gives the run's token to every later step of the job, such as the one that keeps the report |
+| GitLab's `check` job | no variable once its script starts; the runner's job token stays in the checkout's remote |
+| GitLab's `plan` job | yes: `GITLAB_TOKEN`, `api` scope, and the job token in the checkout's remote; with `gitlab.token: protected`, only the job token |
+| `apply-comment` and `mr-apply` with `apply.when: pull-request` | yes: the job's token, in the job's environment and the checkout, which the stage pushes the locks and the gate's records with |
+| The jobs that run merged code: the apply waves, `confirm`, `drift`, `tips` | yes: the job's token; the code there was reviewed and merged |
 | A change that edits its own pipeline file | whatever that pipeline asks for |
 
 Each of these is a writer's own code in a job the forge gives a token to. Branch protection is what keeps that token from reaching the default branch.

@@ -155,6 +155,9 @@ export async function driftRuns(fetch: Fetch, t: ForgeTarget): Promise<DriftRuns
   return last ? { last } : {};
 }
 
+/** What a plan job with no forge token leaves for the note job: the cron and the pipeline file's first commit. */
+export const DRIFT_SCHEDULE_FILE = "drift-schedule.json";
+
 /** When the pipeline file first appeared in the checkout's history (ISO 8601), if the history has it. */
 export function pipelineAdded(repo: string, forge: ForgeName): string | undefined {
   const r = spawnSync("git", ["-C", repo, "log", "--format=%cI", "--diff-filter=A", "--", PIPELINE_PATHS[forge]], { encoding: "utf-8" });
