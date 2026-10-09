@@ -22,9 +22,6 @@ export interface GenerateSettings extends GenerateLevel {
   roots?: Record<string, GenerateLevel>;
 }
 
-export const TERRAGRUNT_GENERATE =
-  "a Terragrunt repo generates backend, provider and version files with Terragrunt's own generate blocks (and remote_state's generate), which every unit includes from root.hcl; see https://terragrunt.gruntwork.io/docs/reference/hcl/blocks/#generate. Remove generate from terragucci.yml";
-
 export const LEVEL_KEYS = ["backend", "providers", "required_version"] as const;
 const TOP_KEYS = [...LEVEL_KEYS, "dirs", "roots"] as const;
 export const IDENT = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -96,10 +93,9 @@ function checkLevel(level: unknown, where: string, problems: string[], top: bool
   }
 }
 
-/** Check a `generate` key; `terragrunt` is the same settings' terragrunt block, which generate refuses. */
-export function checkGenerate(v: unknown, where: string, problems: string[], terragrunt?: unknown): void {
+/** Check a `generate` key. */
+export function checkGenerate(v: unknown, where: string, problems: string[]): void {
   if (v === undefined) return;
-  if (terragrunt !== undefined) problems.push(`${where}: ${TERRAGRUNT_GENERATE}`);
   checkLevel(v, where, problems, true);
 }
 

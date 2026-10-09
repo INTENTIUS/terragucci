@@ -650,7 +650,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
   checkVersion(s.version, s.binary, where, problems);
-  checkGenerate(s.generate, `${where}.generate`, problems, s.terragrunt);
+  checkGenerate(s.generate, `${where}.generate`, problems);
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
   }

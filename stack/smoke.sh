@@ -266,6 +266,7 @@ decide-backends|decide.backend von, decider and jev each answer the description 
 otlp-headers|telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green|
 pinned-install|a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release|
 generate|terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file|
+tg-generate|in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name|
 root-pins|two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root|
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
@@ -337,7 +338,7 @@ cdktn-tips|with synth set the tips job synthesizes the CDK Terrain stacks and op
 cdktn-migrate|a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files|
 cdktn-refused|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
 apply-branches|with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved|
-apply-branches-drift|with apply.branches mapping release to canary, the drift run on main plans canary from release, the branch that applied it, and finds no drift where planning it from main would report its queue gone|
+apply-branches-drift|with apply.branches mapping release to canary, the drift run on main plans canary from release, the branch that applied it, and finds no drift where planning it from main would read the state release left behind and report a false drift|
 own-jobs-kept|with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes|
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
@@ -819,61 +820,71 @@ claim_tg_apply_branches() {
   return $rc
 }
 
-# A root of the apply-branches-drift repo: name, the provider's region, the
-# state bucket. app holds a terraform_data; canary an SQS queue in the region.
-branches_drift_root() { # work, root, region, bucket, queue
+# A root of the apply-branches-drift repo, its state in the bucket under
+# the key given: app holds a terraform_data, canary an SQS queue whose owner
+# tag is the one given.
+branches_drift_root() { # work, root, bucket, key, [queue, owner tag]
   local dir="$1/wave/$2"
   mkdir -p "$dir"
   if [ "$2" = app ]; then
-    printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "app" {\n  input = "app"\n}\n' "$4" > "$dir/main.tf"
+    printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "%s"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "app" {\n  input = "app"\n}\n' "$3" "$4" > "$dir/main.tf"
     return
   fi
-  # The queue carries a tag: floci reads an untagged queue's tags as {} where the state holds null, a tags drift no run clears.
-  printf 'terraform {\n  required_providers {\n    aws = {\n      source  = "hashicorp/aws"\n      version = "6.67.0"\n    }\n  }\n\n  backend "s3" {\n    bucket         = "%s"\n    key            = "canary.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nprovider "aws" {\n  region = "%s"\n}\n\nresource "aws_sqs_queue" "jobs" {\n  name = "%s"\n  tags = { owner = "smoke" }\n}\n' "$4" "$3" "$5" > "$dir/main.tf"
+  printf 'terraform {\n  required_providers {\n    aws = {\n      source  = "hashicorp/aws"\n      version = "6.67.0"\n    }\n  }\n\n  backend "s3" {\n    bucket         = "%s"\n    key            = "%s"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nprovider "aws" {\n  region = "us-east-1"\n}\n\nresource "aws_sqs_queue" "jobs" {\n  name = "%s"\n  tags = { owner = "%s" }\n}\n' "$3" "$4" "$5" "$6" > "$dir/main.tf"
   cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$dir/"
+}
+
+branches_drift_apply() { # work, log name, tf-apply arguments... -> AUDIT_CODE
+  local work="$1" name="$2"; shift 2
+  AUDIT_CODE=0
+  audit_in "$work" terragucci stage tf-apply --wave 1 --layers 'app,canary' --binary tofu --gate never "$@" > "$work/$name.log" 2>&1 || AUDIT_CODE=$?
+  cat "$work/$name.log" >&2
+  clean_mounted "$work/wave" "$(image_tag tofu)"
 }
 
 claim_apply_branches_drift() {
   # Two roots with their state in floci and apply.branches: {release:
-  # ["canary"]}: app, a terraform_data, and canary, an SQS queue. On release
-  # canary's provider is in eu-west-1; main still names us-east-1. tf-apply
-  # on release applies canary alone, so its queue is in eu-west-1, and on main
-  # app alone. tf-drift on main then plans canary from release, the branch
-  # that applied it: its log says so, and neither root drifted.
+  # ["canary"]}: app, a terraform_data, and canary, an SQS queue. release
+  # applies canary (owner tag v1, state at canary.tfstate), then moves its
+  # state to release/canary.tfstate and applies owner v2; main still names
+  # canary.tfstate, where the state of v1 is left, and applies app alone.
+  # tf-drift on main then plans canary from release, the branch that applied
+  # it: its log says so, and neither root drifted.
   # BREAK: the drift run's terragucci.yml has no apply.branches, so canary
-  # plans from main, whose provider finds no queue in us-east-1, and reports
-  # the queue gone: the false drift the claim catches.
+  # plans from main, reads the state release left behind, and reports the
+  # owner tag as drift: the false drift the claim catches.
   log() { echo "[smoke apply-branches-drift] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work image rc=0 bucket="abd-$STAMP" queue="abd-q-$STAMP" map='release=canary' report sha
+  local work image rc=0 bucket="abd-$STAMP" queue="abd-q-$STAMP" map='release=canary' report sha url
   image="$(image_tag tofu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
-  branches_drift_root "$work" app us-east-1 "$bucket"
-  branches_drift_root "$work" canary us-east-1 "$bucket" "$queue"
+  branches_drift_root "$work" app "$bucket" app.tfstate
+  branches_drift_root "$work" canary "$bucket" canary.tfstate "$queue" v1
   printf 'binary: tofu\nroots: ["app", "canary"]\napply:\n  branches:\n    release: ["canary"]\n' > "$work/wave/terragucci.yml"
   printf '.terraform/\nterragucci-report/\n' > "$work/wave/.gitignore"
   audit_origin "$work"
   git -C "$work/wave" checkout -q -b release
-  branches_drift_root "$work" canary eu-west-1 "$bucket" "$queue"
-  git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "release: canary in eu-west-1"
   git -C "$work/wave" push -q "$work/origin.git" release
-  sha="$(git -C "$work/wave" rev-parse --short=8 HEAD)"
-  AUDIT_CODE=0
-  audit_in "$work" terragucci stage tf-apply --wave 1 --layers 'app,canary' --binary tofu --gate never --branches "$map" --branch release > "$work/release.log" 2>&1 || AUDIT_CODE=$?
-  cat "$work/release.log" >&2
-  clean_mounted "$work/wave" "$image"
-  [ "$AUDIT_CODE" = 0 ] || { log "release's wave exited $AUDIT_CODE, not 0"; rc=1; }
-  grep -q "apply.branches: release applies canary" "$work/release.log" || { log "release's wave did not apply canary alone"; rc=1; }
+  branches_drift_apply "$work" release-1 --branches "$map" --branch release
+  [ "$AUDIT_CODE" = 0 ] || { log "release's first wave exited $AUDIT_CODE, not 0"; rc=1; }
+  grep -q "apply.branches: release applies canary" "$work/release-1.log" || { log "release's wave did not apply canary alone"; rc=1; }
+  if [ $rc = 0 ]; then
+    # release moves canary's state to a key of its own, and applies a new owner tag there.
+    curl -fsS -o /dev/null -X PUT -H "x-amz-copy-source: /$bucket/canary.tfstate" "$FLOCI/$bucket/release/canary.tfstate" || { log "could not copy canary's state to its new key"; rc=1; }
+    branches_drift_root "$work" canary "$bucket" release/canary.tfstate "$queue" v2
+    git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "release: canary's state under release/, owner v2"
+    git -C "$work/wave" push -q "$work/origin.git" release
+    sha="$(git -C "$work/wave" rev-parse --short=8 HEAD)"
+    branches_drift_apply "$work" release-2 --branches "$map" --branch release
+    [ "$AUDIT_CODE" = 0 ] || { log "release's second wave exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
   git -C "$work/wave" checkout -q main
   if [ $rc = 0 ]; then
-    AUDIT_CODE=0
-    audit_in "$work" terragucci stage tf-apply --wave 1 --layers 'app,canary' --binary tofu --gate never --branches "$map" > "$work/main.log" 2>&1 || AUDIT_CODE=$?
-    cat "$work/main.log" >&2
-    clean_mounted "$work/wave" "$image"
+    branches_drift_apply "$work" main --branches "$map"
     [ "$AUDIT_CODE" = 0 ] || { log "main's wave exited $AUDIT_CODE, not 0"; rc=1; }
   fi
   if [ $rc = 0 ]; then
@@ -886,17 +897,17 @@ claim_apply_branches_drift() {
     [ -f "$report" ] || { log "the drift run wrote no report"; rc=1; }
   fi
   if [ $rc = 0 ]; then
-    log "drift by root: $(jq -c '[.roots[] | {path, changes: [.changes[] | {address, action}], error}]' "$report")"
-    grep -q "apply.branches: canary plans from release at $sha, the branch that applies it" "$work/drift.log" || { log "the drift run did not plan canary from release at $sha"; rc=1; }
+    log "drift by root: $(jq -c '[.roots[] | {path, changes: [.changes[] | {address, action, attributes: [.attributes[]?.path]}], error}]' "$report")"
     [ "$(jq -r '[.roots[] | .path] | sort | join(",")' "$report")" = "app,canary" ] || { log "the drift run did not check both roots"; rc=1; }
     jq -e '[.roots[] | select(.error != null)] | length == 0' "$report" >/dev/null || { log "a root failed its drift check"; rc=1; }
     jq -e '[.roots[] | select(.path == "canary") | .changes[]] | length == 0' "$report" >/dev/null || { log "canary reports drift that is only the difference between main and release"; rc=1; }
     jq -e '[.roots[] | select(.path == "app") | .changes[]] | length == 0' "$report" >/dev/null || { log "app reports drift"; rc=1; }
+    grep -q "apply.branches: canary plans from release at $sha, the branch that applies it" "$work/drift.log" || { log "the drift run did not plan canary from release at $sha"; rc=1; }
   fi
-  curl -s -o /dev/null -X POST "$FLOCI/" -H "Authorization: AWS4-HMAC-SHA256 Credential=test/20261009/eu-west-1/sqs/aws4_request, SignedHeaders=host, Signature=0" \
-    -H "X-Amz-Target: AmazonSQS.DeleteQueue" -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"https://sqs.eu-west-1.amazonaws.com/000000000000/$queue\"}" || true
+  url="$(curl -fsS -X POST "$FLOCI/" -H "X-Amz-Target: AmazonSQS.GetQueueUrl" -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueName\":\"$queue\"}" 2>/dev/null | jq -r '.QueueUrl // empty')"
+  [ -n "$url" ] && curl -s -o /dev/null -X POST "$FLOCI/" -H "X-Amz-Target: AmazonSQS.DeleteQueue" -H 'Content-Type: application/x-amz-json-1.0' -d "{\"QueueUrl\":\"$url\"}"
   drop_work "$work" "$image"
-  [ $rc = 0 ] && log "the drift run planned canary from release, which applied it in eu-west-1, and found no drift in either root"
+  [ $rc = 0 ] && log "the drift run planned canary from release, whose state and owner tag are the ones the cloud holds, and found no drift in either root"
   return $rc
 }
 
@@ -8799,6 +8810,92 @@ JS
   return $rc
 }
 
+claim_tg_generate() {
+  # A Terragrunt repo of two units, live/dev/app and live/prod/app, each with
+  # include "terragucci" and nothing of its own about backends or providers,
+  # and a terragucci.yml whose generate key gives the s3 backend with a key
+  # per unit, the aws provider and its version, and eu-west-1 for
+  # live/prod/*. terragucci generate writes terragucci.hcl. The check step
+  # init writes, run in the Terragrunt image as the check job runs it, passes:
+  # hcl fmt, generate --check and hcl validate. tf-apply --terragrunt wave 1
+  # then applies both units: each state lands at the key generate gives it,
+  # and the providers.tf Terragrunt wrote for live/prod/app names eu-west-1.
+  # BREAK: live/prod/app does not include terragucci.hcl, so the check step
+  # refuses it by name and fails.
+  log() { echo "[smoke tg-generate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bucket="tggen-$STAMP" body code=0 u rc=0 inc
+  image="$(image_tag terragrunt)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  mkdir -p "$work/wave/modules/app"
+  printf 'resource "terraform_data" "app" {\n  input = "app"\n}\n' > "$work/wave/modules/app/main.tf"
+  printf '# Every unit takes its backend and providers from terragucci.hcl.\n' > "$work/wave/root.hcl"
+  for u in live/dev/app live/prod/app; do
+    mkdir -p "$work/wave/$u"
+    inc='include "terragucci" {\n  path = find_in_parent_folders("terragucci.hcl")\n}\n\n'
+    [ -n "${BREAK:-}" ] && [ "$u" = live/prod/app ] && inc=''
+    # shellcheck disable=SC2059 # the include is the format's own text
+    printf "${inc}terraform {\n  source = \"../../../modules/app\"\n}\n" > "$work/wave/$u/terragrunt.hcl"
+    cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/wave/$u/"
+  done
+  cat > "$work/wave/terragucci.yml" <<YML
+forge: forgejo
+binary: tofu
+generate:
+  backend:
+    s3:
+      bucket: $bucket
+      key: "{root}/terraform.tfstate"
+      region: us-east-1
+      use_lockfile: true
+      use_path_style: true
+  providers:
+    aws:
+      source: hashicorp/aws
+      version: "6.67.0"
+      region: us-east-1
+      s3_use_path_style: true
+  dirs:
+    "live/prod/*":
+      providers: { aws: { region: eu-west-1 } }
+YML
+  printf '.terragrunt-cache/\nterragucci-report/\n' > "$work/wave/.gitignore"
+  (cd "$work/wave" && "$TERRAGUCCI" generate >&2) || { log "generate failed"; drop_work "$work"; return 1; }
+  [ -f "$work/wave/terragucci.hcl" ] || { log "generate wrote no terragucci.hcl"; drop_work "$work"; return 1; }
+  (cd "$work/wave" && TERRAGUCCI_TERRAGRUNT=/nonexistent/terragrunt "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  body="$(check_step_body "$work/wave/.forgejo/workflows/terragucci.yml")"
+  grep -q '^terragucci generate --check$' <<<"$body" || { log "the check step runs no terragucci generate --check"; rc=1; }
+  audit_origin "$work"
+  AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true sh -c "$body" > "$work/check.log" 2>&1 || code=$?
+  cat "$work/check.log" >&2
+  clean_mounted "$work/wave" "$image"
+  if [ "$code" != 0 ]; then
+    log "the check step exited $code"
+    grep -q '^refused: live/prod/app/terragrunt.hcl does not include terragucci.hcl' "$work/check.log" && log "it refused live/prod/app, which does not include terragucci.hcl, by name"
+    rc=1
+  else
+    grep -q '^generated files match terragucci.yml: 1 file for 2 units$' "$work/check.log" || { log "the check step did not say terragucci.hcl matches for both units"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    AUDIT_CODE=0
+    AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true sh -c 'terragucci stage tf-apply --wave 1 --layers "live/dev/app,live/prod/app" --binary tofu --gate never --terragrunt && cat live/prod/app/.terragrunt-cache/*/*/providers.tf' > "$work/apply.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/apply.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "the wave exited $AUDIT_CODE, not 0"; rc=1; }
+    for u in live/dev/app live/prod/app; do
+      curl -fsS -o /dev/null "$FLOCI/$bucket/$u/terraform.tfstate" || { log "no state for $u at $bucket/$u/terraform.tfstate"; rc=1; }
+    done
+    grep -q 'region            = "eu-west-1"' "$work/apply.log" || { log "the providers.tf Terragrunt wrote for live/prod/app does not name eu-west-1"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "generate wrote terragucci.hcl, the check step passed it, and each unit applied with the backend key and the provider region generate gives it"
+  return $rc
+}
+
 claim_root_pins() {
   # Two roots in one wave: old pins OpenTofu 1.10.6 in its .opentofu-version,
   # which the tofu image does not carry, and new pins nothing. tf-plan, run in
@@ -15660,6 +15757,7 @@ otlp-headers         weight=60
 pinned-install       weight=60
 root-pins            weight=60
 generate             weight=60
+tg-generate          weight=150
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150

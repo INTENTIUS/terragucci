@@ -88,7 +88,7 @@ export interface DiscoverOptions {
 }
 
 /** The body of each top-level `<keyword> ... {` block in HCL text, braces matched, strings and comments skipped. */
-function blocks(text: string, keyword: string): string[] {
+export function hclBlocks(text: string, keyword: string): string[] {
   const out: string[] = [];
   const head = new RegExp(`^\\s*${keyword}\\b[^{\\n]*\\{`, "gm");
   for (let m = head.exec(text); m; m = head.exec(text)) {
@@ -120,12 +120,12 @@ export function literalDependencies(text: string): string[] {
   const clean = text.replace(/(^|[^:"$])(#|\/\/).*$/gm, "$1");
   const plain = /^"([^"$]*)"$/;
   const out: string[] = [];
-  for (const b of blocks(clean, "dependency")) {
+  for (const b of hclBlocks(clean, "dependency")) {
     const m = /^\s*config_path\s*=\s*("[^"\n]*")\s*$/m.exec(b);
     const p = m && plain.exec(m[1]);
     if (p) out.push(p[1]);
   }
-  for (const b of blocks(clean, "dependencies")) {
+  for (const b of hclBlocks(clean, "dependencies")) {
     const m = /\bpaths\s*=\s*\[([^\]]*)\]/.exec(b);
     for (const item of m ? m[1].split(",").map((x) => x.trim()).filter(Boolean) : []) {
       const p = plain.exec(item);
