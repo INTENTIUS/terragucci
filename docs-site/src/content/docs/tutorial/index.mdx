@@ -1,6 +1,6 @@
 ---
 title: Boot the example
-description: Run a 15-root OpenTofu estate, or the same shop as Terragrunt units, on your laptop, with a local forge and an AWS stand-in, in a few minutes.
+description: Run a 15-root OpenTofu estate, or the same shop as Terragrunt units, on your laptop, with a local forge and an AWS stand-in, in about ten minutes the first time.
 sidebar:
   order: 1
   badge:
@@ -9,7 +9,7 @@ sidebar:
 claims: [boot]
 prompt: |
   Read https://intentius.io/terragucci/tutorial/.
-  Clone github.com/INTENTIUS/terragucci, run `npm ci` and `just example up` as the page says, and report the Forgejo URL and the boot time. If it fails, match the error to "When something looks wrong" and tell me the fix.
+  Clone https://github.com/INTENTIUS/terragucci, run `npm ci` and `just example up` as the page says, and report the Forgejo URL and the boot time. If it fails, match the error to "When something looks wrong" and tell me the fix.
   `just example up` applies the example to floci, its local AWS stand-in. That is the one exception to the line below, and only against floci.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -95,6 +95,8 @@ waves:
   canary: ["envs/dev/*"]
 drift: "0 6 * * *"
 ```
+
+With Terraform, `binary: terraform` runs the same pipeline ([Choose your binary](/terragucci/guides/use-a-binary/)). Terragrunt users get the same shop as units on [its own page](/terragucci/tutorial/terragrunt/).
 
 ## When something looks wrong
 

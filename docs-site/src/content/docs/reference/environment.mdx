@@ -35,11 +35,21 @@ The config names variables and never holds a value. Put secrets in your forge's 
 
 `token_env` renames the variable. That token needs no merge rights; those commands never merge.
 
-The binary and Terragrunt never get `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, or any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN`. That holds in the plan, apply, drift and respond stages, and for `validate`, `live-check` and the policy engine in the check job. `TF_` variables pass as set, so a provider's token goes in a `TF_VAR_` variable. [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
+| Never reaches the binary or Terragrunt | Where |
+|---|---|
+| `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN` | the plan, apply, drift and respond stages, and `validate`, `live-check` and the policy engine in the check job |
+| any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN` | the same |
+| `TF_` variables | pass as set, so a provider's token goes in a `TF_VAR_` variable | [What this covers](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
 
 ### Jobs that run a pull request's code
 
-On GitHub and Forgejo these jobs hold no forge token while the change's code runs. Their checkouts keep no credentials in the git config, and the steps that run the change's code start without `TG_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN` or `ACTIONS_RUNTIME_TOKEN`. Forgejo's runner gives every step its token whatever `permissions:` says, so those steps start their shell again without it.
+On GitHub and Forgejo these jobs hold no forge token while the change's code runs.
+
+| Guard | Covers |
+|---|---|
+| checkouts keep no credentials in the git config | every job below |
+| the steps that run the change's code start without `TG_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN` or `ACTIONS_RUNTIME_TOKEN` | every job below |
+| those steps start their shell again without the token | Forgejo, whose runner gives every step its token whatever `permissions:` says |
 
 | Job | The token is used by |
 |---|---|
@@ -80,7 +90,7 @@ Each names a secret in your forge's store.
 |---|---|---|
 | `agent.comment.key_secret` | `ANTHROPIC_API_KEY` | the model's API key, given to the agent's step alone |
 | `agent.token_env` | none, required | the token the agent's change is pushed with |
-| `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto` | a token that may push to the default branch |
+| `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto`, and on GitLab with `apply.when: pull-request` | a token that may push to the default branch |
 | `cost.key_secret` | `INFRACOST_API_KEY` | the cost estimator's API key; the plan jobs get it as `INFRACOST_API_KEY` |
 | `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
 | `notify.slack` | none | a Slack incoming webhook address; the apply jobs get it as `TERRAGUCCI_SLACK_WEBHOOK` |

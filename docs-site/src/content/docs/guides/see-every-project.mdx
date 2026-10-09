@@ -31,53 +31,6 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 The page reads `index.json`, `inventory.json`, `changes.json`, `states.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
 
-## The resources
-
-Each `tf-apply` wave records, for every root it applied or that had nothing to apply, the resources the root holds afterwards: address, type and provider, read from the plan the wave applied. The upload keeps the newest list of each root in the project's `inventory.json`, and the page lists them.
-
-| On the page | What it holds |
-|---|---|
-| a count at the top | resources across every project |
-| per project | how many of each type |
-| per root | each resource's address, type and provider, and the wave that recorded them |
-
-No attribute value is ever recorded, sensitive or not. A root is listed from the first wave that applies it. A root you remove from the repo keeps its last list.
-
-## Change history
-
-Each `tf-apply` wave also records what it did to each resource of the roots it applied. The upload adds one row per resource to the project's `changes.json`. The estate job then writes `history.html` and `history.json` beside the page. They list every resource address with each apply that changed it, oldest first. Each resource on the page links to its history.
-
-| Action | Attributes named |
-|---|---|
-| `create`, `delete`, `import`, `move`, `forget` | none |
-| `update`, `replace` | the top-level attributes whose value changed |
-
-| Each apply shows | From |
-|---|---|
-| when, and what it did | the wave's plan |
-| the attributes it changed, by name | the wave's plan |
-| who approved the wave | the wave's apply entry in the [audit trail](/terragucci/reference/audit-trail/) |
-| the commit, the wave, its report and the root's plan digest | the wave's report |
-
-Run `terragucci audit` before `terragucci estate` (step 5) to name the approvers. Without the audit trail the history still lists every apply but names nobody. A wave no gate held has no approver.
-
-## State versions
-
-Each `tf-apply` wave records the version id of each root's state, read from the bucket's versioning, and the page lists them per root, newest first. A root whose bucket keeps no versions says versions are off. [Find the state version an apply left](/terragucci/guides/find-a-state-version/) sets this up and says how to go back to a version.
-
-## Delivery metrics
-
-The Delivery section shows the four DORA metrics for each project and for the estate over the newest eight weeks, with a row per week. The same numbers go to `dora.json` beside the page.
-
-| Metric | What the page counts |
-|---|---|
-| Deployment frequency | applied waves per week |
-| Lead time | the median time from a change's first plan to its wave applied, and that time before the gate, at the gate and after the approval |
-| Change failure rate | failed applies, plus applied waves whose roots drifted within 7 days, over all applies; a refused wave does not count |
-| Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none |
-
-The applies come from the audit trail, so run `terragucci audit` before `terragucci estate` (step 5). With an OTLP endpoint set, the job also sends the four as gauges, and the Estate dashboard graphs them. [Delivery metrics](/terragucci/reference/delivery-metrics/) defines each one exactly.
-
 ## Before you start
 
 | You need | Why |
@@ -103,7 +56,7 @@ The applies come from the audit trail, so run `terragucci audit` before `terragu
    | one central bucket | every project's `reports.bucket` names it, each writing with a `reports.role` of its own |
    | a bucket per account | the project's `reports` in the control repo names its bucket and a `role` that can read it |
 
-2. Give the job an identity. It reads the indexes and the audit trail, writes the page and its files, and signs the link.
+2. Give the job an identity. It reads the indexes, each apply wave's report and the audit trail, writes the page, its files and the audit trail (step 5), and signs the link.
 
    <Tabs syncKey="cloud">
      <TabItem label="AWS">
@@ -111,8 +64,8 @@ The applies come from the audit trail, so run `terragucci audit` before `terragu
    {
      "Version": "2012-10-17",
      "Statement": [
-       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl"] },
-       { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json"] }
+       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
+       { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/audit.html", "arn:aws:s3:::acme-terragucci/reports/audit.json"] }
      ]
    }
    ```
@@ -201,6 +154,13 @@ The applies come from the audit trail, so run `terragucci audit` before `terragu
      </TabItem>
    </Tabs>
 
+   The tabs show AWS. On GCP or Azure, replace the AWS lines with the cloud's own:
+
+   | Cloud | The job sets | On GitHub |
+   |---|---|---|
+   | GCP | `GOOGLE_APPLICATION_CREDENTIALS`, pointing at an `external_account` file for the service account of step 2, or a `service_account` key file | `google-github-actions/auth@v2` with `workload_identity_provider` and `service_account` writes the file and sets the variable |
+   | Azure | `ARM_TENANT_ID`, `ARM_CLIENT_ID`, and the job's OIDC token (audience `api://AzureADTokenExchange`) in the file `ARM_OIDC_TOKEN_FILE_PATH` names; or the account key as `AZURE_STORAGE_KEY` | `permissions: id-token: write`, and a step that requests the token and writes the file |
+
 4. Run it once. The log ends with the link:
 
    ```text
@@ -208,15 +168,15 @@ The applies come from the audit trail, so run `terragucci audit` before `terragu
      gitlab.example.com/platform/network: wave 2 waits, for 3h 0m
      github.com/acme/data: 2 roots drifted
    dora: 2.5 deployments per week, lead time 3h 10m, change failure rate 5%, time to restore 1h 20m
-   wrote terragucci-estate/estate.json, terragucci-estate/estate.html and terragucci-estate/dora.json
-   copied to s3://acme-terragucci/reports/estate.json, reports/estate.html and reports/dora.json
+   wrote terragucci-estate/estate.json, terragucci-estate/estate.html, terragucci-estate/dora.json, terragucci-estate/history.json and terragucci-estate/history.html
+   copied to s3://acme-terragucci/reports/estate.json, reports/estate.html, reports/dora.json, reports/history.json and reports/history.html
    link, until 2026-10-08T12:00:00.000Z:
    https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/estate.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
    ```
 
    The job fails (exit 1) when a project's index could not be read; the page still goes up and names that project.
 
-5. Add the audit trail: a `terragucci audit` step before the estate step writes `audit.jsonl` and `audit.html`, and the page links them. The approvers in the change history and the applies in the delivery metrics come from it. [The audit trail](/terragucci/reference/audit-trail/#write-it) lists what that step reads.
+5. Add the audit trail: a `terragucci audit` step before the estate step writes `audit.jsonl`, `audit.html` and `audit.json`, and the page links them. The approvers in the change history and the applies in the delivery metrics come from it. [The audit trail](/terragucci/reference/audit-trail/#write-it) lists what that step reads.
 
    ```yaml
    - run: npx --yes @intentius/terragucci audit
@@ -234,6 +194,53 @@ The applies come from the audit trail, so run `terragucci audit` before `terragu
 </Steps>
 
 The page's own numbers need nothing else. Its links to each run's report open where the bucket is served: `reports.url`, or your own front door.
+
+## The resources
+
+Each `tf-apply` wave records, for every root it applied or that had nothing to apply, the resources the root holds afterwards: address, type and provider, read from the plan the wave applied. The upload keeps the newest list of each root in the project's `inventory.json`, and the page lists them.
+
+| On the page | What it holds |
+|---|---|
+| a count at the top | resources across every project |
+| per project | how many of each type |
+| per root | each resource's address, type and provider, and the wave that recorded them |
+
+No attribute value is ever recorded, sensitive or not. A root is listed from the first wave that applies it. A root you remove from the repo keeps its last list.
+
+## Change history
+
+Each `tf-apply` wave also records what it did to each resource of the roots it applied. The upload adds one row per resource to the project's `changes.json`. The estate job then writes `history.html` and `history.json` beside the page. They list every resource address with each apply that changed it, oldest first. Each resource on the page links to its history.
+
+| Action | Attributes named |
+|---|---|
+| `create`, `delete`, `import`, `move`, `forget` | none |
+| `update`, `replace` | the top-level attributes whose value changed |
+
+| Each apply shows | From |
+|---|---|
+| when, and what it did | the wave's plan |
+| the attributes it changed, by name | the wave's plan |
+| who approved the wave | the wave's apply entry in the [audit trail](/terragucci/reference/audit-trail/) |
+| the commit, the wave, its report and the root's plan digest | the wave's report |
+
+Run `terragucci audit` before `terragucci estate` (step 5) to name the approvers. Without the audit trail the history still lists every apply but names nobody. A wave no gate held has no approver.
+
+## State versions
+
+Each `tf-apply` wave records the version id of each root's state, read from the bucket's versioning, and the page lists them per root, newest first. A root whose bucket keeps no versions says versions are off. [Find the state version an apply left](/terragucci/guides/find-a-state-version/) sets this up and says how to go back to a version.
+
+## Delivery metrics
+
+The Delivery section shows the four DORA metrics for each project and for the estate over the newest eight weeks, with a row per week. The same numbers go to `dora.json` beside the page.
+
+| Metric | What the page counts |
+|---|---|
+| Deployment frequency | applied waves per week |
+| Lead time | the median time from a change's first plan to its wave applied, and that time before the gate, at the gate and after the approval |
+| Change failure rate | failed applies, plus applied waves whose roots drifted within 7 days, over all applies; a refused wave does not count |
+| Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none |
+
+The applies come from the audit trail, so run `terragucci audit` before `terragucci estate` (step 5). With an OTLP endpoint set, the job also sends the four as gauges, and the Estate dashboard graphs them. [Delivery metrics](/terragucci/reference/delivery-metrics/) defines each one exactly.
 
 ## Next
 
