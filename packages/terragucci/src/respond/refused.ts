@@ -70,7 +70,8 @@ export function refusedDiff(approved: Report, current: Report, wave?: number): R
   return out;
 }
 
-const short = (d: string | null): string => (d ? d.replace(/^sha256:/, "").slice(0, 12) : "none");
+/** A digest's first 12 hex characters, past its scheme ("sha256:", "jcs1-sha256:"); "none" when there is none. */
+export const short = (d: string | null): string => (d ? d.slice(d.lastIndexOf(":") + 1).slice(0, 12) : "none");
 
 export function describeRefused(d: RefusedDiff): string {
   const what = d.wave === undefined ? "The change set" : `Wave ${d.wave}`;

@@ -9,7 +9,7 @@ import { buildReport, planFiles } from "../src/report/build";
 import { respond } from "../src/respond";
 import { codify, driftOf, hcl, importBlocks, literal, parseImport } from "../src/respond/drift";
 import { moduleNotes, releaseNotes } from "../src/respond/notes";
-import { describeRefused, refusedDiff } from "../src/respond/refused";
+import { describeRefused, refusedDiff, short } from "../src/respond/refused";
 import { addCanary, canaryFor, missingLocks, pinFromLock, SYNTH_TIPS_LEFT, tipProposals } from "../src/respond/tips";
 import { bareFrom, git, tmp, write } from "./helpers";
 import { plan, rc, RUN } from "./report-fixtures";
@@ -106,6 +106,18 @@ describe("respond wave-refused: the root-by-root diff", () => {
   it("names a changed value inside a change both plans make", () => {
     const d = refusedDiff(report([queue(60)], [queue(60)]), report([queue(90)], [queue(60)]), 2);
     expect(d.roots[0]!.changes).toEqual([{ address: "module.service.aws_sqs_queue.jobs", was: "update", now: "update", attributes: ["visibility_timeout_seconds"] }]);
+  });
+
+  it("prints each digest's hex, whatever its scheme, never the bare scheme", () => {
+    const d = refusedDiff(report([queue(60)], [queue(60)]), report([queue(90)], [queue(60)]), 2);
+    expect(d.approved_set).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
+    const text = describeRefused(d);
+    const hex = (x: string | null) => x!.slice(x!.lastIndexOf(":") + 1, x!.lastIndexOf(":") + 13);
+    expect(text).toContain(`(approved ${hex(d.approved_set)}, now ${hex(d.current_set)})`);
+    expect(text).toContain(`plan ${hex(d.roots[0]!.approved)} -> ${hex(d.roots[0]!.current)}`);
+    expect(text).not.toMatch(/sha256:[,) ]|sha256:$/m);
+    expect(short("sha256:0123456789abcdef")).toBe("0123456789ab");
+    expect(short(null)).toBe("none");
   });
 
   it("finds nothing when the plans match", () => {
