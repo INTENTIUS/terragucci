@@ -20,13 +20,21 @@
 # gitlab_claim_<name> here.
 
 # name|what the site says|issue that builds it (empty: implemented here)
-GITLAB_CLAIMS=''
+GITLAB_CLAIMS='note-footer|the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG|
+tips|the plan note on a merge request counts the tips the plan report holds, each naming its rule and page|
+apply-serial|two pushes to main apply one after the other through the resource group, none is cancelled, and the commit carries one terragucci/apply success|
+policy-override|a wave the policy denies is retried with no effect after an override by someone policy.override does not list, applies after the listed approver overrides its plan, and its report names the override|'
 
 # As CLAIM_GROUPS in smoke.sh. Each run has its own project, so plain and
 # break overlap. runner is the lab's one gitlab-runner (concurrent = 4):
 # apply-serial's BREAK run holds it alone, so a lack of free slots never
 # orders its two applies.
-GITLAB_CLAIM_GROUPS=''
+GITLAB_CLAIM_GROUPS='
+note-footer      runner weight=100
+tips             runner weight=100
+apply-serial     runner break:runner! weight=300
+policy-override  runner weight=250
+'
 
 GITLAB_LAB_ENV="$HERE/gitlab/.state/gitlab.env"
 # How long a claim waits for a pipeline or a job, as lib.sh's TIMEOUT.
@@ -206,4 +214,239 @@ gl_planned_mr() { # dir project title
   MR="$(gl_mr "$2" change "$3")"
   [ -n "$MR" ] && [ "$MR" != null ] || { log "no merge request for change"; return 1; }
   gl_wait "$2" "$sha" merge_request_event
+}
+
+# ── the claims ────────────────────────────────────────────────────────────
+
+gitlab_claim_note_footer() {
+  # A merge request's plan note on GitLab: its last line is the footer, GitLab
+  # renders the footer's taco as an image, and the image answers 200 with a
+  # PNG.
+  # BREAK: the plan job's bundle points the footer at an image the site does
+  # not serve, so the note GitLab gets has a broken taco.
+  log() { echo "[smoke gitlab note-footer] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project note footer img got magic html rc=0 wf
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project note-footer)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_tree "$work/tree" "$project" "gate: never\n" || { drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    wf="$work/tree/.gitlab/terragucci.yml"
+    awk '{ print } /^plan:$/ { print "  before_script:"; print "    - \"sed -i '"'"'s#brand/taco-small.png#brand/taco-gone.png#'"'"' /usr/local/bin/terragucci\"" }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'taco-gone' "$wf" || { log "could not break the plan job"; drop_work "$work"; return 1; }
+  fi
+  gl_planned_mr "$work/tree" "$project" "smoke note-footer" || rc=1
+  [ $rc = 1 ] || [ "$PIPE_STATUS" = success ] || { log "the merge request's pipeline ended $PIPE_STATUS"; rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(gl_note "$project" "$MR")"
+    [ -n "$note" ] || { log "merge request !$MR has no plan note"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    footer="$(printf '%s\n' "$note" | sed '/^[[:space:]]*$/d' | tail -1)"
+    log "last line: $footer"
+    [[ "$footer" == "<sub><img "*"Posted by [terragucci]("*"</sub>" ]] || { log "the note's last line is not the footer"; rc=1; }
+    img="$(grep -o 'src="[^"]*"' <<<"$footer" | head -1 | sed 's/^src="//; s/"$//' || true)"
+    # GitLab's own Markdown renderer, as the merge request page uses it: the
+    # footer comes out as an image of that URL (lazy-loaded, so in data-src).
+    html="$(glapi -X POST "$GL_URL/api/v4/markdown" -H 'content-type: application/json' \
+      -d "$(jq -n --arg t "$footer" --arg p "$GL_USER/$project" '{text: $t, gfm: true, project: $p}')" | jq -r .html)"
+    grep -qE "<img [^>]*(data-)?src=\"$img\"" <<<"$html" || { log "GitLab does not render the footer's image: $html"; rc=1; }
+    got="$(curl -sS -m 20 -o "$work/taco.png" -w '%{http_code} %{content_type}' "$img" 2>/dev/null || true)"
+    magic="$(head -c 8 "$work/taco.png" 2>/dev/null | od -An -tx1 | tr -d ' \n' || true)"
+    log "$img answers ${got:-nothing}"
+    [[ "$got" == "200 image/png"* ]] && [ "$magic" = 89504e470d0a1a0a ] || { log "the footer's image is not a PNG that answers 200"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "merge request !$MR: the note ends with the footer, GitLab renders its taco, and $img is a PNG"
+  return $rc
+}
+
+gitlab_claim_tips() {
+  # app's null provider is let float to "~> 3.2". The merge request's plan
+  # note counts the tips, and the plan job's report.json holds as many, each
+  # with its rule and an https page, terragucci-floating-range for app among
+  # them.
+  # BREAK: tips: false, so the note counts none and the report holds none.
+  log() { echo "[smoke gitlab tips] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project cfg="gate: never\n" note counted job report tips rules rc=0
+  [ -n "${BREAK:-}" ] && cfg="gate: never\ntips: false\n"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project tips)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_tree "$work/tree" "$project" "$cfg" '  required_providers {
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
+  }' || { drop_work "$work"; return 1; }
+  gl_planned_mr "$work/tree" "$project" "smoke tips" || rc=1
+  [ $rc = 1 ] || [ "$PIPE_STATUS" = success ] || { log "the merge request's pipeline ended $PIPE_STATUS"; rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(gl_note "$project" "$MR")"
+    counted="$(sed -n 's/^\([0-9][0-9]*\) tips\{0,1\} on how the roots are set up.*/\1/p' <<<"$note" | head -1)"
+    job="$(gl_job plan)"
+    report="$work/report.json"
+    gl_artifact "$project" "$job" terragucci-report/report.json > "$report" 2>/dev/null || : > "$report"
+    tips="$(jq '[.tips // [] | .[] | select(.rule and (.url | startswith("https://")))] | length' "$report" 2>/dev/null || echo 0)"
+    rules="$(jq -r '[.tips // [] | .[].rule] | unique | join(", ")' "$report" 2>/dev/null || true)"
+    log "the note counts ${counted:-no} tips; the report of job $job holds ${tips:-no} with a rule and page (${rules:-none})"
+    [ -n "$counted" ] && [ "${tips:-0}" -gt 0 ] && [ "$counted" = "$tips" ] || { log "the note does not count the report's tips"; rc=1; }
+    jq -e '.tips[]? | select(.rule == "terragucci-floating-range" and .root == "app")' "$report" >/dev/null \
+      || { log "the floating null provider in app is not tipped"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "merge request !$MR: the note counts $counted tip(s), and the report names $rules, each with its page"
+  return $rc
+}
+
+gitlab_claim_apply_serial() {
+  # app's apply writes a mark to floci when it starts and another when it ends,
+  # 60 seconds apart, longer than the second pipeline's check job takes. A second push lands on main once the first push's apply
+  # has started. The marks must read start end start end: the second apply
+  # waited for the first in the resource group terragucci-apply. Both
+  # pipelines pass, no job is cancelled, and the second commit's
+  # terragucci/apply is one success for the stage.
+  # BREAK: the resource group is cut from the pipeline and the state lock
+  # waits 3 seconds, so the second apply runs into the first.
+  log() { echo "[smoke gitlab apply-serial] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project wf sha1 sha2 i marks s1 s2 cancelled status rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project apply-serial)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  # The second push replaces the resource, which on-destroy would hold for an
+  # approval; this claim is about the order, so no wave waits.
+  gl_tree "$work/tree" "$project" "gate: never\n" || { drop_work "$work"; return 1; }
+  cat >> "$work/tree/app/main.tf" <<TF
+
+resource "terraform_data" "slow" {
+  triggers_replace = file("\${path.module}/rev.txt")
+  provisioner "local-exec" {
+    command = <<-SH
+      mark() { node -e "fetch(process.env.AWS_ENDPOINT_URL + '/shop-terraform-state/$project-marks/' + Date.now() + '-\$1', { method: 'PUT', body: 'x' })"; }
+      mark start
+      sleep 60
+      mark end
+    SH
+  }
+}
+TF
+  wf="$work/tree/.gitlab/terragucci.yml"
+  grep -q '^  resource_group: terragucci-apply$' "$wf" || { log "the pipeline has no resource group for its apply jobs"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    grep -v '^  resource_group: terragucci-apply$' "$wf" \
+      | awk '{ print } /^    TF_INPUT: / { print "    TF_CLI_ARGS_plan: -lock-timeout=3s"; print "    TF_CLI_ARGS_apply: -lock-timeout=3s" }' > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  sha1="$(gl_push "$work/tree" "$project" main "serial: first")" || rc=1
+  if [ $rc = 0 ]; then
+    for _ in $(seq 1 150); do
+      gl_floci_keys "$project-marks/" 2>/dev/null | grep -q -- '-start$' && break
+      sleep 2
+    done
+    gl_floci_keys "$project-marks/" | grep -q -- '-start$' || { log "the first apply never started"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/app/rev.txt"
+    sha2="$(gl_push "$work/tree" "$project" main "serial: second")" || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    gl_wait "$project" "$sha1" push || rc=1
+    s1="$PIPE_STATUS"; cancelled="$(jq -r '[.[] | select(.status == "canceled") | .name] | join(" ")' <<<"$PIPE_JOBS")"
+    gl_wait "$project" "$sha2" push || rc=1
+    s2="$PIPE_STATUS"; cancelled="$cancelled $(jq -r '[.[] | select(.status == "canceled") | .name] | join(" ")' <<<"$PIPE_JOBS")"
+    marks="$(gl_floci_keys "$project-marks/" | sed -E 's#.*/[0-9]*-##' | tr '\n' ' ')"
+    log "marks in key order: $marks"
+    [ "$s1" = success ] && [ "$s2" = success ] || { log "the pipelines ended $s1 and $s2"; rc=1; }
+    [ -z "${cancelled// /}" ] || { log "cancelled: $cancelled"; rc=1; }
+    # Keys sort by millisecond timestamp, so the listing is the order they happened in.
+    [ "$marks" = "start end start end " ] || { log "the applies overlapped or one did not run"; rc=1; }
+    status="$(glapi "$(gl_p "$project")/repository/commits/$sha2/statuses?name=terragucci/apply&all=true" \
+      | jq -r 'sort_by(.id) | map(select(.status != "running" and .status != "pending")) | map(.status + ":" + .description) | join(" | ")')"
+    log "terragucci/apply on the second commit: ${status:-none}"
+    [ "$status" = "success:1 roots in 1 groups applied" ] || { log "expected one success status for the stage"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the second push's apply waited for the first: $marks"
+  return $rc
+}
+
+gitlab_claim_policy_override() {
+  # The policy denies app's terraform_data (stack/fixtures/policy-wave's
+  # plan.rego), so main's apply-wave-1 fails and records the denial on
+  # chant/lifecycle. smoke-stranger, whom policy.override does not list,
+  # overrides it with terragucci override; the retried job is denied again
+  # and says smoke-stranger is not listed. smoke-approver, who is listed,
+  # overrides it; the retried job applies app, and its report names the
+  # override: who, the rules, the reason and the plan digest.
+  # BREAK: policy.override lists nobody, so no override lets the wave through.
+  log() { echo "[smoke gitlab policy-override] $*" >&2; }
+  gl_load || return 1
+  build_cli || return 1
+  local work project listed=smoke-approver sha job rules clone out first second third st report q rc=0
+  local reason="smoke: the probe goes out"
+  [ -n "${BREAK:-}" ] && listed=""
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  project="$(gl_project policy-override)" || { drop_work "$work"; return 1; }
+  log "project $GL_URL/$GL_USER/$project"
+  gl_tree "$work/tree" "$project" "gate: never\n" || { drop_work "$work"; return 1; }
+  mkdir -p "$work/tree/policy"
+  cp "$HERE/fixtures/policy-wave/policy/plan.rego" "$work/tree/policy/"
+  printf 'policy:\n  engine: conftest\n  path: policy\n' >> "$work/tree/terragucci.yml"
+  [ -z "$listed" ] || printf '  override: [%s]\n' "$listed" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed with the policy"; drop_work "$work"; return 1; }
+  sha="$(gl_push "$work/tree" "$project" main "policy-override: app")" || rc=1
+  [ $rc = 1 ] || gl_wait "$project" "$sha" push || rc=1
+  if [ $rc = 0 ]; then
+    job="$(gl_job apply-wave-1)"
+    first="$(jq -r --arg j "$job" '.[] | select((.id | tostring) == $j) | .status' <<<"$PIPE_JOBS")"
+    log "apply-wave-1 (job $job): $first"
+    [ "$first" = failed ] || { log "the policy did not deny the wave"; rc=1; }
+  fi
+  # The approvers' clone: terragucci override writes to chant/lifecycle and
+  # pushes it, as chant approve does.
+  override_as() { # actor
+    git -C "$clone" config user.name "$1"; git -C "$clone" config user.email "$1@terragucci.local"
+    out="$(cd "$clone" && PATH="$(dirname "$CHANT"):$PATH" "$TERRAGUCCI" override app --rule "$rules" --reason "$reason" --actor "$1" 2>&1)" \
+      || { log "terragucci override as $1 failed: $out"; return 1; }
+    log "terragucci override as $1: $(tr '\n' ' ' <<<"$out")"
+  }
+  if [ $rc = 0 ]; then
+    clone="$work/approver"
+    git clone -q "${GL_URL/#http:\/\//http://oauth2:${GL_TOKEN}@}/$GL_USER/$project.git" "$clone" || rc=1
+    git -C "$clone" fetch -q origin chant/lifecycle 2>/dev/null || true
+    rules="$(git -C "$clone" show origin/chant/lifecycle:_gates/policy-override.jsonl 2>/dev/null \
+      | jq -rs '[.[] | select(.kind == "pending" and .gate == "app")] | last | .rules // [] | join(",")' 2>/dev/null || true)"
+    log "the denial names: ${rules:-no rule}"
+    [ -n "$rules" ] || { log "the wave recorded no denial of app on chant/lifecycle"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    override_as smoke-stranger || rc=1
+    [ $rc = 1 ] || { read -r job second < <(gl_retry "$project" "$job"); log "retried apply-wave-1 (job $job): $second"; }
+    [ "${second:-}" = failed ] || { log "the wave went through on an override by smoke-stranger"; rc=1; }
+    gl_trace "$project" "$job" | grep -q "smoke-stranger is not listed under policy.override at base" \
+      || { log "the job does not say smoke-stranger is not listed"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    override_as smoke-approver || rc=1
+    [ $rc = 1 ] || { read -r job third < <(gl_retry "$project" "$job"); log "retried apply-wave-1 (job $job): $third"; }
+    [ "${third:-}" = success ] || { log "the wave did not apply after smoke-approver's override"; gl_trace "$project" "$job" | tail -20 >&2; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    st="$(curl -fsS "$GL_FLOCI/shop-terraform-state/$project/app.tfstate" 2>/dev/null | jq '.resources | length' 2>/dev/null || echo 0)"
+    [ "${st:-0}" -gt 0 ] || { log "app has no state in floci: nothing applied"; rc=1; }
+    report="$work/report.json"
+    gl_artifact "$project" "$job" terragucci-report/report.json > "$report" 2>/dev/null || : > "$report"
+    q='.roots[] | select(.path == "app") | .policy'
+    jq -e --arg why "$reason" "$q | .result == \"denied\" and .override.by == \"smoke-approver\" and .override.reason == \$why and (.override.rules | length > 0) and (.override.plan_digest | test(\"sha256:\"))" "$report" >/dev/null \
+      || { log "the report does not name the override under app: $(jq -c "$q" "$report" 2>/dev/null)"; rc=1; }
+    jq -e '.policy.overridden == ["app"]' "$report" >/dev/null || { log "the report's policy does not list app as overridden"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the denied wave stayed denied after smoke-stranger's override, applied after smoke-approver's, and the report names it"
+  return $rc
 }
