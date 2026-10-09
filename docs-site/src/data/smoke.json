@@ -57,7 +57,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "f5213e4"
     },
     {
       "claim": "refuse",
@@ -164,7 +164,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "f5213e4"
     },
     {
       "claim": "apply-serial",
@@ -694,7 +694,7 @@
       "needs": null,
       "verdict": "fail",
       "break": "caught",
-      "commit": "4107acc"
+      "commit": "f5213e4"
     },
     {
       "claim": "drift-overdue",
@@ -758,7 +758,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "f5213e4"
     },
     {
       "claim": "resume-schedule",
@@ -766,7 +766,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "f5213e4"
     },
     {
       "claim": "approve-plan",
@@ -1336,7 +1336,39 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "1fc42e9"
+      "commit": "f5213e4"
+    },
+    {
+      "claim": "migrate-backend",
+      "says": "a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f5213e4"
+    },
+    {
+      "claim": "migrate-revert",
+      "says": "terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f5213e4"
+    },
+    {
+      "claim": "migrate-resume-never",
+      "says": "with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f5213e4"
+    },
+    {
+      "claim": "migrate-split",
+      "says": "a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f5213e4"
     },
     {
       "claim": "dora",

@@ -1662,6 +1662,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(split && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
+  // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
   const writesLedger = gate !== "never" || input.cost?.approveAbove === true;
   const what = tg ? "unit" : "root";
   // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
@@ -1856,7 +1857,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         variables: gitlabEnv,
         // The comments, resume and rollouts schedules' pipelines carry TERRAGUCCI_SCHEDULE=comments, resume or rollouts; any other schedule, with or without a variable, is drift's.
-        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume && writesLedger ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}` })],
+        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}` })],
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
         script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr))],
@@ -1889,7 +1890,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken))],
       } as never) as never);
     }
-    if (input.resume && writesLedger) {
+    if (input.resume) {
       // A pipeline schedule with TERRAGUCCI_SCHEDULE=resume: retry the default branch's waiting apply job once its approval stands.
       // It reads the ledger and calls the API with the project's token; it takes no cloud credentials.
       jobs.set("resume", new GitLabJob({
@@ -2325,7 +2326,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   }
   const serializer = forge === "forgejo" ? forgejoSerializer : githubSerializer;
   const extra: { path: string; content: string }[] = [];
-  if (input.resume && writesLedger) {
+  if (input.resume) {
     // apply.resume: a schedule of its own reads the ledger and applies a wave whose approval stands, as a comment's apply does.
     const resume = new Map<string, never>([
       ["workflow", new Workflow({ name: "terragucci resume", on: { schedule: [{ cron: resumeCron(input.resume) }], workflow_dispatch: {} }, env: jobEnv, permissions: { contents: "read" } }) as never],
