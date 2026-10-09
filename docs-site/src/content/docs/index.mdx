@@ -9,46 +9,24 @@ import Lifecycle from '../../components/Lifecycle.astro';
 import PlanNote from '../../components/PlanNote.astro';
 import Waves from '../../components/Waves.astro';
 import Runtimes from '../../components/Runtimes.astro';
-import Validated from '../../components/Validated.astro';
 import ScaleLine from '../../components/ScaleLine.astro';
 import Shot from '../../components/Shot.astro';
 import { CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 <Landing />
 
-terragucci launched in Rome: [watch the launch party](/terragucci/launch-party/). The [0.4.3 release](/terragucci/reference/whats-new/) approves from chat and signs module releases.
+terragucci launched in Rome: [watch the launch party](/terragucci/launch-party/). The [0.4.3 release](/terragucci/reference/whats-new/) links a waiting wave's review from its chat message, posts signed webhook events that a relay of your own can act on, and signs module releases.
 
-## One note for two hundred plans
+## Your forge and your bucket
 
-<PlanNote />
+<Runtimes />
 
-Roots taking the same change share one diff, with each value before and after, and every destroy is named. Each root's whole plan sits collapsed below, and [the full report](/terragucci/reference/report/) links each root's plan.
+terragucci reads your roots and runs your binary. Code, state backend and provider pins stay as you have them.
 
-<ScaleLine />
-
-## Pull request automation
-
-These are plain CI jobs in your pipeline. None of them runs a coding agent.
-
-| On a pull request | How you start it | Forges | Page |
-|---|---|---|---|
-| One grouped plan note and a `terragucci/plan` status | open or push to the pull request | all three | [Get your first plan note](/terragucci/getting-started/) |
-| Tips and policy results on the plan | on by default with the plan; `tips: false` turns tips off, `policy` adds checks | all three | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
-| A re-plan | comment `/terragucci plan [root]` | all three; GitLab through the comments schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
-| Root locks | comment `/terragucci lock` or `/terragucci unlock`; `locks: plan` locks from the first plan | GitHub and Forgejo; GitLab takes the comments with apply before merge and `comments:` set, without `locks: plan` | [Locks](/terragucci/guides/apply-before-merge/#locks) |
-| Apply before merge, then merge after the last wave | `apply.when: pull-request`, then comment `/terragucci apply [wave-<n>]` | GitHub, Forgejo, and GitLab with `comments:` set | [Apply before merge](/terragucci/guides/apply-before-merge/) |
-| An approval for a waiting wave | `approval: ledger`, `pr-review` or `sealed`; run `terragucci approve` | all three | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
-| A recorded policy override | a listed person runs `terragucci override` | all three | [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) |
-| Comment commands on GitLab | `comments:` sets the schedule that answers merge request notes | GitLab | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
-
-### Opt-in: coding agent
-
-Two features run a coding agent. Both are off until you set them up, and both need a model API key in your forge's secrets. Nothing else in terragucci runs an agent.
-
-| Feature | Turn it on | Forges | Page |
-|---|---|---|---|
-| Comment `/terragucci agent <ask>` and an agent commits the change to the pull request | `agent.comment` in `terragucci.yml` | GitHub and Forgejo | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
-| A summary of what moved in a refused wave | add the explain-refusal job to the pipeline by hand | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
+| Where it runs | What you set | Page |
+|---|---|---|
+| GitHub, GitLab or Forgejo CI | nothing: `init` reads the forge from the `origin` remote and writes its pipeline format | [Per forge](/terragucci/guides/add-to-a-repo/#per-forge) |
+| S3, GCS or Azure Blob, for your state and the reports | `oidc` for keyless cloud identities, `reports.bucket` for the reports | [Credentials](/terragucci/reference/pipeline/#credentials), [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 
 ## See every run as a trace
 
@@ -74,7 +52,61 @@ The change goes out a few roots at a time, the [canary](/terragucci/concepts/glo
 
 <Waves />
 
-The report lists each wave with the digest of its plans and links the approval record that let it go out. A pinned module rolls out the same way: one pull request per wave, across as many repos as use it. [How waves and approvals work](/terragucci/concepts/waves-and-approvals/).
+The report lists each wave with the digest of its plans and links the approval record that let it go out. [How waves and approvals work](/terragucci/concepts/waves-and-approvals/).
+
+## One note for two hundred plans
+
+<PlanNote />
+
+Roots taking the same change share one diff, with each value before and after, and every destroy is named. Each root's whole plan sits collapsed below, and [the full report](/terragucci/reference/report/) links each root's plan.
+
+<ScaleLine />
+
+## Module publishing and pinned rollouts
+
+| You get | Turn it on | Page |
+|---|---|---|
+| Each changed module released after the apply, as a git tag or an OCI artifact, and with attest signed with cosign | `modules.publish`, `modules.attest` | [Publish your modules](/terragucci/guides/publish-modules/) |
+| A new version rolled out to every repo that pins the module, one pull request per wave | `terragucci rollout`, or `rollouts:` for a scheduled job | [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) |
+
+## With choudoufu
+
+With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the OpenTofu fork from the team behind terragucci, the pipeline also gets:
+
+| You get | Page |
+|---|---|
+| A live check in `tf-check` on every push, before the apply waves, with no cloud credentials | [Check](/terragucci/reference/stages/#check) |
+| No state file: one record per resource in an S3 backend you own, each write conditional, so there is no lock table or database to run | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
+| How long a wave waited for a state lock, and how many tries it took | [State lock waits](/terragucci/reference/observability/#state-lock-waits) |
+| Which provider calls were slow, and the resource each was for | [What the report lists](/terragucci/reference/observability/#what-the-report-lists) |
+| Timings summed by resource type, so a large estate's report stays readable | [What the report lists](/terragucci/reference/observability/#what-the-report-lists) |
+| Two applies that change different resources of one estate at once, with no estate-wide lock; two that change the same resource leave one winner, named | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
+| A role scoped to one estate by an IAM condition on the `tofu-estate` tag, refused on another estate's resources | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
+
+## Pull request automation
+
+These are plain CI jobs in your pipeline.
+
+| On a pull request | How you start it | Forges | Page |
+|---|---|---|---|
+| One grouped plan note and a `terragucci/plan` status | open or push to the pull request | all three | [Get your first plan note](/terragucci/getting-started/) |
+| Tips and policy results on the plan | on by default with the plan; `tips: false` turns tips off, `policy` adds checks | all three | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
+| A re-plan | comment `/terragucci plan [root]` | all three; GitLab through the comments schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
+| Root locks by comment | comment `/terragucci lock` or `/terragucci unlock` | GitHub and Forgejo; GitLab with `apply.when: pull-request` and `comments:` set | [Locks](/terragucci/guides/apply-before-merge/#locks) |
+| Root locks from the first plan | `locks: plan` | GitHub and Forgejo | [Locks](/terragucci/guides/apply-before-merge/#locks) |
+| Apply before merge, then merge after the last wave | `apply.when: pull-request`, then comment `/terragucci apply [wave-<n>]` | GitHub, Forgejo, and GitLab with `comments:` set | [Apply before merge](/terragucci/guides/apply-before-merge/) |
+| An approval for a waiting wave | `approval: ledger`, `pr-review` or `sealed`; run `terragucci approve` | all three | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
+| A recorded policy override | a listed person runs `terragucci override` | all three | [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) |
+| Comment commands on GitLab | `comments:` sets the schedule that answers merge request notes | GitLab | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
+
+### Opt-in: coding agent
+
+Only these two features run a coding agent. Both are off until you set them up, and both need a model API key in your forge's secrets.
+
+| Feature | Turn it on | Forges | Page |
+|---|---|---|---|
+| Comment `/terragucci agent <ask>` and an agent commits the change to the pull request | `agent.comment` in `terragucci.yml` | GitHub and Forgejo | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
+| A summary of what moved in a refused wave | add the explain-refusal job to the pipeline by hand | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
 ## Security
 
@@ -85,14 +117,6 @@ The report lists each wave with the digest of its plans and links the approval r
 | A changed plan is refused | a gated wave whose plans moved after the approval applies nothing and names both digests |
 
 [The threat model](/terragucci/reference/threat-model/) lists what each job can reach on each forge.
-
-## Works with
-
-<Runtimes />
-
-terragucci reads your roots and runs your binary. Code, state backend and provider pins stay as you have them.
-
-<Validated />
 
 ## Start from what you want
 
@@ -105,22 +129,9 @@ terragucci reads your roots and runs your binary. Code, state backend and provid
 <LinkCard title="Choose your binary" description="Terraform, OpenTofu, Terragrunt or choudoufu, and what each gives the pipeline." href="/terragucci/guides/use-a-binary/" />
 </CardGrid>
 
-## Locks that settle at the API, with no database to run
-
-Every resource keeps its own record in an S3 backend you own, and every record write is a conditional write, so the API settles two runs that meet: no lock table, no database. Each resource also carries its estate as a tag from its create call. [How it works](/terragucci/concepts/locking-per-resource/).
-
-| You get | How | Page |
-|---|---|---|
-| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner, named | every record write is a conditional S3 write, so the second write to one resource fails and overwrites nothing | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
-| An estate any cloud tool can list by its tag, and each address finding its real resource | the next plan reads the tags back from the cloud | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
-| A role scoped to one estate, refused on another estate's resources | an IAM condition on the `tofu-estate` tag | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
-| One bucket for every estate | each estate writes under its own prefix | [One backend for all your estates](/terragucci/concepts/locking-per-resource/#one-backend-for-all-your-estates) |
-
-<small>These need <code>binary: choudoufu</code>, the OpenTofu fork from the team behind terragucci (<a href="/terragucci/guides/use-a-binary/#choudoufu">set it up</a>). It also adds a live check before any plan and timings for slow provider calls; <a href="/terragucci/guides/use-a-binary/#choudoufu">Choose your binary</a> lists all of it.</small>
-
 ## Hand the setup to your agent
 
-You can skip this. [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) gives the same steps by hand, and only the [opt-in agent features](#opt-in-coding-agent) run an agent.
+You can skip this. [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) gives the same steps by hand.
 
 Paste this into Claude Code, Codex or Cursor in your Terraform, OpenTofu or Terragrunt repository. [The agent page](/terragucci/getting-started/agents/) says what the agent does. It never applies and never approves.
 

@@ -16,11 +16,13 @@ Pushes apply one at a time in the order they arrived; none cancels another.
 | GitLab | a resource group |
 | Forgejo | a named group, plus a lock on the remote that a waiter takes over once the holder's run ends or its lease is two hours old |
 
-With [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1, every apply job on GitHub and Forgejo takes the lock on the remote, held by the run rather than by one job, so a wave's share jobs apply side by side outside the concurrency group while another push's apply waits for them. On GitHub the apply a comment starts and the resume job take it too.
-
-A wave whose commit is no longer the branch tip stands down on GitHub and Forgejo. Pull requests take no locks under the defaults `apply.when: merge` and `locks: apply`; with [`locks: plan`](#plan-locks) a pull request locks its roots from its first plan, and under `apply.when: pull-request`, an applying pull request, or one a writer comments `/terragucci lock` on, locks the roots it reaches (in a Terragrunt repo, the units).
-
-`tf-plan`, `tf-drift` and `tf-apply` plan a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 4 otherwise. `tf-apply` applies them up to the same number at once. A stage's roots share one provider cache, the job's `TF_PLUGIN_CACHE_DIR` or one of the stage's own, and their inits take turns, so each provider downloads once per job.
+| Rule | What happens |
+|---|---|
+| [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1 | on GitHub and Forgejo every apply job takes the lock on the remote, held by the run rather than by one job, so a wave's share jobs apply side by side outside the concurrency group while another push's apply waits; on GitHub the apply a comment starts and the resume job take it too |
+| Stand-down | a wave whose commit is no longer the branch tip stands down, on GitHub and Forgejo |
+| Pull request locks | none under the defaults `apply.when: merge` and `locks: apply`; with [`locks: plan`](#plan-locks), from a pull request's first plan; under `apply.when: pull-request`, an applying pull request or one a writer comments `/terragucci lock` on locks the roots it reaches (in a Terragrunt repo, the units) |
+| Parallelism | `tf-plan`, `tf-drift` and `tf-apply` plan and apply a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 4 otherwise, and 16 units for Terragrunt's `run --all` on other backends |
+| Provider cache | a stage's roots share one, the job's `TF_PLUGIN_CACHE_DIR` or one of the stage's own, and their inits take turns, so each provider downloads once per job |
 
 ## Resume after an approval
 
@@ -38,6 +40,8 @@ Neither approves anything: the wave's gate decides again against the plans it ma
 | GitHub | `.github/workflows/terragucci-resume.yml`, on its own schedule, which `init` writes; GitHub may start a scheduled run a few minutes late |
 | Forgejo | `.forgejo/workflows/terragucci-resume.yml`, the same |
 | GitLab | the `resume` job in the pipeline, for a pipeline schedule you create with the variable `TERRAGUCCI_SCHEDULE=resume`, every `apply.resume` minutes |
+
+On GitHub and Forgejo the schedule is the cron `*/<apply.resume>`, so `60` runs hourly and a value that does not divide 60 also runs on the hour.
 
 Each run costs a short job even when nothing waits.
 

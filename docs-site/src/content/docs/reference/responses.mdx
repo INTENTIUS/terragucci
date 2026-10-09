@@ -1,6 +1,11 @@
 ---
 title: Responses to pipeline events
 description: What terragucci does when a plan finishes, a wave is refused, an apply fails or drift is found.
+prompt: |
+  Read https://intentius.io/terragucci/reference/responses/.
+  Set `respond:` in terragucci.yml only for the events I name, run `npx terragucci config check`, and open a pull request.
+  Run `terragucci respond` in its default dry-run mode only, and show me what each response would do.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
 import Shot from '../../../components/Shot.astro';
@@ -16,7 +21,7 @@ Every event has a default response that needs no model. No response runs a codin
 | tip raised | one small pull request per tip: pin a provider from its lock file, add a lock file, add a canary | `off` |
 | format check failed | a `fmt` commit on the pull request's branch, on request | `off` |
 | module published | release notes from conventional commits | `off` |
-| rollout wave merged | with [`rollouts`](/terragucci/reference/config/) set, a scheduled job runs `respond rollout`, which opens the next wave's pull requests once the merged wave applied, within one schedule interval; without it, nothing until someone runs `respond rollout` | `off`, which leaves the job out |
+| rollout wave merged | with [`rollouts`](/terragucci/reference/config/) set, a scheduled job opens the next wave once the merged one applied | `off`, which leaves the job out |
 | module changed with no conventional commit | none; `tf-publish` proposes a patch | `suggest`: a suggested bump in a release pull request, from the typed-decision service |
 | pull request opened or updated | none | `check`: a typed decision flags a description that leaves out what the plan destroys or replaces |
 
@@ -62,7 +67,15 @@ terragucci respond rollout modules/network 1.4.0 --mode apply
 terragucci respond rollout --mode apply
 ```
 
-`respond rollout` with no module continues every rollout in flight. It finds them from their pull requests' `terragucci/rollout/` branches. A rollout runs only when its newest wave merged, and it opens the next wave once that wave applied. A rollout with a wave still open, a wave closed without merging, or its last wave merged is left alone.
+`respond rollout` with no module continues every rollout in flight, found from their pull requests' `terragucci/rollout/` branches. Without `rollouts` set, nothing opens the next wave until someone runs it.
+
+| A rollout's newest wave | `respond rollout` |
+|---|---|
+| merged and applied | opens the next wave |
+| merged, not yet applied | waits |
+| still open | leaves it alone |
+| closed without merging | leaves it alone |
+| the last wave, merged | leaves it alone |
 
 `--json` prints one envelope, as every other command does.
 

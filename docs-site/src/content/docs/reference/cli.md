@@ -32,7 +32,9 @@ prompt: |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
+| `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
 | `install` | fetches a release of OpenTofu, Terraform, Terragrunt, [choudoufu](/terragucci/concepts/glossary/#choudoufu) or Infracost, verified against its checksums |
 
 ## init
@@ -84,7 +86,13 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 | `--link-hours` | how long the link lives; default 24, at most 168 |
 | `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), in place of `reports` in a repo's config |
 
-It reads each project's `index.json`, `inventory.json`, `changes.json` and `states.json`, then writes `estate.html` and `estate.json` at the top of the prefix, and `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` when the audit trail is there. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. When `audit.json` is beside the page, the page links the audit trail. From `audit.jsonl` and the indexes it computes the [delivery metrics](/terragucci/reference/delivery-metrics/), writes them to `dora.json` and the page, and sends them as gauges when an OTLP endpoint is set. Exit code 1 when a project's index could not be read; the page names it.
+| | `estate` |
+|---|---|
+| Reads | each project's `index.json`, `inventory.json`, `changes.json` and `states.json`; `audit.jsonl` and `audit.json` when the audit trail is there |
+| Writes | `estate.html`, `estate.json` and `dora.json` at the top of the prefix; `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` |
+| Projects | in a control repo, its `projects:`, each read from its own `reports`, the page written to `defaults.reports`; in a repo of its own, the ones the top `index.json` lists |
+| Also | links the audit trail when `audit.json` is beside the page; computes the [delivery metrics](/terragucci/reference/delivery-metrics/) and sends them as gauges when an OTLP endpoint is set |
+| Exit 1 | a project's index could not be read; the page names it |
 
 ## audit
 
@@ -101,7 +109,14 @@ terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>]
 | `--link-hours` | how long the link to `audit.html` lives; default 24, at most 168 |
 | `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write, in place of `reports` in a repo's config |
 
-It reads each project's `chant/lifecycle` history and its `tf-apply` wave reports, appends the entries `audit.jsonl` lacks, and writes `audit.html` and `audit.json` beside it at the top of the prefix. In a control repo the projects are its `projects:`, each ledger fetched from the project's repo and each project's reports read from its own `reports`; the record goes to `defaults.reports`. In a repo of its own the project is the checkout's, its ledger read from `origin`. Exit code 1 when a project's ledger or index could not be read. [The audit trail](/terragucci/reference/audit-trail/) describes every entry.
+| | `audit` |
+|---|---|
+| Reads | each project's `chant/lifecycle` history and its `tf-apply` wave reports |
+| Writes | the entries `audit.jsonl` lacks, appended, and `audit.html` and `audit.json` beside it at the top of the prefix |
+| Projects | in a control repo, its `projects:`, each ledger fetched from the project's repo and its reports read from its own `reports`, the record written to `defaults.reports`; in a repo of its own, the checkout's, its ledger read from `origin` |
+| Exit 1 | a project's ledger or index could not be read, or with `--check` the record lacks an entry |
+
+[The audit trail](/terragucci/reference/audit-trail/) describes every entry.
 
 ## plan and stage
 
@@ -204,7 +219,7 @@ terragucci respond rollout [--mode dry-run|apply]
 terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
 terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
 terragucci comment --agent push --change <dir> [--policy-dir <dir>]
-terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none]
+terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes]
 ```
 
 Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`.
@@ -218,7 +233,14 @@ Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and write
 | `run` | `agent` | decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`; a fork or default-branch pull request gets no agent |
 | `push` | `agent-push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them, and commits a passing patch to the pull request's head branch with the `TG_*` variables in [Environment variables](/terragucci/reference/environment/) |
 
-On GitLab, `--forge gitlab --poll` reads no event file. The generated `comments` job runs it on the comments schedule ([`comments`](/terragucci/reference/config/#keys)). It reads the notes of the merge requests updated in the last day and answers each `/terragucci` note once: each reply carries a `<!-- terragucci:note=<id> -->` marker, and a note with one is never answered again. The poll exits 1 when GitLab answers with an error.
+On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments` job runs it on the comments schedule ([`comments`](/terragucci/reference/config/#keys)).
+
+| Poll | Does |
+|---|---|
+| Which notes | those of the merge requests updated in the last day |
+| Each `/terragucci` note | answered once: the reply carries a `<!-- terragucci:note=<id> -->` marker, and a note with one is never answered again |
+| `--plan-notes` | first posts the plan note and status each merge request pipeline's plan job left in its report; the comments job passes it under `gitlab: { token: protected }` |
+| Exit 1 | GitLab answered with an error |
 
 | Note | Checked | Does |
 |---|---|---|
@@ -272,6 +294,30 @@ Merges the pull request while its head is still `--sha`, then releases its root 
 It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
 
 With `--forge gitlab` it first looks for the `mr-apply` reply, from `TG_TOKEN`'s user, that says every wave of `--sha` applied in this pipeline (`CI_PIPELINE_ID`). Without one it prints `nothing to merge` and exits 0. The approval it checks is one given after the merge request's latest push.
+
+## plan-note
+
+```text
+terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--forge` | `github` (the default) or `forgejo` |
+| `--report` | the plan job's report directory, read as data; default `terragucci-report` |
+| `--plan-result` | the plan job's result (`success` or `failure`), which `terragucci/plan` follows |
+| `--root` | the root a `/terragucci plan <root>` re-plan named |
+| `--approval-status` | also post `terragucci/approval`, under `approval: pr-review` |
+
+The generated `plan-note` and `replan-note` jobs run it. It exits 0.
+
+## approval-status
+
+```text
+terragucci approval-status [--forge github|forgejo] [--report <dir>]
+```
+
+Posts `terragucci/approval` on the pull request's head (`TG_SHA`, `TG_PR`): pending while a wave the gate will hold has no approving review of that head. With `--report` it reads the waves from that plan report; without it, from the head's plan note. The generated `approval` job runs it on each review under `approval: pr-review`. It exits 0.
 
 ## notify
 
@@ -328,7 +374,7 @@ wave-2 waits for an approval of jcs1-sha256:2e7a63f3... (wave 2 of 2: app), sinc
 running: chant approve tf-apply wave-2 --plan jcs1-sha256:2e7a63f3... --actor github:alice
 ```
 
-With a digest that no longer waits, because the plans moved after you read them:
+With a digest that no longer waits, because the plans moved after you read them, `terragucci approve wave-2 --plan jcs1-sha256:9f2c...` prints:
 
 ```text
 not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha256:2e7a63f3.... The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest
@@ -419,5 +465,10 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `config check` | `ok` | | problems found | | |
 | `check-root`, `check-policy` | passed | failed | | | |
 | `install` | done | | not a Linux host | | |
+| `estate` | page written | a project's index could not be read | | | |
+| `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
+| `verify-release` | every target verified | a target refused | | | |
+| `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
+| `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
 
 Code 4 comes only from `stage tf-apply`, which has no `--json`.
