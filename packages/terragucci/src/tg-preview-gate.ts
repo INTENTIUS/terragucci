@@ -6,7 +6,11 @@
  * approves reads it first. The note is the pull request's, written by a job
  * that ran its code: it is read for what it says, and nothing is gated on it.
  */
+import { spawnSync } from "node:child_process";
+import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set";
 import { ConfigError } from "./config";
+import { buildReport } from "./report/build";
+import { runFacts } from "./report/stage";
 import type { Fetch } from "./forge";
 import type { NoteWaves } from "./report/marker";
 import type { ReportChange, ReportWavePreview } from "./report/schema";
@@ -66,4 +70,26 @@ export async function gatePreview(o: {
         ...moved.flatMap((u) => u.differences!.map((d) => `  ${u.unit}: ${d}`)),
       ];
   return { preview: { pull_request: pr, units }, lines };
+}
+
+/**
+ * A wave's comparison with the preview, from the plans it just made: each
+ * line said through `say`, before its gate decides. Read only, and never
+ * fails the wave. Undefined when there is nothing to compare.
+ */
+export async function comparePreview(
+  o: { repo: string; env: NodeJS.ProcessEnv; wave: number; binary: string; fetch?: Fetch; units: readonly { root: string; plan?: unknown }[] },
+  say: (line: string) => void,
+): Promise<ReportWavePreview | undefined> {
+  const env = o.env;
+  const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
+  const sha = env.TG_SHA || spawnSync("git", ["-C", o.repo, "rev-parse", "HEAD"], { encoding: "utf-8" }).stdout.trim();
+  const now = new Date().toISOString();
+  const report = buildReport({
+    run: { ...runFacts(o.repo, env), stage: "tf-apply", wave: o.wave, binary: o.binary, runtime: "forge", started: now, finished: now },
+    roots: o.units.map((p) => ({ path: p.root, plan: p.plan, planner: plannerForBinary(o.binary) })),
+  });
+  const found = await gatePreview({ env, ...(o.fetch ? { fetch: o.fetch } : {}), forge, sha, units: report.roots.map((r) => ({ unit: r.path, plan: r.plan_digest, changes: r.changes })) });
+  found.lines.forEach(say);
+  return found.preview;
 }
