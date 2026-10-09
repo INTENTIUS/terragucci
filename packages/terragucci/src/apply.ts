@@ -61,7 +61,8 @@
  * the pipeline still applies it. The gate, the ledger and the seals are the
  * ones above.
  *
- * A wave of plain roots can spread across jobs (`waves.jobs`). With
+ * A wave can spread across jobs (`waves.jobs`); a Terragrunt wave's shares
+ * plan and apply their units with `run --all --filter` (runTerragruntWave). With
  * `--shares <n>` the wave's job plans every root, runs the policy, decides the
  * gate and records the approval it uses, all as above, but applies nothing:
  * it writes the plan digest of each root to `terragucci-wave/wave-<k>.json`
@@ -117,11 +118,12 @@ import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyRevi
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, walkUnits } from "./terragrunt";
+import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion } from "./backend";
 import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
-import { readSteps, runSteps, stepsUsed, STEPS_NOT_TERRAGRUNT, waveStepsBase, type StepWhen } from "./steps";
+import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
 import type { StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
 
@@ -133,7 +135,6 @@ export const waveGate = (wave: number): string => `wave-${wave}`;
 export const approveLine = (wave: number, digest: string, mode: Approval = "ledger"): string => approveCommand(wave, digest, mode === "sealed");
 
 /** The migration files in a repo's migrations/. */
-const listMigrationFiles = (repo: string): string[] => migrationFiles(repo);
 
 /** Exit codes of `stage tf-apply`. */
 export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
@@ -1030,20 +1031,12 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   if (options.share !== undefined && (options.shares === undefined || !Number.isInteger(options.share) || options.share < 1 || options.share > options.shares)) {
     throw new ConfigError("--share must be a share number from 1 to --shares");
   }
-  if (options.terragrunt && options.shares !== undefined) throw new ConfigError("--shares splits a wave of plain roots; a Terragrunt wave applies its units with one run --all");
   // A state migration in the change runs before the first wave plans, behind its own gate (./migrate.ts); a share of a split wave leaves that to the wave's job.
   if (wave === 1 && options.share === undefined) {
     const held = await migrationsFirst(repo, options, w);
     if (held !== undefined) return held;
   }
-  if (options.terragrunt) {
-    const cfg = options.config ?? findConfig(repo);
-    if (cfg && resolveRepo(await loadConfig(cfg)).steps?.length) {
-      console.log(`wave ${wave}: ${STEPS_NOT_TERRAGRUNT}`);
-      return EXIT.failed;
-    }
-    return runTerragruntWave(repo, options, work, w, facts);
-  }
+  if (options.terragrunt) return runTerragruntWave(repo, options, work, w, facts);
   const waves = applyWaves(options.layers, options.canary);
   const whole = waves[wave - 1];
   if (!whole) {
@@ -1178,11 +1171,7 @@ async function recordStateVersions(repo: string, applied: PlannedRoot[], limit: 
   await eachLimited(applied, limit, async (p) => {
     out.set(p.root, await stateVersion(join(repo, p.root), p.env));
   });
-  for (const p of applied) {
-    const v = out.get(p.root)!;
-    const where = v.location ? ` ${v.location}` : "";
-    console.log(`${p.root}: state${where}${v.version_id ? ` version ${v.version_id}` : `, versions ${v.versioning}${v.note ? ` (${v.note})` : ""}`}`);
-  }
+  logStateVersions(applied.map((p) => p.root), out);
   return out;
 }
 
@@ -1197,15 +1186,11 @@ async function recordStateVersions(repo: string, applied: PlannedRoot[], limit: 
 async function migrationsFirst(repo: string, options: ApplyWaveOptions, w: WaveRun): Promise<number | undefined> {
   if (!existsSync(join(repo, MIGRATIONS_DIR))) return undefined;
   const env = options.env ?? process.env;
-  if (options.terragrunt) {
-    if (listMigrationFiles(repo).length === 0) return undefined;
-    console.log(`wave 1: ${MIGRATIONS_DIR}/ holds a migration, and migrations move the state of Terraform and OpenTofu roots, not Terragrunt units; nothing was applied`);
-    writeOutcome(options.env, "wave 1: migrations refuse Terragrunt units", w);
-    return EXIT.failed;
-  }
   const run = await runMigrations(repo, {
     binary: options.binary,
     env,
+    // A Terragrunt unit is prepared by Terragrunt, and its binary then runs where Terragrunt runs it.
+    ...(options.terragrunt ? { terragrunt: { ...(options.terragruntPath ? { path: options.terragruntPath } : {}), ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) } } : {}),
     ...(options.now ? { now: options.now } : {}),
     ...(options.approval ? { approval: options.approval } : {}),
     ...(options.base ? { base: options.base } : {}),
@@ -1795,6 +1780,10 @@ interface PlannedUnit {
   outputs: boolean;
   error?: string;
   policy?: ReportRootPolicy;
+  /** The steps that ran in its directory. */
+  steps?: ReportStep[];
+  /** What it ran, when the unit pins a release (unit-pins.ts). */
+  bin?: ReportRootBinary;
 }
 
 /** Whether a plan changes any of the root's outputs. */
@@ -1830,11 +1819,26 @@ const waves = (n: number): string => `${n} wave${n === 1 ? "" : "s"}`;
  * unit of it, and a unit that reads one of a later wave fails the job.
  *
  * The wave plans its units with one `run --all`, each plan saved, and takes
- * the set digest over the units whose plan changes something. The gate
+ * the set digest over the units whose plan changes something. With `cost`
+ * set the plans are priced first, and with `cost.approve_above` at base the
+ * wave's cost is one more member of the digest, as for plain roots. The gate
  * decides, as it decides a plain wave, and the wave applies exactly those
  * saved plans with one `run --all`, never planning anew. A unit whose plan
  * would read mock_outputs fails the wave: its upstream applies in an earlier
  * wave, so it has no outputs only when it lies outside the units.
+ *
+ * `steps:` run around the wave's `run --all`: each moment once for the wave,
+ * in the directory of every unit a step's `roots` globs match (runUnitSteps).
+ * Before init and before plan come before the plan, after plan after it with
+ * each unit's saved plan, and before and after apply around the apply of the
+ * units that change. A step that fails fails the wave, and one with
+ * `on_failure: approve` holds it at its gate.
+ *
+ * With `waves.jobs` (`--shares`) a wave's units split across share jobs as a
+ * plain wave's roots do (waveShares): this job plans every unit, prices,
+ * runs the policy and decides the gate, then hands the plan digest of each
+ * unit to the shares, which plan their units again with `run --all
+ * --filter` and apply them only when each plan has the digest decided.
  */
 async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: string, w: WaveRun, facts: WaveFacts): Promise<number> {
   const { wave, binary } = options;
@@ -1868,23 +1872,125 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   }
   const unlisted = found.units.map((u) => u.path).filter((u) => !listed.some((l) => l.includes(u)));
   if (unlisted.length > 0) console.log(`wave ${wave}: the pipeline does not list ${unlisted.join(", ")}, so no wave applies it; run terragucci init to add it`);
-  const roots = cut[wave - 1];
-  if (!roots) {
+  const whole = cut[wave - 1];
+  const deciding = options.shares !== undefined && options.share === undefined;
+  if (!whole) {
     facts.nothing = true;
     console.log(`wave ${wave}: this repo has ${waves(cut.length)}, so there is nothing to apply`);
+    // The share jobs read a decision whatever the wave came to.
+    if (deciding) writeDecision(repo, options, { version: 1, wave, shares: 0, digest: "", approval: "not-required", changes: 0, members: [] });
     return EXIT.applied;
   }
+  const shares = options.shares !== undefined ? waveShares(whole, options.shares) : [whole];
+  let roots = whole;
+  let label = `wave ${wave} of ${cut.length}`;
+  let decision: WaveDecision | undefined;
+  if (options.share !== undefined) {
+    const share = options.share;
+    const mine = shares[share - 1];
+    if (!mine) {
+      facts.nothing = true;
+      console.log(`${label}: its ${whole.length} units make ${shares.length} share${shares.length === 1 ? "" : "s"}, so share ${share} has nothing to apply`);
+      return EXIT.applied;
+    }
+    roots = mine;
+    label = `${label}, share ${share} of ${shares.length}`;
+    w.share = share;
+    decision = readDecision(options.decided ?? join(repo, decidedPath(wave)));
+    const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+    if (decision.wave !== wave || decision.shares !== shares.length || (decision.commit && commit && decision.commit !== commit)) {
+      console.log(`${label}: the decision it was handed is for wave ${decision.wave} in ${decision.shares} shares${decision.commit ? ` at ${decision.commit.slice(0, 8)}` : ""}, not this one, so nothing in it was applied`);
+      return EXIT.failed;
+    }
+    const decided = new Set(decision.members.map((m) => m.member));
+    const missing = roots.filter((r) => !decided.has(r));
+    if (missing.length > 0) {
+      console.log(`${label}: the wave's job decided on no plan of ${missing.join(", ")}, so nothing in it was applied`);
+      return EXIT.failed;
+    }
+    w.digest = decision.digest;
+    w.approval = decision.approval;
+    if (decision.changes === 0) {
+      facts.nothing = true;
+      console.log(`${label}: the wave's plans change nothing, so there is nothing to apply`);
+      return EXIT.applied;
+    }
+  }
   facts.roots = roots;
-  const label = `wave ${wave} of ${cut.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
+  const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
+  if ("error" in stepsRead) {
+    console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const stepsRefused = terragruntStepsRefusal(stepsRead.ws?.steps);
+  if (stepsRefused) {
+    console.log(`${label}: ${stepsRefused}, so nothing in it was applied`);
+    return EXIT.failed;
+  }
   const exec = unitLockTimeoutExec(options.terragruntExec ?? terragruntExec, env);
   const run = { dir: repo, binary, terragrunt, exec };
   w.started = new Date().toISOString();
   w.roots = roots;
   const planDir = join(work, "plan");
+  // A unit that pins its binary or Terragrunt release runs it, installed here: one run --all per pair of releases, plan and apply alike.
+  const unitTools = new UnitBinaries(repo, binary, settings.version, terragrunt, env, options.installer);
+  const tools = new Map<string, UnitTools>();
+  const pinned = unitTools.pinsAny(roots);
+  {
+    const bad: string[] = [];
+    for (const u of roots) {
+      try {
+        const t = await unitTools.resolve(u);
+        tools.set(u, t);
+        if (t.report.pin || t.report.terragrunt?.pin) console.log(`${u}: ${binaryText(t.report)}`);
+      } catch (e) {
+        bad.push(u);
+        console.log(`FAILED ${u}: ${(e as Error).message}`);
+      }
+    }
+    if (bad.length > 0) {
+      w.failed = bad;
+      console.log(`${label}: a pinned release could not be installed, so nothing in it was planned or applied`);
+      return EXIT.failed;
+    }
+  }
+  const groups = groupUnits(roots, planDir, { terragrunt, binary }, pinned ? tools : undefined);
+  const unitDir = (unit: string): string => dirOf(groups, unit, planDir);
+  const savedPlan = (unit: string): string => join(unitDir(unit), "plans", unit, "tfplan.tfplan");
+  // What each unit's steps came to, for the report; and the steps that hold the wave at its gate.
+  const ran = new Map<string, ReportStep[]>();
+  const holds = new Map<string, string[]>();
+  const unitSteps = async (when: StepWhen, units: readonly string[], planFile?: (unit: string) => string): Promise<Map<string, string>> => {
+    const failed = new Map<string, string>();
+    if (!stepsRead.ws) return failed;
+    const outcomes = await runUnitSteps(stepsRead.ws.steps, when, units, { repo, stage: "tf-apply", env: stepsRead.ws.env, log: (l) => console.log(l), ...(planFile ? { planFile } : {}) });
+    for (const [unit, o] of outcomes) {
+      ran.set(unit, [...(ran.get(unit) ?? []), ...o.runs]);
+      if (o.holds.length) holds.set(unit, [...(holds.get(unit) ?? []), ...o.holds]);
+      if (o.error) failed.set(unit, o.error);
+    }
+    return failed;
+  };
+  const stepsFailed = (failed: Map<string, string>, what: string): boolean => {
+    if (failed.size === 0) return false;
+    for (const [unit, error] of failed) {
+      console.log(`FAILED ${unit}: ${error.split("\n")[0]}`);
+      console.log(indent(error));
+    }
+    console.log(`${label}: ${what}`);
+    return true;
+  };
+  // The wave plans with one run --all, so a step before init or plan runs before it for every unit.
+  let before = await unitSteps("before-init", roots);
+  if (before.size === 0) before = await unitSteps("before-plan", roots);
+  if (stepsFailed(before, `a step before the plan failed, so nothing in it was planned or applied`)) {
+    w.failed = [...before.keys()];
+    return EXIT.failed;
+  }
   let result: Awaited<ReturnType<typeof planTerragruntWave>>;
   try {
-    result = await planTerragruntWave({ ...run, units: roots, workDir: planDir });
+    result = await planWaveGroups(groups, { dir: repo, exec });
   } catch (e) {
     if (e instanceof TerragruntMockRefusal) {
       for (const r of e.reads) console.log(`${r.unit} would plan on the mock_outputs of ${r.upstream}, which has no outputs`);
@@ -1896,24 +2002,26 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     return EXIT.failed;
   }
   if (result.code !== 0 && result.code !== 2) console.log(tail(result.log));
-  for (const [unit, t] of unitTimes(join(planDir, "plan-report.json"))) w.observer.unitTimed(unit, (t.end - t.start) / 1000, t);
+  for (const g of groups) for (const [unit, t] of unitTimes(join(g.workDir, "plan-report.json"))) w.observer.unitTimed(unit, (t.end - t.start) / 1000, t);
   const planned = new Map<string, PlannedUnit>();
   for (const part of result.parts) {
     const path = part.member.member;
     let plan: unknown;
     if (part.member.status !== "failed") {
       try {
-        plan = JSON.parse(readFileSync(join(planDir, "json", path, "tfplan.json"), "utf-8"));
+        plan = JSON.parse(readFileSync(join(unitDir(path), "json", path, "tfplan.json"), "utf-8"));
       } catch {
         plan = undefined;
       }
     }
+    const bin = tools.get(path)?.report;
     if (plan === undefined) {
-      planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it" });
+      planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it", ...(bin ? { bin } : {}) });
       continue;
     }
     const changed = part.entries.filter((e) => e.action !== "no-op" && e.action !== "read");
     planned.set(path, {
+      ...(bin ? { bin } : {}),
       root: path,
       plan,
       member: { member: path, planDigest: part.member.planDigest ?? "" },
@@ -1923,6 +2031,8 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     });
   }
   const units = roots.filter((r) => planned.has(r)).map((r) => planned.get(r)!);
+  // The steps each unit ran, on the unit's row of the report, filled in as they run.
+  for (const p of units) p.steps = ran.get(p.root) ?? [];
   w.plannedAt = new Date().toISOString();
   w.planned = units;
   for (const p of units) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.changes === 0 ? "no changes" : `${p.changes} change${p.changes === 1 ? "" : "s"}, ${p.destroys} destroy${p.destroys === 1 ? "" : "s"}`}`);
@@ -1934,45 +2044,194 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     console.log(`${label}: ${failed.length + unplanned.length} unit${failed.length + unplanned.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
     return EXIT.failed;
   }
-  const refusedByPolicy = await policyGate(repo, options, { label, settings, configPath }, units, w);
-  if (refusedByPolicy !== undefined) return refusedByPolicy;
+  const afterPlan = await unitSteps("after-plan", roots, savedPlan);
+  for (const p of units) {
+    p.steps = ran.get(p.root) ?? [];
+    if (afterPlan.has(p.root)) p.error = afterPlan.get(p.root);
+  }
+  if (stepsFailed(afterPlan, `a step after the plan failed, so nothing in it was applied`)) return EXIT.failed;
+  const heldBySteps = [...holds.keys()].filter((u) => roots.includes(u)).sort();
   // A unit applies when its plan changes a resource or an output: a later wave reads the outputs.
   const changing = units.filter((p) => p.changes > 0 || p.outputs);
+  const changes = changing.reduce((n, p) => n + p.changes, 0);
+  const destroys = changing.reduce((n, p) => n + p.destroys, 0);
   w.changedRoots = changing.map((p) => p.root).sort();
+  /** Apply the saved plans of the units that change, with the steps around them. */
+  const applyUnits = async (): Promise<number> => {
+    const beforeApply = await unitSteps("before-apply", changing.map((p) => p.root), savedPlan);
+    for (const p of units) p.steps = ran.get(p.root) ?? [];
+    if (stepsFailed(beforeApply, "a step before the apply failed, so nothing in it was applied")) {
+      w.failed = [...beforeApply.keys()];
+      return EXIT.failed;
+    }
+    // The saved plans, and nothing planned anew.
+    w.applyStarted = new Date().toISOString();
+    await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}) });
+    const applied = await applyWaveGroups(groups, changing.map((p) => p.root), { dir: repo, exec });
+    console.log(applied.log.trim());
+    const bad = applied.results.filter((r) => r.status !== "succeeded");
+    // A unit with no change had nothing to apply; a changing one applied when Terragrunt says it succeeded.
+    const succeeded = new Set(applied.results.filter((r) => r.status === "succeeded").map((r) => r.unit));
+    w.applied = new Set(units.filter((p) => !changing.includes(p) || (applied.code === 0 && succeeded.has(p.root))).map((p) => p.root));
+    w.states = await recordUnitStateVersions(repo, roots.filter((r) => w.applied!.has(r)), run, env);
+    if (applied.code !== 0 || bad.length > 0) {
+      for (const r of bad) console.log(`FAILED ${r.unit}: ${r.result}${r.error ? `: ${r.error}` : ""}`);
+      w.failed = bad.map((r) => r.unit);
+      console.log(`${label}: an apply failed`);
+      return EXIT.failed;
+    }
+    for (const p of changing) console.log(`applied ${p.root}`);
+    const afterApply = await unitSteps("after-apply", changing.map((p) => p.root));
+    for (const p of units) p.steps = ran.get(p.root) ?? [];
+    if (stepsFailed(afterApply, "applied, then a step after the apply failed")) {
+      w.failed = [...afterApply.keys()];
+      for (const [unit, error] of afterApply) planned.get(unit)!.error = error;
+      return EXIT.failed;
+    }
+    console.log(`${label} applied`);
+    return EXIT.applied;
+  };
+
+  if (decision) {
+    // A share: the wave's job planned, priced, checked and gated every unit; this share applies only the plans it decided on.
+    if (heldBySteps.length > 0 && decision.approval !== "approved") {
+      w.heldBySteps = heldBySteps;
+      console.log(`${label}: a step of ${heldBySteps.join(", ")} asks for an approval, and wave ${wave} decided without one, so nothing in this share was applied; run the pipeline again so the wave's job holds it at its gate`);
+      writeOutcome(options.env, `wave ${wave} share ${options.share} held by a step of ${heldBySteps.join(", ")}`, w);
+      return EXIT.refused;
+    }
+    const decided = new Map(decision.members.map((m) => [m.member, m.planDigest]));
+    const moved = units.filter((p) => !samePlanDigest(decided.get(p.root), p.member!.planDigest)).map((p) => p.root).sort();
+    if (moved.length > 0) {
+      console.log(`${label}: these units planned differently since wave ${wave} decided on ${decision.digest}: ${moved.join(", ")}`);
+      console.log(`${label}: nothing in this share was applied; run the pipeline again to plan and decide the wave anew`);
+      if (decision.approval === "approved") w.refused = { reason: "approval", approved: decision.digest, roots: moved };
+      writeOutcome(options.env, `wave ${wave} share ${options.share} changed since the wave decided: ${moved.join(", ")}`, w);
+      return EXIT.refused;
+    }
+    if (changing.length === 0) {
+      facts.nothing = true;
+      w.applied = new Set(units.map((p) => p.root));
+      w.states = await recordUnitStateVersions(repo, roots, run, env);
+      console.log(`${label}: no changes`);
+      console.log(`${label} applied`);
+      return EXIT.applied;
+    }
+    return applyUnits();
+  }
+
+  const unpriced = await priceWave(repo, options, { label, settings, configPath, work }, units, w);
+  if (unpriced !== undefined) return unpriced;
+  const refusedByPolicy = await policyGate(repo, options, { label, settings, configPath }, units, w);
+  if (refusedByPolicy !== undefined) return refusedByPolicy;
+  const all = units.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
+  const handOff = (digest: string): number => {
+    // The share jobs apply: this job hands them the digest of every unit's plan it decided on, and applies nothing itself.
+    const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+    writeDecision(repo, options, {
+      version: 1,
+      wave,
+      shares: shares.length,
+      digest,
+      approval: w.approval === "approved" ? "approved" : "not-required",
+      // A unit whose plan changes only an output applies too, so it counts as a change.
+      changes: changes + changing.filter((p) => p.changes === 0).length,
+      ...(commit ? { commit } : {}),
+      members: all,
+    });
+    w.decided = true;
+    for (const [i, share] of shares.entries()) console.log(`${label}: share ${i + 1} of ${shares.length} applies ${share.join(", ")}`);
+    console.log(`${label}: ${changing.length === 0 ? "nothing to apply" : w.approval === "approved" ? "approved" : "no approval needed"}; its ${shares.length} share job${shares.length === 1 ? "" : "s"} apply these plans`);
+    return EXIT.applied;
+  };
   if (changing.length === 0) {
     facts.nothing = true;
+    if (deciding) {
+      w.digest = waveSetDigest(all);
+      w.approval = "not-required";
+      return handOff(w.digest);
+    }
     w.applied = new Set(units.map((p) => p.root));
+    w.states = await recordUnitStateVersions(repo, roots, run, env);
     console.log(`${label}: no changes`);
     console.log(`${label} applied`);
     return EXIT.applied;
   }
-  const changes = changing.reduce((n, p) => n + p.changes, 0);
-  const destroys = changing.reduce((n, p) => n + p.destroys, 0);
-  const members = changing.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
+  // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
+  const priced = costMember(w.waveCost);
+  const members = [...changing.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1)), ...(priced ? [priced] : [])];
   const digest = waveSetDigest(members);
   console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
+  for (const u of heldBySteps) console.log(`${label}: ${u}: step ${holds.get(u)!.join(", ")} asks for an approval, so the gate holds this wave`);
+  if (heldBySteps.length) w.heldBySteps = heldBySteps;
   w.preview = await comparePreview({ repo, env: options.env ?? process.env, wave: options.wave, binary: options.binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
-  const stop = await gateWave(repo, options, { label, roots: changing.map((p) => p.root), planned: changing, members, digest, changes, destroys }, facts, w);
+  const stop = await gateWave(repo, options, { label, roots: changing.map((p) => p.root), planned: changing, members, digest, changes: changes + changing.filter((p) => p.changes === 0).length, destroys, heldBySteps }, facts, w);
   if (stop !== undefined) return stop;
   recordOverridesUsed(repo, options, changing);
-  // The saved plans, and nothing planned anew.
-  w.applyStarted = new Date().toISOString();
-  await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}) });
-  const applied = await applyTerragruntWave({ ...run, units: changing.map((p) => p.root), workDir: planDir });
-  console.log(applied.log.trim());
-  const bad = applied.results.filter((r) => r.status !== "succeeded");
-  // A unit with no change had nothing to apply; a changing one applied when Terragrunt says it succeeded.
-  const succeeded = new Set(applied.results.filter((r) => r.status === "succeeded").map((r) => r.unit));
-  w.applied = new Set(units.filter((p) => !changing.includes(p) || (applied.code === 0 && succeeded.has(p.root))).map((p) => p.root));
-  if (applied.code !== 0 || bad.length > 0) {
-    for (const r of bad) console.log(`FAILED ${r.unit}: ${r.result}${r.error ? `: ${r.error}` : ""}`);
-    w.failed = bad.map((r) => r.unit);
-    console.log(`${label}: an apply failed`);
-    return EXIT.failed;
+  if (deciding) return handOff(digest);
+  return applyUnits();
+}
+
+/** One line per root or unit: where its state is, and its version or why there is none. */
+function logStateVersions(roots: readonly string[], versions: Map<string, ReportStateVersion>): void {
+  for (const root of roots) {
+    const v = versions.get(root);
+    if (!v) continue;
+    const where = v.location ? ` ${v.location}` : "";
+    console.log(`${root}: state${where}${v.version_id ? ` version ${v.version_id}` : `, versions ${v.versioning}${v.note ? ` (${v.note})` : ""}`}`);
   }
-  for (const p of changing) console.log(`applied ${p.root}`);
-  console.log(`${label} applied`);
-  return EXIT.applied;
+}
+
+/**
+ * The state version each unit's backend holds now that the wave applied it.
+ * A unit's working directory is in Terragrunt's cache, so the backend comes
+ * from its evaluated `remote_state` block (`terragrunt render --json`), and
+ * the version from the state object's metadata, as for a plain root. A unit
+ * with no `remote_state` and no `terraform.source` is its own working
+ * directory, read as a plain root is. Anything else is recorded as unknown,
+ * with why; nothing here fails the wave.
+ */
+async function recordUnitStateVersions(
+  repo: string,
+  units: readonly string[],
+  run: { terragrunt: string; exec: TerragruntExec; binary: string },
+  env: NodeJS.ProcessEnv,
+): Promise<Map<string, ReportStateVersion>> {
+  const out = new Map<string, ReportStateVersion>();
+  await eachLimited([...units], 8, async (unit) => {
+    const dir = join(repo, unit);
+    const r = await run.exec(run.terragrunt, ["render", "--json", "--non-interactive", "--no-color", "--working-dir", unit], { cwd: repo, env: { TG_TF_PATH: run.binary, TG_NON_INTERACTIVE: "true" } });
+    let rendered: { remote_state?: { backend?: unknown; config?: unknown } | null; terraform?: { source?: unknown } | null } | undefined;
+    try {
+      rendered = r.code === 0 ? JSON.parse(r.stdout) : undefined;
+    } catch {
+      rendered = undefined;
+    }
+    if (!rendered) {
+      out.set(unit, { backend: "unknown", versioning: "unknown", note: `terragrunt render could not say the unit's backend (exit ${r.code}): ${(r.stderr || r.stdout).trim().split("\n").pop() ?? ""}` });
+      return;
+    }
+    const backend = typeof rendered.remote_state?.backend === "string" && rendered.remote_state.backend ? rendered.remote_state.backend : undefined;
+    if (backend) {
+      const config = rendered.remote_state?.config && typeof rendered.remote_state.config === "object" ? (rendered.remote_state.config as Record<string, unknown>) : {};
+      out.set(unit, await stateVersion(dir, env, undefined, { type: backend, config }));
+      return;
+    }
+    if (typeof rendered.terraform?.source !== "string" || !rendered.terraform.source) {
+      out.set(unit, await stateVersion(dir, env));
+      return;
+    }
+    out.set(unit, { backend: "unknown", versioning: "unknown", note: "the unit names no remote_state block and runs from Terragrunt's cache, so its backend cannot be read" });
+  });
+  logStateVersions(units, out);
+  return out;
+}
+
+/** Write the decision a wave split across jobs hands its shares. */
+function writeDecision(repo: string, options: ApplyWaveOptions, decision: WaveDecision): void {
+  const file = options.decided ?? join(repo, decidedPath(decision.wave));
+  mkdirSync(join(file, ".."), { recursive: true });
+  writeFileSync(file, JSON.stringify(decision, null, 2) + "\n");
 }
 
 /** The one line the job's status carries, written where the pipeline reads it (`TG_OUTCOME`). */

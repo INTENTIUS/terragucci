@@ -1,7 +1,7 @@
 ---
 title: Move resources between roots
 description: Split a root in two, merge two roots, or hand a resource to another root, with a migration file in the pull request, proved with no change, approved by digest and written under the state lock.
-claims: [migrate-split, migrate-resume, migrate-backend, migrate-revert, cdktn-migrate]
+claims: [migrate-split, migrate-resume, migrate-backend, migrate-revert, cdktn-migrate, tg-migrate-split]
 prompt: |
   Read https://intentius.io/terragucci/guides/move-resources-between-roots/.
   In this repo, move the resource blocks I name from their root to the root I name, write the migration file the page describes for that move, and open a pull request.
@@ -30,7 +30,7 @@ State contents stay in your backend and the job's temporary directory. The recor
 
 | You need | Why |
 |---|---|
-| Plain Terraform or OpenTofu roots, or CDK Terrain stacks, whose roots are `cdktf.out/stacks/<stack>` holding `cdk.tf.json` | a Terragrunt unit is refused |
+| Terraform or OpenTofu roots, CDK Terrain stacks, whose roots are `cdktf.out/stacks/<stack>` holding `cdk.tf.json`, or Terragrunt units | a unit is prepared by Terragrunt (`terragrunt run -- init`), and the job then reads and writes its state in the directory Terragrunt runs it in, with the inputs Terragrunt gives it; a move can go between two units, or between a unit and a plain root |
 | An `s3` backend with `use_lockfile = true`, or a `local` backend, in every root the migration touches | the job holds the S3 lock file while it writes; a root with a `cloud` block, or another backend, is refused |
 | Bucket versioning on, for S3 | each version id before is the version to go back to; see [Find the state version an apply left](/terragucci/guides/find-a-state-version/) |
 | An apply identity that can write the state objects and their `.tflock` files | the same rights `use_lockfile` already needs |

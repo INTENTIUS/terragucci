@@ -1125,11 +1125,10 @@ describe("a wave split across jobs", () => {
     expect(existsSync(join(work, decidedPath(1)))).toBe(false);
   });
 
-  it("refuses --share without --shares, a share past --shares, and --shares on a Terragrunt wave", async () => {
+  it("refuses --share without --shares, and a share past --shares", async () => {
     const { work, bin } = setup();
     await expect(applyWave(work, { ...opts(bin), shares: undefined, share: 1 })).rejects.toThrow("--share must be a share number from 1 to --shares");
     await expect(applyWave(work, { ...opts(bin), share: 3 })).rejects.toThrow("--share must be a share number from 1 to --shares");
-    await expect(applyWave(work, { ...opts(bin), terragrunt: true })).rejects.toThrow(/--shares splits a wave of plain roots/);
   });
 });
 
