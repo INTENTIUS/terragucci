@@ -24,6 +24,7 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
 | `<prefix>/estate.json`, `estate.html` | [`terragucci estate`](/terragucci/guides/see-every-project/) | every project's latest plan, drift check and apply waves |
 | `<prefix>/history.json`, `history.html` | [`terragucci estate`](/terragucci/guides/see-every-project/#change-history) | every resource address with each apply that changed it |
+| `<prefix>/dora.json` | [`terragucci estate`](/terragucci/reference/delivery-metrics/) | the four DORA metrics per project and for the estate, week by week |
 | `<prefix>/audit.jsonl`, `audit.html`, `audit.json` | [`terragucci audit`](/terragucci/reference/audit-trail/) | the audit trail, its page and its summary |
 | `<prefix>/views/` | nothing | kept for a viewer's own files |
 
@@ -58,6 +59,7 @@ Each JSON object a program reads names its schema in its `schema` field, and the
 | `changes.json` | `terragucci.changes/v1` | `dist/changes.schema.json` |
 | `history.json` | `terragucci.history/v1` | `dist/history.schema.json` |
 | `states.json` | `terragucci.state-versions/v1` | `dist/state-versions.schema.json` |
+| `dora.json` | `terragucci.dora/v1` | `dist/dora.schema.json` |
 
 Within `v1` a release only adds fields, and an existing field keeps its meaning. A reader checks `schema` and ignores fields it does not know. The schemas leave objects open, so a validator accepts a field a later release added.
 
@@ -66,7 +68,7 @@ npm pack @intentius/terragucci
 tar -xzf intentius-terragucci-*.tgz package/dist/estate.schema.json
 ```
 
-[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json`, `history.json` and `states.json`, and [The audit trail](/terragucci/reference/audit-trail/#what-each-entry-holds) the fields of an audit entry.
+[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json`, `history.json` and `states.json`, [Delivery metrics](/terragucci/reference/delivery-metrics/#dorajson) the fields of `dora.json`, and [The audit trail](/terragucci/reference/audit-trail/#what-each-entry-holds) the fields of an audit entry.
 
 ## The views prefix
 
@@ -84,5 +86,6 @@ Whatever serves the bucket serves `views/` too. A presigned link opens one objec
 | every resource's history | `GetObject` on `<prefix>/history.json`, or on `<prefix>/*changes.json` for the rows without approvers |
 | a run's report | `GetObject` on `<prefix>/*/report.json` |
 | the audit trail | `GetObject` on `<prefix>/audit.jsonl` |
+| the delivery metrics | `GetObject` on `<prefix>/dora.json` |
 
 A reader needs no list permission: an index row names each run's directory, and the report names each root's plan files.

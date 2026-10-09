@@ -29,6 +29,8 @@ export interface ReportRun {
   stage: ReportStage;
   /** Set on a `tf-apply` wave's report. */
   wave?: number;
+  /** On a `tf-apply` wave split across jobs (`waves.jobs`), the share this report applied, from 1 (minor 16); `waves[0].roots` are its roots. */
+  share?: number;
   binary: string;
   runtime: string;
   started: string;

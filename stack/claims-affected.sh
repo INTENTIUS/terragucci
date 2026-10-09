@@ -61,8 +61,9 @@ smoke_owner() {
     /^CLAIMS=\047/ { sect = "claims"; print "-"; next }
     /^CLAIM_GROUPS=\047/ { sect = "groups"; print "-"; next }
     sect != "" && /^\047/ { sect = ""; print "-"; next }
-    sect == "claims" { split($0, f, "|"); print (f[1] == "" ? "-" : f[1]); next }
-    sect == "groups" { print (NF ? $1 : "-"); next }
+    # The last row ends with the closing quote, on the same line.
+    sect == "claims" { split($0, f, "|"); print (f[1] == "" ? "-" : f[1]); if (/\047$/) sect = ""; next }
+    sect == "groups" { print (NF ? $1 : "-"); if (/\047$/) sect = ""; next }
     /^claim_[a-z0-9_]+\(\) *\{/ { fn = $0; sub(/^claim_/, "", fn); sub(/\(.*/, "", fn); gsub(/_/, "-", fn); print fn; next }
     # A claim runs to the next top-level definition: a "}" at column 0 can
     # close a heredoc inside it.

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, approvedPath, decideGate, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { APPLIED_PATH, appliedPathFor, applyWave, applyWaves, approvedPath, decideGate, decidedPath, parseApplied as readApplied, waveShares, lockTimeoutArgs, movedMembers, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { Fetch } from "../src/forge";
 import type { PolicyExec } from "../src/report/policy";
 import { noteMarker } from "../src/review";
@@ -884,6 +884,135 @@ exit 0
     writeFileSync(join(work, "terragucci.yml"), "parallelism: 3\n");
     expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env })).toBe(0);
     expect(most(run)).toBe(3);
+  });
+});
+
+describe("waveShares", () => {
+  it("deals a wave's roots out to as many shares as there are jobs, in wave order", () => {
+    expect(waveShares(["a", "b", "c", "d", "e"], 2)).toEqual([["a", "c", "e"], ["b", "d"]]);
+  });
+
+  it("never makes more shares than roots, and one job is the whole wave", () => {
+    expect(waveShares(["a", "b"], 5)).toEqual([["a"], ["b"]]);
+    expect(waveShares(["a", "b", "c"], 1)).toEqual([["a", "b", "c"]]);
+  });
+});
+
+describe("a wave split across jobs", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const roots = ["a", "b", "c"];
+  const create = (v: string) => JSON.stringify({ resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["create"], before: null, after: { input: v }, after_unknown: {} } }] });
+
+  function setup(): { work: string; origin: string; bin: string; log: string; plans: string } {
+    const dir = tmp("tg-split-");
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    const work = join(dir, "work");
+    for (const r of roots) mkdirSync(join(work, r), { recursive: true });
+    git(work, "init", "-q", "-b", "main");
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
+    git(work, "remote", "add", "origin", origin);
+    git(work, "push", "-q", "origin", "main");
+    const plans = join(dir, "plans");
+    mkdirSync(plans);
+    for (const r of roots) writeFileSync(join(plans, `${r}.json`), create(r));
+    const bin = join(dir, "tofu");
+    writeFileSync(bin, FAKE);
+    chmodSync(bin, 0o755);
+    vi.stubEnv("PLANS", plans);
+    vi.stubEnv("LOG", join(dir, "apply.log"));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    return { work, origin, bin, log: join(dir, "apply.log"), plans };
+  }
+  const applied = (log: string): string[] => (existsSync(log) ? readFileSync(log, "utf-8").trim().split("\n").map((l) => l.replace("applied ", "")).sort() : []);
+  const opts = (bin: string, extra: Record<string, unknown> = {}) => ({ wave: 1, layers: [roots], binary: bin, gate: "always" as const, env: {}, shares: 2, ...extra });
+
+  function approveWave(origin: string, at: number): void {
+    const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
+    const clone = join(tmp("tg-approve-"), "l");
+    execFileSync("git", ["clone", "-q", "-b", "chant/lifecycle", origin, clone]);
+    const file = join(clone, "_gates/tf-apply.jsonl");
+    writeFileSync(file, `${readFileSync(file, "utf-8").replace(/\n$/, "")}\n${JSON.stringify({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(at), planDigest: digest })}`);
+    git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "approve");
+    git(clone, "push", "-q", "origin", "chant/lifecycle");
+  }
+
+  it("decides the wave under one gate in its own job, and each share applies only its own roots, under that one approval", async () => {
+    const { work, origin, bin, log } = setup();
+    // The wave waits at its gate: one pending fact for the whole wave, no decision, nothing applied.
+    expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
+    expect(existsSync(join(work, decidedPath(1)))).toBe(false);
+    const pending = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending;
+    expect(pending).toHaveLength(1);
+    expect(pending[0].members!.map((m) => m.member)).toEqual(roots);
+    approveWave(origin, 2);
+    // Approved, the wave's job records the approval used once, writes every root's digest for its shares and applies nothing.
+    expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(0);
+    expect(applied(log)).toEqual([]);
+    const decision = JSON.parse(readFileSync(join(work, decidedPath(1)), "utf-8"));
+    expect(decision).toMatchObject({ version: 1, wave: 1, shares: 2, digest: pending[0].planDigest, approval: "approved", changes: 3, commit: git(work, "rev-parse", "HEAD").trim() });
+    expect(decision.members.map((m: { member: string }) => m.member)).toEqual(roots);
+    const used = () => readApplied(git(origin, "show", `chant/lifecycle:${APPLIED_PATH}`));
+    expect(used()).toHaveLength(1);
+    // Each share applies its roots alone, reads no gate and records nothing more.
+    expect(await applyWave(work, { ...opts(bin), share: 1, now: T(4) })).toBe(0);
+    expect(applied(log)).toEqual(["a", "c"]);
+    const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
+    expect(report.run).toMatchObject({ wave: 1, share: 1 });
+    expect(report.waves[0]).toMatchObject({ roots: ["a", "c"], set_digest: pending[0].planDigest, approval: "approved" });
+    expect(await applyWave(work, { ...opts(bin), share: 2, now: T(5) })).toBe(0);
+    expect(applied(log)).toEqual(["a", "b", "c"]);
+    expect(used()).toHaveLength(1);
+    expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending).toHaveLength(1);
+  });
+
+  it("a share whose plans moved since its wave decided applies nothing, names the root and exits 4", async () => {
+    const { work, bin, log, plans } = setup();
+    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), now: T(1) })).toBe(0);
+    writeFileSync(join(plans, "c.json"), create("moved"));
+    const outcome = join(work, "..", "outcome");
+    expect(await applyWave(work, { ...opts(bin, { gate: "never", env: { TG_OUTCOME: outcome } }), share: 1, now: T(2) })).toBe(4);
+    expect(applied(log)).toEqual([]);
+    expect(readFileSync(outcome, "utf-8")).toBe("wave 1 share 1 changed since the wave decided: c");
+    // The other share's plans did not move, so it applies.
+    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), share: 2, now: T(3) })).toBe(0);
+    expect(applied(log)).toEqual(["b"]);
+  });
+
+  it("a share applies nothing without its wave's decision, or with one for another split or commit", async () => {
+    const { work, bin, log } = setup();
+    await expect(applyWave(work, { ...opts(bin, { gate: "never" }), share: 1 })).rejects.toThrow(/the wave's own job writes it before its shares run/);
+    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), now: T(1) })).toBe(0);
+    const file = join(work, decidedPath(1));
+    const decision = JSON.parse(readFileSync(file, "utf-8"));
+    writeFileSync(file, JSON.stringify({ ...decision, commit: "f".repeat(40) }));
+    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), share: 1 })).toBe(1);
+    expect(await applyWave(work, { ...opts(bin, { gate: "never", shares: 3 }), share: 1 })).toBe(1);
+    expect(applied(log)).toEqual([]);
+  });
+
+  it("a share of a wave whose plans change nothing plans nothing and applies nothing", async () => {
+    const { work, bin, log, plans } = setup();
+    for (const r of roots) writeFileSync(join(plans, `${r}.json`), JSON.stringify({ resource_changes: [] }));
+    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), now: T(1) })).toBe(0);
+    expect(JSON.parse(readFileSync(join(work, decidedPath(1)), "utf-8"))).toMatchObject({ changes: 0, approval: "not-required" });
+    expect(await applyWave(work, { ...opts(bin, { gate: "never" }), share: 2 })).toBe(0);
+    expect(applied(log)).toEqual([]);
+  });
+
+  it("a wave of one root, or one job, applies in its own job as before", async () => {
+    const { work, bin, log } = setup();
+    expect(await applyWave(work, { ...opts(bin, { gate: "never", shares: 1 }), now: T(1) })).toBe(0);
+    expect(applied(log)).toEqual(roots);
+    expect(existsSync(join(work, decidedPath(1)))).toBe(false);
+  });
+
+  it("refuses --share without --shares, a share past --shares, and --shares on a Terragrunt wave", async () => {
+    const { work, bin } = setup();
+    await expect(applyWave(work, { ...opts(bin), shares: undefined, share: 1 })).rejects.toThrow("--share must be a share number from 1 to --shares");
+    await expect(applyWave(work, { ...opts(bin), share: 3 })).rejects.toThrow("--share must be a share number from 1 to --shares");
+    await expect(applyWave(work, { ...opts(bin), terragrunt: true })).rejects.toThrow(/--shares splits a wave of plain roots/);
   });
 });
 

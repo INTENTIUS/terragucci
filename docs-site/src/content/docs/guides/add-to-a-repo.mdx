@@ -205,6 +205,8 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
    git push -u origin add-terragucci
    ```
 
+   <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, a reminder that drift checks are overdue, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
+
    </TabItem>
    <TabItem label="Forgejo">
 
@@ -239,6 +241,12 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
    <TabItem label="GitLab">
 
    Turn on "Pipelines must succeed" under Settings, Merge requests.
+
+   <Shot step="gitlab" view="required" alt="GitLab's merge request settings with Pipelines must succeed checked: merge requests cannot be merged if the latest pipeline did not succeed or is still running" />
+
+   A failed check fails the pipeline:
+
+   <Shot step="gitlab" view="check" alt="A GitLab check job for a change pushed without tofu fmt: its log shows the diff tofu fmt would make to envs/dev/orders/locals.tf, and the job failed with exit code 1" />
 
    </TabItem>
    <TabItem label="Forgejo">
