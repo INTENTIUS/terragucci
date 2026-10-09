@@ -648,8 +648,8 @@
       "says": "with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head",
       "needs": null,
       "verdict": "pass",
-      "break": "fail",
-      "commit": "6766e9e"
+      "break": "caught",
+      "commit": "a5c8037"
     },
     {
       "claim": "cdf-concurrency",
@@ -704,16 +704,16 @@
       "says": "with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock",
       "needs": null,
       "verdict": "pass",
-      "break": "fail",
-      "commit": "6766e9e"
+      "break": "caught",
+      "commit": "a5c8037"
     },
     {
       "claim": "plan-lock-release",
       "says": "with locks: plan the merge of a pull request releases the lock its first plan took",
       "needs": null,
       "verdict": "pass",
-      "break": "fail",
-      "commit": "6766e9e"
+      "break": "caught",
+      "commit": "a5c8037"
     },
     {
       "claim": "policy-override",
