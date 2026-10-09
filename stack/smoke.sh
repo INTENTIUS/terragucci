@@ -311,6 +311,7 @@ state-versions|a root whose state is in a versioned S3 bucket applies twice, and
 migrate-resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
 migrate-backend|a migration moves the state of a root to a new bucket: proved with no change, approved by digest, written under both lock files, the old state left where it was, and both versions recorded|
 migrate-revert|terragucci migrate revert writes the migration that puts back the states a split wrote, and once approved it restores each state to the version the split recorded before, refused when a state moved past the version the split left|
+migrate-resume-never|with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1|
 migrate-split|a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after|
 dora|terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each|
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
@@ -10697,9 +10698,20 @@ migrate_wave() { # work, log name, [layers] -> AUDIT_CODE of wave 1 over mono an
   clean_mounted "$1/wave" "$(image_tag tofu)"
 }
 
+claim_migrate_resume_never() {
+  # migrate-resume with gate: never in the fixture: no wave can wait, and a
+  # migration still can, so init writes the resume workflow all the same, and
+  # one run of it applies the approved migration.
+  # BREAK: the resume workflow init wrote is removed before the push, as when
+  # init wrote none under gate: never, so nothing resumes the migration.
+  MIGRATE_RESUME_GATE=never MIGRATE_RESUME_NAME=migrate-resume-never claim_migrate_resume
+}
+
 claim_migrate_resume() {
   # stack/fixtures/migrate-roots: one root, mono, holding keep and moved, with
-  # gate: never and apply.resume: 5, pushed to Forgejo; its run applies mono.
+  # the default gate (on-destroy) and apply.resume: 5, so init writes the
+  # resume workflow, pushed to Forgejo; its run applies mono, which destroys
+  # nothing and so does not wait.
   # A second push moves moved to a new root, split, with
   # migrations/split-moved.yml: wave 1 waits for the migration (exit 3). In a
   # clone, terragucci approve with no argument finds the migration, prints
@@ -10708,15 +10720,23 @@ claim_migrate_resume() {
   # runs wave 1 again: the migration writes both states and the wave applies.
   # mono's state then holds keep and split's moved, and chant/lifecycle's
   # done.jsonl says applied.
-  # BREAK: nobody approves, so the resume run writes nothing and split has no state.
-  log() { echo "[smoke migrate-resume] $*" >&2; }
+  # BREAK: nobody approves, so the resume run says there is nothing to resume,
+  # writes nothing, and split has no state. A setup that breaks first (no
+  # resume workflow, wave 1 not waiting) fails BREAK too, so it is never
+  # counted as caught.
+  local name="${MIGRATE_RESUME_NAME:-migrate-resume}" gate="${MIGRATE_RESUME_GATE:-}"
+  log() { echo "[smoke $name] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work name=migrate-resume repo="$USER/migrate-resume" sha out run status deadline mono split done rc=0
+  local work repo="$USER/$name" sha out run status deadline mono split done rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo "$name" migrate-roots || { drop_work "$work"; return 1; }
+  if [ -n "$gate" ]; then
+    printf 'gate: %s\n' "$gate" >> "$work/tree/terragucci.yml"
+    (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init with gate: $gate failed"; drop_work "$work"; return 1; }
+  fi
   sha="$(push_tree "$work/tree" "$repo" main "migrate-resume: mono")"
-  wait_run "$repo" "$sha" || rc=1
+  wait_run "$repo" "$sha" push || rc=1
   [ $rc = 0 ] && [ "$RUN_STATUS" = success ] || { log "the first run of mono ended ${RUN_STATUS:-unknown}"; rc=1; }
   if [ $rc = 0 ]; then
     perl -0pi -e 's/\n\nresource "terraform_data" "moved" \{\n  input = "moved"\n\}\n/\n/' "$work/tree/mono/main.tf"
@@ -10724,13 +10744,21 @@ claim_migrate_resume() {
     perl -pe 's#\@PREFIX\@/mono#'"$name"'/split#; s#mono.tfstate#split.tfstate#' "$HERE/fixtures/migrate-roots/mono/main.tf" | perl -0pe 's/\nresource "terraform_data" "keep" \{\n  input = "keep"\n\}\n//' > "$work/tree/split/main.tf"
     printf 'moves:\n  - from: mono\n    to: split\n    addresses: [terraform_data.moved]\n' > "$work/tree/migrations/split-moved.yml"
     (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init after the split failed"; rc=1; }
+    [ -f "$work/tree/.forgejo/workflows/terragucci-resume.yml" ] || { log "init wrote no resume workflow${gate:+ under gate: $gate}"; rc=1; }
+    # The gate: never BREAK: the resume workflow is dropped, as init dropped it under gate: never before.
+    if [ $rc = 0 ] && [ -n "$gate" ] && [ -n "${BREAK:-}" ]; then
+      git -C "$work/tree" rm -q --cached .forgejo/workflows/terragucci-resume.yml 2>/dev/null || true
+      mv "$work/tree/.forgejo/workflows/terragucci-resume.yml" "$work/resume.yml.dropped"
+    fi
   fi
   if [ $rc = 0 ]; then
     sha="$(push_tree "$work/tree" "$repo" main "migrate-resume: split moved out of mono")"
-    wait_run "$repo" "$sha" || rc=1
+    wait_run "$repo" "$sha" push || rc=1
     [ $rc = 0 ] && { run_logs "$repo" "$RUN_ID" | grep -q 'chant approve tf-migrate split-moved --plan' || { log "wave 1 did not wait for the migration"; rc=1; }; }
   fi
-  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+  if [ $rc != 0 ] && [ -n "${BREAK:-}" ]; then log "the setup failed before the approval, so BREAK proves nothing"; drop_work "$work"; return 0; fi
+  # Approved in every run but migrate-resume's BREAK, which is that nobody approves.
+  if [ $rc = 0 ] && { [ -z "${BREAK:-}" ] || [ -n "$gate" ]; }; then
     git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/approver-clone" || rc=1
     git -C "$work/approver-clone" config user.name smoke-approver
     git -C "$work/approver-clone" config user.email smoke-approver@terragucci.local
@@ -10750,10 +10778,30 @@ claim_migrate_resume() {
         sleep 3
       done
       log "the dispatched resume run ${run:-?} ended '${status:-unknown}'"
-      [ -n "$run" ] && print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci resume|migration|wave [0-9]+' >&2 || true
+      out="$( [ -n "$run" ] && print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci resume|migration|wave [0-9]+' || true)"
+      printf '%s\n' "$out" >&2
+      if [ -n "${BREAK:-}" ] && [ -n "$gate" ]; then
+        log "a resume workflow ran although the BREAK removed it, so BREAK proves nothing"; drop_work "$work"; return 0
+      elif [ -n "${BREAK:-}" ]; then
+        # Nobody approved: caught only when the resume run itself said so.
+        if grep -q 'terragucci resume: nothing to resume' <<<"$out"; then log "the resume run found nothing to resume"; rc=1; else log "the resume run did not say there is nothing to resume, so BREAK proves nothing"; drop_work "$work"; return 0; fi
+      else
+        grep -q 'migration split-moved: approved by smoke-approver for this digest' <<<"$out" && grep -q 'migration split-moved applied' <<<"$out" \
+          || { log "the resume run did not apply split-moved under smoke-approver's approval"; rc=1; }
+      fi
     else
-      log "Forgejo has no resume workflow to run in $repo"; rc=1
+      log "Forgejo has no resume workflow to run in $repo"
+      if [ -n "${BREAK:-}" ] && [ -n "$gate" ]; then
+        # The gate: never BREAK: approved, with no resume job, the migration stays unwritten.
+        split="$(curl -fsS "$FLOCI/shop-terraform-state/$name/split.tfstate" 2>/dev/null | jq -r '[.resources[].name] | join(",")' 2>/dev/null)"
+        drop_work "$work"
+        if [ -z "$split" ]; then log "the approved migration waits with no resume job to run it"; return 1; fi
+        log "split holds [$split] with no resume job, so BREAK proves nothing"; return 0
+      fi
+      [ -n "${BREAK:-}" ] && { log "so BREAK proves nothing"; drop_work "$work"; return 0; }
+      rc=1
     fi
+    [ -n "${BREAK:-}" ] && { drop_work "$work"; return $rc; }
     mono="$(curl -fsS "$FLOCI/shop-terraform-state/$name/mono.tfstate" 2>/dev/null | jq -r '[.resources[].name] | join(",")' 2>/dev/null)"
     split="$(curl -fsS "$FLOCI/shop-terraform-state/$name/split.tfstate" 2>/dev/null | jq -r '[.resources[].name] | join(",")' 2>/dev/null)"
     log "after the resume run: mono holds [${mono:-}], split [${split:-}]"
@@ -11923,6 +11971,7 @@ migrate-split        weight=200
 migrate-backend      weight=200
 migrate-revert       weight=250
 migrate-resume       runner self! weight=300
+migrate-resume-never runner self! weight=300
 dora                 weight=250
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150

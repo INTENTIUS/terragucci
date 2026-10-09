@@ -134,10 +134,12 @@ describe("apply.resume in the pipeline", () => {
     if (forge === "github") expect(w.jobs.resume.permissions.contents).toBe("write");
     if (forge === "forgejo") expect(JSON.stringify(w.jobs.resume.steps)).toContain("terragucci-apply-lock");
     expect(JSON.stringify(w.jobs.resume.steps)).toContain(`terragucci resume --forge ${forge} --out terragucci-resume.env`);
-    // The pipeline itself is unchanged, and without apply.resume, or with gate never, there is no resume workflow.
+    // The pipeline itself is unchanged, and without apply.resume there is no resume workflow.
     expect(r.content).toBe(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"], ["b"]], env: {}, gate: "always" }).content);
     expect(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "always" }).extra).toBeUndefined();
-    expect(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "never", resume: 10 }).extra).toBeUndefined();
+    // Under gate never too: a state migration waits in wave 1 whatever the gate, and an approved one resumes.
+    const never = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "never", resume: 10 });
+    expect(never.extra?.map((e) => e.path)).toEqual([extra.path]);
   });
 
   it("gitlab: a resume job for the pipeline schedule TERRAGUCCI_SCHEDULE=resume, which drift's job sits out", () => {
