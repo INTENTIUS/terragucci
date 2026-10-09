@@ -937,6 +937,16 @@ describe("publish job", () => {
     for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("COSIGN");
   });
 
+  it.each(["github", "forgejo"] as const)("%s: with modules.registry in a bucket, the publish job alone gets the bucket's key secrets", (forge) => {
+    expect(JSON.stringify(body(withPublish(forge)).jobs.publish)).not.toContain("AWS_ACCESS_KEY_ID");
+    const jobs = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, publishBucket: "s3://acme-modules" }).content).jobs;
+    expect(jobs.publish.env.AWS_ACCESS_KEY_ID).toBe("${{ secrets.AWS_ACCESS_KEY_ID }}");
+    expect(jobs.publish.env.AWS_SECRET_ACCESS_KEY).toBe("${{ secrets.AWS_SECRET_ACCESS_KEY }}");
+    const azure = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, publishBucket: "az://acmemods/modules" }).content).jobs;
+    expect(azure.publish.env.AZURE_STORAGE_KEY).toBe("${{ secrets.AZURE_STORAGE_KEY }}");
+    for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("AWS_ACCESS_KEY_ID");
+  });
+
   it("gitlab: a publish job after apply, on the default branch, with full history", () => {
     const doc = body(withPublish("gitlab"));
     expect(doc.publish.needs).toEqual(["apply-wave-2"]);

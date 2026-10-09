@@ -423,7 +423,8 @@ export async function main(argv: string[]): Promise<number> {
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const results = await publish(cwd, settings, { dryRun: flags["dry-run"] === true });
         console.log(describePublish(results));
-        return 0;
+        // A release modules.test refused fails the job, once every other module has published.
+        return results.some((r) => r.status === "refused") ? 1 : 0;
       }
       case "verify-release": {
         const [module, version] = args;

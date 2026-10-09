@@ -99,8 +99,10 @@ packages/terragucci/src/report            report require-* highlight* drill-down
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue cdktn-tips cdktn-refused
-packages/terragucci/src/publish/require.ts require-* tg-require-attested
-packages/terragucci/src/publish           publish publish-attest require-* tg-require-attested version-bump-job
+packages/terragucci/src/publish/require.ts require-* tg-require-attested module-registry
+packages/terragucci/src/publish/registry.ts module-registry require-*
+packages/terragucci/src/publish/test.ts   module-registry
+packages/terragucci/src/publish           publish publish-attest require-* tg-require-attested version-bump-job module-registry
 packages/terragucci/src/rollout           rollout rollout-*
 packages/terragucci/src/tips              tips respond-tips
 
