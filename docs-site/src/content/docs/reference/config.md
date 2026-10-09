@@ -47,7 +47,7 @@ A key the control repo sets away from its default reaches each project one of tw
 
 | How it reaches the project | Keys |
 |---|---|
-| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too) |
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 ```yaml
@@ -159,6 +159,8 @@ dashboards: true
 | `modules.attest` | none (off) | `true`, or `key` (default `cosign.pub`): sign each release, attest its provenance and SBOM, and record it in the release ledger; see [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
 | `modules.require` | none (off) | `attested`: `tf-check` and `tf-plan` refuse a root that pins a release of a checked source unless it verifies; `tf-plan` reads it at base. terragucci's CI images carry the HCL parser it reads pins with; elsewhere, `npm i -D @cdktn/hcl2json`. See [Require attested releases](/terragucci/guides/publish-modules/#require-attested-releases) |
 | `modules.trusted` | none | publishers in other repos that `require` checks: each a `source` (an `oci://` prefix or a git URL), the `key` (a path to their `cosign.pub` in this repo) and the `ledger` (the git URL whose `chant/lifecycle` holds their release ledger) |
+| `modules.test` | `false` (off) | `true`: the binary's `test` runs on each module before a release of it publishes, and a module with no tests, or whose tests fail, is refused; see [Test each release](/terragucci/guides/publish-modules/#test-each-release) |
+| `modules.registry` | none | write each release as the module registry protocol's static files: `url` (the `https://` host that serves them), `namespace`, `bucket` (`s3://`, `gs://` or `az://`) or `dir`, and optionally `endpoint`, `prefix`, `namespaces` (a tag prefix to a namespace), `system` (default `generic`) and `download` (`tarball`, the default, `git-tags` or `oci`); see [Serve a module registry](/terragucci/guides/publish-modules/#serve-a-module-registry) |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge`), `token_env` and [`comment`](#the-agent-comment) |

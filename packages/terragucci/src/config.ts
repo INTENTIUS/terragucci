@@ -777,7 +777,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.dashboards !== undefined) checkDashboards(s.dashboards, `${where}.dashboards`, problems);
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
-    else checkModules(s.modules as Record<string, unknown>, `${where}.modules`, problems);
+    else {
+      checkModules(s.modules as Record<string, unknown>, `${where}.modules`, problems);
+      if (s.modules.test === true && s.binary === "choudoufu") problems.push(`${where}.modules.test runs the binary's test command on each module, and choudoufu has none; set binary to tofu or terraform`);
+    }
   }
 }
 
@@ -804,7 +807,50 @@ function checkSteps(v: unknown, where: string, problems: string[]): void {
   });
 }
 
-const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted"]);
+const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
+const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];
+/** A registry namespace or module name, as the Terraform module registry protocol allows them. */
+export const REGISTRY_NAME = /^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$/;
+/** A registry module's system (its target provider): lower-case letters and digits. */
+export const REGISTRY_SYSTEM = /^[0-9a-z]{1,64}$/;
+
+function checkRegistry(r: unknown, where: string, targets: unknown[], problems: string[]): void {
+  if (!isObject(r)) return void problems.push(`${where} must be a map with url, namespace, and a bucket or a dir`);
+  for (const k of Object.keys(r)) if (!REGISTRY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting; use ${REGISTRY_KEYS.join(", ")}`);
+  if ((r.bucket === undefined) === (r.dir === undefined)) problems.push(`${where} writes its files to a bucket or a dir; set one of them`);
+  if (r.bucket !== undefined) {
+    if (typeof r.bucket !== "string") problems.push(`${where}.bucket must be s3://<bucket>, gs://<bucket> or az://<account>/<container>`);
+    else {
+      try {
+        parseReportsBucket(r.bucket);
+      } catch {
+        problems.push(`${where}.bucket must be s3://<bucket>, gs://<bucket> or az://<account>/<container>, not ${r.bucket}`);
+      }
+    }
+  }
+  if (r.dir !== undefined && (typeof r.dir !== "string" || r.dir === "" || r.dir.startsWith("/") || r.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a directory in the repo, such as public`);
+  for (const k of ["endpoint", "prefix"] as const) if (r[k] !== undefined && typeof r[k] !== "string") problems.push(`${where}.${k} must be a string`);
+  if (r.endpoint !== undefined && r.bucket === undefined) problems.push(`${where}.endpoint is the bucket's address; it needs ${where}.bucket`);
+  if (typeof r.url !== "string" || !/^https:\/\/[^/\s?#]+\/?$/.test(r.url)) {
+    problems.push(`${where}.url must be the https address, with no path, that serves the files, such as https://modules.example.com: Terraform and OpenTofu find a registry at its host's root over https`);
+  } else if (!new URL(r.url).hostname.includes(".")) {
+    problems.push(`${where}.url's host is the first part of each module source, and Terraform and OpenTofu read a registry host only when it has a dot, such as modules.example.com`);
+  }
+  if (typeof r.namespace !== "string" || !REGISTRY_NAME.test(r.namespace)) problems.push(`${where}.namespace must be a registry namespace: letters, digits, - and _, such as acme`);
+  if (r.namespaces !== undefined) {
+    if (!isObject(r.namespaces)) problems.push(`${where}.namespaces must map a tag prefix (a path in the repo, such as platform/) to a namespace`);
+    else for (const [prefix, ns] of Object.entries(r.namespaces)) {
+      if (prefix === "" || prefix.startsWith("/")) problems.push(`${where}.namespaces: ${JSON.stringify(prefix)} must be a path in the repo, such as platform/`);
+      if (typeof ns !== "string" || !REGISTRY_NAME.test(ns)) problems.push(`${where}.namespaces.${prefix} must be a registry namespace: letters, digits, - and _`);
+    }
+  }
+  if (r.system !== undefined && (typeof r.system !== "string" || !REGISTRY_SYSTEM.test(r.system))) problems.push(`${where}.system must be lower-case letters and digits, such as aws`);
+  if (r.download !== undefined) {
+    if (!["tarball", "git-tags", "oci"].includes(r.download as string)) problems.push(`${where}.download is ${JSON.stringify(r.download)}; use tarball, git-tags or oci`);
+    else if (r.download === "git-tags" && !targets.includes("git-tags")) problems.push(`${where}.download: git-tags points each version at its git tag, so publish needs git-tags too`);
+    else if (r.download === "oci" && !targets.some((t) => typeof t === "string" && t.startsWith("oci://"))) problems.push(`${where}.download: oci points each version at its OCI artifact, so publish needs an oci:// target too`);
+  }
+}
 
 function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
@@ -815,6 +861,8 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
       problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
     }
   }
+  if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);
+  if (m.test !== undefined && typeof m.test !== "boolean") problems.push(`${where}.test must be true or false`);
   if (m.attest !== undefined) {
     // true reads the public key at cosign.pub.
     if (isObject(m.attest)) {
@@ -822,7 +870,7 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
       const key = m.attest.key;
       if (key !== undefined && (typeof key !== "string" || key === "")) problems.push(`${where}.attest.key must be the path of the public key, such as cosign.pub`);
     } else if (typeof m.attest !== "boolean") problems.push(`${where}.attest must be true or a map with key`);
-    if (m.attest !== false && m.publish === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish too`);
+    if (m.attest !== false && m.publish === undefined && m.registry === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish or ${where}.registry too`);
   }
   if (m.trusted !== undefined) {
     if (!Array.isArray(m.trusted)) problems.push(`${where}.trusted must be a list of sources, each with source, key and ledger`);
@@ -864,6 +912,32 @@ export interface ModulesSettings {
   require?: "attested";
   /** Publishers in other repos whose releases `require` checks. */
   trusted?: TrustedModuleSource[];
+  /** Run the binary's `test` on each module before a release of it publishes; a module with no tests, or one that fails them, is refused. */
+  test?: boolean;
+  /** Write each release as the Terraform module registry protocol, as static files a bucket or a Pages site serves. */
+  registry?: RegistrySettings;
+}
+
+/** `modules.registry`: the module registry protocol as static files. */
+export interface RegistrySettings {
+  /** The bucket the files go to: `s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`. */
+  bucket?: string;
+  /** Or a directory in the repo, for a Pages site to serve. */
+  dir?: string;
+  /** The bucket's API address, for an S3-compatible store. */
+  endpoint?: string;
+  /** Where the files go in the bucket. The prefix is served as the host's root. */
+  prefix?: string;
+  /** The https address, with no path, that serves the files; its host is the one module sources name. */
+  url: string;
+  /** The namespace a module is published under, unless `namespaces` maps its path. */
+  namespace: string;
+  /** A tag prefix (a path in the repo, such as `platform/`) to the namespace its modules go under. The longest match wins. */
+  namespaces?: Record<string, string>;
+  /** The system (target provider) in each module's address. Default `generic`. */
+  system?: string;
+  /** What a version's download points at: a tarball beside it (the default), its git tag, or its OCI artifact. */
+  download?: "tarball" | "git-tags" | "oci";
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
