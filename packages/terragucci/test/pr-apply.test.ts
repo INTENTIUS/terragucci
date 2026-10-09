@@ -441,14 +441,14 @@ describe("locks: plan, the pr-lock job", () => {
     const r = repos();
     const stale = "b".repeat(40);
     const s = target("opened", OPEN(r.head));
-    writeFileSync(s.env.GITHUB_EVENT_PATH!, JSON.stringify({ action: "opened", number: 7, pull_request: { number: 7, ...OPEN(stale) }, repository: { full_name: "acme/infra", default_branch: "main" } }));
+    writeFileSync(s.env.GITHUB_EVENT_PATH!, JSON.stringify({ action: "opened", number: 7, pull_request: { ...OPEN(stale), number: 7 }, repository: { full_name: "acme/infra", default_branch: "main" } }));
     await lock(r, s);
     expect(readLocks(r.work).locks.network).toEqual(expect.objectContaining({ pr: 7, head: r.head, stage: "plan" }));
     expect(statuses(s)).toEqual([["success", "terragucci/lock", "holds network"]]);
     expect(s.sent.find((x) => x.path.endsWith(`statuses/${r.head}`))).toBeDefined();
     // When the forge does not have the fetched head either, it stands down for the run that push started.
     const elsewhere = target("opened", OPEN("c".repeat(40)));
-    writeFileSync(elsewhere.env.GITHUB_EVENT_PATH!, JSON.stringify({ action: "opened", number: 7, pull_request: { number: 7, ...OPEN(stale) }, repository: { full_name: "acme/infra", default_branch: "main" } }));
+    writeFileSync(elsewhere.env.GITHUB_EVENT_PATH!, JSON.stringify({ action: "opened", number: 7, pull_request: { ...OPEN(stale), number: 7 }, repository: { full_name: "acme/infra", default_branch: "main" } }));
     expect((await lock(r, elsewhere)).reason).toBe("pull request 7 moved since this event; its next run locks the new head");
     expect(statuses(elsewhere)).toEqual([]);
     expect(elsewhere.sent.filter((x) => x.path.endsWith("pulls/7"))).toHaveLength(4);
