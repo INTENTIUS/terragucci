@@ -1486,17 +1486,17 @@
       "claim": "plan-no-lock",
       "says": "a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it",
       "needs": null,
-      "verdict": "fail",
-      "break": "fail",
-      "commit": "f87feabd"
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "46d2d20c"
     },
     {
       "claim": "sensitive-redacted",
       "says": "a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "f87feabd"
+      "commit": "46d2d20c"
     },
     {
       "claim": "provider-cache-once",
@@ -1504,7 +1504,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f87feabd"
+      "commit": "46d2d20c"
     },
     {
       "claim": "mr-widget",

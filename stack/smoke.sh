@@ -8909,7 +8909,8 @@ claim_plan_no_lock() {
   [ $rc = 0 ] && { jq -e '.run.stage == "tf-drift"' "$work/repo/tf-drift-report/report.json" >/dev/null || { log "the drift report is not a tf-drift report"; rc=1; }; }
   docker exec "$holder" touch /tmp/release >/dev/null 2>&1 || true
   for i in $(seq 1 30); do [ "$(docker inspect -f '{{.State.Running}}' "$holder" 2>/dev/null)" = true ] || break; sleep 1; done
-  docker logs "$holder" 2>&1 | tail -3 | sed 's/^/[holder] /' >&2 || true
+  # awk ends the last line, which the prompt leaves open, so the SMOKE line starts a line of its own.
+  docker logs "$holder" 2>&1 | tail -3 | awk '{ print "[holder] " $0 }' >&2 || true
   docker rm -f "$holder" >/dev/null 2>&1 || true
   curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$key.tflock" || true
   curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$key" || true
