@@ -116,6 +116,8 @@ Other changes are only reported:
 | never set in the root | it comes from a default |
 | on a resource deleted outside Terraform | the next apply makes it again |
 
+In a Terragrunt repo a unit's resources are in the module its `terraform.source` names, and what differs between units is their `inputs`. Where the module sets the drifted attribute to `var.<name>` and the unit's own `terragrunt.hcl` sets `<name>` to a literal in `inputs`, the pull request writes the live value there, so only that unit changes. A literal in the module is reported, since every unit calling the module shares it, and so is a module from outside the repo. The drift job plans again only the units its report shows drifted. `--import` names a root's files, so it is refused in a Terragrunt repo.
+
 With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#what-edits-the-stacks) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
 
 For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14.1 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
@@ -141,7 +143,7 @@ With `respond.drift: attribute`, each drifted attribute goes through three steps
 | the `aws` CLI, version 2 | the generated drift job installs it against a pinned SHA-256 unless it is on the path; a pipeline you write installs it the same way |
 | `cloudtrail:LookupEvents` | on the job's role |
 | the region | `audit_region`, else the CLI's |
-| a plain-root repo | `terragucci stage tf-drift` lists who changed each attribute in the drift issue; a Terragrunt repo's drift run does not |
+| roots or Terragrunt units | `terragucci stage tf-drift` lists who changed each attribute in the drift issue, under its root or unit |
 | `decide.token_env` | received on GitHub and Forgejo |
 
 Where the step cannot run, it says so and step 3 follows.

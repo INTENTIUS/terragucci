@@ -172,7 +172,7 @@ dashboards: true
 
 ## A version per root
 
-A plain root can run its own OpenTofu or Terraform version, so one wave plans and applies roots on different versions. The first of these that names an exact version picks it:
+A plain root or a Terragrunt unit can run its own OpenTofu or Terraform version, so one wave plans and applies roots on different versions. The first of these that names an exact version picks it:
 
 | Order | Where | Example |
 |---|---|---|
@@ -189,7 +189,7 @@ version:
 
 A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
 
-A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version, and a Terragrunt repo runs one version of its binary for every unit. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-a-root-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version. A Terragrunt unit is pinned the same ways, and an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` pins the Terragrunt release that runs it, installed the same way. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-a-root-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
 
 ## Apply before merge
 

@@ -11893,7 +11893,9 @@ claim_tg_stacks() {
   # base's real output: both units' states are in floci and top's holds the
   # value base wrote.
   # BREAK: terragrunt stack generate does nothing (a wrapper stands in for
-  # it), so init finds no units and the waves have nothing generated to plan.
+  # it), so discovery finds none of the stack's units and init writes no
+  # waves. (A wave's run --all generates the stack again on its own, so the
+  # claim's waves still run on the layers the plain run's init wrote.)
   log() { echo "[smoke tg-stacks] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -11935,8 +11937,8 @@ claim_tg_stacks() {
       [ "$code" = 0 ] || { log "wave $w exited $code, not 0"; rc=1; break; }
     done
   fi
-  base="$(curl -fsS "$FLOCI/shop-terraform-state/$prefix/live/stk/.terragrunt-stack/base/terraform.tfstate" 2>/dev/null | jq -r '[.resources[] | .instances[].attributes.output] | join(",")' 2>/dev/null)"
-  top="$(curl -fsS "$FLOCI/shop-terraform-state/$prefix/live/stk/.terragrunt-stack/top/terraform.tfstate" 2>/dev/null | jq -r '[.resources[] | .instances[].attributes.output] | join(",")' 2>/dev/null)"
+  base="$(curl -fsS "$FLOCI/shop-terraform-state/$prefix/live/stk/.terragrunt-stack/base/terraform.tfstate" 2>/dev/null | jq -r '[.resources[] | .instances[].attributes.output | if type == "object" then .value else . end] | join(",")' 2>/dev/null)"
+  top="$(curl -fsS "$FLOCI/shop-terraform-state/$prefix/live/stk/.terragrunt-stack/top/terraform.tfstate" 2>/dev/null | jq -r '[.resources[] | .instances[].attributes.output | if type == "object" then .value else . end] | join(",")' 2>/dev/null)"
   log "base's state holds [${base:-}], top's [${top:-}]"
   [ "$base" = "stk-$STAMP" ] || { log "base did not apply stk-$STAMP"; rc=1; }
   [ "$top" = "on-stk-$STAMP" ] || { log "top did not apply on base's real output"; rc=1; }
