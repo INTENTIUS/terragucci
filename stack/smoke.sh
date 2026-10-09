@@ -163,6 +163,7 @@ publish|changed modules are published at a new version|
 publish-attest|with modules.attest each release is signed, attested and recorded in the release ledger with its tag|
 require-attested|with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved|
 require-recorded|with modules.require: attested tf-plan refuses a root that pins a version the release ledger does not record|
+tg-require-attested|with modules.require: attested in a Terragrunt repo tf-check and tf-plan refuse a unit whose terraform source pins an unattested release, and pass one that pins an attested release|
 tips|tips are on by default and name their rule|
 zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
@@ -1681,6 +1682,88 @@ require_claim() { # claim name, tampered|unrecorded
 claim_require_attested() { require_claim require-attested tampered; }
 claim_require_recorded() { require_claim require-recorded unrecorded; }
 
+claim_tg_require_attested() {
+  # modules.require: attested in a Terragrunt repo whose pipeline publishes
+  # modules/service 0.1.0 attested. A branch whose unit live/dev pins 0.1.1,
+  # a tag pushed by hand, must fail its tf-check job with the unit, its
+  # terraform source and the version named, and tf-plan, in the Terragrunt CI
+  # image, must refuse the unit without planning it. Pinned to 0.1.0, both pass.
+  # BREAK: the pipeline's check job skips terragucci check-pins, as it did
+  # before, so the branch's tf-check goes green.
+  local claim=tg-require-attested
+  log() { echo "[smoke $claim] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work name="$claim-$(date +%s)" sha out logs rc=0 image tgimage
+  local repo="$USER/$name"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  image="$(image_tag tofu)"; tgimage="$(tg_image)"
+  docker image inspect "$image" >/dev/null 2>&1 && docker image inspect "$tgimage" >/dev/null 2>&1 \
+    || { log "no CI image $image or $tgimage; run 'just images' first"; drop_work "$work"; return 1; }
+  local tree="$work/tree"
+  mkdir -p "$tree/modules/service" "$tree/live/dev" "$work/keys"
+  in_image "$work/keys" sh -c "export PATH=\"\$(terragucci install cosign $COSIGN_VERSION):\$PATH\" && COSIGN_PASSWORD=smoke-require cosign generate-key-pair && chmod 644 cosign.key" >/dev/null 2>&1 \
+    && [ -s "$work/keys/cosign.key" ] || { log "cosign $COSIGN_VERSION could not make a key pair"; drop_work "$work"; return 1; }
+  fresh_repo "$name" || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for t in COSIGN_PRIVATE_KEY COSIGN_PASSWORD; do
+    jq -n --arg d "$( [ "$t" = COSIGN_PASSWORD ] && echo smoke-require || cat "$work/keys/cosign.key")" '{data: $d}' \
+      | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/secrets/$t" || { log "could not set the $t secret"; drop_work "$work"; return 1; }
+  done
+  cp "$work/keys/cosign.pub" "$tree/cosign.pub"
+  : > "$tree/root.hcl"
+  printf 'resource "terraform_data" "service" {}\n' > "$tree/modules/service/main.tf"
+  printf 'resource "terraform_data" "dev" {}\n' > "$tree/live/dev/main.tf"
+  unit() { # the terraform block, or nothing
+    printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n%b' "$1" > "$tree/live/dev/terragrunt.hcl"
+  }
+  unit ""
+  printf 'binary: tofu\nforge: forgejo\nmodules:\n  path: modules/*\n  publish: git-tags\n  attest: true\n  require: attested\n' > "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu >/dev/null) || { drop_work "$work"; return 1; }
+  local pipeline="$tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^ *terragucci check-pins$' "$pipeline" || { log "init gave the Terragrunt check job no check-pins step"; drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && perl -ni -e 'print unless /^ *terragucci check-pins$/' "$pipeline"
+  sha="$(push_tree "$tree" "$repo" main "feat: service")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first run ended $RUN_STATUS"; drop_work "$work"; return 1; }
+  local remote="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git"
+  git ls-remote --exit-code "$remote" refs/tags/modules/service/v0.1.0 refs/heads/chant/lifecycle >/dev/null \
+    || { print_logs "$repo" "$RUN_ID" >&2; log "the run published no attested 0.1.0"; drop_work "$work"; return 1; }
+  # 0.1.1, a tag no attested publish wrote.
+  git clone -q "$remote" "$work/hand" && printf 'output "id" { value = terraform_data.service.id }\n' > "$work/hand/modules/service/outputs.tf" \
+    && git -C "$work/hand" add -A && git -C "$work/hand" -c user.email=hand@smoke -c user.name=hand -c commit.gpgsign=false commit -q -m "fix: by hand" \
+    && git -C "$work/hand" -c user.email=hand@smoke -c user.name=hand tag -a modules/service/v0.1.1 -m "by hand" >/dev/null \
+    && git -C "$work/hand" push -q "$remote" refs/tags/modules/service/v0.1.1 \
+    || { log "could not push the hand-made tag"; drop_work "$work"; return 1; }
+  local source="git::http://forgejo:3000/$repo.git//modules/service"
+  unit "\nterraform {\n  source = \"$source?ref=modules/service/v0.1.1\"\n}\n"
+  sha="$(push_tree "$tree" "$repo" smoke/pin "pin modules/service 0.1.1")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || { drop_work "$work"; return 1; }
+  logs="$(print_logs "$repo" "$RUN_ID" 2>&1)"
+  [ "$RUN_STATUS" = failure ] || { echo "$logs" >&2; log "tf-check on the branch pinning 0.1.1 ended '$RUN_STATUS'"; drop_work "$work"; return 1; }
+  grep -q "refused: live/dev: terraform (live/dev/terragrunt.hcl) pins $source at modules/service/v0.1.1, which modules.require: attested refuses" <<<"$logs" \
+    && grep -q "FAILED live/dev: modules.require: attested refused 1 module pin" <<<"$logs" \
+    || { echo "$logs" >&2; log "tf-check failed but did not name live/dev's pin of 0.1.1"; drop_work "$work"; return 1; }
+  # tf-plan on the branch, in the Terragrunt CI image, as a pull request's plan job runs it; then the same unit pinned to 0.1.0.
+  out="$(IN_IMAGE="$tgimage" in_image "$work" sh -c "git clone -q -b smoke/pin http://$USER:$TOKEN@forgejo:3000/$repo.git c && cd c \
+    && { terragucci stage tf-plan --terragrunt --root live/dev --out /tmp/refused; echo \"refused-exit=\$?\"; } \
+    && sed -i 's#v0.1.1#v0.1.0#' live/dev/terragrunt.hcl \
+    && { terragucci check-pins; echo \"check-exit=\$?\"; } \
+    && { terragucci stage tf-plan --terragrunt --root live/dev --out /tmp/attested; echo \"plan-exit=\$?\"; }" 2>&1)" || rc=$?
+  echo "${out//$TOKEN/***}" >&2
+  api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/branches/smoke%2Fpin" || true
+  [ "$rc" = 0 ] || { log "the tf-plan run in the Terragrunt image did not finish (exit $rc)"; drop_work "$work"; return 1; }
+  grep -q "^refused-exit=0" <<<"$out" && { log "tf-plan passed live/dev pinning 0.1.1"; drop_work "$work"; return 1; }
+  grep -q "^live/dev: refused by modules.require: attested" <<<"$out" \
+    || { log "tf-plan did not refuse live/dev by modules.require"; drop_work "$work"; return 1; }
+  grep -q "^check-exit=0" <<<"$out" && grep -q "^attested live/dev: terraform $source modules/service/v0.1.0" <<<"$out" \
+    || { log "tf-check's check-pins did not pass live/dev pinning the attested 0.1.0"; drop_work "$work"; return 1; }
+  grep -q "^plan-exit=0" <<<"$out" && grep -q "^live/dev: attested terraform $source modules/service/v0.1.0" <<<"$out" \
+    || { log "tf-plan did not verify and plan live/dev pinning the attested 0.1.0"; drop_work "$work"; return 1; }
+  log "tf-check and tf-plan refused live/dev pinning the hand-made 0.1.1, named its terraform source, and passed it pinning the attested 0.1.0"
+  drop_work "$work"
+}
+
 claim_rollout() {
   # One repo, three roots taking modules/network by git tag: dev/app (the
   # canary), prod/net, and prod/app, which reads prod/net's state. The module
@@ -1790,9 +1873,9 @@ fresh_repo() { # name
 }
 
 # Run a command in the tofu CI image, in DIR, with terragucci built from this tree.
-in_image() { # dir, command...
+in_image() { # dir, command...; IN_IMAGE names another CI image
   local dir="$1" image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
-  image="$(image_tag tofu)"
+  image="${IN_IMAGE:-$(image_tag tofu)}"
   docker image inspect "$image" >/dev/null 2>&1 || { echo "no CI image $image; run 'just example up' first" >&2; return 1; }
   [ -f "$bundle" ] || build_cli || return 1
   run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
@@ -11340,6 +11423,7 @@ publish         runner self! registry! weight=200
 publish-attest  runner self! registry! weight=200
 require-attested runner self! weight=200
 require-recorded runner self! weight=200
+tg-require-attested runner self! weight=220
 forgejo-oidc    runner self! weight=200
 grouped         ex runner self! after=boot weight=200
 check           ex runner self! after=boot weight=200

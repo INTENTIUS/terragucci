@@ -967,6 +967,20 @@ async function runTerragruntStage(
       log(everyUnit);
     }
   }
+  // modules.require: attested, checked for every unit before any wave plans, as for plain roots: a refused unit fails and does not plan.
+  const refusedUnits: RootInput[] = [];
+  if (!drift) {
+    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env });
+    for (const unit of pins ? waves.flat() : []) {
+      const r = await pins!(unit);
+      if (r.refused.length) {
+        log(`${unit}: refused by modules.require: attested`);
+        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
+      } else if (r.verified.length) log(`${unit}: attested ${r.verified.join("; ")}`);
+    }
+    const refused = new Set(refusedUnits.map((u) => u.path));
+    waves = waves.map((w) => w.filter((u) => !refused.has(u))).filter((w) => w.length > 0);
+  }
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), drift ? "tf-drift" : "tf-plan", env);
   // Each unit's plan sends its spans here through the TG_TF_PATH wrapper, for its per-resource timings.
@@ -978,6 +992,7 @@ async function runTerragruntStage(
       selection: (u) => reasons.get(u) ?? everyUnit,
     }, log);
     const { inputs, plans, redacted, mockReads } = planned;
+    inputs.push(...refusedUnits);
     for (const u of planned.waiting) {
       if (drift) {
         // A refresh needs the upstream's real outputs; with none, the unit cannot be checked.

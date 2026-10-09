@@ -14,6 +14,7 @@
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
+ *   terragucci check-pins [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
  *   terragucci binary <root> [--binary <b>] [--config <file>]   (print the binary a root runs, installing the version it pins; run by the generated pipeline)
@@ -75,9 +76,9 @@ import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
 import { applyWave, readLedger } from "./apply";
 import { resumeStep } from "./resume";
-import { checkPolicyTests, checkRoot, emitCheck, policyBase } from "./check";
+import { checkPolicyTests, checkRoot, checkUnitPins, emitCheck, policyBase } from "./check";
 import { pinChecker } from "./publish/require";
-import { authProviderOutput } from "./terragrunt";
+import { authProviderOutput, walkUnits } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
 import { StoreError } from "./report/object-store";
@@ -100,6 +101,7 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
+  terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
@@ -328,6 +330,16 @@ export async function main(argv: string[]): Promise<number> {
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const pins = await pinChecker(cwd, settings.modules, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {});
         const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd, pins ? { pins } : {});
+        emitCheck(cwd, result);
+        return result.ok ? 0 : 1;
+      }
+      case "check-pins": {
+        // tf-check's pin step in a Terragrunt repo: each unit's terraform source, as check-root checks a root's module calls.
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const pins = await pinChecker(cwd, settings.modules, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {});
+        if (!pins) return 0;
+        const result = await checkUnitPins(walkUnits(cwd, settings.terragrunt?.exclude).map((u) => u.path), pins);
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
