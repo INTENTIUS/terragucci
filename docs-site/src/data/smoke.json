@@ -1697,6 +1697,14 @@
       "commit": "e105af7f"
     },
     {
+      "claim": "tg-estate-graph",
+      "says": "in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9c86b8a9"
+    },
+    {
       "claim": "tg-stacks",
       "says": "the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them",
       "needs": null,
