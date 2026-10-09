@@ -663,6 +663,28 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(r.report.deferred).toEqual([{ unit: "live/dev/app", after: ["live/dev/vpc"], why: "depends on a changed unit", previewed: false }]);
   });
 
+  it("the blast radius holds the changed unit and every unit that depends on it, and the note lists them", async () => {
+    const repo = liveRepo();
+    const exec = fakeTerragrunt({ affected: { selected: ["live/dev/vpc"], files: ["live/dev/vpc/terragrunt.hcl"] } });
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, base: "origin/main", terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.blast).toEqual({ roots: ["live/dev/vpc"], downstream: [{ root: "live/dev/app", reads: ["live/dev/vpc"], depth: 1, wave: 2, planned: false }] });
+    const note = readFileSync(join(repo, "out/note.md"), "utf-8");
+    expect(note).toContain("**Blast radius:** 1 unit changes (`live/dev/vpc`), and 1 unit downstream depends on them:");
+    expect(note).toContain("- `live/dev/app` (wave 2) depends on `live/dev/vpc`; not planned in this run");
+  });
+
+  it("a blast radius follows the edges through: a unit that depends on a dependent is depth 2", async () => {
+    const repo = liveRepo({ "live/dev/web/terragrunt.hcl": unit(["app"]) });
+    const find = JSON.stringify([...JSON.parse(FIND), { type: "unit", path: "live/dev/web", dependencies: ["live/dev/app"] }]);
+    const base = fakeTerragrunt();
+    const exec: TerragruntExec = async (file, args, options) => (args[0] === "find" && !args.some((a) => a.startsWith("[")) ? { code: 0, stdout: find, stderr: "" } : base(file, args, options));
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, root: "live/dev/vpc", terragruntExec: exec, env: {} }, () => {});
+    expect(r.report.blast?.downstream).toEqual([
+      { root: "live/dev/app", reads: ["live/dev/vpc"], depth: 1, wave: 2, planned: false },
+      { root: "live/dev/web", reads: ["live/dev/app"], depth: 2, wave: 3, planned: false },
+    ]);
+  });
+
   it("against a base, the pipeline's waves are split by the edges discovery gives, as the apply jobs split them", async () => {
     const repo = liveRepo();
     const all = ["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"];

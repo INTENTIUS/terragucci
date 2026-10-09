@@ -387,7 +387,7 @@
       }
     },
     "blast": {
-      "description": "A tf-plan run's blast radius (minor 22): the roots whose plan changes a resource or an output, and every root of the repo that reads their state through terraform_remote_state, followed through, nearest first. Absent when no root's plan changes anything, on a Terragrunt repo, and on other stages.",
+      "description": "A tf-plan run's blast radius (minor 22): the roots whose plan changes a resource or an output, and every root of the repo that reads their state through terraform_remote_state (in a Terragrunt repo, every unit that depends on them through a dependency or dependencies block), followed through, nearest first. Absent when no root's plan changes anything, and on other stages.",
       "type": "object",
       "required": ["roots", "downstream"],
       "properties": {

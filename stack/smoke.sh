@@ -352,6 +352,7 @@ tg-drift-attribute|with respond.drift: attribute in a Terragrunt repo, tf-drift 
 tg-migrate-split|a migration file moves a resource from the state of one Terragrunt unit to that of another: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks, recording each version before and after|
 tg-root-pins|three Terragrunt units of one wave plan with their own releases: the tofu the .opentofu-version of a unit pins and the Terragrunt its terragrunt_version_constraint pins, each installed and checked in the job, and the releases of the image for the third, and the report names each|
 tg-choudoufu|in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH|
+tg-estate-graph|in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block|
 tg-stacks|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
 chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
 chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
@@ -12341,6 +12342,107 @@ claim_tg_state_versions() {
   return $rc
 }
 
+# A Terragrunt repo of three units in a chain, its state in a bucket of its
+# own on floci: live/vpc, live/app with a dependency block on live/vpc, and
+# live/web with one on live/app. Each unit's module takes an input and has an
+# output id.
+tg_graph_repo() { # work, prefix, state bucket -> $1/wave and $1/origin.git
+  local work="$1" prefix="$2" bucket="$3" u
+  mkdir -p "$work/wave/modules/thing"
+  printf 'remote_state {\n  backend = "s3"\n  generate = {\n    path      = "backend.tf"\n    if_exists = "overwrite_terragrunt"\n  }\n  config = {\n    bucket         = "%s"\n    key            = "${path_relative_to_include()}/terraform.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n' "$bucket" > "$work/wave/root.hcl"
+  printf 'variable "input" {\n  type = string\n}\n\nresource "terraform_data" "this" {\n  input = var.input\n}\n\noutput "id" {\n  value = terraform_data.this.id\n}\n' > "$work/wave/modules/thing/main.tf"
+  for u in vpc app web; do mkdir -p "$work/wave/live/$u"; done
+  printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\nterraform {\n  source = "../../modules/thing"\n}\n\ninputs = {\n  input = "vpc"\n}\n' > "$work/wave/live/vpc/terragrunt.hcl"
+  for u in app:vpc web:app; do
+    printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\nterraform {\n  source = "../../modules/thing"\n}\n\ndependency "up" {\n  config_path  = "../%s"\n  mock_outputs = { id = "mock" }\n}\n\ninputs = {\n  input = dependency.up.outputs.id\n}\n' "${u#*:}" > "$work/wave/live/${u%%:*}/terragrunt.hcl"
+  done
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  printf '.terragrunt-cache/\nterragucci-report/\n' > "$work/wave/.gitignore"
+  audit_origin "$work"
+}
+
+claim_tg_estate_graph() {
+  # tg_graph_repo's chain of units: tf-plan --terragrunt of live/vpc alone
+  # writes a plan note whose blast radius names live/vpc as changing and
+  # live/app (depth 1) and live/web (depth 2) as the units downstream, each
+  # with the unit it depends on. tf-apply --terragrunt wave 1 then applies
+  # live/vpc, and its run view in the bucket holds the three units by wave,
+  # each with the unit its dependency block names, and the same blast radius.
+  # terragucci estate draws the graph: the edges live/vpc to live/app and
+  # live/app to live/web, each a path in estate.html.
+  # BREAK: live/web's edge to live/app is dropped from run.json before the
+  # page is built, so the graph loses it.
+  log() { echo "[smoke tg-estate-graph] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="tggraph-$STAMP" bucket="tggraph-$STAMP" layers='live/vpc;live/app;live/web' sha key view page html note got want
+  image="$(image_tag terragrunt)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  tg_graph_repo "$work" "$prefix" "$bucket"
+  sha="$(git -C "$work/wave" rev-parse HEAD)"
+  key="$prefix/repo/runs/$sha"
+  AUDIT_CODE=0
+  AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true terragucci stage tf-plan --terragrunt --binary tofu --root live/vpc --out terragucci-report > "$work/plan.log" 2>&1 || AUDIT_CODE=$?
+  cat "$work/plan.log" >&2
+  clean_mounted "$work/wave" "$image"
+  [ "$AUDIT_CODE" = 0 ] || { log "tf-plan exited $AUDIT_CODE, not 0"; rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(cat "$work/wave/terragucci-report/note.md" 2>/dev/null)"
+    # shellcheck disable=SC2016 # the backticks are the note's markdown
+    grep -qF '**Blast radius:** 1 unit changes (`live/vpc`), and 2 units downstream depend on them:' <<<"$note" || { log "the plan note's blast radius is not live/vpc and its two dependents: $(grep -F 'Blast radius' <<<"$note")"; rc=1; }
+    # shellcheck disable=SC2016
+    grep -qF -- '- `live/app` (wave 2) depends on `live/vpc`; not planned in this run' <<<"$note" || { log "the note does not list live/app depending on live/vpc"; rc=1; }
+    # shellcheck disable=SC2016
+    grep -qF -- '- `live/web` (wave 3) depends on `live/app`; not planned in this run' <<<"$note" || { log "the note does not list live/web depending on live/app"; rc=1; }
+    jq -e '.blast.downstream | map({root, depth}) == [{"root":"live/app","depth":1},{"root":"live/web","depth":2}]' "$work/wave/terragucci-report/report.json" >/dev/null || { log "report.json's blast is not live/app then live/web: $(jq -c .blast "$work/wave/terragucci-report/report.json")"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    AUDIT_CODE=0
+    AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true terragucci stage tf-apply --wave 1 --layers "$layers" --binary tofu --gate never --terragrunt > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    view="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$key/run.json")" || { log "no run.json at $REPORT_BUCKET/$key"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$key/run.html")" || { log "no run.html at $REPORT_BUCKET/$key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    log "the run view's units: $(jq -c '[.roots[] | {root, wave, reads}]' <<<"$view")"
+    [ "$(jq -c '[.roots[] | [.root, .wave, .reads]]' <<<"$view")" = '[["live/vpc",1,[]],["live/app",2,["live/vpc"]],["live/web",3,["live/app"]]]' ] || { log "the run view does not hold each unit by wave with the unit it depends on"; rc=1; }
+    grep -q '<div id="blast" data-roots="1" data-downstream="2">' <<<"$html" || { log "the run view's blast radius is not live/vpc and its two dependents: $(grep -o '<div id="blast"[^>]*>' <<<"$html")"; rc=1; }
+    grep -q '<g class="node changed" data-project="repo" data-root="live/vpc"' <<<"$html" || { log "the run view's graph does not mark live/vpc as changed"; rc=1; }
+    if [ -n "${BREAK:-}" ]; then
+      jq '(.roots[] | select(.root == "live/web") | .reads) |= map(select(. != "live/app"))' <<<"$view" | curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @- "$FLOCI/$REPORT_BUCKET/$key/run.json" || { log "could not drop live/web's edge"; rc=1; }
+    fi
+  fi
+  if [ $rc = 0 ]; then
+    AUDIT_IMAGE=terragrunt audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    want="$(printf 'live/app live/web\nlive/vpc live/app')"
+    got="$(jq -r '.graph.edges[]? | "\(.from.root) \(.to.root)"' <<<"$page" | sort)"
+    log "the graph's edges: $(tr '\n' ';' <<<"$got")"
+    [ "$got" = "$want" ] || { log "the graph's edges are not the units' dependency edges: missing $(comm -23 <(echo "$want") <(echo "$got") | tr '\n' ';') extra $(comm -13 <(echo "$want") <(echo "$got") | tr '\n' ';')"; rc=1; }
+    while read -r from to; do
+      grep -q "<path class=\"edge\" data-from=\"repo $from\" data-to=\"repo $to\"" <<<"$html" || { log "estate.html draws no edge from $from to $to"; rc=1; }
+    done <<<"$want"
+    [ "$(jq -c '[.graph.nodes[]? | [.root, .wave]] | sort' <<<"$page")" = '[["live/app",2],["live/vpc",1],["live/web",3]]' ] || { log "the graph does not hold every unit by wave: $(jq -c '[.graph.nodes[]?]' <<<"$page")"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the plan note and the run view give live/vpc's blast radius through both dependents, and the estate graph holds each unit by wave with both dependency edges"
+  return $rc
+}
+
 # ── Terragrunt parity: drift, migrations, pins, choudoufu, stacks ────────
 
 # A command in a CI image (the Terragrunt one unless TG_IN_IMAGE names
@@ -15410,6 +15512,7 @@ tg-migrate-split     weight=200
 tg-root-pins         weight=150
 tg-choudoufu         weight=120
 tg-stacks            weight=150
+tg-estate-graph      weight=200
 chat-approve         runner self! weight=300
 chat-approve-teams   runner self! weight=300
 chat-approve-lambda  runner self! weight=350

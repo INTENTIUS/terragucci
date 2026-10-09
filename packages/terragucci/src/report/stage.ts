@@ -1379,7 +1379,11 @@ async function runTerragruntStage(
     const real = new Set(inputs.filter((r) => !r.terragrunt?.provisional).map((r) => r.path));
     // Each unit's dependencies, from discovery or, when the pipeline named the waves, its terragrunt.hcl.
     const edges = units ?? walkUnits(repo, settings.terragrunt?.exclude);
+    // The blast radius, as for plain roots: the units whose own plan changes something (not a preview), and every unit that depends on them, followed through.
+    const changing = drift ? [] : inputs.filter((i) => i.plan !== undefined && !i.error && !i.terragrunt?.provisional && changesSomething(i.plan)).map((i) => i.path);
+    const blast = changing.length > 0 ? blastRadius(new Map(edges.map((u) => [u.path, u.dependencies])), changing, { waveOf, planned: new Set(plannedPaths) }) : undefined;
     return await finish(repo, settings, options, env, log, {
+      ...(blast ? { blast: blast as ReportBlast } : {}),
       binary, started, inputs, plans, redacted, all: all.length ? all : plannedPaths, roots: plannedPaths, observer, mockReads,
       dependencies: new Map(edges.map((u) => [u.path, u.dependencies])),
       ...(drift ? { stage: "tf-drift" as const, names: planned.names } : {}),

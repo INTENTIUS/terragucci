@@ -247,6 +247,11 @@ export function refineWaves(listed: readonly (readonly string[])[], units: reado
 
 export { stackOfUnit };
 
+/** Each unit and the units it depends on: the edges the dependency graph and the blast radius draw. */
+export function unitEdges(units: readonly TerragruntUnit[]): Map<string, Set<string>> {
+  return new Map(units.map((u) => [u.path, new Set(u.dependencies)]));
+}
+
 /** The state backend `root.hcl` configures, when it names one. */
 export function stateBackend(repo: string): { backend: string; gitlab: boolean } | undefined {
   const file = join(repo, "root.hcl");
