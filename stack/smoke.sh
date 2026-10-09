@@ -1524,8 +1524,8 @@ require_claim() { # claim name, tampered|unrecorded
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; drop_work "$work"; return 1; }
   local tree="$work/tree"
   mkdir -p "$tree/modules/service" "$tree/envs/dev" "$work/keys"
-  docker run --rm -v "$work/keys:/k" -w /k -e COSIGN_PASSWORD=smoke-require "$image" cosign generate-key-pair >/dev/null 2>&1 \
-    && [ -s "$work/keys/cosign.key" ] || { log "cosign in $image could not make a key pair"; drop_work "$work"; return 1; }
+  in_image "$work/keys" sh -c "export PATH=\"\$(terragucci install cosign $COSIGN_VERSION):\$PATH\" && COSIGN_PASSWORD=smoke-require cosign generate-key-pair && chmod 644 cosign.key" >/dev/null 2>&1 \
+    && [ -s "$work/keys/cosign.key" ] || { log "cosign $COSIGN_VERSION could not make a key pair"; drop_work "$work"; return 1; }
   fresh_repo "$name" || { drop_work "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   for t in COSIGN_PRIVATE_KEY COSIGN_PASSWORD; do
