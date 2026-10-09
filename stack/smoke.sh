@@ -11869,7 +11869,7 @@ claim_unlock_state() {
     sha="$(push_tree "$work/tree" "$repo" main "unlock-state: slow sleeps 0s")" || rc=1
     [ $rc = 0 ] && { wait_run "$repo" "$sha" push || rc=1; }
     [ $rc = 0 ] && [ "$RUN_STATUS" = success ] || { log "the next run ended ${RUN_STATUS:-unknown}"; [ -n "${RUN_ID:-}" ] && print_logs "$repo" "$RUN_ID" | tail -40 >&2; rc=1; }
-    [ $rc = 0 ] && { [ "$(curl -fsS "$FLOCI/shop-terraform-state/$name/slow.tfstate" | jq -r '[.resources[].instances[].attributes.input] | join(",")')" = 0 ] || { log "slow's state does not hold the applied resource"; rc=1; }; }
+    [ $rc = 0 ] && { [ "$(curl -fsS "$FLOCI/shop-terraform-state/$name/slow.tfstate" | jq -r '[.resources[].instances[].attributes.input | .value? // .] | map(tostring) | join(",")')" = 0 ] || { log "slow's state does not hold the applied resource"; rc=1; }; }
   fi
   kill_apply
   drop_work "$work"
