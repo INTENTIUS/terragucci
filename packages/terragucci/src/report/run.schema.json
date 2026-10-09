@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/run/v1/run.schema.json",
+  "title": "terragucci.run/v1",
+  "description": "run.json under <prefix>/<project>/runs/<commit>/: the apply of one commit, every wave of it, the roots in each and the roots whose state each reads, and where each wave stands at its gate. Each tf-apply wave job rewrites its own row when it starts applying and when it ends. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "project", "commit", "updated", "roots", "waves"],
+  "properties": {
+    "schema": { "const": "terragucci.run/v1" },
+    "project": { "type": "string" },
+    "commit": { "type": "string" },
+    "updated": { "type": "string", "description": "When a wave job last wrote it." },
+    "roots": {
+      "type": "array",
+      "description": "Each root, its wave, and the roots whose state it reads through terraform_remote_state. Empty for a Terragrunt repo.",
+      "items": {
+        "type": "object",
+        "required": ["root", "wave", "reads"],
+        "properties": {
+          "root": { "type": "string" },
+          "wave": { "type": "integer" },
+          "reads": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "waves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "roots", "reads", "state", "gate"],
+        "properties": {
+          "number": { "type": "integer" },
+          "roots": { "type": "array", "items": { "type": "string" } },
+          "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read." },
+          "state": { "enum": ["not-started", "planned", "waiting", "applying", "applied", "refused", "failed"] },
+          "gate": { "type": "string", "description": "Its gate on the ledger, wave-<n>." },
+          "policy": { "type": "string", "description": "The gate policy it ran under: always, on-destroy or never." },
+          "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
+          "digest": { "type": ["string", "null"], "description": "The set digest its gate decided on." },
+          "command": { "type": "string", "description": "The command that approves it, while it waits." },
+          "report": { "type": "string", "description": "Its report's directory, relative to the project's index.json." },
+          "shares": { "type": "integer", "description": "A wave split across jobs: how many share jobs apply it." },
+          "shares_applied": { "type": "array", "items": { "type": "integer" }, "description": "The shares that applied; the wave is applied once every share has." },
+          "updated": { "type": "string" }
+        }
+      }
+    }
+  }
+}
