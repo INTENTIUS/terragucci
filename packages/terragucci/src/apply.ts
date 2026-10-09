@@ -111,7 +111,7 @@ import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, override
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, forgeCalls, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
-import { noReview, reviewOfPull, type PolicyReview } from "./review-agent";
+import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
@@ -1315,10 +1315,11 @@ async function priceWave(
 }
 
 /**
- * What the wave's policy reads as `input.review`: the review note of the head
- * of the pull request this commit merged (or `TG_PR`'s, applied before merge),
- * posted by the pipeline's own token. GitLab has no review job, and a commit
- * no pull request made has no review: both read as not found.
+ * What the wave's policy reads as `input.review`: the verdict the review job
+ * kept as its artifact, in a run of the head of the pull request this commit
+ * merged (or `TG_PR`'s, applied before merge). Notes on the pull request are
+ * not read: any run's token can post one. GitLab has no review job, and a
+ * commit no pull request made has no review: both read as not found.
  */
 async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string): Promise<PolicyReview> {
   if (env.GITLAB_CI === "true") return noReview();
@@ -1330,10 +1331,10 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
       console.log(`${label}: review: no pull request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
       return noReview();
     }
-    const review = await reviewOfPull(f, pr);
+    const { run, ...review } = await reviewOfPull(f, pr, artifactBytes(env, (options.fetch ?? fetch) as unknown as FetchBytes));
     console.log(review.found
-      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk}, which the policy reads as input.review`
-      : `${label}: review: no review note of pull request ${pr.number}'s head ${pr.head.slice(0, 8)}, so input.review.found is false`);
+      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk} in run ${run}, which the policy reads as input.review`
+      : `${label}: review: no run of pull request ${pr.number}'s head ${pr.head.slice(0, 8)} kept a review, so input.review.found is false`);
     return review;
   } catch (e) {
     console.log(`${label}: review: could not read the pull request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
