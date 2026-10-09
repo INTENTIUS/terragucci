@@ -329,7 +329,11 @@ cdktn-refused|with synth set init refuses the drift pull request and rollouts as
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
-steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|'
+steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
+chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
+chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
+chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
+chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -11736,6 +11740,304 @@ claim_notify_webhook() {
   return $rc
 }
 
+# ── chat approvals through the relay ──────────────────────────────────────
+# The gated fixture with apply.resume and notify naming a chat webhook and
+# the relay, terragucci. The stand-in takes the chat message and stands in
+# for Slack's response_url. The relay runs as a container on the stack's
+# network, in the CI image, with a token of its own user: a write
+# collaborator, with main protected so that user may not push there.
+
+relay_user() { # repo, user -> sets RELAY_TOKEN, for a new user with write access and a token scoped write:repository and read:user
+  local pass="smoke-$RANDOM-$RANDOM-Aa1" who="$2"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/$who?purge=true" 2>/dev/null || true
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -cn --arg u "$who" --arg p "$pass" '{username: $u, email: ($u + "@terragucci.local"), password: $p, must_change_password: false}')" "$URL/api/v1/admin/users" || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"write"}' "$URL/api/v1/repos/$1/collaborators/$who" || return 1
+  RELAY_TOKEN="$(curl -fsS -u "$who:$pass" -H 'content-type: application/json' -X POST -d '{"name":"relay","scopes":["write:repository","read:user"]}' "$URL/api/v1/users/$who/tokens" | jq -r '.sha1 // empty')"
+  [ -n "$RELAY_TOKEN" ] || { log "no token for $who"; return 1; }
+}
+
+# The Lambda Web Adapter and the Lambda runtime interface emulator, pinned by digest. With
+# RELAY_LAMBDA=1 the relay runs as the function the guide builds: its Dockerfile, under the
+# emulator, which stands in for Lambda's Runtime and Extensions APIs on the claim's own host.
+LWA_IMAGE="public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0@sha256:17cfd08eff1dfea3f6a9a1e9c65fdac80aa4919b6085e746615530f43f57d2f1"
+RIE_VERSION=v1.37
+RIE_SHA256_arm64=ec2e5d09633d853834c008b1ef264bf834b258a94d551d2b2074966494b39a21
+RIE_SHA256_x86_64=6b1e686e62ab2baf5759c412c4864276ef2a88b094fca53ec070637ccba9b9a5
+
+relay_up() { # repo, name, KEY=VALUE... -> RELAY (container id), RELAY_URL (from the host)
+  local repo="$1" name="$2" i hostport bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" kv arch sum port=8080 image
+  shift 2
+  local -a envs=() entry=()
+  for kv in "$@"; do envs+=(-e "$kv"); done
+  image="$(image_tag tofu)"
+  if [ -n "${RELAY_LAMBDA:-}" ]; then
+    case "$(docker info --format '{{.Architecture}}')" in aarch64|arm64) arch=arm64 ;; *) arch=x86_64 ;; esac
+    sum="RIE_SHA256_$arch"
+    mkdir -p "$work/lambda"
+    curl -fsSLo "$work/lambda/aws-lambda-rie" "https://github.com/aws/aws-lambda-runtime-interface-emulator/releases/download/$RIE_VERSION/aws-lambda-rie-$arch" || { log "could not download the emulator"; return 1; }
+    echo "${!sum}  $work/lambda/aws-lambda-rie" | shasum -a 256 -c - >/dev/null || { log "the emulator's sha256 is not ${!sum}"; return 1; }
+    chmod +x "$work/lambda/aws-lambda-rie"
+    cp "$bundle" "$work/lambda/terragucci"
+    # The guide's Dockerfile, FROM this tree's image and bundle.
+    cat > "$work/lambda/Dockerfile" <<DOCKERFILE
+FROM $image
+COPY --chmod=0755 terragucci /usr/local/bin/terragucci
+COPY --from=$LWA_IMAGE /lambda-adapter /opt/extensions/lambda-adapter
+ENV PORT=8080
+ENV AWS_LWA_READINESS_CHECK_PATH=/healthz
+CMD ["terragucci", "relay"]
+DOCKERFILE
+    docker build -q -t "terragucci-relay-lambda:smoke" "$work/lambda" >/dev/null || { log "the function's image did not build"; return 1; }
+    image="terragucci-relay-lambda:smoke"
+    # The emulator takes invocations on 9000, so the relay keeps 8080 as it has on Lambda.
+    port=9000
+    entry=(--entrypoint /rie/aws-lambda-rie -v "$work/lambda/aws-lambda-rie:/rie/aws-lambda-rie:ro")
+    RELAY="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::9000 ${entry[@]+"${entry[@]}"} \
+      -e "TERRAGUCCI_RELAY_REPO=http://forgejo:3000/$repo.git" -e TERRAGUCCI_RELAY_FORGE=forgejo -e "TERRAGUCCI_RELAY_TOKEN=$RELAY_TOKEN" \
+      ${envs[@]+"${envs[@]}"} "$image" --runtime-interface-emulator-address 0.0.0.0:9000 terragucci relay)" || return 1
+  else
+    RELAY="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::8080 -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -e PORT=8080 -e "TERRAGUCCI_RELAY_REPO=http://forgejo:3000/$repo.git" -e TERRAGUCCI_RELAY_FORGE=forgejo -e "TERRAGUCCI_RELAY_TOKEN=$RELAY_TOKEN" \
+      ${envs[@]+"${envs[@]}"} "$image" terragucci relay)" || return 1
+  fi
+  hostport="$(docker port "$RELAY" "$port/tcp" | head -1 | sed 's/.*://')"
+  RELAY_URL="http://127.0.0.1:$hostport"
+  for i in $(seq 1 60); do
+    relay_post GET /healthz text/plain "" 2>/dev/null && [ "$RELAY_CODE" = 200 ] && { docker logs "$RELAY" 2>&1 | grep -i 'terragucci relay\|lambda\|adapter' | tail -4 >&2; return 0; }
+    [ "$(docker inspect -f '{{.State.Running}}' "$RELAY" 2>/dev/null)" = true ] || break
+    sleep 1
+  done
+  log "the relay never answered:"; docker logs "$RELAY" 2>&1 | tail -20 >&2
+  return 1
+}
+
+# One request to the relay: straight to its port, or with RELAY_LAMBDA as the function URL
+# event Lambda would hand the function, through the emulator's invoke endpoint.
+relay_post() { # method, path, content type, body, [header: value]... -> RELAY_CODE, the answer's body in $work/answer
+  local method="$1" path="$2" type="$3" body="$4" h event out
+  shift 4
+  if [ -z "${RELAY_LAMBDA:-}" ]; then
+    local -a hs=()
+    for h in "$@"; do hs+=(-H "$h"); done
+    RELAY_CODE="$(curl -sS -o "$work/answer" -w '%{http_code}' -X "$method" -H "content-type: $type" ${hs[@]+"${hs[@]}"} ${body:+--data-binary "$body"} "$RELAY_URL$path")" || return 1
+    return 0
+  fi
+  event="$(jq -cn --arg m "$method" --arg p "$path" --arg t "$type" --arg b "$body" --args '{version: "2.0", routeKey: "$default", rawPath: $p, rawQueryString: "", headers: ({"content-type": $t, host: "relay.lambda-url.us-east-1.on.aws"} + ([$ARGS.positional[] | capture("^(?<k>[^:]+): (?<v>.*)$") | {key: (.k | ascii_downcase), value: .v}] | from_entries)), requestContext: {domainName: "relay.lambda-url.us-east-1.on.aws", http: {method: $m, path: $p, protocol: "HTTP/1.1", sourceIp: "127.0.0.1", userAgent: "smoke"}, requestId: "smoke", routeKey: "$default", stage: "$default", timeEpoch: 0}, body: $b, isBase64Encoded: false}' "$@")"
+  out="$(curl -sS -X POST --data-binary "$event" "$RELAY_URL/2015-03-31/functions/function/invocations")" || return 1
+  RELAY_CODE="$(jq -r '.statusCode // empty' <<<"$out" 2>/dev/null)"
+  jq -r 'if .isBase64Encoded then (.body | @base64d) else (.body // "") end' <<<"$out" > "$work/answer" 2>/dev/null || return 1
+  [ -n "$RELAY_CODE" ]
+}
+
+relay_down() {
+  [ -n "${RELAY:-}" ] && { docker logs "$RELAY" 2>&1 | grep -v '^$' | tail -10 >&2; docker stop -t 2 "$RELAY" >/dev/null 2>&1 || true; }
+  RELAY=""
+}
+
+chat_approve() { # slack|teams, [lambda]
+  local app="$1" claim="chat-approve" work repo name stand sha digest reqs msg reply out code body ts sig secret who resolved run status deadline applied rc=0
+  local RELAY_LAMBDA="${2:-}"
+  [ "$app" = teams ] && claim="chat-approve-teams"
+  [ -n "$RELAY_LAMBDA" ] && claim="chat-approve-lambda"
+  log() { echo "[smoke $claim] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  repo="$USER/$claim"; name="tgs-relay-${claim#chat-approve}-$STAMP"; stand="tgs-chatin-${claim#chat-approve}-$STAMP"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo "$claim" || { drop_work "$work"; return 1; }
+  # The approver's line in the signers file also lists their chat ids.
+  echo "smoke-approver,slack:TSMOKE/UAPPROVER,teams:00000000-0000-0000-0000-00000000a001 $(cut -d' ' -f1,2 "$work/approver.pub")" > "$work/tree/.chant/allowed_signers"
+  if [ "$app" = slack ]; then
+    printf 'apply:\n  resume: 5\nnotify:\n  slack: CHAT_HOOK\n  relay: terragucci\n' >> "$work/tree/terragucci.yml"
+  else
+    printf 'apply:\n  resume: 5\nnotify:\n  teams: CHAT_HOOK\n  relay: terragucci\n' >> "$work/tree/terragucci.yml"
+  fi
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "http://$stand:8790/$app" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/CHAT_HOOK" \
+    || { log "could not set the CHAT_HOOK secret"; drop_work "$work"; return 1; }
+  stand_in_up "$work" "$stand" 8790 MODE=webhook || { stand_in_down; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "$claim: two waves")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    digest="$(run_logs "$repo" "$RUN_ID" | grep -Eo 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' | head -1 | sed 's/.* --plan //')"
+    [ -n "$digest" ] || { log "wave 1 did not wait for its approval"; rc=1; }
+    reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
+    msg="$(jq -c --arg p "/$app" '[.[] | select(.method == "POST" and .path == $p)] | last | .body // empty' <<<"$reqs")"
+    [ -n "$msg" ] || { log "the wave posted nothing to $app"; rc=1; }
+  fi
+  # main takes pushes from the smoke's own user alone, so the relay's user may not push there.
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg u "$USER" '{rule_name: "main", branch_name: "main", enable_push: true, enable_push_whitelist: true, push_whitelist_usernames: [$u]}')" \
+      "$URL/api/v1/repos/$repo/branch_protections" || { log "could not protect main"; rc=1; }
+  fi
+  [ $rc = 0 ] && { relay_user "$repo" "relay-$claim" || rc=1; }
+  if [ $rc = 0 ]; then
+    secret="smoke-relay-$STAMP-$RANDOM"
+    [ "$app" = teams ] && secret="$(printf '%s' "$secret" | base64)"
+    if [ "$app" = slack ]; then
+      relay_up "$repo" "$name" "SLACK_SIGNING_SECRET=$secret" "TERRAGUCCI_RELAY_SLACK_RESPONSE=http://$stand:8790/" || rc=1
+    else
+      relay_up "$repo" "$name" "TEAMS_WEBHOOK_SECRET=$secret" || rc=1
+    fi
+  fi
+  # The click: the approver's, or under BREAK a user no line of the signers file lists.
+  if [ $rc = 0 ]; then
+    if [ "$app" = slack ]; then
+      who=UAPPROVER; [ -z "${BREAK:-}" ] || who=UMALLORY
+      jq -e --arg d "$digest" '.blocks[1].elements | map(.action_id) == ["terragucci-approve", "terragucci-decline"] and (.[0].value | fromjson) == {wave: 1, plan: $d}' <<<"$msg" >/dev/null \
+        || { log "the Slack message has no Approve and Decline buttons for wave 1 and $digest: $(jq -c '.blocks // null' <<<"$msg")"; rc=1; }
+      body="payload=$(jq -cn --arg u "$who" --arg v "$(jq -r '.blocks[1].elements[0].value' <<<"$msg")" --arg r "http://$stand:8790/response" \
+        '{type: "block_actions", user: {id: $u, username: ("smoke-" + $u), team_id: "TSMOKE"}, team: {id: "TSMOKE"}, actions: [{action_id: "terragucci-approve", value: $v}], response_url: $r, container: {message_ts: "1700000000.000100"}}' | jq -sRr @uri)"
+      ts="$(date +%s)"
+      sig="v0=$(printf 'v0:%s:%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$secret" | sed 's/^.* //')"
+      relay_post POST /slack application/x-www-form-urlencoded "$body" "X-Slack-Request-Timestamp: $ts" "X-Slack-Signature: $sig" || rc=1
+      code="${RELAY_CODE:-}"
+      reply="$(curl -fsS "$STANDIN_CTL/_requests" | jq -r '[.[] | select(.method == "POST" and .path == "/response")] | last | .body | select(.thread_ts == "1700000000.000100") | .text // empty')"
+    else
+      who=00000000-0000-0000-0000-00000000a001; [ -z "${BREAK:-}" ] || who=00000000-0000-0000-0000-00000000bad0
+      jq -e --arg d "$digest" '.attachments[0].content.body | last | .text | contains("reply @terragucci approve wave-1 " + $d)' <<<"$msg" >/dev/null \
+        || { log "the Teams card does not give the reply that approves wave 1 for $digest"; rc=1; }
+      body="$(jq -cn --arg u "$who" --arg d "$digest" '{type: "message", id: "1700000000100", text: ("<at>terragucci</at> approve wave-1 " + $d), from: {id: "29:smoke", name: "Smoke Approver", aadObjectId: $u}}')"
+      sig="HMAC $(printf '%s' "$body" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(printf '%s' "$secret" | base64 -d | od -An -tx1 | tr -d ' \n')" -binary | base64)"
+      relay_post POST /teams application/json "$body" "Authorization: $sig" || rc=1
+      code="${RELAY_CODE:-}"
+      reply="$(jq -r '.text // empty' "$work/answer" 2>/dev/null)"
+    fi
+    log "the relay answered $code; in the thread: ${reply:-nothing}"
+    [ "$code" = 200 ] || { log "the relay did not take the signed request"; rc=1; }
+    case "$reply" in "wave-1 approved by smoke-approver, relayed by terragucci-relay, for $digest"*) ;; *) log "the thread does not say smoke-approver approved wave 1 for $digest"; rc=1 ;; esac
+  fi
+  if [ $rc = 0 ] || [ -n "${BREAK:-}" ]; then
+    git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$work/ledger" 2>/dev/null && git -C "$work/ledger" fetch -q origin chant/lifecycle 2>/dev/null
+    resolved="$(git -C "$work/ledger" show origin/chant/lifecycle:_gates/tf-apply.jsonl 2>/dev/null | jq -sc --arg a "$app" '[.[] | select(.kind == "resolution" and .gate == "wave-1") | {resolvedBy, relayedBy, planDigest, via}]')"
+    log "approvals of wave 1 on chant/lifecycle: ${resolved:-none}"
+    jq -e --arg d "$digest" --arg a "$app" '. == [{resolvedBy: "smoke-approver", relayedBy: "terragucci-relay", planDigest: $d, via: $a}]' <<<"${resolved:-[]}" >/dev/null \
+      || { log "chant/lifecycle does not hold one approval of $digest by smoke-approver, relayed by terragucci-relay"; rc=1; }
+  fi
+  # The resume job, once, as its schedule runs it: it applies a wave whose approval stands.
+  if [ $rc = 0 ]; then
+    if run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' "$URL/api/v1/repos/$repo/actions/workflows/terragucci-resume.yml/dispatches" 2>/dev/null)"; then
+      run="$(jq -r '.id // empty' <<<"$run" 2>/dev/null || true)"
+      deadline=$(( $(date +%s) + TIMEOUT )); status=""
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        status="$(api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -r --arg r "${run:-0}" '[.workflow_runs // [] | .[] | select($r == "0" or .id == ($r | tonumber))] | (.[0].status // "")')"
+        case "$status" in success|failure|cancelled|skipped) break ;; esac
+        sleep 3
+      done
+      log "the dispatched resume run ${run:-?} ended '${status:-unknown}'"
+    else
+      log "Forgejo has no resume workflow to run in $repo"; rc=1
+    fi
+    applied="$(gated_applied "$claim")"
+    log "after the resume run: state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one " ] || { log "expected the resume run to apply canary/one"; rc=1; }
+  fi
+  relay_down
+  stand_in_down
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/relay-$claim?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the $app click reached the relay, which recorded smoke-approver's approval of $digest and said so in the thread, and the resume run applied canary/one"
+  return $rc
+}
+
+claim_chat_approve() {
+  # A waiting wave's Slack message carries Approve and Decline buttons whose
+  # value names wave 1 and its digest. A click by the Slack user the signers
+  # file lists beside smoke-approver, signed as Slack signs with the app's
+  # signing secret, reaches the relay; it records an approval of that digest
+  # by smoke-approver, relayed by terragucci-relay, says so in the thread
+  # through the response_url, and one run of the resume workflow applies
+  # canary/one.
+  # BREAK: the click is by a Slack user no line lists, so the relay refuses
+  # it in the thread, records nothing, and nothing applies.
+  chat_approve slack
+}
+
+claim_chat_approve_lambda() {
+  # As chat-approve, with the relay as the AWS Lambda function the guide
+  # builds: its Dockerfile (the Lambda Web Adapter 1.1.0 extension, PORT and
+  # the readiness path), run under the Lambda runtime interface emulator on
+  # this host, so no AWS account is touched. Each request reaches it as the
+  # function URL event Lambda hands the function: the signed Slack click,
+  # the approval recorded as smoke-approver, the reply in the thread, and the
+  # resume run applying canary/one.
+  # BREAK: the click is by a Slack user no line lists, so the function
+  # refuses it in the thread, records nothing, and nothing applies.
+  chat_approve slack lambda
+}
+
+claim_chat_approve_teams() {
+  # A waiting wave's Teams card gives the reply @terragucci approve wave-1
+  # <digest>. That reply by the Entra user the signers file lists beside
+  # smoke-approver, signed as a Teams outgoing webhook signs it, reaches the
+  # relay; its answer, which Teams posts under the message, says
+  # smoke-approver approved that digest, chant/lifecycle holds the approval,
+  # and one run of the resume workflow applies canary/one.
+  # BREAK: the reply is by a Teams user no line lists, so the relay refuses
+  # it, records nothing, and nothing applies.
+  chat_approve teams
+}
+
+claim_chat_replan() {
+  # A queue applied with a visibility timeout of 30, set to 45 outside
+  # OpenTofu. With notify naming a Slack webhook and a drift schedule, the
+  # drift job's commands (stage tf-drift, then notify drift) post the drifted
+  # root to Slack with a Re-plan button. Its address is the repo's
+  # terragucci.yml workflow page on Forgejo, which answers, and that workflow
+  # runs on workflow_dispatch and holds the drift job, so Run workflow there
+  # plans every root again.
+  # BREAK: the timeout stays at 30, so there is no drift and nothing is posted.
+  log() { echo "[smoke chat-replan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/chat-replan" name="tgs-replan-$STAMP" queue="tg-chat-replan-$STAMP" key="respond/chat-replan-$STAMP.tfstate" url reqs msg link wf rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo chat-replan || return 1
+  respond_tree "$work" "$repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+  tags                       = { owner = \"smoke\" }
+}")"
+  printf 'drift: "0 6 * * *"\nnotify:\n  slack: CHAT_SLACK\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  push_tree "$work/tree" "$repo" main "a queue with a timeout of 30, and a drift schedule" >/dev/null || { drop_work "$work"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
+  in_image "$work/tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the apply failed"; drop_work "$work"; return 1; }
+  clean_mounted "$work/tree"
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+  [ -n "$url" ] || { log "$queue is not in floci"; drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] || sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null
+  stand_in_up "$work" "$name" 8790 MODE=webhook || { stand_in_down; drop_work "$work"; return 1; }
+  # The drift job's script, as init wrote it, with the job's environment.
+  in_image "$work/tree" env "GITHUB_REPOSITORY=$repo" GITHUB_SERVER_URL=http://forgejo:3000 GITHUB_API_URL=http://forgejo:3000/api/v1 GITHUB_RUN_ID=1 GITEA_ACTIONS=true \
+    "TG_TOKEN=$TOKEN" "TERRAGUCCI_SLACK_WEBHOOK=http://$name:8790/slack" \
+    sh -c 'terragucci stage tf-drift --forge forgejo --report-url "http://forgejo:3000/$GITHUB_REPOSITORY/actions"; rc=$?; terragucci notify drift --report terragucci-report || true; exit $rc' >&2 || { log "the drift run failed"; rc=1; }
+  clean_mounted "$work/tree"
+  if [ $rc = 0 ]; then
+    reqs="$(curl -fsS "$STANDIN_CTL/_requests" || echo '[]')"
+    msg="$(jq -c '[.[] | select(.method == "POST" and .path == "/slack")] | last | .body // empty' <<<"$reqs")"
+    log "Slack got: $(jq -r '.text // "nothing"' <<<"${msg:-null}")"
+    [ -n "$msg" ] || { log "the drift run posted nothing"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -e '.text | contains("Drifted: app")' <<<"$msg" >/dev/null || { log "the message does not name app"; rc=1; }
+    link="$(jq -r '.blocks[1].elements[] | select(.action_id == "terragucci-replan" and .text.text == "Re-plan") | .url' <<<"$msg")"
+    log "the Re-plan button opens: ${link:-nothing}"
+    [ "$link" = "http://forgejo:3000/$repo/actions?workflow=terragucci.yml" ] || { log "the Re-plan button does not open the drift workflow's page"; rc=1; }
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "${link/http:\/\/forgejo:3000/$URL}")" = 200 ] || { log "the Re-plan page does not answer"; rc=1; }
+    wf="$(api "$URL/api/v1/repos/$repo/raw/.forgejo/workflows/terragucci.yml?ref=main")"
+    grep -q 'workflow_dispatch' <<<"$wf" && grep -q 'terragucci stage tf-drift' <<<"$wf" || { log "terragucci.yml on main does not run the drift job on workflow_dispatch"; rc=1; }
+  fi
+  stand_in_down
+  sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the drift run posted app to Slack with a Re-plan button that opens the drift workflow, which Run workflow starts"
+  return $rc
+}
+
 claim_cost_estimate() {
   # Two roots, app and net, and cost in terragucci.yml naming the secret
   # COST_KEY and a command, cost.mjs, that sends the root's plan with that key
@@ -12343,6 +12645,10 @@ wave-jobs            runner self! weight=250
 steps-before-plan    runner self! weight=200
 steps-stop           runner self! weight=150
 steps-gate           runner self! weight=200
+chat-approve         runner self! weight=300
+chat-approve-teams   runner self! weight=300
+chat-approve-lambda  runner self! weight=350
+chat-replan          self! weight=90
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

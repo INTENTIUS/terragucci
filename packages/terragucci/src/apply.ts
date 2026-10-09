@@ -231,8 +231,8 @@ export interface ResolutionRecord {
   seal?: { signer?: unknown; key?: unknown; signature?: unknown } | null;
   /** `chant approve --note`: the reason a policy override gives. */
   note?: string;
-  /** Set when the apply job recorded the approval from a pull request's review (`approval: pr-review`). */
-  via?: "pr-review";
+  /** Set when the apply job recorded the approval from a pull request's review (`approval: pr-review`), or a relay from a click in Slack or Teams (./relay.ts). */
+  via?: "pr-review" | "slack" | "teams";
   pr?: number;
   head?: string;
   reviewers?: string[];
@@ -405,6 +405,11 @@ export function storedReport(repo: string, wave: number, digest: string): string
 /** Append a pending fact to the ledger and push it, with any `files` beside it, retrying when another writer moved the branch. */
 export function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}, path: string = LEDGER_PATH): void {
   appendRecord(repo, record, files, `Pending gate record: ${record.op} ${record.gate}`, path);
+}
+
+/** Append an approval of a wave's gate to the ledger and push it: what the relay records for the person who clicked. */
+export function appendResolution(repo: string, record: ResolutionRecord): void {
+  appendRecord(repo, record, {}, `Approved: ${record.op} ${record.gate}${record.relayedBy ? `, relayed by ${record.relayedBy}` : ""}`);
 }
 
 /** Append lines to the ledger (`path`, the waves' file by default) and push them in one commit, as appendPending does. */

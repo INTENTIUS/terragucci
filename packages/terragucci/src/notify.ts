@@ -13,10 +13,18 @@
  * (`terragucci.outcome/v1`), signed with HMAC-SHA256 over the raw body
  * (`X-Terragucci-Signature: sha256=<hex>`). It is never posted unsigned.
  *
- * It only tells people. Nothing here approves, applies or merges, and a chat
- * message carries no button that does: approvals stay records on
- * chant/lifecycle. A webhook that does not answer is logged and never fails
- * the job; its address, a secret, is never printed.
+ * It only tells people. Nothing here approves, applies or merges. With
+ * `notify.relay` set, a waiting wave's Slack message carries Approve and
+ * Decline buttons, and its Teams card the reply that does the same; a click
+ * reaches the customer's own relay (./relay.ts), which checks who clicked
+ * and records the approval on chant/lifecycle. A webhook that does not
+ * answer is logged and never fails the job; its address, a secret, is never
+ * printed.
+ *
+ * The drift job posts a drift notice (`notify drift`) to Slack and Teams
+ * when the refresh-only plans found drift, with a Re-plan button that opens
+ * the page where a person runs the drift check again with their own forge
+ * login.
  */
 import { createHash, createHmac } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -32,6 +40,13 @@ export const SLACK_WEBHOOK_ENV = "TERRAGUCCI_SLACK_WEBHOOK";
 export const TEAMS_WEBHOOK_ENV = "TERRAGUCCI_TEAMS_WEBHOOK";
 export const WEBHOOK_ENV = "TERRAGUCCI_WEBHOOK";
 export const WEBHOOK_KEY_ENV = "TERRAGUCCI_WEBHOOK_KEY";
+/** `notify.relay`: the relay's name, which a waiting wave's message offers buttons (Slack) or a reply (Teams) for. */
+export const RELAY_NAME_ENV = "TERRAGUCCI_RELAY";
+
+/** The Slack buttons' action ids, which the relay reads. */
+export const APPROVE_ACTION = "terragucci-approve";
+export const DECLINE_ACTION = "terragucci-decline";
+export const REPLAN_ACTION = "terragucci-replan";
 
 /** The generic webhook's body. */
 export const NOTIFY_SCHEMA = "terragucci.notify/v1";
@@ -53,6 +68,8 @@ export interface WaveNotice {
   report?: string;
   /** The stage's outcome as it wrote it, which the generic webhook carries whole. */
   result?: WaveOutcome;
+  /** `notify.relay`: the relay a waiting wave's buttons (Slack) and reply (Teams) reach. */
+  relay?: string;
 }
 
 /** The stage's outcome as JSON (`TG_OUTCOME_JSON`), or undefined when the file is missing, empty or another schema. */
@@ -82,8 +99,9 @@ export function waveNotice(event: NotifyEvent, wave: number, opts: { outcome?: s
   const project = report?.run?.project ?? env.GITHUB_REPOSITORY ?? env.CI_PROJECT_PATH ?? "this project";
   const digest = event === "waiting" ? result?.set_digest : undefined;
   const review = event === "waiting" && result?.review ? { pr: result.review.pull_request, url: result.review.url } : undefined;
+  const relay = event === "waiting" && digest ? env[RELAY_NAME_ENV]?.trim() || undefined : undefined;
   // A waiting wave's outcome is its approve command, said once.
-  return { event, wave, project, roots, approve: approveText(event, wave, result), ...(digest ? { digest } : {}), ...(review ? { review } : {}), ...(result ? { result } : {}), ...(outcome && event !== "waiting" ? { outcome } : {}), ...(runUrl(env) ? { run: runUrl(env) } : {}), ...(report?.run?.report_url ? { report: report.run.report_url } : {}) };
+  return { event, wave, project, roots, approve: approveText(event, wave, result), ...(digest ? { digest } : {}), ...(relay ? { relay } : {}), ...(review ? { review } : {}), ...(result ? { result } : {}), ...(outcome && event !== "waiting" ? { outcome } : {}), ...(runUrl(env) ? { run: runUrl(env) } : {}), ...(report?.run?.report_url ? { report: report.run.report_url } : {}) };
 }
 
 /** The approval a person gives: the stage's own command for a waiting wave, `terragucci approve` for a refused one (it finds the new digest). */
@@ -133,10 +151,37 @@ export function headline(n: WaveNotice): string {
 
 const rootsText = (n: WaveNotice): string => (n.roots.length > 0 ? n.roots.join(", ") : "see the run");
 
-/** A Slack incoming webhook's body: one mrkdwn text. */
-export function slackMessage(n: WaveNotice): { text: string } {
+/** What a relay button carries: the wave and the digest it approves, and nothing else. */
+export interface ButtonValue {
+  wave: number;
+  plan: string;
+}
+
+/** A Slack button. `value` is what the relay reads back; `url` makes it a link that opens a page. */
+function slackButton(text: string, action: string, o: { value?: string; url?: string; style?: "primary" | "danger" }): Record<string, unknown> {
+  return { type: "button", action_id: action, text: { type: "plain_text", text }, ...(o.value ? { value: o.value } : {}), ...(o.url ? { url: o.url } : {}), ...(o.style ? { style: o.style } : {}) };
+}
+
+/**
+ * A Slack incoming webhook's body: one mrkdwn text. With a relay, a waiting
+ * wave's message also carries the text as a block and Approve and Decline
+ * buttons, whose value names the wave and the digest the message showed.
+ */
+export function slackMessage(n: WaveNotice): { text: string; blocks?: Record<string, unknown>[] } {
+  const text = slackText(n);
+  if (!n.relay || !n.digest || n.event !== "waiting") return { text };
+  const value = JSON.stringify({ wave: n.wave, plan: n.digest } satisfies ButtonValue);
   return {
-    text: [
+    text,
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text } },
+      { type: "actions", block_id: "terragucci", elements: [slackButton("Approve", APPROVE_ACTION, { value, style: "primary" }), slackButton("Decline", DECLINE_ACTION, { value, style: "danger" })] },
+    ],
+  };
+}
+
+function slackText(n: WaveNotice): string {
+  return [
       `*${headline(n)}*`,
       ...(n.review ? [`Review and approve: <${n.review.url}|pull request ${n.review.pr}>, then run the wave again`] : []),
       `Roots: ${rootsText(n)}`,
@@ -145,9 +190,11 @@ export function slackMessage(n: WaveNotice): { text: string } {
       ...(n.outcome ? [`Outcome: ${n.outcome}`] : []),
       ...(n.run ? [`Run: <${n.run}>`] : []),
       ...(n.report ? [`Report: <${n.report}>`] : []),
-    ].join("\n"),
-  };
+    ].join("\n");
 }
+
+/** The Teams reply that approves or declines a waiting wave through the relay's outgoing webhook. */
+export const teamsReply = (n: Pick<WaveNotice, "relay" | "wave" | "digest">, action: "approve" | "decline"): string => `@${n.relay} ${action} wave-${n.wave} ${n.digest}`;
 
 /** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card. Its actions open the pull request's review page, under pr-review, and the run. */
 export function teamsMessage(n: WaveNotice): Record<string, unknown> {
@@ -173,6 +220,10 @@ export function teamsMessage(n: WaveNotice): Record<string, unknown> {
           body: [
             { type: "TextBlock", text: headline(n), weight: "Bolder", wrap: true },
             { type: "FactSet", facts },
+            // Teams has no button that reaches a relay without a registered bot, so the card gives the reply its outgoing webhook reads.
+            ...(n.relay && n.digest && n.event === "waiting"
+              ? [{ type: "TextBlock", wrap: true, text: `Approve here: reply ${teamsReply(n, "approve")}. Decline: reply ${teamsReply(n, "decline")}.` }]
+              : []),
           ],
           ...(n.review || n.run ? { actions: [...(n.review ? [{ type: "Action.OpenUrl", title: "Review and approve", url: n.review.url }] : []), ...(n.run ? [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] : [])] } : {}),
         },
@@ -262,6 +313,122 @@ export async function notify(n: WaveNotice, env: NodeJS.ProcessEnv = process.env
     try {
       const r = await post(t.url, { method: "POST", headers: t.headers, body: t.body, signal: AbortSignal.timeout(10_000) });
       lines.push(r.ok ? `posted to ${t.name}: ${headline(n)}` : `${t.name} answered ${r.status}; nothing was posted`);
+    } catch (e) {
+      lines.push(`${t.name} did not answer (${(e as Error).message}); nothing was posted`);
+    }
+  }
+  return lines;
+}
+
+// ── drift ────────────────────────────────────────────────────────────────
+
+/** What the drift job tells the channel: the roots whose real state moved, and where to run the check again. */
+export interface DriftNotice {
+  project: string;
+  /** The roots the refresh-only plans found drifted. */
+  roots: string[];
+  /** The roots that could not be refreshed. */
+  failed: string[];
+  run?: string;
+  report?: string;
+  /** The page where a person runs the drift check again: the workflow's page (GitHub, Forgejo), the pipeline schedules (GitLab). */
+  replan?: string;
+}
+
+interface DriftReportShape {
+  run?: { project?: string; report_url?: string };
+  roots?: { path: string; status?: string; changes?: unknown[] }[];
+}
+
+/** The workflow file the job runs, from GITHUB_WORKFLOW_REF (`owner/repo/.github/workflows/<file>@<ref>`), else the pipeline's own name. */
+const workflowFile = (env: NodeJS.ProcessEnv): string => /\/workflows\/([^/@]+)@/.exec(env.GITHUB_WORKFLOW_REF ?? "")?.[1] ?? "terragucci.yml";
+
+/** Where a person starts the drift check again with their own login. */
+export function replanUrl(env: NodeJS.ProcessEnv): string | undefined {
+  if (env.GITLAB_CI === "true") return env.CI_PROJECT_URL ? `${env.CI_PROJECT_URL}/-/pipeline_schedules` : undefined;
+  if (!env.GITHUB_SERVER_URL || !env.GITHUB_REPOSITORY) return undefined;
+  const repo = `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}`;
+  // Forgejo lists a workflow's runs, with its Run workflow button, under ?workflow=; GitHub under /actions/workflows/.
+  return env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? `${repo}/actions?workflow=${workflowFile(env)}` : `${repo}/actions/workflows/${workflowFile(env)}`;
+}
+
+/** The drift notice from the drift job's report, or undefined when it found no drift and no root failed. */
+export function driftNotice(reportDir: string, env: NodeJS.ProcessEnv = process.env): DriftNotice | undefined {
+  const file = join(reportDir, "report.json");
+  if (!existsSync(file)) return undefined;
+  let r: DriftReportShape;
+  try {
+    r = JSON.parse(readFileSync(file, "utf-8")) as DriftReportShape;
+  } catch {
+    return undefined;
+  }
+  const roots = (r.roots ?? []).filter((x) => x.status === "planned" && (x.changes?.length ?? 0) > 0).map((x) => x.path);
+  const failed = (r.roots ?? []).filter((x) => x.status === "failed").map((x) => x.path);
+  if (roots.length === 0 && failed.length === 0) return undefined;
+  const project = r.run?.project ?? env.GITHUB_REPOSITORY ?? env.CI_PROJECT_PATH ?? "this project";
+  const run = runUrl(env);
+  const replan = replanUrl(env);
+  return { project, roots, failed, ...(run ? { run } : {}), ...(r.run?.report_url ? { report: r.run.report_url } : {}), ...(replan ? { replan } : {}) };
+}
+
+export const driftHeadline = (n: DriftNotice): string =>
+  `terragucci: drift in ${n.project}: ${n.roots.length > 0 ? `${n.roots.length} root${n.roots.length === 1 ? "" : "s"} changed outside Terraform` : "no drift found"}${n.failed.length > 0 ? `, ${n.failed.length} could not be refreshed` : ""}`;
+
+/** The drift notice for Slack: the text, and a Re-plan button that opens the page where the check runs again. */
+export function slackDrift(n: DriftNotice): { text: string; blocks?: Record<string, unknown>[] } {
+  const text = [
+    `*${driftHeadline(n)}*`,
+    ...(n.roots.length > 0 ? [`Drifted: ${n.roots.join(", ")}`] : []),
+    ...(n.failed.length > 0 ? [`Not refreshed: ${n.failed.join(", ")}`] : []),
+    ...(n.run ? [`Run: <${n.run}>`] : []),
+    ...(n.report ? [`Report: <${n.report}>`] : []),
+  ].join("\n");
+  if (!n.replan) return { text };
+  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }, { type: "actions", block_id: "terragucci-drift", elements: [slackButton("Re-plan", REPLAN_ACTION, { url: n.replan })] }] };
+}
+
+/** The drift notice for Teams: an Adaptive Card whose Re-plan button opens the page where the check runs again. */
+export function teamsDrift(n: DriftNotice): Record<string, unknown> {
+  const facts = [
+    ...(n.roots.length > 0 ? [{ title: "Drifted", value: n.roots.join(", ") }] : []),
+    ...(n.failed.length > 0 ? [{ title: "Not refreshed", value: n.failed.join(", ") }] : []),
+    ...(n.run ? [{ title: "Run", value: n.run }] : []),
+  ];
+  const actions = [...(n.replan ? [{ type: "Action.OpenUrl", title: "Re-plan", url: n.replan }] : []), ...(n.run ? [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] : [])];
+  return {
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            { type: "TextBlock", text: driftHeadline(n), weight: "Bolder", wrap: true },
+            { type: "FactSet", facts },
+          ],
+          ...(actions.length > 0 ? { actions } : {}),
+        },
+      },
+    ],
+  };
+}
+
+/** Post a drift notice to the Slack and Teams webhooks the job holds. The generic webhook's event is a wave's, so it gets none. Never throws. */
+export async function notifyDrift(n: DriftNotice | undefined, env: NodeJS.ProcessEnv = process.env, post: typeof fetch = fetch): Promise<string[]> {
+  if (!n) return ["no drift found and every root refreshed; nothing posted"];
+  const targets = [
+    { name: "Slack", url: env[SLACK_WEBHOOK_ENV] ?? "", body: JSON.stringify(slackDrift(n)) },
+    { name: "Teams", url: env[TEAMS_WEBHOOK_ENV] ?? "", body: JSON.stringify(teamsDrift(n)) },
+  ].filter((t) => t.url);
+  if (targets.length === 0) return [`no chat webhook: ${SLACK_WEBHOOK_ENV} and ${TEAMS_WEBHOOK_ENV} are empty`];
+  const lines: string[] = [];
+  for (const t of targets) {
+    try {
+      const r = await post(t.url, { method: "POST", headers: { "content-type": "application/json" }, body: t.body, signal: AbortSignal.timeout(10_000) });
+      lines.push(r.ok ? `posted to ${t.name}: ${driftHeadline(n)}` : `${t.name} answered ${r.status}; nothing was posted`);
     } catch (e) {
       lines.push(`${t.name} did not answer (${(e as Error).message}); nothing was posted`);
     }

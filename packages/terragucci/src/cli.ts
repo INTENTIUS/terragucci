@@ -42,6 +42,8 @@
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
+ *   terragucci notify drift [--report <dir>]   (post the drift job's findings to Slack and Teams, with a Re-plan button; run by the generated pipeline)
+ *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -88,7 +90,8 @@ import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert }
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
-import { notify, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
+import { driftNotice, notify, notifyDrift, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
+import { startRelay } from "./relay";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
@@ -121,6 +124,8 @@ const USAGE = `usage:
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
+  terragucci notify drift [--report <dir>]
+  terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
@@ -583,8 +588,12 @@ export async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case "notify": {
+        if (args[0] === "drift") {
+          for (const line of await notifyDrift(driftNotice(resolve(cwd, str(flags, "report") ?? "terragucci-report")))) console.log(`terragucci notify: ${line}`);
+          return 0;
+        }
         const event = args[0] as NotifyEvent;
-        if (!(NOTIFY_EVENTS as readonly string[]).includes(event)) throw new ConfigError(`terragucci notify takes one of ${NOTIFY_EVENTS.join(", ")}`);
+        if (!(NOTIFY_EVENTS as readonly string[]).includes(event)) throw new ConfigError(`terragucci notify takes one of ${[...NOTIFY_EVENTS, "drift"].join(", ")}`);
         const wave = Number(str(flags, "wave"));
         if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("terragucci notify needs --wave <n>");
         const file = str(flags, "outcome");
@@ -594,6 +603,13 @@ export async function main(argv: string[]): Promise<number> {
         const report = str(flags, "report");
         for (const line of await notify(waveNotice(event, wave, { ...(outcome ? { outcome } : {}), ...(result ? { result } : {}), reportDir: resolve(cwd, report ?? "terragucci-report") }))) console.log(`terragucci notify: ${line}`);
         return 0;
+      }
+      case "relay": {
+        const port = Number(str(flags, "port") ?? process.env.PORT ?? 8080);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError("terragucci relay --port takes a port number");
+        await startRelay({ port });
+        // Serves until the process is stopped.
+        return await new Promise<number>(() => {});
       }
       case "plan-note": {
         const forge = str(flags, "forge") ?? "github";

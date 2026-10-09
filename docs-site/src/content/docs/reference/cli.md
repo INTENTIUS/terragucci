@@ -30,7 +30,8 @@ prompt: |
 | `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and runs `chant approve policy-override <root> --plan <digest> --note <reason>`; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
-| `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names; the generated apply jobs run it |
+| `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
+| `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
 | `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
@@ -368,6 +369,32 @@ Posts one wave's outcome to `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOO
 | `--outcome`, the stage's `TG_OUTCOME` line | the outcome line the message quotes |
 | `--report` (default `terragucci-report`) | the project, the report's link, and the wave's roots when there is no outcome |
 | `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`, or `CI_JOB_URL` | the run's link |
+| `TERRAGUCCI_RELAY` | the relay a waiting wave's Approve and Decline buttons (Slack) and reply (Teams) reach |
+
+```text
+terragucci notify drift [--report <dir>]
+```
+
+Posts the drift job's findings to `TERRAGUCCI_SLACK_WEBHOOK` and `TERRAGUCCI_TEAMS_WEBHOOK`: the roots the refresh-only plans found drifted and the roots that could not be refreshed, read from `--report` (default `terragucci-report`), with a Re-plan button. The button opens the page where a person runs the drift check again with their own login: the workflow's page on GitHub and Forgejo, where Run workflow is, and the pipeline schedules on GitLab. With no drift and every root refreshed it posts nothing. The generic webhook gets no drift event. The generated drift job runs it when `notify` names `slack` or `teams`.
+
+## relay
+
+```text
+terragucci relay [--port <n>]
+```
+
+Serves `POST /slack`, `POST /teams` and `GET /healthz`, with its settings from [the environment](/terragucci/reference/environment/#the-relay). It checks the token first and does not start with one that can do more than approve. [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/) sets it up.
+
+| A request | The relay |
+|---|---|
+| whose signature does not verify, or a Slack one more than five minutes old | answers 401 and records nothing |
+| from a chat user no line of the signers file on the default branch lists | answers in the thread that it refused, and records nothing |
+| Approve, for the digest a wave waits for, under `approval: ledger` or `pr-review` | records the approval of that digest on `chant/lifecycle` as the person's principal, `relayedBy` the relay, and says so in the thread |
+| Approve, for a digest no wave waits for | records nothing, and names the digest waiting |
+| Approve, under `approval: sealed` | records nothing: only the approver's own key seals an approval |
+| Decline | records nothing, and says in the thread who declined; the wave keeps waiting |
+
+It runs until stopped; an error in a request never stops it.
 
 A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.
 
@@ -507,5 +534,6 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `verify-release` | every target verified | a target refused | | | |
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
+| `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
 
 Code 4 comes only from `stage tf-apply`, which has no `--json`.
