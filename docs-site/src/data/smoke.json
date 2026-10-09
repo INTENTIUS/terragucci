@@ -365,22 +365,6 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
-    },
-    {
-      "claim": "comment-atlantis",
-      "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "8fd354f"
-    },
-    {
-      "claim": "import-atlantis",
-      "says": "terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
       "commit": "cb0fa61"
     },
     {
@@ -1497,6 +1481,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "8fd354f"
+    },
+    {
+      "claim": "plan-no-lock",
+      "says": "a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it",
+      "needs": null,
+      "verdict": "fail",
+      "break": "fail",
+      "commit": "f87feabd"
+    },
+    {
+      "claim": "sensitive-redacted",
+      "says": "a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket",
+      "needs": null,
+      "verdict": "fail",
+      "break": "caught",
+      "commit": "f87feabd"
+    },
+    {
+      "claim": "provider-cache-once",
+      "says": "a wave of eight roots that use one provider downloads it once: the job log names one download and the cache volume holds one copy",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "f87feabd"
     },
     {
       "claim": "mr-widget",
