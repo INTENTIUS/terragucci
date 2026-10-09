@@ -42,8 +42,12 @@ tutorial-check:
 bundle-check: build-cli
     node scripts/bundle-check.mjs
 
-[doc("Typecheck, lint, test, lint the docs, check the tutorial and the bundle. What CI runs.")]
-check: typecheck lint bundle-check test lint-docs tutorial-check
+[doc("Vet and test the Terraform and OpenTofu provider, and check its files are gofmt'd.")]
+provider-test:
+    cd terraform-provider-terragucci && test -z "$(gofmt -l .)" && go vet ./... && go test ./...
+
+[doc("Typecheck, lint, test, lint the docs, check the tutorial, the bundle and the provider. What CI runs.")]
+check: typecheck lint bundle-check test provider-test lint-docs tutorial-check
 
 # ── this repo's workflows ──────────────────────────────────────────────────
 

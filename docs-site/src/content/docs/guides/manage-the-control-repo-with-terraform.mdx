@@ -1,0 +1,151 @@
+---
+title: Manage the control repo with Terraform
+description: Write the projects and defaults of a control repo's terragucci.yml with the terragucci provider for Terraform and OpenTofu, and see each change in a plan.
+claims: [provider-project]
+prompt: |
+  Read https://intentius.io/terragucci/guides/manage-the-control-repo-with-terraform/.
+  Read the terragucci.yml of the control repo I name and write a Terraform configuration that holds the same defaults and projects with terragucci_defaults and terragucci_project, plus the import blocks that adopt each of them.
+  Run `tofu plan` (or `terraform plan`) with the provider built as the page shows, and show me the plan. It must show no change other than the imports.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A Terraform or OpenTofu configuration that owns the control repo's `terragucci.yml`, as described in [Govern many repos from one place](/terragucci/guides/govern-many-repos/). The provider commits each change through the forge's API, so a plan shows which setting of which project moves before anything is written. `terragucci reconcile` reads what it wrote the same way it reads a hand-written config.
+
+| Resource | Owns in `terragucci.yml` |
+|---|---|
+| `terragucci_defaults` | `defaults` |
+| `terragucci_project` | one entry of `projects`, by its key |
+
+Keys that no resource owns stay as they are, comments included. A resource whose key is already there refuses to overwrite it and names the `import` that adopts it.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| A control repo on GitHub, GitLab or Forgejo | the provider writes its `terragucci.yml` |
+| A token that can push to the control repo's branch: `TERRAGUCCI_TOKEN`, or `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN` | each change is one commit through the API |
+| Go 1.25 or later | you build the provider from the terragucci repository |
+| Terraform or OpenTofu | to plan and apply |
+
+## Steps
+
+<Steps>
+
+1. Build the provider.
+
+   ```bash
+   git clone https://github.com/intentius/terragucci
+   cd terragucci/terraform-provider-terragucci
+   go build -o "$HOME/.terragucci/provider/terraform-provider-terragucci" .
+   ```
+
+2. Point Terraform or OpenTofu at the build.
+
+   Put this in a CLI configuration file, such as `~/.terragucci/dev.tfrc`:
+
+   ```hcl
+   provider_installation {
+     dev_overrides {
+       "intentius/terragucci" = "/home/you/.terragucci/provider"
+     }
+     direct {}
+   }
+   ```
+
+   Use the full path of the directory you built into, and export `TF_CLI_CONFIG_FILE=$HOME/.terragucci/dev.tfrc`. Terraform and OpenTofu then load the provider from that directory without `init`, and print a warning saying so.
+
+3. Describe the control repo.
+
+   ```hcl
+   terraform {
+     required_providers {
+       terragucci = {
+         source = "intentius/terragucci"
+       }
+     }
+   }
+
+   provider "terragucci" {
+     forge      = "github"
+     repository = "acme/control"
+   }
+
+   resource "terragucci_defaults" "this" {
+     settings = {
+       binary = "tofu"
+       gate   = "on-destroy"
+     }
+   }
+
+   resource "terragucci_project" "infra" {
+     key = "github.com/acme/infra"
+     settings = {
+       roots = ["envs/*/*"]
+       drift = "17 4 * * *"
+     }
+   }
+   ```
+
+   `settings` takes the same keys as `terragucci.yml` ([keys](/terragucci/reference/config/#keys)), as an HCL object. The provider block also takes `url` for a forge that is not github.com, gitlab.com or codeberg.org, `api` when the API is not at the usual path under it, `branch` (default: the repository's default branch), `path` (default: `terragucci.yml`) and `token`.
+
+4. Apply the configuration.
+
+   ```bash
+   tofu apply
+   ```
+
+   The control repo gets one commit per resource, such as `terraform: add terragucci_project github.com/acme/infra`. Destroying a resource takes its key out again; once no key is left, `terragucci.yml` is deleted.
+
+5. Change a setting and plan.
+
+   After you add `parallelism = 2` to the project's `settings`, `tofu plan` shows that one setting.
+
+   ```text
+     ~ resource "terragucci_project" "infra" {
+           id       = "github.com/acme/infra"
+         ~ settings = {
+             + parallelism = 2
+               # (2 unchanged attributes hidden)
+           }
+       }
+   ```
+
+   Each plan reads `terragucci.yml` from the forge first. A key someone edited or dropped by hand shows up as a change, which the next apply undoes.
+
+6. Open the projects' pull requests.
+
+   In a clone of the control repo, run [`reconcile`](/terragucci/guides/govern-many-repos/#steps):
+
+   ```bash
+   npx terragucci reconcile --config terragucci.yml --mode apply
+   ```
+
+   Each project whose pipeline changes gets a pull request.
+
+</Steps>
+
+## Adopt an existing file
+
+Import each entry `terragucci.yml` already holds, then plan:
+
+```hcl
+import {
+  to = terragucci_defaults.this
+  id = "defaults"
+}
+
+import {
+  to = terragucci_project.infra
+  id = "github.com/acme/infra"
+}
+```
+
+When the plan shows only the imports, the configuration matches the control repo.
+
+## Next
+
+- [Govern many repos from one place](/terragucci/guides/govern-many-repos/) covers what `reconcile` does with each project.
