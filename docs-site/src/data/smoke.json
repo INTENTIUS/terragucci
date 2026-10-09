@@ -373,22 +373,6 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
-    },
-    {
-      "claim": "comment-atlantis",
-      "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "8fd354f"
-    },
-    {
-      "claim": "import-atlantis",
-      "says": "terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
       "commit": "cb0fa61"
     },
     {
@@ -549,15 +533,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "19580a3c"
     },
     {
       "claim": "review-policy",
-      "says": "a tf-apply wave gives the policy the risk of the review of the head of the merged pull request as input.review, and a policy that denies risk high stops the wave",
+      "says": "a tf-apply wave gives the policy the risk the review job kept as its artifact in the run of the head of the merged pull request as input.review, a forged low-risk note posted with the pipeline token changes nothing, and a policy that denies risk high stops the wave",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "19580a3c"
     },
     {
       "claim": "wave-report",
@@ -1555,22 +1539,6 @@
       "commit": "8fd354f"
     },
     {
-      "claim": "linked-plan",
-      "says": "a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "68fd6a8"
-    },
-    {
-      "claim": "linked-states",
-      "says": "after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "68fd6a8"
-    },
-    {
       "claim": "chat-approve",
       "says": "a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave",
       "needs": null,
@@ -1597,6 +1565,22 @@
     {
       "claim": "chat-replan",
       "says": "with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
+      "claim": "linked-plan",
+      "says": "a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
+      "claim": "linked-states",
+      "says": "after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
