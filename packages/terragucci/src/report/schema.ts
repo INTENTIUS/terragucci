@@ -628,8 +628,10 @@ export interface Report {
   /**
    * A `tf-plan` run's blast radius (minor 22): the roots whose plan changes
    * something, and every root of the repo that reads their state through
-   * `terraform_remote_state`, followed through. Absent when no root's plan
-   * changes anything, on a Terragrunt repo, and on other stages.
+   * `terraform_remote_state` (in a Terragrunt repo, every unit that depends
+   * on them through a `dependency` or `dependencies` block), followed
+   * through. Absent when no root's plan changes anything, and on other
+   * stages.
    */
   blast?: ReportBlast;
 }

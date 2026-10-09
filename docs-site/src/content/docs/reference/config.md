@@ -276,9 +276,13 @@ Each key is a branch, and its list holds root globs: a push to `release` applies
 
 The waves are cut from the roots the branch applies, so a branch's wave 1 holds its first roots in apply order. A wave with nothing to apply on that branch passes without planning.
 
+In a Terragrunt repo the globs match unit paths, such as `release: ["live/prod/**"]`. A push to `release` applies those units in their own dependency layers, each behind its gate, cut from `terragrunt find` as every Terragrunt wave is; a unit there that depends on a unit the default branch applies plans against that unit's applied state.
+
+The drift job checks each root from the branch that applies it, so the difference between the branches is not drift ([Roots another branch applies](/terragucci/guides/turn-on-drift-checks/#roots-another-branch-applies)).
+
 The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) applies the default branch's waiting waves only. A wave waiting on a branch named here applies when its run runs again: `terragucci approve` re-runs it on GitHub and GitLab, and on Forgejo the branch's next push runs it.
 
-`config check` refuses a glob listed under two branches, `apply.branches` with `apply.when: pull-request`, where a push applies nothing, and in a Terragrunt repo. Run `npx terragucci init` after a change to the map: the apply jobs carry it. The fmt job never commits to a branch named here.
+`config check` refuses a glob listed under two branches, and `apply.branches` with `apply.when: pull-request`, where a push applies nothing. Run `npx terragucci init` after a change to the map: the apply jobs carry it. The fmt job never commits to a branch named here.
 
 ## Jobs of your own
 

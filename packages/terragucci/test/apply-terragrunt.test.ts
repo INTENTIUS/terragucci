@@ -219,6 +219,33 @@ describe("a Terragrunt wave behind its gate", () => {
     expect(readFileSync(join(work, "terragucci-report", "note.md"), "utf-8")).toContain("**Wave 2 plans differently from the preview in pull request 9 (1 of 1):**");
   });
 
+  it("with apply.branches, a branch applies the units its globs match, in their own waves behind the gate, and the default branch leaves them alone", async () => {
+    const { work, origin } = setup();
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    const tg = fakeTerragrunt();
+    const branches = { release: ["live/b"] };
+    // The default branch applies live/a alone; live/b is release's, and no line says the pipeline does not list it.
+    expect(await applyWave(work, { ...opts(tg, "never"), branches, wave: 1, rest: true, now: T(1) })).toBe(0);
+    expect([...tg.applied]).toEqual(["live/a"]);
+    expect(runs(tg)).toEqual(["plan live/a", "apply live/a"]);
+    const said = out.mock.calls.flat().join("\n");
+    expect(said).toContain("apply.branches: live/b applies from release, not here");
+    expect(said).not.toContain("the pipeline does not list");
+    // On release, live/b is the one wave: it plans against what live/a applied and waits at its gate.
+    tg.calls.length = 0;
+    expect(await applyWave(work, { ...opts(tg), branches, branch: "release", wave: 1, rest: true, now: T(2) })).toBe(3);
+    expect(runs(tg)).toEqual(["plan live/b"]);
+    expect(ledger(origin).pending.map((p) => [p.gate, p.members!.map((m) => m.member)])).toEqual([["wave-1", ["live/b"]]]);
+    approve(origin, "wave-1", ledger(origin).pending[0].planDigest!, T(3));
+    expect(await applyWave(work, { ...opts(tg), branches, branch: "release", wave: 1, rest: true, now: T(4) })).toBe(0);
+    expect([...tg.applied]).toEqual(["live/a", "live/b"]);
+    // A branch whose globs match no unit applies nothing.
+    tg.calls.length = 0;
+    expect(await applyWave(work, { ...opts(tg), branches: { release: ["live/b"], hotfix: ["live/z/*"] }, branch: "hotfix", wave: 1, now: T(5) })).toBe(0);
+    expect(tg.calls).toEqual([]);
+    expect(out.mock.calls.flat().join("\n")).toContain("no unit applies from hotfix, so there is nothing to apply");
+  });
+
   it("--rest needs --terragrunt", async () => {
     await expect(applyWave(tmp(), { wave: 1, layers: [["a"]], binary: "tofu", gate: "never", rest: true })).rejects.toThrow(/needs --terragrunt/);
   });

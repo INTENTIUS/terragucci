@@ -83,7 +83,7 @@ Below the waves the page has two more parts:
 
 | Part | Shows |
 |---|---|
-| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state`, followed through, and the dependency graph of the commit's roots with both marked |
+| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state` (in a Terragrunt repo, every unit whose `dependency` or `dependencies` block names it), followed through, and the dependency graph of the commit's roots with both marked |
 | Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
 
 A wave that waited has two plans on the timeline, the one that asked for the approval and the later one that applies. In `run.json` each wave carries `changed` (the roots whose plan changes something) and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start` and, once it ended, `end`. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
@@ -100,7 +100,15 @@ A pull request's plan note names the same radius: the roots whose plan changes s
 - `envs/dev/search` (wave 2) reads `envs/dev/platform`
 ```
 
-The note leaves it out when no root reads a changed root's state. `report.json` carries it as `blast`. Terragrunt units are not in it.
+In a Terragrunt repo the radius is the units whose own plan changes something, not a preview, and each unit that depends on them through a `dependency` or `dependencies` block, followed through:
+
+```text
+**Blast radius:** 1 unit changes (`live/dev/vpc`), and 1 unit downstream depends on them:
+
+- `live/dev/app` (wave 2) depends on `live/dev/vpc`; not planned in this run
+```
+
+The note leaves it out when nothing reads or depends on a changed root. `report.json` carries it as `blast`.
 
 ## Waiting waves
 

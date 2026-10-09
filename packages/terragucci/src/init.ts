@@ -31,7 +31,6 @@ import {
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
 import { terragruntStepsRefusal } from "./steps";
-import { TERRAGRUNT_GENERATE } from "./generate-config";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
@@ -163,7 +162,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
     const stepsRefused = terragruntStepsRefusal(settings.steps);
     if (stepsRefused) throw new ConfigError(stepsRefused);
-    if (settings.generate) throw new ConfigError(TERRAGRUNT_GENERATE);
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {
@@ -267,6 +265,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       parallelism: terragrunt.parallelism.value,
       exclude: settings.terragrunt?.exclude ?? [],
       ...(detectedTg && detectTerragrunt(repo)!.stacks.length > 0 ? { stacks: true } : {}),
+      ...(settings.generate ? { generate: true } : {}),
       ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
       installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
     };
