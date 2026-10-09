@@ -7,11 +7,13 @@
  *   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
+  terragucci verify-release <module> <version> [--config <file>]
+ *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
- *   terragucci check-root <dir> [--binary <b>]
+ *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
- *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>   (Linux builds, for a CI job)
+ *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
@@ -56,13 +58,14 @@ import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { assertLinux, install, type Tool } from "./install";
 import { plan } from "./plan";
-import { describePublish, publish } from "./publish";
+import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
 import { applyWave } from "./apply";
-import { checkPolicyTests, checkRoot, emitCheck } from "./check";
+import { checkPolicyTests, checkRoot, emitCheck, policyBase } from "./check";
+import { pinChecker } from "./publish/require";
 import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
@@ -83,9 +86,9 @@ const USAGE = `usage:
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
-  terragucci check-root <dir> [--binary <b>]
+  terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
-  terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>   (Linux builds, for a CI job)
+  terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
@@ -278,8 +281,11 @@ export async function main(argv: string[]): Promise<number> {
       case "check-root": {
         // tf-check's per-root step: validate's diagnostics, and choudoufu's live-check for a choudoufu root.
         const dir = args[0];
-        if (!dir) throw new ConfigError("usage: terragucci check-root <dir> [--binary <b>]");
-        const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd);
+        if (!dir) throw new ConfigError("usage: terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const pins = await pinChecker(cwd, settings.modules, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {});
+        const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd, pins ? { pins } : {});
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
@@ -296,8 +302,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "install": {
         const [tool, version] = args;
-        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost"].includes(tool)) {
-          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>");
+        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost", "cosign"].includes(tool)) {
+          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>");
         }
         assertLinux();
         console.log(await install(tool as Tool, version));
@@ -309,6 +315,14 @@ export async function main(argv: string[]): Promise<number> {
         const results = await publish(cwd, settings, { dryRun: flags["dry-run"] === true });
         console.log(describePublish(results));
         return 0;
+      }
+      case "verify-release": {
+        const [module, version] = args;
+        if (!module || !version) throw new ConfigError("usage: terragucci verify-release <module> <version> [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const checks = await verifyPublished(cwd, resolveRepo(path ? await loadConfig(resolve(path)) : {}), module, version);
+        console.log(describeChecks(checks));
+        return checks.every((c) => c.verified) ? 0 : 1;
       }
       case "respond": {
         const event = args[0] ?? "";

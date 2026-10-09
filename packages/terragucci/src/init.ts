@@ -230,7 +230,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     tokenEnv: settings.token_env,
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
-    ...(settings.modules?.publish ? { publish: true } : {}),
+    ...(settings.modules?.publish ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}) } : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(settings.synth ? { synth: settings.synth } : {}),

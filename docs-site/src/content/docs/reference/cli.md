@@ -18,6 +18,7 @@ prompt: |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
+| `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
@@ -147,6 +148,14 @@ terragucci publish [--dry-run] [--config <file>]
 ```
 
 `--dry-run` lists what would be published and pushes nothing. A git tag that exists with the same content is unchanged and exits 0.
+
+## verify-release
+
+```bash
+terragucci verify-release <module> <version> [--config <file>]
+```
+
+Run in the repo that publishes, with `modules.attest` set. For each target in `modules.publish` it reads the tag as it stands now and checks that the release ledger on `origin` records those bytes from the tag's commit, and that the signature, provenance and SBOM verify against the public key. It prints one line per target and exits 1 when any is refused.
 
 ## rollout
 
@@ -331,19 +340,19 @@ running: chant approve policy-override envs/prod/app --plan sha256:9b0f2a71... -
 ## check-root and check-policy
 
 ```bash
-terragucci check-root <dir> [--binary <b>]
+terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
 terragucci check-policy [--config <file>] [--base <ref>]
 ```
 
-`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. `check-policy` runs the policy's tests when `policy` is set. Both append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
+`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-policy` runs the policy's tests when `policy` is set. Both append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 
 ```bash
-terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>
+terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>
 ```
 
-Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds.
+Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds. With `modules.attest`, the publish job installs cosign this way before it publishes.
 
 ## --json
 
