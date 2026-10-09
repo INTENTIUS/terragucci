@@ -35,7 +35,7 @@ import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
-import { agentCommentInput } from "./agent-comment";
+import { agentCommentInput, agentDriftInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
@@ -310,6 +310,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.respond ? { respond: settings.respond } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
+    ...(agentDriftInput(settings) ? { agentDrift: agentDriftInput(settings) } : {}),
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
     ...(reviewInput(settings) ? { review: reviewInput(settings) } : {}),
     ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),

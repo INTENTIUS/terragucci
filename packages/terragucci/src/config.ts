@@ -310,6 +310,18 @@ export interface AgentCommentSettings {
 export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
 
 /**
+ * `agent.drift`: when the drift job opens the drift issue, a job runs a coding
+ * agent on the default branch with the drift report, and a second job opens a
+ * pull request with what it changed, with `agent.token_env`'s token. The
+ * agent's job holds no forge token and no cloud role. Its settings are
+ * `agent.comment`'s (AgentCommentSettings); `true` takes every default.
+ */
+export const AGENT_DRIFT_KEYS = AGENT_COMMENT_KEYS;
+
+/** Why `agent.drift` and `respond.drift: pull-request` do not go together. */
+export const AGENT_DRIFT_RESPOND = "agent.drift opens the drift pull request itself, so the codified one would be a second; set respond.drift to attribute or off";
+
+/**
  * `review`: a model reviews each pull request's intent against its plan
  * (review-agent.ts), off unless `agent` is true. It posts a note and never
  * approves; a `tf-apply` wave's policy reads its risk as `input.review`.
@@ -452,10 +464,11 @@ export interface ProjectSettings {
   /** The response to each pipeline event; see RESPONSES. */
   respond?: Partial<Record<RespondEvent, string>>;
   /**
-   * The agent integration behind `agent.comment`. Its token can comment and
-   * push to a pull request's branch; its role, when named, is read-only.
+   * The agent integration behind `agent.comment` and `agent.drift`. Its token
+   * can comment, push a branch and open a pull request; the agent itself never
+   * holds it.
    */
-  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings };
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings };
   /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
   review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -773,12 +786,20 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     const a = s.agent;
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
-      for (const k of Object.keys(a)) if (!["via", "token_env", "comment"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment)`);
+      for (const k of Object.keys(a)) if (!["via", "token_env", "comment", "drift"].includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, comment, drift)`);
       if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
       else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
       if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
+      if (a.drift !== undefined) {
+        checkAgentComment(a.drift, a.token_env, `${where}.agent.drift`, problems);
+        // A control repo's defaults and projects are checked apart; init checks the merged settings (render.ts).
+        if (a.drift !== false && where === "config") {
+          if (!s.drift) problems.push(`${where}.agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule`);
+          else if (responseTo(s as ProjectSettings, "drift") === "pull-request") problems.push(`${where}.respond.drift: ${AGENT_DRIFT_RESPOND}`);
+        }
+      }
     }
   }
   if (s.review !== undefined) checkReview(s.review, `${where}.review`, problems);

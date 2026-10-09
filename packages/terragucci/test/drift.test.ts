@@ -149,8 +149,11 @@ describe("terragucci stage tf-drift", () => {
     const found = await runStage("tf-drift", repoWith({ orders: drifted }), opts, () => {});
     expect(found.issue).toMatchObject({ action: "opened" });
     expect(stored?.body).toContain("terragucci:drift");
+    // What the jobs after it read: agent.drift runs when this run opened the issue.
+    expect(JSON.parse(readFileSync(join(found.dir, "issue.json"), "utf-8"))).toEqual({ action: "opened", number: 1, url: "http://f/i/1" });
     const again = await runStage("tf-drift", repoWith({ orders: drifted }), opts, () => {});
     expect(again.issue).toMatchObject({ action: "updated" });
+    expect(JSON.parse(readFileSync(join(again.dir, "issue.json"), "utf-8")).action).toBe("updated");
     const none = await runStage("tf-drift", repoWith({ orders: clean }), opts, () => {});
     expect(none.issue).toMatchObject({ action: "closed" });
     expect(stored).toBeUndefined();

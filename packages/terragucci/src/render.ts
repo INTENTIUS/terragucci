@@ -69,13 +69,14 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, BRANCHES_NOT_TERRAGRUNT, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, BRANCHES_NOT_TERRAGRUNT, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
-import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
+import { AGENT_COMMENT_IF, agentCommentJobs, driftAgentJobs } from "./render-agent";
+import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { reviewWorkflow } from "./render-review";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
@@ -188,6 +189,8 @@ export interface PipelineInput {
   policy?: boolean;
   /** `agent.comment` is set: `/terragucci agent <ask>` gets the agent and agent-push jobs (render-agent.ts). GitHub and Forgejo only. */
   agentComment?: AgentCommentInput;
+  /** `agent.drift` is set: when the drift job opens the drift issue, the drift-agent and drift-agent-push jobs open a pull request with an agent's change (render-agent.ts). GitHub and Forgejo only. */
+  agentDrift?: AgentCommentInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
   /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
@@ -1513,7 +1516,7 @@ export function publishScript(forge: ForgeName): string {
  * -refresh-only, writes the plan report, and keeps the drift issue. A root
  * that cannot be refreshed fails the job; drift alone does not.
  */
-export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false): string {
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false, agent = false): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -1533,13 +1536,15 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
-    ...(pullRequest || notify ? ["rc=$?"] : []),
+    ...(pullRequest || notify || agent ? ["rc=$?"] : []),
+    // With agent.drift, the step's outputs say whether this run opened the drift issue, and which; the drift-agent jobs run when it did.
+    ...(agent ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : []),
     ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${SYNTH_DRIFT_PR_SHORT}"`] : []),
     // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
     // The drift pull request: a person reviews and merges it, or closes it.
     ...(pullRequest ? [...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`] : []),
-    ...(pullRequest || notify ? ['exit "$rc"'] : []),
+    ...(pullRequest || notify || agent ? ['exit "$rc"'] : []),
   ].join("\n");
 }
 
@@ -1752,6 +1757,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${SYNTH_DRIFT_PR}`);
   if (input.synth && rollouts) throw new RenderError(`rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
   const driftPr = !tg && !input.synth && responds(input.respond, "drift") ? { tokenEnv } : undefined;
+  if (input.agentDrift && !drift) throw new RenderError("agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule");
+  if (input.agentDrift && driftPr) throw new RenderError(`respond.drift: ${AGENT_DRIFT_RESPOND}`);
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
   const tipsOn = responds(input.respond, "tips");
   // An agent response writes its input file; the job keeps it as an artifact.
@@ -1763,6 +1770,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   if (forge === "gitlab") {
     if (input.agentComment) throw new RenderError("agent.comment needs a pipeline a pull request comment can start, and GitLab starts none for a merge request note; leave agent.comment unset on GitLab");
+    if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
     if (input.review) throw new RenderError("review.agent runs on GitHub and Forgejo; leave review unset on GitLab");
     // With gitlab.token: protected no merge request pipeline holds the token, and the comments job posts the plan notes.
     const protectedToken = input.gitlabToken === "protected";
@@ -2400,6 +2408,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       if: "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
       permissions: { contents: driftPr ? "write" : "read", issues: "write", ...(driftPr ? { "pull-requests": "write" } : {}), ...(oidc ? { "id-token": "write" } : {}) },
       ...openid(Boolean(oidc)),
+      ...(input.agentDrift ? { outputs: { agent: "${{ steps.drift.outputs.agent }}", issue: "${{ steps.drift.outputs.issue }}" } } : {}),
       env: {
         TG_TOKEN: "${{ github.token }}",
         TG_SHA: "${{ github.sha }}",
@@ -2409,7 +2418,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...driftNotifyEnv,
       },
       steps: [
-        ...steps(new Step({ name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify) }), true, false, awsStep),
+        ...steps(new Step({ ...(input.agentDrift ? { id: "drift" } : {}), name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, input.agentDrift !== undefined) }), true, false, awsStep),
         new Step({
           name: "Keep the drift report",
           if: "always()",
@@ -2422,6 +2431,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
+  if (drift && input.agentDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
   const serializer = forge === "forgejo" ? forgejoSerializer : githubSerializer;
   const extra: { path: string; content: string }[] = [];
   if (input.resume) {

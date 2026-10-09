@@ -43,6 +43,7 @@ import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf } from "../respond/drift";
 import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./drift-schedule";
+import { DRIFT_ISSUE_FILE } from "../drift-agent";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
@@ -1410,6 +1411,11 @@ async function finish(
     }
   }
   observer.pins = modulePins(inputs);
+  if (drift) {
+    // What happened to the issue, for the jobs after this one (agent.drift runs when this run opened it).
+    const kept = issue && "issue" in issue ? { action: issue.action, number: issue.issue.number, url: issue.issue.url } : { action: "none" as const };
+    writeFileSync(join(dir, DRIFT_ISSUE_FILE), JSON.stringify(kept) + "\n");
+  }
   if (drift && issue && "issue" in issue && issue.action !== "closed") {
     // A newly opened issue was opened by this run, so its drift starts now.
     observer.drift = { since: issue.action === "opened" ? report.run.finished : (issue.issue.created ?? report.run.finished) };

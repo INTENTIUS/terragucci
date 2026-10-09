@@ -65,7 +65,7 @@ The binary never gets `CI_JOB_TOKEN`, so the `http` backend takes its credential
 
 ## Reports
 
-Set these on the plan job when `reports.bucket` is set. `AWS_` variables are read for an `s3://` bucket only.
+Set these on the plan job when `reports.bucket` is set, and in the environment `terragucci mcp` starts in. `AWS_` variables are read for an `s3://` bucket only.
 
 | Variable | Meaning |
 |---|---|
@@ -186,6 +186,11 @@ In a Terragrunt repo, roles can follow unit paths. See [The generated pipeline](
 ## Agent integrations
 
 `agent.token_env` holds the agent's forge token; the agent's jobs hold no cloud role. See [Responses](/terragucci/reference/responses/#where-it-runs).
+
+| Variable | Set for |
+|---|---|
+| `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent's step of `agent.comment` and `agent.drift`: the prompt's path and the turn limit |
+| `TG_ISSUE` | `drift-agent-push`: the drift issue the drift job opened, which the pull request names and is linked on |
 
 ## Traces and metrics
 

@@ -32,6 +32,8 @@ prompt: |
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
+| `mcp` | a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent |
+| `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/); the generated pipeline runs it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
@@ -418,6 +420,50 @@ It runs until stopped; an error in a request never stops it.
 
 A webhook that fails or does not answer within 10 seconds leaves a line in the log, and the command exits 0. It never prints a webhook's address.
 
+## mcp
+
+```text
+terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+```
+
+Serves the Model Context Protocol on stdin and stdout until the client closes them, for an agent that reads the estate while it works. It reads the reports bucket that `reports` names, or `--bucket` in a single repo, with the credentials in its own environment: the variables [Reports](/terragucci/reference/environment/#reports) lists for S3, GCS and Azure Blob. No tool takes a credential. [Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/) connects a client.
+
+| Tool | Reads | Arguments |
+|---|---|---|
+| `estate` | `estate.json`, as `terragucci estate` last wrote it | none |
+| `index` | the report index rows, newest first, each with its `report` path | `project`, `stage`, `limit` |
+| `report` | a run's `report.json`, or one root of it | `path`, `root` |
+| `last_apply` | a root's newest `tf-apply` wave: its commit, wave, gate, whether it applied, its changes and the state version it left | `root`, `project` |
+| `run_view` | the run view of one applied commit | `commit`, `project` |
+| `state_versions` | `states.json`, the state versions each root's applies left | `root`, `project` |
+| `audit` | the audit trail, `audit.jsonl`, newest first, with `audit.json` | `project`, `kind`, `limit` |
+| `dora` | `dora.json` | none |
+| `waiting` | the waves waiting on `chant/lifecycle` in the repo it runs in, each with the `terragucci approve` command a person runs | none |
+
+Every tool is marked read-only. What the server refuses:
+
+| A call | The answer |
+|---|---|
+| to a tool it does not list, such as `approve`, `apply` or `override` | an error: the server is read-only, approvals belong to a person at a shell, and chant refuses a gate approval made over MCP |
+| with an argument the tool does not list | an error naming the argument; one named like a credential (`token`, `secret`, `key`) says credentials come from the server's environment |
+| with a `path` outside the reports prefix | an error |
+
+The server writes nothing: its bucket client refuses a write and a signed link, and it does not start with a tool whose name says it would approve, apply, override, lock, merge or write.
+
+## drift-agent
+
+```text
+terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
+terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
+```
+
+The two halves of the [drift agent](/terragucci/guides/agent-fix-drift/), run by the generated `drift-agent` and `drift-agent-push` jobs.
+
+| Command | Does |
+|---|---|
+| `drift-agent prompt` | reads `report.json` and `issue.json` from the drift job's report in `--report`, and writes the prompt to `--out`: each drifted resource with the state's value and the live one, never a sensitive one; exits 2 when the run opened no drift issue |
+| `drift-agent push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them; commits a passing patch on top of `TG_SHA` to `terragucci/drift-agent-<issue>`, pushes it without force with `TG_TOKEN`, opens the pull request and comments its link on the issue `TG_ISSUE` names |
+
 ## config check
 
 ```bash
@@ -629,5 +675,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
 | `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
+| `mcp` | the client closed stdin | | a bad flag or config | | |
+| `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed | a bad flag, or a run that opened no drift issue | | |
 
 Code 4 comes from `stage tf-apply` and `unlock-state`, which have no `--json`.
