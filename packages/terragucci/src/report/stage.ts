@@ -28,6 +28,7 @@ import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
 import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
+import { describeBinary, RootBinaries, type Installer } from "../pins";
 import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terragrunt";
 import { findIssue, ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
@@ -41,17 +42,19 @@ import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./drift-
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
-import { checkPlans, governingPolicy, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
+import { checkPlans, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
 import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
+import type { Report, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
-import { costCommand, estimateCosts, writeCostFiles, type CostRunner } from "./cost";
+import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
+import { readSteps, runSteps, stepsUsed, STEPS_NOT_TERRAGRUNT, type StepWhen } from "../steps";
+import type { ReportStep } from "./schema";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
@@ -75,6 +78,8 @@ export interface StageOptions {
   layers?: string[][];
   /** The binary, when the pipeline names it. Default: the config's, then detection. */
   binary?: string;
+  /** How a version a root pins is installed. Default: the release, checked against its SHA256SUMS. */
+  installer?: Installer;
   /** Where to copy the report, when the pipeline names a bucket. Default: the config's `reports`. */
   reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string };
   /** Globs for wave 1. Default: the config's `waves.canary`. */
@@ -366,6 +371,8 @@ interface RootOutcome {
   attributed?: Attributed;
   redacted?: number;
   deferred?: ReportDeferred;
+  /** The names of its `on_failure: approve` steps that failed: its wave waits for an approval. */
+  holds?: string[];
 }
 
 const GITLAB_STATE = /\/api\/v4\/projects\/[^"\s]*\/terraform\/state\//;
@@ -657,6 +664,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const config = configPath ? await loadConfig(configPath) : {};
   const settings = options.project ? resolveProject(config, options.project) : resolveRepo(config);
   if (options.terragrunt ?? detectTerragrunt(repo) !== undefined) {
+    if (settings.steps?.length) throw new ConfigError(STEPS_NOT_TERRAGRUNT);
     return runTerragruntStage(repo, settings, options, env, log, drift);
   }
   const all = options.layers ? options.layers.flat() : findRoots(repo, settings.roots);
@@ -681,11 +689,18 @@ export async function runStage(stage: string, repo: string, options: StageOption
   } else if (base) {
     selected = affectedRoots(repo, base, all, layers.flat(), log);
   }
+  // steps: read at base, so the change under review cannot add, edit or remove one. Drift has no base: the default branch's own.
+  const stepsRead = await readSteps(repo, base, settings.steps, { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) });
+  if (stepsRead.note) log(stepsRead.note);
+  const steps = stepsUsed(stepsRead.steps, stage);
+  if (steps.length > 0) log(`steps: ${steps.length} read from terragucci.yml at ${stepsRead.from}`);
   const planLayers = selected ? layers.map((l) => l.filter((r) => selected.has(r))).filter((l) => l.length > 0) : layers;
   const roots = planLayers.flat();
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
   const binary = options.binary ?? settings.binary ?? detectBinary(repo, all).value;
   const planner = plannerForBinary(binary);
+  // Each root's binary: the job's, or the version the root pins, installed once per version.
+  const binaries = new RootBinaries(repo, binary, settings.version, env, options.installer);
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), stage, env);
   if (roots.length > 0) await observer.collectSpans(log);
@@ -719,6 +734,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const deferred: ReportDeferred[] = [];
   const held = new Set<string>();
   const upstreamState = new Map<string, boolean | undefined>();
+  const heldBySteps = new Set<string>();
   const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
   let redacted = 0;
 
@@ -734,24 +750,51 @@ export async function runStage(stage: string, repo: string, options: StageOption
     }
     const planFile = join(work, `${index}.tfplan`);
     const timing = observer.root(root);
+    let bin = binaries.expected(root);
+    let path = binary;
     const run = (...args: string[]) =>
-      observer.commandAsync(timing, binary, args, binEnv, (e) => spawnAsync(binary, [`-chdir=${dir}`, ...args], e));
+      observer.commandAsync(timing, path, args, binEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+    const ran: ReportStep[] = [];
+    const holds: string[] = [];
+    /** Run one moment's steps; the error when one failed the root. */
+    const step = async (when: StepWhen, file?: string): Promise<string | undefined> => {
+      if (steps.length === 0) return undefined;
+      const o = await runSteps(steps, when, { repo, root, stage: drift ? "tf-drift" : "tf-plan", env: binEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
+      ran.push(...o.runs);
+      holds.push(...o.holds);
+      return o.error;
+    };
     const failed = (error: string, line: string): RootOutcome => {
       lines.push(line);
-      return { root, lines, input: { path: root, planner, error, preventDestroy: new Set() } };
+      return { root, lines, ...(holds.length ? { holds } : {}), input: { path: root, planner, binary: bin, error, preventDestroy: new Set(), ...(ran.length ? { steps: ran } : {}) } };
     };
     const refused = pinRefusals.get(root);
     if (refused) {
       observer.endRoot(timing);
       return failed(refused.join("\n"), `${root}: refused by modules.require: attested`);
     }
+    const planStep = drift ? "drift" : "plan";
     try {
+      try {
+        const resolved = await binaries.resolve(root);
+        ({ path } = resolved);
+        bin = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
+      } catch (e) {
+        return failed((e as Error).message, `${root}: ${(e as Error).message}`);
+      }
+      if (bin.pin) lines.push(`${root}: ${describeBinary(bin)}`);
+      let stepError = await step("before-init");
+      if (stepError) return failed(stepError, `${root}: a step before init failed`);
       const init = await initTurn(() => run("init", "-input=false", "-no-color"));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
+      if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
       // A refresh-only plan compares the state with the real objects and ignores the code.
       const p = await run("plan", ...(drift ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
       if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
+      stepError = await step(`after-${planStep}`, planFile);
+      if (stepError) return failed(stepError, `${root}: a step after ${planStep} failed`);
       const json = await run("show", "-json", planFile);
       const text = await run("show", "-no-color", planFile);
       let plan: unknown;
@@ -771,12 +814,12 @@ export async function runStage(stage: string, repo: string, options: StageOption
       }
       lines.push(drift ? `${root}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
       return {
-        root, lines, redacted: safe.values,
+        root, lines, redacted: safe.values, ...(holds.length ? { holds } : {}),
         // The binary masks what the plan marks sensitive; a value copied into an unmarked attribute is masked here too.
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, files: planFiles(root), preventDestroy: preventDestroyIn(dir) },
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(ran.length ? { steps: ran } : {}) },
       };
     } finally {
       observer.endRoot(timing);
@@ -791,6 +834,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       held.add(o.root);
     }
     if (o.input) inputs.push(o.input);
+    if (o.holds?.length) heldBySteps.add(o.root);
     if (o.plan) plans.set(o.root, o.plan);
     if (o.names) names.set(o.root, o.names);
     if (o.attributed) attributions.set(o.root, o.attributed);
@@ -804,7 +848,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
       // The upstreams this layer reads, each read once, before any root of the layer plans.
       const ups = [...new Set(layer.flatMap((r) => [...(readsOf.get(r) ?? [])]))].filter((up) => !upstreamState.has(up)).sort();
       await eachLimited(ups, limit.value, async (up) => {
-        upstreamState.set(up, await stateIsEmptyAsync(binary, join(repo, up), binEnv, initTurn));
+        // The upstream's own binary reads its state; the job's when its pin cannot be installed, and its own plan says why.
+        const upBinary = await binaries.resolve(up).then((b) => b.path, () => binary);
+        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), binEnv, initTurn));
       });
       const first = index;
       index += layer.length;
@@ -826,7 +872,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     ? []
     : applyWaves(full, options.canary ?? settings.waves?.canary)
         .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
-        .filter((w) => w.roots.length > 0);
+        .filter((w) => w.roots.length > 0)
+        .map((w) => {
+          const holding = w.roots.filter((r) => heldBySteps.has(r));
+          return holding.length ? { ...w, heldBySteps: holding } : w;
+        });
 
   return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}) });
 }
@@ -1013,9 +1063,12 @@ export async function checkPolicy(repo: string, policy: PolicySettings, items: {
  * report still shows what it would change; every checked root carries its
  * verdict and warnings.
  */
-async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void, run: Omit<PolicyRunContext, "root"> = {}): Promise<{ inputs: RootInput[]; policy: ReportPolicy }> {
+async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void, run: Omit<PolicyRunContext, "root" | "cost"> = {}, costOf: (root: string) => PolicyCost | undefined = () => undefined): Promise<{ inputs: RootInput[]; policy: ReportPolicy }> {
   const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional);
-  const found = await checkPlans(repo, policy, checked.map((i) => ({ path: i.path, plan: i.plan })), base, trust, options, log, run);
+  const found = await checkPlans(repo, policy, checked.map((i) => {
+    const cost = costOf(i.path);
+    return { path: i.path, plan: i.plan, ...(cost ? { cost } : {}) };
+  }), base, trust, options, log, run);
   return {
     policy: found.policy,
     inputs: inputs.map((i) => {
@@ -1083,19 +1136,54 @@ async function finish(
   let inputs = planned;
   let policy: ReportPolicy | undefined;
   const drift = stage === "tf-drift";
+  // cost: the estimator over each root's stored plan, before the policy, which reads the figures; a failed estimate is named and fails nothing.
+  // cost.approve_above is read at base, so the note says which waves the amount will hold as the base's config has it.
+  let costOutputs: Map<string, string> | undefined;
+  let cost: ReportCost | undefined;
+  let rule: CostRule = {};
+  if (!drift && !options.noCost) {
+    rule = await costRule(repo, settings.cost, options.base ?? baseRef(env), policyTrust(repo, options));
+    if (rule.note) log(rule.note);
+    if (rule.error) log(`cost: ${rule.error}`);
+    const stored = rule.setting
+      ? inputs.flatMap((i) => {
+        const json = plans.get(i.path)?.json;
+        return json !== undefined ? [{ root: i.path, json }] : [];
+      })
+      : [];
+    if (rule.setting && stored.length > 0) {
+      const costWork = mkdtempSync(join(tmpdir(), "terragucci-cost-"));
+      try {
+        const estimate = await estimateCosts(stored, costCommand(rule.setting), env, costWork, repo, log, options.costRunner);
+        cost = estimate.cost;
+        costOutputs = estimate.outputs;
+      } finally {
+        rmSync(costWork, { recursive: true, force: true });
+      }
+    }
+  }
+  const costWaves = cost ? waves.map((w) => ({ ...w, cost: waveCost(cost!, w.roots, rule.approveAbove) })) : waves;
+  for (const w of costWaves) {
+    if ("cost" in w && w.cost?.over) log(`cost: wave ${w.number}: ${costReason(w.cost, rule.source)}, so it waits for an approval when it applies`);
+  }
+  const costOf = (root: string): PolicyCost | undefined => {
+    if (!cost) return undefined;
+    const w = costWaves.find((x) => x.roots.includes(root));
+    return policyCost(cost, root, w && "cost" in w && w.cost ? { number: w.number, cost: w.cost } : undefined, rule.approveAbove);
+  };
   // The base's policy key decides whether policy runs, so a pull request that deletes it is still checked.
   const governing = drift ? undefined : await governingPolicy(repo, settings.policy, options.base ?? baseRef(env), policyTrust(repo, options));
   if (governing?.note) log(governing.note);
   if (governing?.policy) {
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
     const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
-    ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run));
+    ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
     if (governing.policy.override?.length) inputs = await planOverrides(repo, options, env, inputs, policy, log);
   }
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: inputs,
-    waves,
+    waves: costWaves,
     redacted,
     // The waves of a plan say which the gate will hold, and carry the digest approval: pr-review binds a review to.
     ...(drift ? {} : { gate: settings.gate }),
@@ -1116,24 +1204,7 @@ async function finish(
     }
     for (const line of describeTips(report.tips)) log(line);
   }
-  // cost: the estimator over each root's stored plan; a failed estimate is named and fails nothing.
-  let costOutputs: Map<string, string> | undefined;
-  if (!drift && settings.cost && !options.noCost) {
-    const stored = report.roots.flatMap((r) => {
-      const json = plans.get(r.path)?.json;
-      return json !== undefined ? [{ root: r.path, json }] : [];
-    });
-    if (stored.length > 0) {
-      const costWork = mkdtempSync(join(tmpdir(), "terragucci-cost-"));
-      try {
-        const estimate = await estimateCosts(stored, costCommand(settings.cost), env, costWork, repo, log, options.costRunner);
-        report.cost = estimate.cost;
-        costOutputs = estimate.outputs;
-      } finally {
-        rmSync(costWork, { recursive: true, force: true });
-      }
-    }
-  }
+  if (cost) report.cost = cost;
   observer.addTimings(report);
   const dir = resolve(repo, options.out ?? "terragucci-report");
   // The bucket's address comes from the config when the pipeline names the same bucket without it.

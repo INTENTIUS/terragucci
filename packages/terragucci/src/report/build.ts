@@ -10,6 +10,7 @@ import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import type { Gate } from "../config";
 import { changesSomething, destroysSomething } from "./changing";
+import { costMember } from "./cost";
 import { changeKind, foldChange } from "./highlight";
 import { planAppliedChanges } from "./history";
 import { planResources } from "./inventory";
@@ -22,7 +23,9 @@ import {
   type ReportPolicy,
   type ReportRootPolicy,
   type ReportStateVersion,
-  type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
+  type ReportRootBinary,
+  type ReportStep,
+  type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost,
 } from "./schema";
 
 type Json = Record<string, unknown>;
@@ -35,6 +38,8 @@ export interface RootInput {
   /** Why the root failed to plan. */
   error?: string;
   planner?: ChangeSetPlanner;
+  /** The binary the root ran. */
+  binary?: ReportRootBinary;
   /** Where the root's full plan is kept, relative to the report. */
   files?: { text?: string; json?: string };
   job_url?: string;
@@ -52,6 +57,8 @@ export interface RootInput {
   applied?: boolean;
   /** The state version the root's backend holds after the apply. */
   state?: ReportStateVersion;
+  /** The steps that ran for it. */
+  steps?: ReportStep[];
 }
 
 export interface WaveInput {
@@ -66,6 +73,10 @@ export interface WaveInput {
   refused?: ReportWave["refused"];
   /** The pull request whose review would approve a waiting `tf-apply` wave. */
   review?: ReportWave["review"];
+  /** The roots whose `on_failure: approve` step failed: the gate holds the wave. */
+  heldBySteps?: string[];
+  /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
+  cost?: ReportWaveCost;
 }
 
 export interface BuildInput {
@@ -230,6 +241,8 @@ export function buildReport(input: BuildInput): Report {
     const why: string[] = [];
     if (m.status === "failed") why.push(policyRefused(src) ? "refused by policy" : "refused to plan");
     if (src.policy?.override) why.push(`policy overridden by ${src.policy.override.by}`);
+    const holding = (src.steps ?? []).filter((x) => x.status === "approval").map((x) => x.name);
+    if (holding.length) why.push(`step ${holding.join(", ")} asks for an approval`);
     if (src.policy?.warnings.length) why.push(`${src.policy.warnings.length} policy warning${src.policy.warnings.length === 1 ? "" : "s"}`);
     if (inputRun.stage === "tf-drift" && changes.length > 0) why.push("drifted");
     if (outliers.has(m.member)) why.push("outlier: its change matches no other root's");
@@ -237,6 +250,7 @@ export function buildReport(input: BuildInput): Report {
     const group = memberGroup.get(m.member);
     return {
       path: m.member,
+      ...(src.binary ? { binary: src.binary } : {}),
       ...(src.terragrunt ? { terragrunt: src.terragrunt } : {}),
       status: m.status,
       ...(m.error ? { error: m.error } : {}),
@@ -253,6 +267,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.policy ? { policy: src.policy } : {}),
       ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: planAppliedChanges(src.plan) } : {}),
       ...(src.applied && src.state ? { state: src.state } : {}),
+      ...(src.steps?.length ? { steps: src.steps } : {}),
     };
   });
 
@@ -289,26 +304,31 @@ export function buildReport(input: BuildInput): Report {
     // A provisional member is a preview: no wave's set digest covers it.
     const members = doc.members.filter((m) => w.roots.includes(m.member) && !m.provisional);
     const failed = members.some((m) => m.planDigest === null);
+    // With cost.approve_above the wave's cost is one more member of its digests, as the wave's gate takes it.
+    const cost = costMember(w.cost);
+    const extra = cost ? [cost] : [];
     let review: Pick<ReportWave, "review_digest" | "waits"> = {};
     if (input.gate) {
       const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
       const changing = members.filter((m) => changesSomething(plans.get(m.member)));
       const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
       review = {
-        review_digest: failed || changing.length === 0 ? null : changeSetDigest(changing),
-        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys)),
+        review_digest: failed || changing.length === 0 ? null : changeSetDigest([...changing, ...extra]),
+        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys) || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0),
       };
     }
     return {
       number: w.number,
       roots: w.roots,
-      set_digest: w.setDigest ?? (failed || members.length === 0 ? null : changeSetDigest(members)),
+      set_digest: w.setDigest ?? (failed || members.length === 0 ? null : changeSetDigest([...members, ...extra])),
       approval: w.approval ?? "not-requested",
       ...review,
       ...(w.gate ? { gate: w.gate } : {}),
       ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
       ...(w.refused ? { refused: w.refused } : {}),
       ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
+      ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
+      ...(w.cost ? { cost: w.cost } : {}),
     };
   });
 

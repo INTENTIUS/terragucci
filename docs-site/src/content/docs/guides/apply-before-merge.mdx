@@ -39,6 +39,8 @@ An open change that applies from its head in the same waves and gates as a merge
      merge_token_env: MERGE_TOKEN
    ```
 
+   Leave `waves.jobs` unset: `config check` refuses it with `apply.when: pull-request`.
+
    With `merge: auto`, add that secret, holding a token of a user who may push to the default branch. Only `pr-merge`, which runs none of the change's code, gets it.
 
    <Tabs syncKey="forge">
@@ -119,6 +121,8 @@ An open change's apply reads its settings from the default branch. Edits to `ter
 An unreadable default-branch config fails the wave before anything applies.
 
 ## Locks
+
+These locks are on roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), two applies that change different resources of one estate also run at once, settled per resource at the backend ([Locking per resource](/terragucci/concepts/locking-per-resource/)).
 
 | Event | Lock |
 |---|---|

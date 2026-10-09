@@ -17,6 +17,8 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 Every plan, drift and apply job sends one trace and its metrics over OTLP to your collector, and your Grafana shows nine dashboards and the alerts `init` writes. The jobs run in your CI and send to your own collector; nothing else receives them.
 
+With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the traces and reports also carry provider-call timings, timings summed by resource type on a large estate, and state lock waits.
+
 <Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
 
 ## Before you start
@@ -145,6 +147,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
 | Dashboard | Fills in after |
 |---|---|
 | Pipeline health, Change review, Runs, Estate | a plan on a pull request |
+| Estate's Delivery panels | the scheduled estate job with `OTEL_EXPORTER_OTLP_ENDPOINT` set ([See every project](/terragucci/guides/see-every-project/)) |
 | Drift | a scheduled drift run ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)) |
 | Rollouts and waves | a wave on the default branch, or one that waits for an approval |
 | The three SLO dashboards | the recording rules in Prometheus, and the span metrics connector |
