@@ -83,7 +83,23 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
    | Every root clean | closed |
    | A root could not be planned | left as it is |
 
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   <Shot step="github" view="drift" alt="The drift issue on GitHub, opened by github-actions: 1 of 15 roots has drifted, envs/staging/orders, whose local_file.jobs_queue no longer exists, with the full report in the artifacts of the run" />
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   <Shot step="gitlab" view="drift" alt="The drift issue on GitLab: 1 of 15 roots has drifted, envs/staging/orders, whose queue module.service.aws_sqs_queue.jobs, shop-staging-orders-jobs, no longer exists, with a link to the full report" />
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
    <Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
+
+   </TabItem>
+   </Tabs>
 
 6. Remediate the drift.
 
