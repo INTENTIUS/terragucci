@@ -380,8 +380,8 @@ run_scale() { # scale
   : > "$NUDGES"
   # The host's one-minute load average, once a minute, for the record: other work on the host slows the run.
   ( while :; do uptime | sed -E 's/.*load averages?: *//; s/,//g' | awk '{print $1}'; sleep 60; done ) > "$work/load" &
-  local sampler=$!
-  trap 'kill "$sampler" 2>/dev/null || true' EXIT
+  SAMPLER=$!
+  trap 'kill "${SAMPLER:-}" 2>/dev/null || true' EXIT
   t0=$(date +%s)
   out="$(cd "$work/control" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "${tg[@]}" reconcile --config terragucci.yml --mode apply 2>&1)" || { echo "$out" >&2; die "reconcile failed"; }
   echo "$out" | tail -3 >&2
@@ -448,7 +448,7 @@ run_scale() { # scale
   phase_json="$(jq -c --argjson s "$t0" --argjson e "$(date +%s)" '. + {change: {start: $s, end: $e}}' <<<"$phase_json")"
 
   # ── verify and record ──
-  kill "$sampler" 2>/dev/null || true
+  kill "$SAMPLER" 2>/dev/null || true
   local held; held="$(state_instances)"
   log "verify: the state files hold $held of $resources resources"
   local jobs="$work/jobs.jsonl" ph id

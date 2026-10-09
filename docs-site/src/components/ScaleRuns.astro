@@ -10,8 +10,10 @@ const mins = (s: number) => (s < 90 ? `${s} s` : `${Math.round(s / 60)} min`);
 const kb = (b: number) => (b < 1_000_000 ? `${Math.round(b / 1000)} kB` : `${(b / 1_000_000).toFixed(1)} MB`);
 // A run of a commit on main records the release before it and the commit: 0.4.1+9cc0eca.
 const build = (release: string) => (release.includes('+') ? `main at ${release.split('+')[1]}` : release);
-const host = (r: Run) =>
-	`${r.host.os === 'darwin' ? 'macOS' : r.host.os === 'linux' ? 'Linux' : r.host.os} ${r.host.arch}, ${r.host.runner_capacity} jobs at once`;
+const host = (r: Run) => {
+	const load = (r as { host_load?: { mean: number; cpus: number } | null }).host_load;
+	return `${r.host.os === 'darwin' ? 'macOS' : r.host.os === 'linux' ? 'Linux' : r.host.os} ${r.host.arch}, ${r.host.runner_capacity} jobs at once${load ? `, mean load ${load.mean} on ${load.cpus} CPUs` : ''}`;
+};
 ---
 <div class="tg-scale not-content">
 	<table>
