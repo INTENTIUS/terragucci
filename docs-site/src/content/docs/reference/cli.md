@@ -306,12 +306,13 @@ approval: ledger (the default)
 ## approve
 
 ```bash
-terragucci approve [wave-<k>] [--plan <digest>] [--actor <name>] [--sign [<key>]] [--dry-run] [--no-resume]
+terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--actor <name>] [--sign [<key>]] [--dry-run] [--no-resume]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `wave-<k>` | the wave to approve; needed only when several wait and no `--plan` picks one |
+| `<migration>` | a [state migration](/terragucci/reference/migration-files/) wave 1 waits on, by name: it runs `chant approve tf-migrate <migration> --plan <digest>`, and resumes wave 1; needed only when another gate waits too and no `--plan` picks one |
 | `--plan` | the digest you read, from a chat message, a plan note or a report: approve only a wave waiting for exactly that digest. When none does, it approves nothing, prints the digest waiting and exits 1 |
 | `--actor` | the name the approval records; under `approval: sealed`, your principal in the signers file |
 | `--sign` | seal the approval with this key, or with git's `user.signingkey` when no key is given; the default under `approval: sealed` |
@@ -333,13 +334,21 @@ With a digest that no longer waits, because the plans moved after you read them:
 not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha256:2e7a63f3.... The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest
 ```
 
+## migrate
+
+```bash
+terragucci migrate revert <migration>
+```
+
+Writes `migrations/<migration>-revert.yml`, the [revert](/terragucci/reference/migration-files/#revert) of a migration that applied, from its record on `chant/lifecycle` as `origin` holds it. It writes the file and nothing else: the change that carries it is proved by the plan job and waits at wave 1 for its approval, like any migration. Exit code 1 when the migration never applied, moved states to a new backend, or left a root with no version to put back.
+
 ## resume
 
 ```text
 terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
 ```
 
-The resume job runs it ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). It reads `chant/lifecycle` and finds each waiting wave whose digest has an approval no apply has used. On GitHub and Forgejo it writes `TG_SHA` and `TG_PR` to `--out` for the job's waves to apply; on GitLab it retries the waiting apply job. It exits 0 when there is nothing to resume.
+The resume job runs it ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). It reads `chant/lifecycle` and finds each waiting wave, and each state migration wave 1 waits on, whose digest has an approval no apply has used. An approved migration resumes wave 1, which runs it. On GitHub and Forgejo it writes `TG_SHA` and `TG_PR` to `--out` for the job's waves to apply; on GitLab it retries the waiting apply job. It exits 0 when there is nothing to resume.
 
 ## override
 
