@@ -2259,12 +2259,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       container: { image },
       needs: "check",
       if: `always() && needs.check.result == 'failure' && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)${branchNames.map((b) => ` && github.ref != 'refs/heads/${b}'`).join("")}`,
-      permissions: { contents: "write" },
+      // With locks: plan it also answers the lock of the branch's pull request on the new head: its push, made with
+      // the job's own token, starts no pr-lock run.
+      permissions: { contents: "write", ...(locksPlan ? { statuses: "write", "pull-requests": "write" } : {}) },
       env: { TG_TOKEN: "${{ github.token }}" },
       steps: [
         new Step({ uses: "actions/checkout@v4" }),
         ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
         new Step({ name: "Commit the formatting", shell: "bash", run: fmtScript(binary, forge, tokenEnv) }),
+        ...(locksPlan ? [new Step({ name: "Lock the roots the pull request's new head reaches", shell: "bash", run: planLockScript(layers, forge, prApply, Boolean(tg)) })] : []),
       ],
     } as never) as never);
   }
