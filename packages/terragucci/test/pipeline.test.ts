@@ -1629,6 +1629,55 @@ describe("a GitHub wave whose push is no longer the branch tip", () => {
   });
 });
 
+describe("apply.branches", () => {
+  const branches = { release: ["prod/*"] };
+  const tree = [["dev/net", "prod/net"], ["dev/app", "prod/app"]];
+  const pipeline = (forge: ForgeName, extra: Record<string, unknown> = {}) =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: tree, env: {}, applyBranches: branches, ...extra } as never).content;
+
+  it.each(["github", "forgejo"] as const)("%s: the waves run on the default branch and on release, each passing the map and the branch it runs on", (forge) => {
+    const doc = body(pipeline(forge));
+    for (const j of ["apply-wave-1", "apply-wave-2"]) {
+      expect(doc.jobs[j].if).toBe("(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.ref == 'refs/heads/release')");
+      const run = doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+      expect(run).toContain(`--branches 'release=prod/*' --branch "$GITHUB_REF_NAME"`);
+    }
+    // The apply a comment starts is of a merge into the default branch: it passes the map, and no branch.
+    const comment = doc.jobs["apply-comment"].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+    expect(comment).toContain("--branches 'release=prod/*'");
+    expect(comment).not.toContain("--branch ");
+    // Tips, publish and the like stay on the default branch.
+    expect(doc.jobs.check.if).toBe("github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)");
+  });
+
+  it("on GitLab the apply jobs run on release too, and read the branch from CI_COMMIT_BRANCH", () => {
+    const doc = body(pipeline("gitlab"));
+    expect(doc["apply-wave-1"].rules).toEqual([{ if: '($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH == "release")' }]);
+    expect(JSON.stringify(doc["apply-wave-2"].script)).toContain(`--branches 'release=prod/*' --branch \\"$CI_COMMIT_BRANCH\\"`);
+  });
+
+  it("renders as before without the map, and is refused in a Terragrunt repo and with apply.when: pull-request", () => {
+    for (const forge of FORGES) {
+      expect(pipeline(forge, { applyBranches: undefined })).not.toContain("--branches");
+      expect(pipeline(forge, { applyBranches: {} })).toBe(pipeline(forge, { applyBranches: undefined }));
+    }
+    expect(() => pipeline("forgejo", { terragrunt: { installs: [] } })).toThrow(/apply\.branches: a Terragrunt wave/);
+    expect(() => pipeline("forgejo", { applyWhen: "pull-request" })).toThrow(/apply\.branches: apply\.when: pull-request/);
+  });
+
+  it("is checked by config check", () => {
+    expect(validateConfig({ apply: { branches: { release: ["envs/prod/*"], "env/dr": ["envs/dr/*"] } } }, "t")).toEqual({ apply: { branches: { release: ["envs/prod/*"], "env/dr": ["envs/dr/*"] } } });
+    expect(() => validateConfig({ apply: { branches: [] } }, "t")).toThrow("config.apply.branches must map branch names to lists of root globs");
+    expect(() => validateConfig({ apply: { branches: { release: [] } } }, "t")).toThrow("config.apply.branches.release must be a list of root globs");
+    expect(() => validateConfig({ apply: { branches: { "rel ease": ["a"] } } }, "t")).toThrow("is not a branch name terragucci takes");
+    expect(() => validateConfig({ apply: { branches: { "a/../b": ["a"] } } }, "t")).toThrow("is not a branch name terragucci takes");
+    expect(() => validateConfig({ apply: { branches: { release: ["a,b"] } } }, "t")).toThrow("must be a list of root globs");
+    expect(() => validateConfig({ apply: { branches: { release: ["envs/prod/*"], hotfix: ["envs/prod/*"] } } }, "t")).toThrow("envs/prod/* is under both release and hotfix");
+    expect(() => validateConfig({ apply: { when: "pull-request", branches: { release: ["a"] } } }, "t")).toThrow("config.apply.branches: apply.when: pull-request");
+    expect(() => validateConfig({ terragrunt: { version: "0.99.1" }, apply: { branches: { release: ["a"] } } }, "t")).toThrow("config.apply.branches: a Terragrunt wave");
+  });
+});
+
 describe("a wave split across jobs (waves.jobs)", () => {
   const wide = [["net"], ["a", "b", "c", "d", "e"]];
   const pipeline = (forge: ForgeName, extra: Record<string, unknown> = {}) =>
