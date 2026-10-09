@@ -2516,3 +2516,34 @@ describe("the resume and rollout workflows run merged code only", () => {
     }
   });
 });
+
+describe("atlantis_comments", () => {
+  const withAliases = (forge: ForgeName, extra: Record<string, unknown> = {}): string =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, atlantisComments: true, ...extra }).content;
+
+  it.each(["github", "forgejo"] as const)("%s: atlantis plan starts the replan job and atlantis apply the apply-comment job, and every job reads the aliases", (forge) => {
+    const wf = body(withAliases(forge));
+    expect(wf.env.TG_ATLANTIS_COMMENTS).toBe("1");
+    expect(wf.jobs.replan.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci') || startsWith(github.event.comment.body, 'atlantis plan')) && !(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, 'atlantis apply'))");
+    expect(wf.jobs["apply-comment"].if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, 'atlantis apply'))");
+  });
+
+  it("with apply.when: pull-request and locks: plan, the lock and plan-lock jobs take the alias too", () => {
+    const wf = body(withAliases("github", { applyWhen: "pull-request", locksPlan: true }));
+    expect(wf.jobs["apply-comment"].if).toContain("startsWith(github.event.comment.body, 'atlantis apply') || startsWith(github.event.comment.body, '/terragucci lock')");
+    expect(wf.jobs["pr-lock"].if).toContain("(startsWith(github.event.comment.body, '/terragucci plan') || startsWith(github.event.comment.body, 'atlantis plan'))");
+  });
+
+  it("gitlab: the comments job's poll reads the aliases from the pipeline's variables", () => {
+    expect(body(withAliases("gitlab", { comments: "*/5 * * * *" })).comments.variables.TG_ATLANTIS_COMMENTS).toBe("1");
+  });
+
+  it("off by default: no job names atlantis", () => {
+    for (const forge of FORGES) expect(render(forge)).not.toContain("atlantis");
+  });
+
+  it("is true or false in terragucci.yml", () => {
+    expect(validateConfig({ atlantis_comments: true }, "t")).toEqual({ atlantis_comments: true });
+    expect(() => validateConfig({ atlantis_comments: "yes" }, "t")).toThrow(/atlantis_comments must be true or false/);
+  });
+});

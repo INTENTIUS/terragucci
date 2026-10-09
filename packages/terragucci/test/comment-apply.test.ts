@@ -99,6 +99,20 @@ describe("decideApplyComment", () => {
     expect((await decideApplyComment({ layers, canary: ["envs/dev/*"], env: canary.env, fetch: canary.fetch, git: r.git })).go).toBe(true);
   });
 
+  it("atlantis apply, with TG_ATLANTIS_COMMENTS set, is decided as /terragucci apply: the merged pull request applies, an open one is refused", async () => {
+    const r = repos();
+    const merged = setup({ comment: "atlantis apply", pr: MERGED(r.merge) });
+    expect(await decideApplyComment({ layers, env: { ...merged.env, TG_ATLANTIS_COMMENTS: "1" }, fetch: merged.fetch, git: r.git })).toMatchObject({ go: true, sha: r.merge });
+    const open = setup({ comment: "atlantis apply", pr: { state: "open", merged: false, merge_commit_sha: null, head: { sha: "a".repeat(40), repo: { full_name: "acme/infra" } }, base: { ref: "main" } } });
+    const d = await decideApplyComment({ layers, env: { ...open.env, TG_ATLANTIS_COMMENTS: "1" }, fetch: open.fetch, git: r.git });
+    expect(d.go).toBe(false);
+    expect(replies(open)[0]).toContain("pull request 7 is not merged");
+    // Without the variable the comment is not an apply at all.
+    const off = setup({ comment: "atlantis apply", pr: MERGED(r.merge) });
+    expect((await decideApplyComment({ layers, env: off.env, fetch: off.fetch, git: r.git })).go).toBe(false);
+    expect(replies(off)).toEqual([]);
+  });
+
   it("an open pull request is refused with a reply, and its head is never passed on", async () => {
     const r = repos();
     const s = setup({ comment: "/terragucci apply", pr: { state: "open", merged: false, merge_commit_sha: null, head: { sha: "a".repeat(40), repo: { full_name: "acme/infra" } }, base: { ref: "main" } } });

@@ -43,7 +43,7 @@ drift: "17 4 * * *"
 
 In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
 
-A project's jobs read these keys from the project's own `terragucci.yml`, so `reconcile` writes each one the control repo sets away from its default there: `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt` and `token_env`. The other keys reach the project in the pipeline `reconcile` writes: `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `dashboards` and `notify` (with `notify.webhook`).
+A project's jobs read these keys from the project's own `terragucci.yml`, so `reconcile` writes each one the control repo sets away from its default there: `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt` and `token_env`. The other keys reach the project in the pipeline `reconcile` writes: `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards` and `notify` (with `notify.webhook`).
 
 ```yaml
 defaults:
@@ -152,6 +152,7 @@ dashboards: true
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge`), `token_env` and [`comment`](#the-agent-comment) |
+| `atlantis_comments` | `false` (off) | `true`: `atlantis plan` and `atlantis apply` comments work as `/terragucci plan` and `/terragucci apply`, with the same checks; see [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |

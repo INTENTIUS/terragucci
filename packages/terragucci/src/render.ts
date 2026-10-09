@@ -75,6 +75,7 @@ import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
+import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { applyWaves, DECIDED_DIR, waveShares } from "./apply";
 import { CHECK_DIR } from "./check";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
@@ -174,6 +175,8 @@ export interface PipelineInput {
   policy?: boolean;
   /** `agent.comment` is set: `/terragucci agent <ask>` gets the agent and agent-push jobs (render-agent.ts). GitHub and Forgejo only. */
   agentComment?: AgentCommentInput;
+  /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
+  atlantisComments?: boolean;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the `mr-apply` pipeline), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
   applyWhen?: ApplyWhen;
   /** `apply.merge`: with `auto`, a pull request whose every wave applied is merged. */
@@ -1575,7 +1578,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const rollouts = input.rollouts;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError(tg ? "there are no Terragrunt units to run" : "there are no roots to run");
-  const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env };
+  const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env, ...(input.atlantisComments ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {}) };
   // Only the jobs that run a stage send telemetry (plan, apply, drift), so only they get the headers secret; check and publish never see it.
   const headersEnv = headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {};
   // The service's key reaches the jobs that ask it: the plan jobs for the description check, the drift job
@@ -1863,7 +1866,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("comments", new GitLabJob({
         stage: "comments",
         image: jobImage,
-        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, ...(prApply ? { TG_MERGE_TOKEN: `$${input.applyMergeTokenEnv}` } : {}), GIT_STRATEGY: "none" },
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, ...(prApply ? { TG_MERGE_TOKEN: `$${input.applyMergeTokenEnv}` } : {}), ...(input.atlantisComments ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {}), GIT_STRATEGY: "none" },
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
@@ -2014,10 +2017,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never);
   const planNote = noteJob("plan", `github.event_name == 'pull_request' && ${sameRepo}`, REPORT_DIR, { TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_PR: "${{ github.event.pull_request.number }}" }, false);
+  // A comment's first words, as the jobs' conditions test them; with atlantis_comments, `atlantis plan` and `atlantis apply` start the same jobs.
+  const says = (p: string): string => `startsWith(github.event.comment.body, '${p}')`;
+  const atlantis = input.atlantisComments === true;
+  const applySays = atlantis ? `${says("/terragucci apply")} || ${says("atlantis apply")}` : says("/terragucci apply");
+  const planSays = atlantis ? `(${says("/terragucci plan")} || ${says("atlantis plan")})` : says("/terragucci plan");
   // With apply.when: pull-request, `/terragucci lock` and `/terragucci unlock` are the apply-comment job's too: it holds the locks.
   const APPLY_COMMENT = prApply
-    ? "(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))"
-    : "startsWith(github.event.comment.body, '/terragucci apply')";
+    ? `(${applySays} || ${says("/terragucci lock")} || ${says("/terragucci unlock")})`
+    : atlantis ? `(${applySays})` : applySays;
   // With locks: plan and apply.when: merge, `/terragucci lock` and `/terragucci unlock` are the pr-lock job's.
   const LOCK_COMMENT = "(startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))";
   const lockElsewhere = locksPlan && !prApply ? ` && !${LOCK_COMMENT}` : "";
@@ -2030,7 +2038,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
+    if: `github.event_name == 'issue_comment' && ${atlantis ? `(${says("/terragucci")} || ${says("atlantis plan")})` : says("/terragucci")} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": false },
@@ -2142,7 +2150,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // locks: plan. The workflow is the default branch's on pull_request_target and on a comment, and the job checks out
     // only the default branch: it reads the change as data from git, runs no binary and assumes no cloud role. So it may
     // push the locks to chant/lifecycle (contents: write) and post terragucci/lock.
-    const planLockIf = prApply ? "startsWith(github.event.comment.body, '/terragucci plan')" : `(startsWith(github.event.comment.body, '/terragucci plan') || ${LOCK_COMMENT})`;
+    const planLockIf = prApply ? planSays : `(${planSays} || ${LOCK_COMMENT})`;
     entities.set("pr-lock", new Job({
       "runs-on": "ubuntu-latest",
       container: { image },
