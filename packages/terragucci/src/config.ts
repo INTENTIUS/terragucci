@@ -456,6 +456,12 @@ export interface ProjectSettings {
   audit_region?: string;
   /** Dashboards and alert rules written next to the pipeline. Off unless set. */
   dashboards?: boolean | DashboardSettings;
+  /**
+   * Jobs of your own that `init` and `reconcile` write into the generated
+   * pipeline as they are: a map of job name to the job, in the forge's own
+   * syntax, or the path of a YAML file in the repo that holds that map.
+   */
+  own_jobs?: string | Record<string, Record<string, unknown>>;
 }
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
@@ -557,7 +563,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -660,6 +666,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(...synthProblems(s as ProjectSettings, where));
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
+  if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
   }
@@ -947,6 +954,25 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
     // pr-merge merges only a head a reviewer approved, so an auto merge without the approval would never merge.
     else if (a.merge === "auto" && !a.requires.includes("approved")) problems.push(`${where}.requires leaves out approved, and apply.merge: auto merges only an approved head; add approved or set ${where}.merge to manual`);
   }
+}
+
+/** A job name `own_jobs` takes: one every forge's YAML reads as a plain key. */
+export const OWN_JOB_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/** The problems with `own_jobs`: a map of job name to job, or the path of a YAML file in the repo that holds one. */
+export function ownJobsProblems(v: unknown, where: string): string[] {
+  if (typeof v === "string") {
+    return v !== "" && !v.startsWith("/") && !v.split("/").includes("..") && /\.ya?ml$/.test(v)
+      ? []
+      : [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  }
+  if (!isObject(v) || Object.keys(v).length === 0) return [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  const problems: string[] = [];
+  for (const [name, job] of Object.entries(v)) {
+    if (!OWN_JOB_NAME.test(name)) problems.push(`${where}: ${JSON.stringify(name)} is not a job name terragucci writes as it is; use letters, digits, "_" and "-"`);
+    else if (!isObject(job) || Object.keys(job).length === 0) problems.push(`${where}.${name} must be a job: a map of its keys, in the forge's own syntax`);
+  }
+  return problems;
 }
 
 const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches"];

@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import { declaredGates } from "./approval";
 import { SIGNERS_PATH } from "./seal";
@@ -16,6 +16,7 @@ import {
   COST_KEY_SECRET,
   gitlabPrApplyProblems,
   findConfig,
+  ownJobsProblems,
   loadConfig,
   BUILT_IN,
   PROJECT_FILE_KEYS,
@@ -111,6 +112,22 @@ export interface RootVersion {
 function plan(path: string, content: string): FileChange {
   if (!existsSync(path)) return { path, status: "created", content };
   return { path, status: readFileSync(path, "utf-8") === content ? "unchanged" : "updated", content };
+}
+
+/** `own_jobs`: the map itself, or the map the repo's YAML file at that path holds. */
+export function ownJobs(repo: string, v: NonNullable<ProjectSettings["own_jobs"]>): Record<string, Record<string, unknown>> {
+  if (typeof v !== "string") return v;
+  const path = join(repo, v);
+  if (!existsSync(path)) throw new ConfigError(`own_jobs names ${v}, which the repo does not have`);
+  let doc: unknown;
+  try {
+    doc = parseYAMLDocument(readFileSync(path, "utf-8"));
+  } catch (e) {
+    throw new ConfigError(`own_jobs: ${v} is not YAML (${(e as Error).message})`);
+  }
+  const problems = typeof doc === "string" ? [`own_jobs (${v}) must be a map of job name to job`] : ownJobsProblems(doc, `own_jobs (${v})`);
+  if (problems.length > 0) throw new ConfigError(problems.join("; "));
+  return doc as Record<string, Record<string, unknown>>;
 }
 
 export async function init(repo: string, options: InitOptions = {}): Promise<InitResult> {
@@ -298,6 +315,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),
     ...(settings.apply?.branches && Object.keys(settings.apply.branches).length > 0 ? { applyBranches: settings.apply.branches } : {}),
+    ...(settings.own_jobs !== undefined ? { ownJobs: ownJobs(repo, settings.own_jobs) } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {

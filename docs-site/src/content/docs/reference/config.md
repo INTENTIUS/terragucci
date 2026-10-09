@@ -167,6 +167,7 @@ dashboards: true
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
+| `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts.
 
@@ -276,6 +277,31 @@ The waves are cut from the roots the branch applies, so a branch's wave 1 holds 
 The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) applies the default branch's waiting waves only. A wave waiting on a branch named here applies when its run runs again: `terragucci approve` re-runs it on GitHub and GitLab, and on Forgejo the branch's next push runs it.
 
 `config check` refuses a glob listed under two branches, `apply.branches` with `apply.when: pull-request`, where a push applies nothing, and in a Terragrunt repo. Run `npx terragucci init` after a change to the map: the apply jobs carry it. The fmt job never commits to a branch named here.
+
+## Jobs of your own
+
+`init` writes the whole pipeline file each time it runs, so a job added to that file by hand is gone after the next `init`. Name the job under `own_jobs` and `init` writes it again each time, after its own jobs:
+
+```yaml
+own_jobs: ci/own-jobs.yml   # or the jobs themselves, as a map
+```
+
+```yaml
+# ci/own-jobs.yml
+notify-done:
+  needs: apply-wave-2
+  runs-on: ubuntu-latest
+  steps:
+    - run: echo "wave 2 applied"
+```
+
+| Forge | Where the jobs go |
+|---|---|
+| GitHub | under `jobs:` in `.github/workflows/terragucci.yml` |
+| Forgejo | under `jobs:` in `.forgejo/workflows/terragucci.yml` |
+| GitLab | at the top level of `.gitlab/terragucci.yml`, which `.gitlab-ci.yml` includes |
+
+Each job keeps every key and value the file gives it, in the forge's own syntax; comments in the file are not carried, and `init` checks only the job's name. A name terragucci gives one of its own jobs is refused, and so is a GitLab keyword such as `variables`. The jobs run in the same run as terragucci's, so `needs` may name a wave's job and an artifact download reads that run's reports. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) adds its job this way.
 
 ## Plan locks
 
