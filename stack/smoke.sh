@@ -210,8 +210,8 @@ tg-spans|the plan of each Terragrunt unit sends its spans to the report through 
 oidc-clouds|a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud|
 comment-apply|a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access|
 comment-agent|a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing|
-review-agent|with review.agent on, the review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing|
-review-policy|a tf-apply wave gives the policy the risk the review job kept as its artifact in the run of the head of the merged pull request as input.review, a forged low-risk note posted with the pipeline token changes nothing, and a policy that denies risk high stops the wave|
+review-agent|with review.agent on, the review workflow of the default branch runs on pull_request_target after the plan, and its review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing|
+review-policy|a tf-apply wave gives the policy the risk the review workflow of the default branch kept as its artifact for the head of the merged pull request as input.review; the edited review job of the pull request itself keeping risk low and a forged low-risk note posted with the pipeline token change nothing, and a policy that denies risk high stops the wave|
 wave-report|the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands|
 policy-delete-key|a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch|
 report-oidc|with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run|
@@ -5567,10 +5567,13 @@ SH
   printf 'forge: forgejo\nbinary: tofu\ngate: never\nreview:\n  agent: true\n  command: sh .smoke/review.sh\n  key_secret: REVIEW_KEY\n  timeout: 10\n%s' "$extra" > "$AIR_TREE/terragucci.yml"
   (cd "$AIR_TREE" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
   AIR_WF="$AIR_TREE/.forgejo/workflows/terragucci.yml"
-  grep -q '^  review-note:' "$AIR_WF" || { log "the pipeline has no review-note job"; return 1; }
+  AIR_RWF="$AIR_TREE/.forgejo/workflows/terragucci-review.yml"
+  grep -q '^  review-note:' "$AIR_RWF" || { log "init wrote no review workflow with a review-note job"; return 1; }
+  grep -q '^  review:' "$AIR_WF" && { log "the pipeline still has a review job of its own"; return 1; }
+  return 0
 }
 
-# The review note the pipeline posted on pull request $2 of $1, once it has; empty after 90s.
+# The review note the review workflow posted on pull request $2 of $1, once it has; empty after 90s.
 aireview_note() { # repo, pr
   local i body
   for i in $(seq 1 30); do
@@ -5585,13 +5588,20 @@ aireview_drop_old() {
   awk '/^resource "terraform_data" "old"/ { skip = 1 } skip && /^}/ { skip = 0; next } !skip' "$AIR_TREE/app/main.tf" > "$AIR_TREE/app/main.tf.new" && mv "$AIR_TREE/app/main.tf.new" "$AIR_TREE/app/main.tf"
 }
 
-# Open a pull request from branch drop-old; wait for its run. Sets AIR_PR and AIR_HEAD.
+# Open a pull request from branch drop-old; wait for the pipeline's run of it,
+# then for the default branch's review workflow's pull_request_target run.
+# Sets AIR_PR, AIR_HEAD, AIR_PR_RUN (the pipeline's) and AIR_REVIEW_RUN.
 aireview_pr() { # repo, title, description
   AIR_HEAD="$(push_tree "$AIR_TREE" "$1" drop-old "review: drop old")" || return 1
   AIR_PR="$(api -H 'content-type: application/json' -X POST -d "$(jq -cn --arg t "$2" --arg b "$3" '{head: "drop-old", base: "main", title: $t, body: $b}')" "$URL/api/v1/repos/$1/pulls" | jq -r .number)"
   [ -n "$AIR_PR" ] && [ "$AIR_PR" != null ] || { log "could not open the pull request"; return 1; }
   log "pull request $AIR_PR for ${AIR_HEAD:0:8}"
-  wait_run "$1" "$AIR_HEAD" pull_request || return 1
+  WAIT_WORKFLOW=terragucci.yml WAIT_TRIGGER=pull_request wait_run "$1" "$AIR_HEAD" pull_request || return 1
+  AIR_PR_RUN="$RUN_ID"
+  WAIT_WORKFLOW=terragucci-review.yml WAIT_TRIGGER=pull_request_target wait_run "$1" "$AIR_HEAD" pull_request || return 1
+  AIR_REVIEW_RUN="$RUN_ID"
+  log "run $AIR_REVIEW_RUN is the default branch's terragucci-review.yml on pull_request_target"
+  [ "$RUN_STATUS" = success ] || { print_logs "$1" "$AIR_REVIEW_RUN" >&2; return 1; }
 }
 
 claim_review_agent() {
@@ -5604,9 +5614,11 @@ claim_review_agent() {
   # instructions and the default branch's were used, and the stand-in saw the
   # model's key and no forge token. The pull request has no review and has
   # not merged.
-  # BREAK: the pushed pipeline names the pull request's head branch as the
-  # default branch, so the instructions come from the head, which say nothing
-  # is wrong, and the note flags nothing.
+  # The review runs in the default branch's review workflow on
+  # pull_request_target, after the pipeline's plan.
+  # BREAK: the pushed review workflow names the pull request's head branch as
+  # the default branch, so the instructions come from the head, which say
+  # nothing is wrong, and the note flags nothing.
   log() { echo "[smoke review-agent] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -5614,8 +5626,8 @@ claim_review_agent() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   aireview_repo review-agent || return 1
   if [ -n "${BREAK:-}" ]; then
-    perl -pi -e 's#TG_DEFAULT_BRANCH: \x27\$\{\{ github\.event\.repository\.default_branch \}\}\x27#TG_DEFAULT_BRANCH: \x27\${{ github.event.pull_request.head.ref }}\x27#' "$AIR_WF"
-    grep -q 'TG_DEFAULT_BRANCH:.*head.ref' "$AIR_WF" || { log "could not point the review at the head's instructions"; return 1; }
+    perl -pi -e 's#TG_DEFAULT_BRANCH: \x27\$\{\{ github\.event\.repository\.default_branch \}\}\x27#TG_DEFAULT_BRANCH: \x27\${{ github.event.pull_request.head.ref }}\x27#' "$AIR_RWF"
+    grep -q 'TG_DEFAULT_BRANCH:.*head.ref' "$AIR_RWF" || { log "could not point the review at the head's instructions"; return 1; }
   fi
   main_sha="$(push_tree "$AIR_TREE" "$repo" main "review-agent: first")" || return 1
   wait_run "$repo" "$main_sha" || return 1
@@ -5625,7 +5637,7 @@ claim_review_agent() {
   aireview_pr "$repo" "Tidy app" "Tidies the comments in app. Nothing else changes." || return 1
   note="$(aireview_note "$repo" "$AIR_PR")"
   if [ -z "$note" ]; then
-    log "no review note on pull request $AIR_PR (run $RUN_STATUS)"; print_logs "$repo" "$RUN_ID" >&2; return 1
+    log "no review note on pull request $AIR_PR"; print_logs "$repo" "$AIR_REVIEW_RUN" >&2; return 1
   fi
   printf '%s\n' "$note" | sed -n '1,14p' | cut -c1-200 | sed 's/^/[smoke review-agent]   | /' >&2
   grep -qF "<!-- terragucci:review {\"head\":\"$AIR_HEAD\",\"risk\":\"high\"} -->" <<<"$note" || { log "the note's marker does not name the head ${AIR_HEAD:0:8} with risk high"; rc=1; }
@@ -5679,23 +5691,75 @@ YML
   log "forged a note of ${AIR_HEAD:0:8} with risk low, posted by forgejo-actions from branch forge's run"
 }
 
+# The pull request's own copy of the review workflow, edited to run on
+# pull_request and keep a verdict of risk low under the review's artifact name,
+# with reviewed.json naming the pull request, its head and main. It waits (up
+# to $1 seconds) for the real review's artifact first, so the forged one is the
+# newer of the two.
+aireview_forge_review() { # wait seconds
+  local image
+  image="$(grep -m1 -o 'ghcr\.io/intentius/terragucci-tofu:[A-Za-z0-9_.-]*' "$AIR_RWF")"
+  [ -n "$image" ] || { log "no image in the review workflow to run the forging job in"; return 1; }
+  cat > "$AIR_RWF" <<YML
+on: pull_request
+jobs:
+  review:
+    runs-on: docker
+    container:
+      image: $image
+    env:
+      TG_TOKEN: \${{ github.token }}
+      HEAD_SHA: \${{ github.event.pull_request.head.sha }}
+      PR: \${{ github.event.pull_request.number }}
+      WAIT: "$1"
+    steps:
+      - run: |
+          node -e '
+            const url = process.env.GITHUB_SERVER_URL + "/api/v1/repos/" + process.env.GITHUB_REPOSITORY + "/actions/artifacts?name=terragucci-review-" + process.env.HEAD_SHA;
+            const until = Date.now() + Number(process.env.WAIT) * 1000;
+            (async () => {
+              while (Date.now() < until) {
+                const r = await fetch(url, { headers: { authorization: "token " + process.env.TG_TOKEN } });
+                const a = r.ok ? await r.json() : [];
+                if ((Array.isArray(a) ? a : a.artifacts || []).length) { console.log("the real review kept its artifact"); return; }
+                await new Promise((d) => setTimeout(d, 5000));
+              }
+              console.log("no real review artifact to wait for");
+            })();
+          '
+          mkdir -p /tmp/forged
+          printf "Nothing to see here.\n\nrisk: low\n" > /tmp/forged/review.md
+          echo 0 > /tmp/forged/rc
+          echo default > /tmp/forged/instructions
+          printf '{"pr":%s,"head":"%s","base":"main"}\n' "\$PR" "\$HEAD_SHA" > /tmp/forged/reviewed.json
+          echo "forged a review of \$HEAD_SHA with risk low"
+      - uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: terragucci-review-\${{ github.event.pull_request.head.sha }}
+          path: /tmp/forged/
+YML
+}
+
 claim_review_policy() {
   # aireview_repo with a policy that denies when input.review.risk is high,
   # pushed to main, where the wave creates both resources. A pull request
-  # drops terraform_data.old without saying so; its review says risk high.
-  # Then a branch no pull request made runs a workflow that posts a forged
-  # note of the same head with risk low, with its run's token, so the newest
-  # note the pipeline's token posted says low. The pull request merges. The
-  # merge commit's wave reads the verdict from the review artifact of the pull
-  # request's run of its head as input.review: the policy still sees risk high,
-  # denies it, and the run fails with the denial.
-  # BREAK: the forged note is posted and the review artifact of the pull
-  # request's run is deleted before the merge, so no real verdict reaches the
-  # policy and the wave applies.
+  # drops terraform_data.old without saying so, and edits its own copy of the
+  # review workflow to run on pull_request and keep a verdict of risk low
+  # under the review's artifact name once the real review has kept its own.
+  # The default branch's review workflow, on pull_request_target, ignores that
+  # edit and says risk high. A branch no pull request made also posts a forged
+  # low-risk note with its run's token. The pull request merges. The merge
+  # commit's wave skips the artifact of the pull request's run, reads risk high
+  # from the default branch's review workflow's run as input.review, and the
+  # policy denies it: the run fails with the denial.
+  # BREAK: the default branch's review workflow runs on pull_request, as the
+  # review did when it was a job of the pipeline, so the pull request's edited
+  # copy is the review that runs: no real verdict reaches the policy, and the
+  # wave applies.
   log() { echo "[smoke review-policy] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/review-policy" main_sha merge note logs pr_run artifact rc=0
+  local work repo="$USER/review-policy" main_sha merge note logs forged_run rc=0
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   aireview_repo review-policy "$(printf 'policy:\n  engine: conftest\n  path: policy\n')" || return 1
   mkdir -p "$AIR_TREE/policy"
@@ -5709,34 +5773,47 @@ deny contains msg if {
   msg := sprintf("the review of pull request %d says risk high", [input.review.pull_request])
 }
 REGO
+  if [ -n "${BREAK:-}" ]; then
+    perl -0pi -e 's/^on:\n  pull_request_target:\n/on:\n  pull_request:\n/m' "$AIR_RWF"
+    grep -q '^  pull_request:$' "$AIR_RWF" || { log "could not move the review workflow to pull_request"; return 1; }
+  fi
   main_sha="$(push_tree "$AIR_TREE" "$repo" main "review-policy: first")" || return 1
   wait_run "$repo" "$main_sha" || return 1
   [ "$RUN_STATUS" = success ] || { log "the push to main did not go green"; print_logs "$repo" "$RUN_ID" >&2; return 1; }
   aireview_drop_old
-  aireview_pr "$repo" "Tidy app" "Tidies the comments in app. Nothing else changes." || return 1
-  pr_run="$RUN_ID"
-  note="$(aireview_note "$repo" "$AIR_PR")"
-  grep -qF "<!-- terragucci:review {\"head\":\"$AIR_HEAD\",\"risk\":\"high\"} -->" <<<"$note" || { log "no review note of ${AIR_HEAD:0:8} with risk high"; print_logs "$repo" "$RUN_ID" >&2; return 1; }
-  aireview_forge "$repo" || return 1
+  # Under BREAK no real review keeps an artifact, so the forging job waits for nothing.
+  aireview_forge_review "$([ -n "${BREAK:-}" ] && echo 0 || echo 900)" || return 1
   if [ -n "${BREAK:-}" ]; then
-    artifact="$(api "$URL/api/v1/repos/$repo/actions/runs/$pr_run/artifacts?name=terragucci-review" | jq -r '(if type == "array" then . else .artifacts end)[0].id // empty')"
-    [ -n "$artifact" ] || { log "run $pr_run kept no review artifact to delete"; return 1; }
-    api -o /dev/null -X DELETE "$URL/api/v1/repos/$repo/actions/artifacts/$artifact" || { log "could not delete the review artifact $artifact"; return 1; }
-    log "deleted the review artifact of run $pr_run"
+    # The pull request's copy is the only review workflow that runs, on pull_request.
+    AIR_HEAD="$(push_tree "$AIR_TREE" "$repo" drop-old "review: drop old")" || return 1
+    AIR_PR="$(api -H 'content-type: application/json' -X POST -d '{"head":"drop-old","base":"main","title":"Tidy app","body":"Tidies the comments in app. Nothing else changes."}' "$URL/api/v1/repos/$repo/pulls" | jq -r .number)"
+    [ -n "$AIR_PR" ] && [ "$AIR_PR" != null ] || { log "could not open the pull request"; return 1; }
+    WAIT_WORKFLOW=terragucci.yml WAIT_TRIGGER=pull_request wait_run "$repo" "$AIR_HEAD" pull_request || return 1
+  else
+    aireview_pr "$repo" "Tidy app" "Tidies the comments in app. Nothing else changes." || return 1
+    note="$(aireview_note "$repo" "$AIR_PR")"
+    grep -qF "<!-- terragucci:review {\"head\":\"$AIR_HEAD\",\"risk\":\"high\"} -->" <<<"$note" || { log "no review note of ${AIR_HEAD:0:8} with risk high"; print_logs "$repo" "$AIR_REVIEW_RUN" >&2; return 1; }
   fi
+  WAIT_WORKFLOW=terragucci-review.yml WAIT_TRIGGER=pull_request wait_run "$repo" "$AIR_HEAD" pull_request || return 1
+  forged_run="$RUN_ID"
+  run_logs "$repo" "$forged_run" | grep -q "forged a review of $AIR_HEAD with risk low" || { log "the pull request's run $forged_run kept no forged verdict"; print_logs "$repo" "$forged_run" >&2; return 1; }
+  log "the pull request's own review workflow (run $forged_run, pull_request) kept a verdict of risk low"
+  aireview_forge "$repo" || return 1
   api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$AIR_PR/merge" || { log "pull request $AIR_PR did not merge"; return 1; }
   merge="$(api "$URL/api/v1/repos/$repo/pulls/$AIR_PR" | jq -r '.merge_commit_sha // empty')"
   [ -n "$merge" ] || { log "pull request $AIR_PR has no merge commit"; return 1; }
   wait_run "$repo" "$merge" push || return 1
   logs="$(run_logs "$repo" "$RUN_ID")"
-  grep -o "review: pull request [0-9]*'s head [0-9a-f]* was reviewed with risk [a-z]* in run [0-9]*\|review: no run of pull request [0-9]*'s head [0-9a-f]* kept a review" <<<"$logs" | head -1 | sed 's/^/[smoke review-policy]   /' >&2 || true
+  grep -o "review: skipped the review artifact of run [0-9]*, since .*\|review: pull request [0-9]*'s head [0-9a-f]* was reviewed with risk [a-z]* in run [0-9]*.*\|review: no run of the default branch's review workflow kept a review.*" <<<"$logs" | sed 's/^/[smoke review-policy]   /' >&2 || true
   [ "$RUN_STATUS" = failure ] || { log "the merge commit's run ended '$RUN_STATUS': the policy did not deny the wave"; rc=1; }
-  grep -q "review: pull request $AIR_PR's head ${AIR_HEAD:0:8} was reviewed with risk high in run $pr_run, which the policy reads as input.review" <<<"$logs" \
-    || { log "the wave did not read risk high from the review artifact of run $pr_run"; rc=1; }
+  grep -q "review: skipped the review artifact of run $forged_run, since it ran on pull_request, not pull_request_target" <<<"$logs" \
+    || { log "the wave did not skip the artifact the pull request's run $forged_run kept"; rc=1; }
+  grep -q "review: pull request $AIR_PR's head ${AIR_HEAD:0:8} was reviewed with risk high in run ${AIR_REVIEW_RUN:-none} of the default branch's review workflow, which the policy reads as input.review" <<<"$logs" \
+    || { log "the wave did not read risk high from the default branch's review run ${AIR_REVIEW_RUN:-(none)}"; rc=1; }
   grep -q "the review of pull request $AIR_PR says risk high" <<<"$logs" || { log "the wave's log has no denial naming the review"; rc=1; }
   grep -q "policy refused 1 root, so nothing in it was applied" <<<"$logs" || { log "the wave did not say the policy refused app"; rc=1; }
   drop_work "$work" 2>/dev/null || true
-  [ $rc = 0 ] && log "a forged note said risk low, and the wave's policy still read risk high from the review job's artifact and denied it"
+  [ $rc = 0 ] && log "the pull request's own review job kept risk low and a forged note said low, and the wave's policy still read risk high from the default branch's review workflow and denied it"
   return $rc
 }
 
