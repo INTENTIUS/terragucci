@@ -79,6 +79,8 @@ just example-terragrunt change module-bump
 
 The plan covers the 12 service units and none of the platforms. Each unit in the report names `modules/service/policy.json` as its reason.
 
+<Shot step="tg" view="note" alt="The plan note on the module-bump pull request of the Terragrunt example in Forgejo: the 12 service units planned for the change to modules/service/policy.json, and no platform unit" optional />
+
 ## A new unit and its upstream, in one change
 
 The `new-service` scenario adds `ledger`, which makes a bucket, and `billing`, which reads the bucket's name from it. Ledger has no outputs yet, so Terragrunt on its own would hand billing its `mock_outputs`.

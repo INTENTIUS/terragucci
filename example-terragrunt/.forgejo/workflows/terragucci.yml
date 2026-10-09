@@ -31,7 +31,7 @@ jobs:
     runs-on: docker
     container:
       image: ghcr.io/intentius/terragucci-terragrunt:0.4.3-tg1.1.6-tofu1.13.1@sha256:a05537a3ef96cf0594c7fe5ca4c42b479fb7cb0352b1e1aaa87caf7db616c305
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    if: (env.TF_IN_AUTOMATION || 'set') != '' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository))
     env:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
