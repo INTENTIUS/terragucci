@@ -87,13 +87,16 @@ import {
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
-import { globMatch } from "./detect";
+import { globMatch, remoteStateReads, rootDependencies } from "./detect";
+import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
+import { wavesOf } from "./planned-outputs";
+import { runPath } from "./report/store";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
-import { binaryText, type ReportCost, type ReportPolicy, type ReportRootBinary, type ReportRootPolicy, type ReportWave, type ReportWaveCost } from "./report/schema";
+import { binaryText, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
@@ -679,6 +682,7 @@ async function applyOneWave(repo: string, options: ApplyWaveOptions): Promise<{ 
     return { code, ...(wave.count !== undefined ? { count: wave.count } : {}) };
   } finally {
     if (code !== undefined) writeOutcomeJson(env, options.wave, code, wave);
+    if (code !== undefined) wave.state = waveState(code, wave);
     // The report is written once the wave's roots planned, whatever came of the gate and the apply.
     if (wave.planned) await writeWaveReport(repo, options, wave as Required<WaveRun>, env).catch((e) => console.log(`wave ${options.wave}: the report was not written: ${(e as Error).message}`));
     rmSync(work, { recursive: true, force: true });
@@ -732,6 +736,65 @@ interface WaveRun {
   costSource?: string;
   /** The estimator's output per root, kept beside the plans in the report. */
   costOutputs?: Map<string, string>;
+  /** Where the wave stands once it ended, for its report and the run view. */
+  state?: WaveState;
+  /** A wave split across jobs that decided: how many share jobs apply it. */
+  shareCount?: number;
+  /** Each root's `terraform_remote_state` reads of other roots: planned now, after the waves before it applied, on their state. */
+  reads?: Map<string, ReportRead[]>;
+  /** The waves whose roots its roots read. */
+  waveReads?: number[];
+}
+
+/** Where a wave stands, from how it ended. */
+export function waveState(code: number, w: Pick<WaveRun, "decided" | "refused">): WaveState {
+  if (code === EXIT.applied) return w.decided ? "applying" : "applied";
+  if (code === EXIT.waiting) return "waiting";
+  if (code === EXIT.refused || w.refused?.reason === "policy") return "refused";
+  return "failed";
+}
+
+/**
+ * The reads of a wave's roots: each `terraform_remote_state` block that reads
+ * another root of the repo, and the waves those roots are in. The wave plans
+ * after the waves before it applied, so every read is of applied state.
+ */
+export function waveReads(repo: string, waves: readonly string[][], roots: readonly string[], wave: number): { reads: Map<string, ReportRead[]>; waves: number[] } {
+  const blocks = remoteStateReads(repo, waves.flat());
+  const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
+  const reads = new Map(roots.map((r) => [r, (blocks.get(r) ?? []).map((b): ReportRead => ({ upstream: b.upstream, data: b.name, outputs: "applied" }))]));
+  return { reads, waves: wavesOf(waveOf, [...reads.values()].flat().map((r) => r.upstream), wave) };
+}
+
+/** Say what a wave's roots read, as they plan: the state of roots an earlier wave applied. */
+function logReads(label: string, reads: Map<string, ReportRead[]>, waves: readonly string[][]): void {
+  const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
+  for (const [root, rs] of reads) {
+    if (rs.length === 0) continue;
+    const ups = [...new Set(rs.map((r) => r.upstream))].sort();
+    console.log(`${label}: ${root} plans on the state ${ups.map((u) => `${u}${waveOf.has(u) ? ` (wave ${waveOf.get(u)})` : ""}`).join(", ")} applied`);
+  }
+}
+
+/**
+ * Replace this wave's row in the bucket's run view (./report/run-view.ts),
+ * when the config names a reports bucket. A view that cannot be written is
+ * logged; it never fails the wave.
+ */
+async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, row: Partial<RunWave>): Promise<void> {
+  const settings = w.settings;
+  if (!settings?.reports?.bucket) return;
+  const env = options.env ?? process.env;
+  try {
+    const facts = runFacts(repo, env, settings.forge);
+    const waves = options.terragrunt ? options.layers : applyWaves(options.layers, options.canary);
+    const reads = options.terragrunt ? new Map<string, Set<string>>() : rootDependencies(repo, options.layers.flat());
+    const skeleton = runSkeleton(facts.project, facts.commit, waves, reads);
+    const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...row });
+    console.log(`wave ${options.wave}: run view at ${key}`);
+  } catch (e) {
+    console.log(`wave ${options.wave}: the run view was not written: ${(e as Error).message}`);
+  }
 }
 
 /**
@@ -758,9 +821,10 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
       const steps = p.steps?.length ? { steps: p.steps } : {};
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps };
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
+      const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -785,6 +849,13 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     } catch (e) {
       console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
     }
+  }
+  // The run view: a share that applied adds itself to its wave's row; any other ending is the wave's state.
+  if (w.state && w.share !== undefined) {
+    await noteRunView(repo, options, w, w.state === "applied" ? { shares_applied: [w.share] } : { state: w.state });
+  } else if (w.state) {
+    const cmd = w.state === "waiting" && w.command ? { command: w.command } : {};
+    await noteRunView(repo, options, w, { state: w.state, ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}), ...cmd, ...(w.shareCount ? { shares: w.shareCount } : {}), report: runPath(report) });
   }
   await w.observer.finish(report, env, (l) => console.log(l));
 }
@@ -872,6 +943,10 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   facts.roots = roots;
   const label = `wave ${wave} of ${waves.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
+  const linked = waveReads(repo, waves, roots, wave);
+  w.reads = linked.reads;
+  w.waveReads = linked.waves;
+  logReads(label, linked.reads, waves);
   const configPath = options.config ?? findConfig(repo);
   const read = await waveSettings(repo, options, configPath);
   if ("error" in read) {
@@ -951,11 +1026,13 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(file, JSON.stringify(decision, null, 2) + "\n");
     w.decided = true;
+    w.shareCount = shares.length;
     for (const [i, share] of shares.entries()) console.log(`${label}: share ${i + 1} of ${shares.length} applies ${share.join(", ")}`);
     console.log(`${label}: ${changes === 0 ? "nothing to apply" : w.approval === "approved" ? "approved" : "no approval needed"}; its ${shares.length} share jobs apply these plans`);
     return EXIT.applied;
   }
 
+  if (changes > 0) await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), digest });
   // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
   const ok: boolean[] = new Array(planned.length);
@@ -1019,6 +1096,11 @@ async function runShare(
     return EXIT.applied;
   }
   console.log(`${label}: planning ${roots.join(", ")}`);
+  const allWaves = applyWaves(options.layers, options.canary);
+  const linked = waveReads(repo, allWaves, roots, wave);
+  w.reads = linked.reads;
+  w.waveReads = linked.waves;
+  logReads(label, linked.reads, allWaves);
   const configPath = options.config ?? findConfig(repo);
   const read = await waveSettings(repo, options, configPath);
   if ("error" in read) {
@@ -1635,6 +1717,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   if (stop !== undefined) return stop;
   recordOverridesUsed(repo, options, changing);
   // The saved plans, and nothing planned anew.
+  await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}) });
   const applied = await applyTerragruntWave({ ...run, units: changing.map((p) => p.root), workDir: planDir });
   console.log(applied.log.trim());
   const bad = applied.results.filter((r) => r.status !== "succeeded");

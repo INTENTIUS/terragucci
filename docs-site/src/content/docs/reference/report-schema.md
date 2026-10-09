@@ -49,6 +49,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
 | `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
 | `roots[].steps` | the [steps](/terragucci/guides/run-steps/) that ran for the root, in order: `name`, `when` (such as `before-plan`), `status` (`passed`; `failed`, which failed the root; `approval`, a failed `on_failure: approve` step that holds the wave), `exit` and `seconds`; the steps' output stays in the job log |
+| `roots[].reads` | the roots whose state the root reads through `terraform_remote_state`: `upstream`, the block's label (`data`), and `outputs`: `planned`, the upstream's plan in the same run, with `unknown` naming the outputs known only once it applies, or `applied`, its state as it stands, with `why` in a pull request's plan |
 | `waves[].held_by_steps` | the roots whose `on_failure: approve` step failed, so the gate holds the wave when it changes anything, whatever `gate` says |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
@@ -64,6 +65,9 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `review` | a waiting `tf-apply` wave under `approval: pr-review` | the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
 | `review_digest` | a plan's wave | the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to |
 | `waits` | a plan's wave | whether the gate or `cost.approve_above` will hold it |
+| `state` | every wave | `planned` on a plan; on a `tf-apply` wave `waiting`, `applying` (its share jobs apply), `applied`, `refused` or `failed` |
+| `reads` | a wave whose roots read other roots' state | the waves those roots are in |
+| `replans_after` | a plan's wave that read outputs known only once these waves apply | it plans again after they apply and waits for an approval of that plan; its `review_digest` is null |
 | `cost` | a wave, with `cost` set | the wave's monthly change and totals over the roots it estimated, the roots it could not estimate (`unestimated`), and with `cost.approve_above` at base the amount (`approve_above`) and whether the change is `over` it |
 
 The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.

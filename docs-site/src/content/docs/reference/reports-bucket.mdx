@@ -19,6 +19,7 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/<project>/inventory.json` | a `tf-apply` wave's upload | the resources each root holds, from its newest applied wave |
 | `<prefix>/<project>/changes.json` | a `tf-apply` wave's upload | what each applied wave did to each resource, newest first |
 | `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-<n>]/` | every upload | one run's report directory, below |
+| `<prefix>/<project>/runs/<commit>/run.json`, `run.html` | each `tf-apply` wave job | the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view): every wave of the commit's apply, its roots and what they read, and where it stands |
 | `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
 | `<prefix>/estate.json`, `estate.html` | [`terragucci estate`](/terragucci/guides/see-every-project/) | every project's latest plan, drift check and apply waves |
 | `<prefix>/history.json`, `history.html` | [`terragucci estate`](/terragucci/guides/see-every-project/#change-history) | every resource address with each apply that changed it |
@@ -57,6 +58,7 @@ Each JSON object a program reads names its schema in its `schema` field, and the
 | `changes.json` | `terragucci.changes/v1` | `dist/changes.schema.json` |
 | `history.json` | `terragucci.history/v1` | `dist/history.schema.json` |
 | `dora.json` | `terragucci.dora/v1` | `dist/dora.schema.json` |
+| `run.json` | `terragucci.run/v1` | `dist/run.schema.json` |
 
 Within `v1` a release only adds fields, and an existing field keeps its meaning. A reader checks `schema` and ignores fields it does not know. The schemas leave objects open, so a validator accepts a field a later release added.
 
