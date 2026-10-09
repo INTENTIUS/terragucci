@@ -366,6 +366,7 @@ unlock-state|terragucci unlock-state refuses to release a state lock while a run
 tip-moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
 mcp-last-apply|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
 drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
+tg-pr-plan|a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo|
 runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
@@ -15137,6 +15138,57 @@ claim_tip_moved() {
   return $rc
 }
 
+claim_tg_pr_plan() {
+  # Forgejo 16 creates no run for an event that skips a job with more than
+  # five levels of needs below it: the Terragrunt example's check job heads
+  # five waves and the tips job, so its pull requests got no plan. init hands
+  # that check's if to the runner. A copy of the example, its main pushed
+  # without the pipeline so nothing applies, gets a pull request that adds the
+  # committed pipeline and the one-unit scenario: its pull_request run plans
+  # and the plan note names live/dev/orders.
+  # BREAK: the pipeline's check keeps Forgejo's if, and Forgejo creates no
+  # pull_request run.
+  log() { echo "[smoke tg-pr-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-pr-plan" tree flow sha pr run="" i notes rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo tg-pr-plan || return 1
+  tree="$work/tree"
+  mkdir -p "$tree"
+  cp -R "$TG_EXAMPLE/." "$tree/"
+  flow="$work/terragucci.yml"
+  mv "$tree/.forgejo/workflows/terragucci.yml" "$flow"
+  grep -q "if: (env.TF_IN_AUTOMATION || 'set') != '' && (" "$flow" || { log "the committed pipeline's check keeps Forgejo's if"; drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && perl -pi -e "s/^(    if: )\\Q(env.TF_IN_AUTOMATION || 'set') != '' && (\\E(.*)\\)\$/\$1\$2/" "$flow"
+  push_tree "$tree" "$repo" main "the example, without its pipeline" >/dev/null || { drop_work "$work"; return 1; }
+  mkdir -p "$tree/.forgejo/workflows"
+  cp "$flow" "$tree/.forgejo/workflows/terragucci.yml"
+  git -C "$tree" apply "$TG_EXAMPLE/changes/one-unit.patch" || { log "changes/one-unit.patch does not apply"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$tree" "$repo" change/one-unit "the pipeline and the one-unit scenario")" || { drop_work "$work"; return 1; }
+  pr="$(api -H 'content-type: application/json' -X POST -d '{"title":"one-unit","head":"change/one-unit","base":"main"}' "$URL/api/v1/repos/$repo/pulls" | jq -r '.number // empty')"
+  [ -n "$pr" ] || { log "no pull request opened"; drop_work "$work"; return 1; }
+  # Forgejo makes the run when the event comes, or never.
+  for i in $(seq 1 40); do
+    run="$(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$sha" | jq -r '[.workflow_runs[] | select(.event == "pull_request")][0].id // empty')"
+    [ -n "$run" ] && break
+    sleep 3
+  done
+  if [ -z "$run" ]; then
+    log "pull request $pr got no pull_request run in two minutes: $(docker logs --since 5m terragucci-forgejo 2>&1 | grep -m1 "runID .* hit recursion limit" || echo 'no recursion line in the Forgejo log')"
+    drop_work "$work"; return 1
+  fi
+  TIMEOUT=900 wait_run "$repo" "$sha" pull_request || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { log "the pull_request run ended $RUN_STATUS"; print_logs "$repo" "$RUN_ID" >&2; rc=1; }
+  notes="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+  if [ -z "$notes" ]; then log "pull request $pr has no plan note"; rc=1
+  elif ! grep -q "live/dev/orders" <<<"$notes"; then log "the plan note does not name live/dev/orders: $(head -c 400 <<<"$notes")"; rc=1
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $pr got its pull_request run ($RUN_URL) and a plan note naming live/dev/orders"
+  return $rc
+}
+
 claim_runner_nudge() {
   # Forgejo 16 moves no task version when a run ends with no task reporting
   # (forgejo#14576), so a run queued behind it in a concurrency group waits
@@ -15473,6 +15525,7 @@ tip-moved            self! weight=150
 mcp-last-apply       weight=120
 drift-agent          runner self! weight=250
 runner-nudge         stack! self! weight=200
+tg-pr-plan           tg self! after=tg-waves weight=300
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
