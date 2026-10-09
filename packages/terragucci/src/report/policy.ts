@@ -259,6 +259,32 @@ export interface PolicyRunContext {
   commit?: string;
   /** The pull or merge request, by number. */
   pullRequest?: string;
+  /** The root's and its wave's monthly cost, when `cost` is on: `input.cost`, and with `input: hcp` also `input.run.cost_estimate`. */
+  cost?: PolicyCost;
+}
+
+/** One set of monthly figures, in the estimator's currency. Null where the estimator gave none. */
+export interface PolicyCostFigures {
+  monthly_delta: number | null;
+  monthly_total: number | null;
+  past_monthly_total: number | null;
+}
+
+/** What a policy reads as `input.cost`: the root's monthly cost, its wave's, and `cost.approve_above` at base. */
+export interface PolicyCost {
+  estimator: string;
+  currency: string;
+  root: PolicyCostFigures;
+  /** The wave the root applies in, with the sums over its roots estimated. Absent when the run cuts no waves. */
+  wave?: PolicyCostFigures & { number: number };
+  /** `cost.approve_above` at base; null when unset. */
+  approve_above: number | null;
+}
+
+/** HCP Terraform's `run.cost_estimate`, from the root's figures: decimal strings, as HCP gives them. */
+export function hcpCostEstimate(cost: PolicyCost): Record<string, string> {
+  const money = (n: number | null): string => (n === null ? "" : n.toFixed(2));
+  return { prior_monthly_cost: money(cost.root.past_monthly_total), proposed_monthly_cost: money(cost.root.monthly_total), delta_monthly_cost: money(cost.root.monthly_delta) };
 }
 
 /**
@@ -299,8 +325,16 @@ export function hcpRun(context: PolicyRunContext): Record<string, unknown> {
 
 /** What the engine reads as `input`: the plan as it is, or `{plan, run}` with `input: hcp`. */
 export function policyInput(policy: PolicySettings, planJson: string, context?: PolicyRunContext): string {
-  if ((policy.input ?? "plan") !== "hcp") return planJson;
-  return `{"plan":${planJson},"run":${JSON.stringify(hcpRun(context ?? { root: "" }))}}`;
+  const cost = context?.cost;
+  if ((policy.input ?? "plan") !== "hcp") {
+    if (!cost) return planJson;
+    // The plan JSON has no `cost` key of its own: the figures sit beside the plan's keys, where a policy reads `input.cost`.
+    const plan = JSON.parse(planJson) as Record<string, unknown>;
+    return JSON.stringify({ ...plan, cost });
+  }
+  const run = hcpRun(context ?? { root: "" });
+  if (cost) run.cost_estimate = hcpCostEstimate(cost);
+  return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}}`;
 }
 
 /** The engine's arguments for one input file. */
@@ -822,12 +856,12 @@ export interface PolicyCheck {
 export async function checkPlans(
   repo: string,
   policy: PolicySettings,
-  items: { path: string; plan: unknown }[],
+  items: { path: string; plan: unknown; cost?: PolicyCost }[],
   base: string | undefined,
   trust: TrustedOptions,
   options: PolicyOptions,
   log: (line: string) => void,
-  run: Omit<PolicyRunContext, "root"> = {},
+  run: Omit<PolicyRunContext, "root" | "cost"> = {},
 ): Promise<PolicyCheck> {
   const roots = new Map<string, ReportRootPolicy>();
   const failed = new Map<string, string>();
@@ -862,7 +896,7 @@ export async function checkPlans(
       // The engine reads the unredacted plan; what it prints back is redacted as the stored plan is.
       const verdict: PolicyVerdict = setup !== undefined || binary === undefined
         ? { violations: [], error: setup ?? "no engine" }
-        : redactVerdict(await checkPlan(binary, resolved.settings, repo, JSON.stringify(item.plan), options, { ...run, root: item.path }), item.plan);
+        : redactVerdict(await checkPlan(binary, resolved.settings, repo, JSON.stringify(item.plan), options, { ...run, root: item.path, ...(item.cost ? { cost: item.cost } : {}) }), item.plan);
       roots.set(item.path, rootPolicy(verdict));
       for (const w of verdict.warnings ?? []) log(`${item.path}: policy warns: ${w}`);
       if (verdict.error === undefined && verdict.violations.length === 0) {

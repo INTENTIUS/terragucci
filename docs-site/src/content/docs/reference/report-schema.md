@@ -34,11 +34,12 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
+| `roots[].binary` | the binary a plain root ran: `name` (`tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu)), `version`, and `pin`, where the root pinned that version (`.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`); `pin` is absent for a root that runs the job's binary unpinned |
 | `deferred[]` | Terragrunt units planned once the units they wait for apply, and what each waits for |
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
 | `intent` | the description check's decision: status, whether it flagged the pull request, the decision, probability and threshold, model, `state_digest` and the destroys and replacements the text leaves out (`unmentioned`); present only after `respond description` ran on the report |
-| `cost` | with `cost` set, on a `tf-plan` run: the estimator, the currency, the monthly change and the totals before and after over the roots estimated, and per root (`roots[]`) the same three figures, the path of the estimator's output (`output`) or why there is no estimate (`error`) |
+| `cost` | with `cost` set, on a `tf-plan` run or a `tf-apply` wave: the estimator, the currency, the monthly change and the totals before and after over the roots estimated, and per root (`roots[]`) the same three figures, the path of the estimator's output (`output`) or why there is no estimate (`error`) |
 | `policy` | the policy check, when `policy` is on: engine, input mode, namespace, whether the policy came from the checkout or the base branch, the roots it denied and the warning count; with `policy.override` at base, `overriders` and the denied roots an override stands for, `overridden` |
 | `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the ids of the rules that denied (`rules`), the warnings and, for `error`, why it could not run; a denied root is `failed` and keeps its `changes` |
 | `roots[].policy.override` | the [override](/terragucci/reference/policy/#overriding-a-denial) that stands for the root's plan and rules: `by`, `at`, `rules`, `reason`, `plan_digest`, the ledger line's `digest`, and `sealed`; on a `tf-apply` wave the root then applies and is `planned` |
@@ -47,6 +48,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
 | `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
 | `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
+| `roots[].steps` | the [steps](/terragucci/guides/run-steps/) that ran for the root, in order: `name`, `when` (such as `before-plan`), `status` (`passed`; `failed`, which failed the root; `approval`, a failed `on_failure: approve` step that holds the wave), `exit` and `seconds`; the steps' output stays in the job log |
+| `waves[].held_by_steps` | the roots whose `on_failure: approve` step failed, so the gate holds the wave when it changes anything, whatever `gate` says |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
 ### waves
@@ -60,7 +63,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `refused` | a `tf-apply` wave that planned but applied nothing | the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied |
 | `review` | a waiting `tf-apply` wave under `approval: pr-review` | the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
 | `review_digest` | a plan's wave | the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to |
-| `waits` | a plan's wave | whether the gate will hold it |
+| `waits` | a plan's wave | whether the gate or `cost.approve_above` will hold it |
+| `cost` | a wave, with `cost` set | the wave's monthly change and totals over the roots it estimated, the roots it could not estimate (`unestimated`), and with `cost.approve_above` at base the amount (`approve_above`) and whether the change is `over` it |
 
 The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
 
@@ -70,7 +74,7 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 |---|---|
 | every destroy, replacement and refusal | `named[]`, filtered on `action` |
 | the roots a group folds | `groups[].units`, matched to `roots[].path` |
-| the digest an approval binds | `waves[].set_digest` of a `tf-apply` wave, over the `roots[].plan_digest` of each root whose plan changes something; a plan's waves carry the same digest as `review_digest` |
+| the digest an approval binds | `waves[].set_digest` of a `tf-apply` wave, over the `roots[].plan_digest` of each root whose plan changes something and, with `cost.approve_above` at base, the amount, the currency and the wave's monthly change; a plan's waves carry the same digest as `review_digest` |
 | the digest a pull request review binds | `waves[].review_digest` in the plan report, compared with the same digest the wave plans after the merge |
 | why a root is shown open | `roots[].why` |
 | the full plan of a root | `roots[].plan` |
@@ -78,6 +82,7 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | how long a root waited for its state lock | `roots[].timings.lock_waits`, with the attempts it took |
 | what the policy denied or warned about in a root | `roots[].policy` |
 | who overrode a denial, and why | `roots[].policy.override` |
+| the binary and version each root ran | `roots[].binary` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
 Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it.

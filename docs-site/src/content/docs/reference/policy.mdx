@@ -97,6 +97,31 @@ Where the policy came from sets what to change:
 
 HCP Terraform and Spacelift policies read other paths and deny nothing as written.
 
+### Cost
+
+With [`cost`](/terragucci/guides/estimate-cost/) set, `input.cost` holds the monthly cost of the root and of its wave, in `tf-plan` and in each `tf-apply` wave. The plan JSON has no `cost` key of its own, so with `input: plan` it sits beside the plan's keys; with `input: hcp` it sits beside `plan` and `run`.
+
+| Field | Value |
+|---|---|
+| `cost.estimator`, `cost.currency` | the estimator's name, such as `infracost`, and its currency |
+| `cost.root.monthly_delta` | the change this root's plan makes to its monthly cost |
+| `cost.root.monthly_total`, `cost.root.past_monthly_total` | the root's monthly cost after the plan and before it |
+| `cost.wave.number`, `cost.wave.monthly_delta`, `cost.wave.monthly_total`, `cost.wave.past_monthly_total` | the root's wave and the same figures summed over its roots estimated; in `tf-plan`, over the roots the change reaches |
+| `cost.approve_above` | `cost.approve_above` in the config at base, or `null` |
+
+A figure the estimator could not give is `null`. Without `cost`, `input.cost` is absent. A denial on cost blocks the plan and the wave like any other, and an [override](#overriding-a-denial) can let one plan through.
+
+```rego
+package main
+
+import rego.v1
+
+deny contains msg if {
+  input.cost.wave.monthly_delta > 500
+  msg := sprintf("wave %d adds %v %s a month", [input.cost.wave.number, input.cost.wave.monthly_delta, input.cost.currency])
+}
+```
+
 ### Which rules count
 
 | Rule | Effect |
@@ -284,6 +309,7 @@ deny contains msg if {
 | `run.refresh` | `true` |
 | `run.replace_addrs`, `run.target_addrs`, `run.workspace.tags` | empty lists |
 | `run.variables` | empty |
+| `run.cost_estimate.prior_monthly_cost`, `proposed_monthly_cost`, `delta_monthly_cost` | with `cost` set, the root's monthly cost before, after and the change, as decimal strings |
 
 ### policies.hcl
 
