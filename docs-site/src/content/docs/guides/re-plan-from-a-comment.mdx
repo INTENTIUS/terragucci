@@ -58,11 +58,25 @@ Supported, as on GitHub.
 
 2. Read the note. The `replan` job plans the head with the read-only role and no forge token, and the `replan-note` job updates the same note and status.
 
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
    <Shot step="github" view="reply" alt="The plan note on a GitHub pull request after /terragucci plan: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.terraform_data.jobs" />
 
-   On Forgejo, the same note on the example's pull request, updated in place, with the comment below it:
+   </TabItem>
+   <TabItem label="GitLab">
+
+   The `comments` job starts a new merge request pipeline on its next run, and that pipeline's plan job updates the same note.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   The same note on the example's pull request, updated in place, with the comment below it:
 
    <Shot step="replan" view="note" alt="The plan note on the example's one-root pull request in Forgejo, planned again after the /terragucci plan comment below it: one instance in one group, wave 2 with its digest, and dev orders' queue keeping messages for seven days" />
+
+   </TabItem>
+   </Tabs>
 
    A named root the change does not reach gets a "not affected" reply and nothing is updated. A name that is not a root is refused, with the roots listed:
 

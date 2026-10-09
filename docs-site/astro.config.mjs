@@ -153,6 +153,7 @@ export default defineConfig({
 						{ label: 'Webhook event schema', slug: 'reference/notify-event' },
 						{ label: 'The audit trail', slug: 'reference/audit-trail' },
 						{ label: 'Migration files', slug: 'reference/migration-files' },
+						{ label: 'Delivery metrics', slug: 'reference/delivery-metrics' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
 						{ label: 'Tips', slug: 'reference/tips' },
 						{ label: 'Policy', slug: 'reference/policy' },

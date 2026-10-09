@@ -8,6 +8,7 @@
 #   verify_tree DIR            every resource the example's roots in DIR declare
 #                              is in floci (expected lists them)
 #   push_tree DIR REPO BRANCH MESSAGE   commit DIR as one commit and force-push it;
+#                              on Forgejo, waits until the repo is not empty;
 #                              prints the sha. TG_FIXED_DATE=1 pins the commit
 #                              dates so the same tree always gets the same sha.
 #   wait_run REPO SHA [EVENT]  wait for the Actions run on SHA (the newest one,
@@ -86,6 +87,8 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     if [ -z "${TG_KEEP_DIGESTS:-}" ]; then
       for f in .forgejo/workflows/*.yml .github/workflows/*.yml .gitlab/*.yml .gitlab-ci.yml; do
         if [ -f "$f" ]; then perl -pi -e 's#(ghcr\.io/intentius/terragucci-[a-z]+:[^@\s]+)\@sha256:[0-9a-f]{64}#$1#g' "$f"; fi
+        # The GitLab lab's image: the tofu image with this tree's bundle (gitlab.sh image).
+        if [ -f "$f" ] && [ -n "${TG_TOFU_IMAGE:-}" ]; then TG_TOFU_IMAGE="$TG_TOFU_IMAGE" perl -pi -e 's#ghcr\.io/intentius/terragucci-tofu:[^@\s"'"'"']+#$ENV{TG_TOFU_IMAGE}#g' "$f"; fi
       done
     fi
     git add -A
@@ -101,6 +104,19 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     if ! out="$(git push -q --force "$remote" "HEAD:refs/heads/$branch" 2>&1)"; then
       echo "${out//${TOKEN}/***}" >&2
       exit 1
+    fi
+    # Forgejo makes the first branch its push queue handles in an empty repo
+    # the default, whatever default_branch the repo was created with, and the
+    # queue can take a later push first. Wait until the repo is not empty, so
+    # the branch pushed first is the default before anything else is pushed.
+    if [ "${LIB_FORGE:-forgejo}" != gitlab ]; then
+      local empty=""
+      for _ in $(seq 1 120); do
+        empty="$(api "$URL/api/v1/repos/$repo" 2>/dev/null | jq -r '.empty | tostring')"
+        [ "$empty" = false ] && break
+        sleep 1
+      done
+      [ "$empty" = false ] || { echo "$repo still reads as empty after the push of $branch" >&2; exit 1; }
     fi
     git rev-parse HEAD
   )

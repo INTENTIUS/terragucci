@@ -1,0 +1,53 @@
+{
+  "step": "gitlab",
+  "source_hash": "c6909fe377b97186",
+  "commands": [
+    {
+      "cmd": "just example-gitlab change one-root",
+      "output": "Merge request  /root/example/-/merge_requests/1 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/257 (success)\nCheck          /root/example/-/pipelines/256 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab change unformatted",
+      "output": "Merge request  /root/example/-/merge_requests/2 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/259 (failed)\nCheck          /root/example/-/pipelines/258 (failed)",
+      "exit": 0
+    },
+    {
+      "cmd": "the check job of change/unformatted",
+      "output": "envs/dev/orders/locals.tf\n--- old/envs/dev/orders/locals.tf\n+++ new/envs/dev/orders/locals.tf\n@@ -1,4 +1,4 @@\n locals {\n-    team   = \"orders\"\n+  team  = \"orders\"\n   owner = \"shop\"\n }\nUploading artifacts for failed job\nUploading artifacts...\nWARNING: terragucci-check/: no matching files. Ensure that the artifact path is relative to the working directory (/builds/root/example)\nERROR: No files to upload\nCleaning up project directory and file based variables",
+      "exit": 1
+    },
+    {
+      "cmd": "just example-gitlab change destroy",
+      "output": "Merge request  /root/example/-/merge_requests/3 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/264 (success)\nCheck          /root/example/-/pipelines/262 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab merge destroy",
+      "output": "Merged    merge request !3 into main\nPipeline  /root/example/-/pipelines/266 (failed)\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "exit": 0
+    },
+    {
+      "cmd": "the waiting apply job on main",
+      "output": "wave 4 of 4: planning envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\nwave 4 of 4: planning up to 4 roots at once (the s3 backend)\nenvs/prod/email: No changes. Your infrastructure matches the configuration.\nenvs/prod/orders: No changes. Your infrastructure matches the configuration.\nenvs/prod/payments: No changes. Your infrastructure matches the configuration.\nenvs/prod/search: No changes. Your infrastructure matches the configuration.\nenvs/staging/email: Plan: 0 to add, 1 to change, 1 to destroy.\nenvs/staging/orders: No changes. Your infrastructure matches the configuration.\nenvs/staging/payments: No changes. Your infrastructure matches the configuration.\nenvs/staging/search: No changes. Your infrastructure matches the configuration.\nwave 4 of 4: set digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28, 2 changes, 1 destroy\nwave 4 of 4: approval sealed (identity.gates in chant.workspace.json at base, with no approval key)\nwave 4 of 4: note: set approval: sealed in terragucci.yml to keep sealed approvals, or approval: ledger and run terragucci init to drop the gates\nwave 4 of 4 waits for an approval of digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28. Read its plans above, then approve it with:\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "exit": 3
+    },
+    {
+      "cmd": "just example-gitlab change drift",
+      "output": "deleted shop-staging-orders-jobs from floci, outside Terraform\nDrift run  /root/example/-/pipelines/267 (success)\nIssue      /root/example/-/issues/1",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "required-light": "2f66b6b5a4df4ef8",
+    "required-dark": "3c3e915489af1fd6",
+    "note-light": "0549cef71f394f21",
+    "note-dark": "5b64b9c1f3abef48",
+    "check-light": "314e052c6a153f60",
+    "check-dark": "01a363e454c03f18",
+    "waiting-light": "44f975c46494d035",
+    "waiting-dark": "4a4402020f7174d9",
+    "drift-light": "37e5769d51b90868",
+    "drift-dark": "ed2e6d79d0bfef22"
+  }
+}
