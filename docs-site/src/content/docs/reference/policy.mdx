@@ -128,11 +128,11 @@ With [`review.agent`](/terragucci/guides/agent-review-a-pull-request/) set, `inp
 
 | Field | Value |
 |---|---|
-| `review.found` | whether the pull request has a review note of its head, posted by the pipeline's own token |
-| `review.risk` | `low`, `medium` or `high` from that note; `unknown` when none was found, the model gave none, or its command failed |
+| `review.found` | whether a run of the pull request's head kept the review job's artifact |
+| `review.risk` | `low`, `medium` or `high` from that review; `unknown` when none was found, the model gave none, or its command failed |
 | `review.pull_request`, `review.head` | the pull request the commit merged, or the one applied before merge, and its head; `null` for a commit no pull request made |
 
-The wave reads the note from the pull request when it runs, and counts only a note posted by the pipeline's own token: one anyone else posts is ignored. A pull request's own workflow runs with that token, so a writer can still post one ([threat model](/terragucci/reference/threat-model/#the-review)). GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
+The wave reads the review from the `terragucci-review` artifact of the newest `pull_request` run of the pull request's head, through the forge's API: the forge ties the artifact to the run and the run to the head. It never reads the note on the pull request, which any run's token can post, the run of another branch included ([threat model](/terragucci/reference/threat-model/#the-review)). On GitHub the apply jobs get `actions: read` for it. An artifact the forge has expired reads as no review. GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
 
 ```rego
 package main
