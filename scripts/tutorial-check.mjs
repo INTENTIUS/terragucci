@@ -43,6 +43,11 @@ for (const f of files(join(root, "example")).map((p) => relative(root, p)).sort(
   hash.update(f.startsWith("example/.forgejo/") ? withoutImages(readFileSync(join(root, f), "utf8")) : readFileSync(join(root, f)));
 }
 const exampleHash = hash.digest("hex").slice(0, 16);
+// `--hash` prints the example hash and stops: the capture scripts record it, so all three hash one way.
+if (process.argv.includes("--hash")) {
+  console.log(exampleHash);
+  process.exit(0);
+}
 
 const problems = [];
 const shaOf = (file) => createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);

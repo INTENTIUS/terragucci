@@ -1,11 +1,11 @@
 {
   "step": "tg",
-  "source_hash": "b4a6bbf4c012d06a",
+  "source_hash": "c6909fe377b97186",
   "commands": [],
   "shots": {
     "check-light": "7f41dd06b7eda4dc",
     "check-dark": "b24b5ed706cbdc71",
-    "waiting-light": "91906defeb04e30a",
-    "waiting-dark": "07c6d1e1e1075d42"
+    "waiting-light": "4538a999d6a75c13",
+    "waiting-dark": "3c62a1e1765b7db8"
   }
 }

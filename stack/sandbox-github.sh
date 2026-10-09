@@ -1699,8 +1699,8 @@ EOF
       log "no drift issue on $RELEASE; the drift view is left as it was"
     fi
     # The files the docs use: step `github`, beside the Forgejo steps.
-    hash="$(cd "$ROOT" && find example -type f ! -path '*/.terraform/*' | LC_ALL=C sort | while read -r f; do
-      printf '%s\0' "$f"; cat "$f"; done | shasum -a 256 | cut -c1-16)"
+    # The example's hash, computed the way tutorial-check computes it.
+    hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
     # A view this run left out keeps the hash the last capture recorded.
     shots="$(jq -c '.shots // {}' "$DATA/github.json" 2>/dev/null || echo '{}')"
     for pair in $pairs; do
