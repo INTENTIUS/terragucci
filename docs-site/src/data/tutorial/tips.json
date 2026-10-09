@@ -1,10 +1,10 @@
 {
   "step": "tips",
-  "source_hash": "89523777c20d72d8",
+  "source_hash": "197b083215a6a023",
   "commands": [
     {
       "cmd": "just example change float",
-      "output": "[example] pushed change/float at 3f4c675e\n[example] run 3 for 3f4c675e (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/1/attempt/1)\n[example] run 4 for 3f4c675e (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/1 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/3/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/float at 641b1894\n[example] run 23 for 641b1894 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/23/jobs/1/attempt/1)\n[example] run 24 for 641b1894 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/24/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/8 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/23/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/24/jobs/0/attempt/1 (success)",
       "exit": 0
     }
   ],
