@@ -365,7 +365,8 @@ provider-cache-once|a wave of eight roots that use one provider downloads it onc
 unlock-state|terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies|
 tip-moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
 mcp-last-apply|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
-drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|'
+drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
+runner-nudge|on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -15136,6 +15137,56 @@ claim_tip_moved() {
   return $rc
 }
 
+claim_runner_nudge() {
+  # Forgejo 16 moves no task version when a run ends with no task reporting
+  # (forgejo#14576), so a run queued behind it in a concurrency group waits
+  # until something else moves it. This makes that state on purpose: run 1's
+  # job asks for a label no runner has, so it waits; run 2, pushed after it in
+  # the same group, queues behind it; then run 1 is cancelled, which frees the
+  # group and moves nothing. The claim holds the stack alone, so no other job
+  # moves the version either. lib.sh's runner_watch, polled by wait_run, sees
+  # a job waiting with nothing running and restarts the runner, and run 2
+  # succeeds. BREAK: TG_RUNNER_WATCH=off, so run 2 is still waiting after three
+  # minutes.
+  log() { echo "[smoke runner-nudge] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/runner-nudge" tree sha1 sha2 r1="" r2="" i rc=0 t0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo runner-nudge || return 1
+  tree="$work/tree"
+  mkdir -p "$tree/.forgejo/workflows"
+  nudge_flow() { printf 'on: push\nconcurrency:\n  group: nudge\n  cancel-in-progress: false\njobs:\n  a:\n    runs-on: %s\n    steps:\n      - run: echo ran\n' "$1" > "$tree/.forgejo/workflows/nudge.yml"; }
+  nudge_run() { api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$1" | jq -r '.workflow_runs[0].id // empty'; }
+  nudge_flow terragucci-no-runner-has-this
+  sha1="$(push_tree "$tree" "$repo" main "run 1: a label no runner serves")" || { drop_work "$work"; return 1; }
+  for i in $(seq 1 30); do r1="$(nudge_run "$sha1")"; [ -n "$r1" ] && break; sleep 2; done
+  [ -n "$r1" ] || { log "no run for $sha1"; drop_work "$work"; return 1; }
+  nudge_flow docker
+  sha2="$(push_tree "$tree" "$repo" main "run 2: queued behind run 1")" || { drop_work "$work"; return 1; }
+  for i in $(seq 1 30); do r2="$(nudge_run "$sha2")"; [ -n "$r2" ] && break; sleep 2; done
+  [ -n "$r2" ] || { log "no run for $sha2"; drop_work "$work"; return 1; }
+  # A job still running elsewhere would move the version when it ends.
+  for i in $(seq 1 60); do
+    [ "$(api "$URL/api/v1/admin/actions/runners/jobs" | jq '[.[]? | select(.status == "running")] | length')" = 0 ] && break
+    sleep 2
+  done
+  log "run 2 ($r2) is $(api "$URL/api/v1/repos/$repo/actions/runs/$r2" | jq -r .status) behind run 1 ($r1); cancelling run 1"
+  api -o /dev/null -X POST "$URL/api/v1/repos/$repo/actions/runs/$r1/cancel" || { log "could not cancel run 1"; drop_work "$work"; return 1; }
+  [ -n "${BREAK:-}" ] && TG_RUNNER_WATCH=off
+  t0="$(date +%s)"
+  if TIMEOUT=180 wait_run "$repo" "$sha2" push && [ "$RUN_STATUS" = success ]; then
+    log "run 2 succeeded $(( $(date +%s) - t0 ))s after run 1 was cancelled, after $RUNNER_NUDGES runner restart(s)"
+  else
+    log "run 2 did not succeed within three minutes of run 1's cancel (status ${RUN_STATUS:-waiting})"
+    api -o /dev/null -X POST "$URL/api/v1/repos/$repo/actions/runs/$r2/cancel" 2>/dev/null || true
+    rc=1
+  fi
+  TG_RUNNER_WATCH=on
+  drop_work "$work"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -15421,6 +15472,7 @@ unlock-state         runner self! weight=300
 tip-moved            self! weight=150
 mcp-last-apply       weight=120
 drift-agent          runner self! weight=250
+runner-nudge         stack! self! weight=200
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
