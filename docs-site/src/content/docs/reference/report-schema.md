@@ -34,7 +34,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
-| `roots[].binary` | the binary a plain root ran: `name` (`tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu)), `version`, and `pin`, where the root pinned that version (`.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`); `pin` is absent for a root that runs the job's binary unpinned |
+| `roots[].binary` | the binary a root or Terragrunt unit ran: `name` (`tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu)), `version`, and `pin`, where the root pinned that version (`.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`); `pin` is absent for a root that runs the job's binary unpinned; for a unit, `terragrunt` with the Terragrunt `version` that ran it and `pin: terragrunt_version_constraint` when the unit pinned it (minor 22) |
 | `deferred[]` | Terragrunt units planned once the units they wait for apply, and what each waits for |
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |

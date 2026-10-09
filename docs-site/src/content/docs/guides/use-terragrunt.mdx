@@ -1,7 +1,7 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
-claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions]
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-terragrunt/.
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
@@ -35,15 +35,17 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
    npx terragucci init --dry-run
    ```
 
-   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. Explicit stacks are not supported: `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
+   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. An explicit stack (`terragrunt.stack.hcl`) is generated with `terragrunt stack generate` before discovery, so its units are found and cut into waves like any other; every job generates it again, so the generated `.terragrunt-stack` directories stay out of the repo. Generating a stack needs Terragrunt on the path, and without it `init` stops with an error naming the stack file.
 
    Without Terragrunt on the path, `init` reads the units' `dependency` and `dependencies` paths to cut the waves; the apply jobs check them with `terragrunt find`.
 
-2. Name the tool Terragrunt calls. `binary` names the tool Terragrunt runs underneath:
+2. Name the tool Terragrunt calls. `binary` names the tool Terragrunt runs underneath, `tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu):
 
    ```yaml
    binary: tofu
    ```
+
+   With `choudoufu` the jobs run in the choudoufu image and install Terragrunt beside it.
 
 3. Tune it, if you need to. An optional `terragrunt:` block sets version, parallelism, roles by unit path, excluded units and how dependents are planned; see [terragucci.yml keys](/terragucci/reference/config/#the-terragrunt-block).
 
@@ -81,6 +83,9 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 | `waves.jobs` | a wide wave's job plans every unit and decides the gate; each share job plans and applies its own units with `run --all --filter` ([A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
 | State versions | each unit's state version is recorded after its wave applies, its backend read from the unit's `remote_state` block ([Find the state version an apply left](/terragucci/guides/find-a-state-version/)) |
 | A failed format check on a branch | the `fmt` job runs `terragrunt hcl fmt` and the binary's `fmt`, and pushes the commit to the branch |
+| Drift | the drift job reports drift by unit; its pull request writes a drifted value into the unit's own `inputs` in `terragrunt.hcl` where its module reads that variable, and `respond.drift: attribute` names who changed it ([Drift](/terragucci/reference/responses/#drift)) |
+| Moving resources between units | a migration file names units as it names roots; Terragrunt prepares each unit, and the move goes through the same gate ([Move resources between roots](/terragucci/guides/move-resources-between-roots/)) |
+| A version per unit | a unit's `.opentofu-version` or `.terraform-version`, a `version` map glob, or an exact `terragrunt_version_constraint` in its own `terragrunt.hcl` picks its releases; each is installed in the job, and a wave runs as one `run --all` per pair of releases ([A version per root](/terragucci/reference/config/#a-version-per-root)) |
 
 A wave of units the gate holds waits as a wave of roots does, naming its units, its set digest and the approve command:
 
