@@ -244,11 +244,11 @@ describe("a wave behind its gate", () => {
     const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
     const wave = () => JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).waves[0];
     expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
-    expect(wave()).toMatchObject({ approval: "waiting", gate: { branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" } });
+    expect(wave()).toMatchObject({ approval: "waiting", state: "waiting", gate: { branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" } });
     const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
     approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
     expect(await applyWave(work, { ...opts, now: T(3) })).toBe(0);
-    expect(wave()).toMatchObject({ approval: "approved", gate: { branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" } });
+    expect(wave()).toMatchObject({ approval: "approved", state: "applied", gate: { branch: "chant/lifecycle", path: "_gates/tf-apply.jsonl" } });
     expect(await applyWave(work, { ...opts, gate: "never", now: T(4) })).toBe(0);
     expect(wave().approval).toBe("not-required");
   });
@@ -328,6 +328,7 @@ describe("a wave behind its gate", () => {
     expect(diff.roots.map((r) => [r.root, r.changes.map((c) => [c.address, c.attributes])])).toEqual([["a", [["terraform_data.x", ["input"]]]]]);
     // The wave's own report says why it applied nothing, for the audit trail.
     expect(JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).waves[0].refused).toEqual({ reason: "approval", approved: digest, by: "alice", roots: ["a"] });
+    expect(JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).waves[0].state).toBe("refused");
   });
 
   it("writes how the wave ended as terragucci.outcome/v1 to TG_OUTCOME_JSON: waiting, refused, applied and denied", async () => {
