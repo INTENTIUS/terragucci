@@ -6,7 +6,8 @@
  *
  * The entries come from two records the customer already holds
  * (report/audit.ts): each project's `chant/lifecycle` history, for every
- * approval, approval request, policy override and revocation, and each
+ * approval, approval request, policy override and revocation, state
+ * migration and state export, and each
  * project's `tf-apply` wave reports in the bucket, for every apply and its
  * result and every refused wave. Nothing else is read, and nothing is kept
  * anywhere but the bucket.
@@ -40,6 +41,8 @@ import {
   OVERRIDE_LEDGER_FILE,
   MIGRATE_LEDGER_FILE,
   MIGRATE_DONE_FILE,
+  EXPORT_LEDGER_FILE,
+  EXPORT_DONE_FILE,
   parseLedgerLog,
   readRecord,
   renderAuditHtml,
@@ -188,7 +191,7 @@ function readLedger(source: Source): AuditEntry[] | "none" {
   }
   try {
     const entries: AuditEntry[] = [];
-    for (const path of [APPLY_LEDGER, OVERRIDE_LEDGER_FILE, MIGRATE_LEDGER_FILE, MIGRATE_DONE_FILE]) {
+    for (const path of [APPLY_LEDGER, OVERRIDE_LEDGER_FILE, MIGRATE_LEDGER_FILE, MIGRATE_DONE_FILE, EXPORT_LEDGER_FILE, EXPORT_DONE_FILE]) {
       const log = git(dir, ["-c", "core.quotepath=off", "log", "--reverse", "--no-color", "--no-ext-diff", "--no-renames", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", ref, "--", path]);
       if (!log.ok) throw new Error(`cannot read the history of ${path} on ${LEDGER_BRANCH}: ${log.err}`);
       entries.push(...ledgerEntries(source.project, path, parseLedgerLog(log.out), source.commitUrl));

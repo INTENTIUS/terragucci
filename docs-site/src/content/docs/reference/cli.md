@@ -31,7 +31,8 @@ prompt: |
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names; the generated apply jobs run it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
-| `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
+| `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state |
+| `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
@@ -375,6 +376,28 @@ terragucci.yml: ok
 approval: ledger (the default)
 ```
 
+With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) in a repo of plain roots, it reads each root's backend and `terraform_remote_state` blocks and lists the state each role reaches, one line per role and stage. Each `oidc.roles` glob is an environment, and the roots no glob matches are one more, with `plan_role` and `apply_role`. A warning, on stderr, names:
+
+| Warning | When |
+|---|---|
+| a role is the role of two environments | the same role ARN in two globs, or a glob and the pair; it reaches the state of each |
+| a root reads the state of another environment's root | its `terraform_remote_state` names that root's state key, so its roles must reach that state |
+| a root matches no glob and `oidc` names no pair | the root plans and applies with no AWS role |
+
+With `terragrunt.credentials`, it warns when one role serves two unit globs. A warning leaves the exit code 0.
+
+```text
+terragucci.yml: ok
+approval: ledger (the default)
+state access:
+  arn:aws:iam::444455556666:role/dev-plan (plan, envs/dev/**): s3://acme-state/dev/app.tfstate
+  arn:aws:iam::444455556666:role/dev-apply (apply, envs/dev/**): s3://acme-state/dev/app.tfstate
+  arn:aws:iam::111122223333:role/prod-plan (plan, envs/prod/**): s3://acme-state/prod/app.tfstate; reads s3://acme-state/dev/app.tfstate
+  arn:aws:iam::111122223333:role/prod-apply (apply, envs/prod/**): s3://acme-state/prod/app.tfstate; reads s3://acme-state/dev/app.tfstate
+terragucci.yml: 1 warning(s)
+  oidc: envs/prod/app (envs/prod/**) reads the state of envs/dev/app (envs/dev/**) through terraform_remote_state, so arn:aws:iam::111122223333:role/prod-plan and arn:aws:iam::111122223333:role/prod-apply reach s3://acme-state/dev/app.tfstate, another environment's state
+```
+
 ## approve
 
 ```bash
@@ -413,6 +436,27 @@ terragucci migrate revert <migration>
 ```
 
 Writes `migrations/<migration>-revert.yml`, the [revert](/terragucci/reference/migration-files/#revert) of a migration that applied, from its record on `chant/lifecycle` as `origin` holds it. It writes the file and nothing else: the change that carries it is proved by the plan job and waits at wave 1 for its approval, like any migration. Exit code 1 when the migration never applied, moved states to a new backend, or left a root with no version to put back.
+
+## state export
+
+```bash
+terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
+```
+
+| Flag | Meaning |
+|---|---|
+| `<root>` | the root whose state to export, a directory of plain roots with an `s3` backend in a bucket that keeps versions |
+| `--version` | the version id, as the estate page's State versions section lists it; the bucket's current version by default |
+| `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
+| `--actor` | who asks; git's `user.name` by default |
+
+Run it twice, in a checkout whose `origin` you can push to, with your own cloud identity. The first run reads the version's metadata, records a request on `chant/lifecycle`, prints the `chant approve tf-state-export <root> --plan <digest>` command for someone else to run, and exits 3. Once that approval stands, the second run downloads the version, records the export in `_gates/tf-state-export/done.jsonl`, and then writes the file, readable by you alone. [Export a state version](/terragucci/guides/export-a-state-version/) has the steps.
+
+```text
+state export: wrote /tmp/terragucci-export-Xb3k/envs_dev_app.3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY.tfstate: envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY, approved by bob
+```
+
+An approval by the person who asked does not count. A request exports once; another export asks again. It never writes a state to the reports bucket or a job artifact.
 
 ## resume
 
@@ -488,7 +532,8 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `comment`, `comment-apply` | decision written, or every note answered | forge error, unreadable event file | | | |
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | | |
 | `pr-merge` | merged | not merged | | | |
-| `config check` | `ok` | | problems found | | |
+| `config check` | `ok`, with or without warnings | | problems found | | |
+| `state export` | the version written and recorded | | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
 | `check-root`, `check-policy` | passed | failed | | | |
 | `install` | done | | not a Linux host | | |
 | `estate` | page written | a project's index could not be read | | | |

@@ -71,6 +71,7 @@ const forgejoSerializer = {
 };
 import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
+import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
@@ -526,8 +527,23 @@ export function azureScript(forge: ForgeName, azure: NonNullable<OidcSettings["a
   ].join("\n");
 }
 
-/** Whether `oidc` names AWS roles. */
-const hasAws = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.plan_role && oidc.apply_role);
+/** Whether `oidc` names AWS roles: a pair for every root, or roles by root glob. */
+const hasAws = (oidc: OidcSettings | undefined): boolean => Boolean((oidc?.plan_role && oidc.apply_role) || hasRootRoles(oidc));
+
+const hasRootRoles = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.roles && Object.keys(oidc.roles).length > 0);
+
+/**
+ * The AWS step of a stage: the job's role (`plan_role` or `apply_role`) when
+ * one is set, the token file, and with `oidc.roles` the stage's roles by root
+ * glob in ROOT_ROLES_ENV, which the stage hands each root's binary
+ * (rootRoleEnv in ./roles.ts).
+ */
+function awsScript(forge: ForgeName, oidc: OidcSettings, stage: "plan" | "apply", session: string, check: boolean): string {
+  const role = stage === "plan" ? oidc.plan_role : oidc.apply_role;
+  const roles = hasRootRoles(oidc) ? [`export ${ROOT_ROLES_ENV}=${sh(JSON.stringify(rootRoles(oidc.roles!, stage)))}`] : [];
+  if (role) return [oidcScript(forge, role, session, oidc.audience, check), ...roles].join("\n");
+  return [`export AWS_ROLE_SESSION_NAME=${sh(session)}`, 'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', tokenScript(forge, oidc.audience ?? AUDIENCE, undefined, undefined, check), ...roles].join("\n");
+}
 
 /**
  * Shell for a stage's cloud identities: the AWS role, the GCP service
@@ -541,7 +557,7 @@ export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, s
   const shared = Boolean(oidc.gcp || oidc.azure) && forge !== "gitlab";
   return [
     ...(shared ? [tokenCheck(forge)] : []),
-    ...(hasAws(oidc) ? [oidcScript(forge, (plan ? oidc.plan_role : oidc.apply_role) as string, session, oidc.audience, !shared)] : []),
+    ...(hasAws(oidc) ? [awsScript(forge, oidc, stage, session, !shared)] : []),
     ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account, oidc.gcp.token_url, !shared)] : []),
     ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id, !shared)] : []),
   ];

@@ -24,6 +24,7 @@ import {
   type ReportRootPolicy,
   type ReportStateVersion,
   type ReportRootBinary,
+  type ReportRead,
   type ReportStep,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost,
 } from "./schema";
@@ -59,6 +60,8 @@ export interface RootInput {
   state?: ReportStateVersion;
   /** The steps that ran for it. */
   steps?: ReportStep[];
+  /** The roots whose state it reads. */
+  reads?: ReportRead[];
 }
 
 export interface WaveInput {
@@ -268,6 +271,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: planAppliedChanges(src.plan) } : {}),
       ...(src.applied && src.state ? { state: src.state } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
+      ...(src.reads?.length ? { reads: src.reads } : {}),
     };
   });
 

@@ -1,0 +1,49 @@
+---
+title: Track the roots that read other roots' state
+description: The estate page lists each root that reads another root's state, with its last plan against the producer's last apply, and marks it stale when the producer changed after that plan.
+claims: [state-edges]
+prompt: |
+  Read https://intentius.io/terragucci/guides/track-cross-state-edges/.
+  List the terraform_remote_state blocks in this repo's roots and the root whose state each reads, from the backend blocks, and tell me which reads terragucci cannot match to a root.
+  Read only. Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A Cross-state edges section on the [estate page](/terragucci/guides/see-every-project/). It lists each root that reads another root's state, by the producer it reads. Beside each edge are the consumer's last plan and the producer's last apply that changed it, and a status.
+
+| Status | Means |
+|---|---|
+| `stale` | the producer applied a change after the consumer's last plan, so that plan read outputs that have changed since |
+| `current` | the consumer's last plan is newer than the producer's last change |
+| `unknown` | no plan of the consumer, or no apply of the producer that changed it, is recorded yet |
+
+A consumer goes stale when a change reaches the producer and not the consumer: its wave applies the producer, and nothing plans the consumer again.
+
+## Where the edges come from
+
+| A root reads another through | terragucci reads |
+|---|---|
+| a `terraform_remote_state` block whose backend's `bucket` and `key` name another root's state | the code of both roots, as it orders the apply waves |
+| a Terragrunt unit's `dependency` or `dependencies` block | the unit's `terragrunt.hcl` |
+
+Each report lists a root's reads as `roots[].reads`. Each upload keeps them in the project's `edges.json`. Beside them it keeps the newest run that planned each root, and the newest apply wave that changed it. The reads follow the default branch's code; a pull request's plan moves the consumer's last plan forward and never changes its reads. Nothing reads a state or an output's value.
+
+## Steps
+
+<Steps>
+
+1. Keep [reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/). From then on, each run's upload writes `edges.json`.
+
+2. Run `terragucci estate` and open the link it prints. Its scheduled job does the same. The Cross-state edges section lists each consumer and the states it reads.
+
+3. For a stale edge, plan the consumer again: `/terragucci plan <root>` on a pull request, or a drift check of the default branch. When the plan changes something, the producer's new outputs reach the consumer through a change you review.
+
+</Steps>
+
+## See also
+
+- [Report JSON schema](/terragucci/reference/report-schema/#cross-state-edges) for `edges.json` and `projects[].edges`.
+- [Why plans are grouped](/terragucci/concepts/why-plans-are-grouped/) for how remote state orders the waves.

@@ -27,7 +27,7 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "state-export"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 /** Where an entry was read: a ledger line and the commit that added or removed it, or a report in the bucket. */
@@ -81,6 +81,9 @@ export const OVERRIDE_LEDGER_FILE = "_gates/policy-override.jsonl";
 /** The state migrations' gates, and the record of each migration's writes beside them (../migrate.ts). */
 export const MIGRATE_LEDGER_FILE = "_gates/tf-migrate.jsonl";
 export const MIGRATE_DONE_FILE = "_gates/tf-migrate/done.jsonl";
+/** State exports: the requests and their approvals, and the record of each export written (../export.ts). */
+export const EXPORT_LEDGER_FILE = "_gates/tf-state-export.jsonl";
+export const EXPORT_DONE_FILE = "_gates/tf-state-export/done.jsonl";
 
 const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
 
@@ -142,6 +145,7 @@ const drop = <T extends Record<string, unknown>>(o: T): Partial<T> => Object.fro
  */
 export function ledgerEntries(project: string, path: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined = () => undefined): AuditEntry[] {
   if (path === MIGRATE_DONE_FILE) return migrationEntries(project, changes, commitUrl);
+  if (path === EXPORT_DONE_FILE) return exportEntries(project, changes, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   // An override line names its digest; the denial it answers (a pending line of that digest) holds the rules and the root's plan digest.
   const denials = new Map<string, Line>();
@@ -259,6 +263,35 @@ function migrationEntries(project: string, changes: LedgerChange[], commitUrl: (
       result: str(r.result) ?? "applied",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: MIGRATE_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
       detail: drop({ roots: Array.isArray(r.roots) ? r.roots : undefined, file_digest: str(r.file_digest), error: str(r.error), commit: str(r.commit), run_id: str(r.runId) }),
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of `_gates/tf-state-export/done.jsonl`: one per state version
+ * exported, naming who exported it, the root and version, who approved it,
+ * and the digest of the bytes written. Never the state's contents.
+ */
+function exportEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of changes) {
+    if (!c.added) continue;
+    const r = parse(c.line);
+    if (!r || r.version !== 1 || r.kind !== "state-export" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    const url = commitUrl(c.commit);
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, EXPORT_DONE_FILE, c.line),
+      kind: "state-export",
+      project,
+      at: r.timestamp,
+      who: str(r.exportedBy) ?? null,
+      what: r.gate,
+      digest: str(r.planDigest) ?? null,
+      result: "exported",
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: EXPORT_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({ location: str(r.location), version_id: str(r.version_id), approved_by: str(r.approvedBy), approved_at: str(r.approvedAt), content_digest: str(r.content_digest) }),
     });
   }
   return out;

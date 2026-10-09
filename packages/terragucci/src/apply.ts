@@ -90,7 +90,7 @@ import {
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
-import { globMatch } from "./detect";
+import { globMatch, rootDependencies } from "./detect";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
@@ -110,9 +110,11 @@ import type { Fetch } from "./forge";
 import { changesSomething, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
-import { discoverUnits, refineWaves } from "./terragrunt";
+import { discoverUnits, refineWaves, walkUnits } from "./terragrunt";
+import { readsFor } from "./report/state-edges";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion } from "./backend";
+import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, stepsUsed, STEPS_NOT_TERRAGRUNT, waveStepsBase, type StepWhen } from "./steps";
 import type { StepSettings } from "./config";
@@ -547,7 +549,8 @@ async function planRoot(repo: string, binaries: RootBinaries, root: string, work
 
 async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps): Promise<PlannedRoot> {
   const dir = join(repo, root);
-  const env = { ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir };
+  // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
+  const env = rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root);
   const planFile = join(work, `${i}.tfplan`);
   const expected = binaries.expected(root);
   const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
@@ -561,7 +564,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
   if (bin.pin) console.log(`${root}: ${binaryText(bin)}`);
   const base = { ...failed, binary, bin };
-  const stepEnv = ws ? { ...ws, env: { ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir } } : undefined;
+  const stepEnv = ws ? { ...ws, env: rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root) } : undefined;
   let stepError = await rootSteps(repo, base, stepEnv, "before-init");
   if (stepError) return { ...base, error: stepError };
   const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir));
@@ -592,7 +595,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
 }
 
 async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, ws?: WaveSteps): Promise<boolean> {
-  const stepEnv = ws ? { ...ws, env: { ...ws.env, TF_PLUGIN_CACHE_DIR: p.env.TF_PLUGIN_CACHE_DIR } } : undefined;
+  const stepEnv = ws ? { ...ws, env: rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: p.env.TF_PLUGIN_CACHE_DIR }, p.root) } : undefined;
   const before = await rootSteps(repo, p, stepEnv, "before-apply", p.planFile);
   if (before) {
     console.log(`FAILED ${p.root}: nothing applied`);
@@ -761,15 +764,20 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     redacted += safe.values;
     plans.set(p.root, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
   }
+  // The roots whose state each root reads, from the code: remote state for plain roots, dependency blocks for units.
+  const reads = options.terragrunt
+    ? readsFor(new Map(walkUnits(repo, settings.terragrunt?.exclude).map((u) => [u.path, u.dependencies])), "dependency")
+    : readsFor(rootDependencies(repo, options.layers.flat()), "terraform_remote_state");
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => {
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
       const steps = p.steps?.length ? { steps: p.steps } : {};
-      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps };
+      const read = reads(p.root) ? { reads: reads(p.root) } : {};
+      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps, ...read };
       const state = w.states?.get(p.root);
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}) };
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...read };
     }),
     waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}) }],
     redacted,
