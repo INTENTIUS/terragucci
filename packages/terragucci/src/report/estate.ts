@@ -15,6 +15,7 @@ import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
 import type { ReportResource } from "./schema";
 import type { ChangeRow } from "./history";
+import { renderDoraSection, type Dora } from "./dora";
 import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
@@ -132,6 +133,8 @@ export interface Estate {
   audit?: { page: string; entries: number; generated: string };
   /** The resource history beside the page, when an apply changed a resource: its page, how many addresses, and when. */
   history?: { page: string; resources: number; generated: string };
+  /** The DORA metrics beside the page (dora.json): when they were built, and the estate's applied waves in their window. */
+  dora?: { file: string; generated: string; deployments: number };
 }
 
 const at = (iso: string): number => Date.parse(iso) || 0;
@@ -338,7 +341,7 @@ function resourcesSection(estate: Estate, now: Date): string {
  * small script only moves the "ago" times forward while it is open, and the
  * estate JSON rides inline for a reader that wants it.
  */
-export function renderEstateHtml(estate: Estate): string {
+export function renderEstateHtml(estate: Estate, dora?: Dora): string {
   const now = new Date(estate.generated);
   const t = estate.totals;
   const tiles = [
@@ -371,7 +374,7 @@ ${TACO_ICON}
 <style>${TACO_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}.tile.hot b{color:var(--warn)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Estate</h1>
 <p>${estate.projects.length} projects, built from their report indexes <time datetime="${esc(estate.generated)}">${esc(estate.generated)}</time>.</p>
 ${estate.audit ? `<p>Audit trail: <a href="${esc(estate.audit.page)}" id="audit-trail">${estate.audit.entries} ${estate.audit.entries === 1 ? "entry" : "entries"}</a>, built <time datetime="${esc(estate.audit.generated)}">${esc(estate.audit.generated)}</time>.</p>` : ""}
@@ -384,7 +387,7 @@ ${projectRows.join("\n")}
 </table></div>
 <h2>Recent runs</h2>
 ${recentRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Stage</th><th>Commit</th><th>Pull request</th><th>Changes</th><th></th><th>Finished</th><th></th></tr>\n${recentRows.join("\n")}\n</table></div>` : `<p class="none">No runs yet.</p>`}
-<h2 id="resources">Resources</h2>
+${dora ? `<h2 id="delivery">Delivery</h2>\n${renderDoraSection(dora, (name) => link(estate.projects.find((p) => p.project === name)?.index, esc(name)))}\n` : ""}<h2 id="resources">Resources</h2>
 ${estate.history ? `<p>Change history: <a href="${esc(estate.history.page)}" id="resource-history">${estate.history.resources} ${estate.history.resources === 1 ? "resource" : "resources"}</a>, each apply that changed one with its approver.</p>\n` : ""}${resourcesSection(estate, now)}
 </main>
 <script type="application/json" id="terragucci-estate">${json}</script>

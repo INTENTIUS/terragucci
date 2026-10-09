@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/dora/v1/dora.schema.json",
+  "title": "terragucci.dora/v1",
+  "description": "dora.json at the top of a reports prefix, beside estate.json: the four DORA metrics per project and for the estate, which terragucci estate builds from audit.jsonl and each project's index.json. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "generated", "weeks", "window", "drift_window_seconds", "audit", "estate", "projects"],
+  "properties": {
+    "schema": { "const": "terragucci.dora/v1" },
+    "generated": { "type": "string", "description": "When the metrics were built, ISO 8601." },
+    "weeks": { "type": "integer", "description": "How many weeks the metrics cover, the current one included." },
+    "window": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "type": "string", "description": "The Monday, 00:00 UTC, the window starts on." },
+        "to": { "type": "string", "description": "When it ends: generated." }
+      }
+    },
+    "drift_window_seconds": { "type": "integer", "description": "An applied wave whose roots drift within this long counts as a failed change." },
+    "audit": { "type": "boolean", "description": "Whether audit.jsonl was read. Without it no apply counts." },
+    "estate": { "$ref": "#/$defs/metrics" },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["project", "deployments", "per_week", "lead_time", "change_failure", "restore", "trend"],
+        "properties": {
+          "project": { "type": "string" },
+          "deployments": { "type": "integer" },
+          "per_week": { "type": "number" },
+          "lead_time": { "$ref": "#/$defs/lead_time" },
+          "change_failure": { "$ref": "#/$defs/change_failure" },
+          "restore": { "$ref": "#/$defs/restore" },
+          "trend": { "$ref": "#/$defs/trend" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "seconds": { "type": ["integer", "null"], "description": "A median in seconds; null when nothing counts." },
+    "metrics": {
+      "type": "object",
+      "required": ["deployments", "per_week", "lead_time", "change_failure", "restore", "trend"],
+      "properties": {
+        "deployments": { "type": "integer", "description": "Applied waves in the window." },
+        "per_week": { "type": "number", "description": "Deployment frequency: applied waves per week over the window." },
+        "lead_time": { "$ref": "#/$defs/lead_time" },
+        "change_failure": { "$ref": "#/$defs/change_failure" },
+        "restore": { "$ref": "#/$defs/restore" },
+        "trend": { "$ref": "#/$defs/trend" }
+      }
+    },
+    "lead_time": {
+      "type": "object",
+      "description": "From a change's first plan to its wave applied.",
+      "required": ["changes", "median_seconds", "before_gate_seconds", "at_gate_seconds", "after_gate_seconds"],
+      "properties": {
+        "changes": { "type": "integer", "description": "Applied waves whose first plan was found." },
+        "median_seconds": { "$ref": "#/$defs/seconds" },
+        "before_gate_seconds": { "$ref": "#/$defs/seconds" },
+        "at_gate_seconds": { "$ref": "#/$defs/seconds" },
+        "after_gate_seconds": { "$ref": "#/$defs/seconds" }
+      }
+    },
+    "change_failure": {
+      "type": "object",
+      "required": ["applies", "failed", "drifted", "rate"],
+      "properties": {
+        "applies": { "type": "integer", "description": "Waves that applied or failed. A refused or waiting wave is not an apply." },
+        "failed": { "type": "integer" },
+        "drifted": { "type": "integer", "description": "Applied waves whose roots drifted within drift_window_seconds." },
+        "rate": { "type": ["number", "null"], "description": "(failed + drifted) / applies; null with no applies." }
+      }
+    },
+    "restore": {
+      "type": "object",
+      "required": ["restored", "open", "median_seconds", "apply_restored", "drift_restored"],
+      "properties": {
+        "restored": { "type": "integer", "description": "Failed applies and drift restored in the window." },
+        "open": { "type": "integer", "description": "Failed roots no apply has restored yet, and drift no check has cleared." },
+        "median_seconds": { "$ref": "#/$defs/seconds" },
+        "apply_restored": { "type": "integer" },
+        "drift_restored": { "type": "integer" }
+      }
+    },
+    "trend": {
+      "type": "array",
+      "description": "One row per week, oldest first.",
+      "items": {
+        "type": "object",
+        "required": ["week", "deployments", "applies", "failures", "lead_time_seconds", "restore_seconds"],
+        "properties": {
+          "week": { "type": "string", "description": "The Monday the week starts on, YYYY-MM-DD." },
+          "deployments": { "type": "integer" },
+          "applies": { "type": "integer" },
+          "failures": { "type": "integer", "description": "Failed applies and applied waves followed by drift." },
+          "lead_time_seconds": { "$ref": "#/$defs/seconds" },
+          "restore_seconds": { "$ref": "#/$defs/seconds" }
+        }
+      }
+    }
+  }
+}
