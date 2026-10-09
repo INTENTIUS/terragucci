@@ -529,19 +529,19 @@
     },
     {
       "claim": "review-agent",
-      "says": "with review.agent on, the review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing",
+      "says": "with review.agent on, the review workflow of the default branch runs on pull_request_target after the plan, and its review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "a9a5d790"
     },
     {
       "claim": "review-policy",
-      "says": "a tf-apply wave gives the policy the risk of the review of the head of the merged pull request as input.review, and a policy that denies risk high stops the wave",
+      "says": "a tf-apply wave gives the policy the risk the review workflow of the default branch kept as its artifact for the head of the merged pull request as input.review; the edited review job of the pull request itself keeping risk low and a forged low-risk note posted with the pipeline token change nothing, and a policy that denies risk high stops the wave",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "a9a5d790"
     },
     {
       "claim": "wave-report",
