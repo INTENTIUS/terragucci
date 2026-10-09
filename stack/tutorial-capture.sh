@@ -124,7 +124,7 @@ SOURCE_HASH="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
 claims_pass() { # claim...
   local c
   for c in "$@"; do
-    [ "$(jq -r --arg c "$c" '.claims[] | select(.claim == $c) | .verdict' "$SMOKE")" = pass ] || return 1
+    [ "$(jq -r --arg c "$c" '.claims[] | select(.claim == $c and (.forge // "forgejo") == "forgejo") | .verdict' "$SMOKE")" = pass ] || return 1
   done
 }
 
