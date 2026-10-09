@@ -999,7 +999,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "79c43672"
+      "commit": "b0f19790"
     },
     {
       "claim": "tg-generate",
@@ -1007,7 +1007,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "79c43672"
+      "commit": "b0f19790"
     },
     {
       "claim": "root-pins",
