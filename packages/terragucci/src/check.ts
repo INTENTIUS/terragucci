@@ -120,6 +120,41 @@ export function liveCheckTextLines(out: { stdout: string; stderr: string }, max 
   return `${out.stdout}\n${out.stderr}`.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim() !== "").slice(0, max);
 }
 
+/** One directory's module pins under `modules.require: attested`, into the log and the report; false when one is refused. */
+async function pinLines(dir: string, check: NonNullable<CheckOptions["pins"]>, log: string[], report: string[]): Promise<boolean> {
+  const pins = await check(dir);
+  for (const line of pins.refused) {
+    log.push(line);
+    report.push(`- ${line.replace(`refused: ${dir}: `, `refused: \`${dir}\`: `)}`);
+  }
+  if (pins.refused.length) {
+    log.push(`FAILED ${dir}: modules.require: attested refused ${pins.refused.length} module pin${pins.refused.length === 1 ? "" : "s"}`);
+    return false;
+  }
+  if (pins.verified.length) {
+    log.push(`attested ${dir}: ${pins.verified.join("; ")}`);
+    report.push(`- attested: ${pins.verified.map((v) => `\`${v}\``).join(", ")}`);
+  }
+  return true;
+}
+
+/**
+ * tf-check's pin step in a Terragrunt repo, where no unit runs check-root:
+ * each unit's `terraform { source }` under `modules.require: attested`.
+ * Only units that refuse a pin or verify one get a section in the report.
+ */
+export async function checkUnitPins(units: readonly string[], pins: NonNullable<CheckOptions["pins"]>): Promise<CheckResult> {
+  const log: string[] = [];
+  const report: string[] = [];
+  let ok = true;
+  for (const dir of units) {
+    const r: string[] = [];
+    if (!(await pinLines(dir, pins, log, r))) ok = false;
+    if (r.length) report.push(`### ${dir}`, "", ...r, "");
+  }
+  return { ok, log, report };
+}
+
 /**
  * One root: `validate -json`, and for a choudoufu root `live-check -json` after
  * it. The root has been initialised (`init -backend=false`). Warnings print and
@@ -130,20 +165,7 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
   const log: string[] = [];
   const report: string[] = [`### ${dir}`, ""];
   let ok = true;
-  if (options.pins) {
-    const pins = await options.pins(dir);
-    for (const line of pins.refused) {
-      log.push(line);
-      report.push(`- ${line.replace(`refused: ${dir}: `, `refused: \`${dir}\`: `)}`);
-    }
-    if (pins.refused.length) {
-      ok = false;
-      log.push(`FAILED ${dir}: modules.require: attested refused ${pins.refused.length} module pin${pins.refused.length === 1 ? "" : "s"}`);
-    } else if (pins.verified.length) {
-      log.push(`attested ${dir}: ${pins.verified.join("; ")}`);
-      report.push(`- attested: ${pins.verified.map((v) => `\`${v}\``).join(", ")}`);
-    }
-  }
+  if (options.pins) ok = await pinLines(dir, options.pins, log, report);
   const v = await exec(binary, [`-chdir=${dir}`, "validate", "-json"], repo);
   const parsed = parseValidate(v.stdout);
   if (!parsed) {

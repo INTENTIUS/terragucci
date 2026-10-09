@@ -58,7 +58,8 @@ The check job runs these, in order:
 1. `tofu fmt -check -recursive -diff .`, for the modules the units call
 2. `terragrunt hcl fmt --check`
 3. `terragrunt hcl validate --inputs`
-4. `terragucci check-policy`, which runs the policy's tests when `policy` is set
+4. `terragucci check-pins`, which checks each unit's `terraform { source }` when [`modules.require: attested`](/terragucci/guides/publish-modules/#require-attested-releases) is set
+5. `terragucci check-policy`, which runs the policy's tests when `policy` is set
 
 An unformatted `.hcl` file fails the job by name:
 

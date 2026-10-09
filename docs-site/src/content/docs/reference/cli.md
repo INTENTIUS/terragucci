@@ -32,7 +32,7 @@ prompt: |
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names; the generated apply jobs run it |
 | `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from |
-| `check-root`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
@@ -434,14 +434,15 @@ envs/prod/app: its plan jcs1-sha256:4c1e09d2... was denied by main.deny_public_b
 running: chant approve policy-override envs/prod/app --plan sha256:9b0f2a71... --note 'the incident needs the bucket public until 18:00' --actor github:alice
 ```
 
-## check-root and check-policy
+## check-root, check-pins and check-policy
 
 ```bash
 terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
+terragucci check-pins [--config <file>] [--base <ref>]
 terragucci check-policy [--config <file>] [--base <ref>]
 ```
 
-`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-policy` runs the policy's tests when `policy` is set. Both append to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
+`check-root` runs `validate -json` in an initialised root and prints each diagnostic with its file and range; with `--binary choudoufu` it also runs `choudoufu live-check -json`. Under `modules.require: attested` it first checks the root's module pins, with the setting read at `--base`. `check-pins` does the same pin check for each unit of a Terragrunt repo, on its `terraform { source }`, and prints nothing without `modules.require: attested`. `check-policy` runs the policy's tests when `policy` is set. Each appends to `terragucci-check/report.md`, and run in the generated `tf-check` job. See [Stages](/terragucci/reference/stages/#check).
 
 ## install
 
@@ -480,7 +481,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | | |
 | `pr-merge` | merged | not merged | | | |
 | `config check` | `ok` | | problems found | | |
-| `check-root`, `check-policy` | passed | failed | | | |
+| `check-root`, `check-pins`, `check-policy` | passed | failed | | | |
 | `install` | done | | not a Linux host | | |
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
