@@ -1539,6 +1539,54 @@
       "commit": "f0fde540"
     },
     {
+      "claim": "tg-drift-pr",
+      "says": "a drifted Terragrunt unit gets a pull request that writes the live value into its own terragrunt.hcl inputs and leaves the module its units share alone",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e105af7f"
+    },
+    {
+      "claim": "tg-drift-attribute",
+      "says": "with respond.drift: attribute in a Terragrunt repo, tf-drift lists who changed each drifted attribute under its unit in the drift issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e105af7f"
+    },
+    {
+      "claim": "tg-migrate-split",
+      "says": "a migration file moves a resource from the state of one Terragrunt unit to that of another: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks, recording each version before and after",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e105af7f"
+    },
+    {
+      "claim": "tg-root-pins",
+      "says": "three Terragrunt units of one wave plan with their own releases: the tofu the .opentofu-version of a unit pins and the Terragrunt its terragrunt_version_constraint pins, each installed and checked in the job, and the releases of the image for the third, and the report names each",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e105af7f"
+    },
+    {
+      "claim": "tg-choudoufu",
+      "says": "in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e105af7f"
+    },
+    {
+      "claim": "tg-stacks",
+      "says": "the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e105af7f"
+    },
+    {
       "claim": "chat-approve",
       "says": "a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave",
       "needs": null,
