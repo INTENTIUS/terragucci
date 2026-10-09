@@ -150,7 +150,7 @@ services:
   # TERRAGUCCI_REGISTRY_CERTS at it (registry.crt, registry.key); the host
   # reaches it on localhost:5050 with NODE_EXTRA_CA_CERTS set to that CA.
   registry:
-    image: registry:2.8.3
+    image: public.ecr.aws/docker/library/registry:2.8.3
     container_name: terragucci-registry
     profiles: [registry]
     environment:
@@ -299,7 +299,7 @@ services:
   # serves the repos' git over smart HTTP. The full node image is used because
   # the mock shells out to git.
   mock-github:
-    image: node:22-bookworm
+    image: public.ecr.aws/docker/library/node:22-bookworm
     container_name: terragucci-mock-github
     profiles: [github]
     command: ["node", "/srv/server.mjs"]
@@ -378,7 +378,7 @@ services:
   # v0.21.0 is the first release whose agents take `runtime: acp` and a
   # `runtime_command`, which a steward needs.
   fountain-postgres:
-    image: postgres:16
+    image: public.ecr.aws/docker/library/postgres:16
     container_name: terragucci-fountain-postgres
     profiles: [fountain]
     environment:
