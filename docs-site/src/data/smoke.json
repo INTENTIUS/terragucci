@@ -1539,6 +1539,30 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "plan-no-lock",
+      "says": "a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "46d2d20c"
+    },
+    {
+      "claim": "sensitive-redacted",
+      "says": "a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "46d2d20c"
+    },
+    {
+      "claim": "provider-cache-once",
+      "says": "a wave of eight roots that use one provider downloads it once: the job log names one download and the cache volume holds one copy",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "46d2d20c"
+    },
+    {
       "claim": "chat-approve",
       "says": "a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave",
       "needs": null,

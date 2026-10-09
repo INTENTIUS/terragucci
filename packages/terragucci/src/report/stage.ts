@@ -329,6 +329,16 @@ export function spawnAsync(file: string, args: string[], env: NodeJS.ProcessEnv)
   });
 }
 
+/**
+ * The providers an `init` downloaded, as `<source> v<version>`, from the
+ * `- Installed <source> v<version> (...)` lines OpenTofu and Terraform print.
+ * A provider taken from the plugin cache prints `- Using ... from the shared
+ * cache directory` instead, so it is not counted.
+ */
+export function providerDownloads(initOutput: string): string[] {
+  return [...initOutput.matchAll(/^- Installed (\S+) v(\S+) /gm)].map((m) => `${m[1]} v${m[2]}`);
+}
+
 /** Runs a piece of work after the one before it finished. */
 export type Turn = <T>(fn: () => Promise<T>) => Promise<T>;
 
@@ -712,8 +722,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   // The roots share one provider cache, the job's or one of the stage's own, so a provider downloads once per job rather
-  // than once per root (some 700 MB for the AWS provider). The cache is not safe for inits that run together, so they
-  // take turns. Plans still run at once.
+  // than once per root (some 700 MB for the AWS provider). The binary takes a provider from the cache only for a root
+  // whose .terraform.lock.hcl names it; a root without one downloads it again to check the package. The cache is not
+  // safe for inits that run together, so they take turns. Plans still run at once. Each download is in the log.
   const binEnv = { ...env, TF_PLUGIN_CACHE_DIR: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "plugins-")) };
   const initTurn = oneAtATime();
 
@@ -825,6 +836,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (stepError) return failed(stepError, `${root}: a step before init failed`);
       const init = await initTurn(() => run("init", "-input=false", "-no-color"));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      for (const d of providerDownloads(init.stdout)) lines.push(`${root}: downloaded ${d}`);
       stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
