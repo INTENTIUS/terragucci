@@ -90,7 +90,7 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { APPROVALS, BRANCHES_NOT_TERRAGRUNT, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
+import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
 import { globMatch, remoteStateReads, rootDependencies, rootStates } from "./detect";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
@@ -717,19 +717,22 @@ export interface ApplyWaveOptions {
   branches?: Record<string, string[]>;
   /** The branch the push applies; unset means the default branch. */
   branch?: string;
+  /** Set by `apply.branches`: the roots (units) the pipeline lists that another branch applies, which this push leaves alone. */
+  elsewhere?: string[];
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
 export async function applyWave(repo: string, options: ApplyWaveOptions): Promise<number> {
   if (options.branches && Object.keys(options.branches).length > 0) {
-    if (options.terragrunt) throw new ConfigError(`--branches: ${BRANCHES_NOT_TERRAGRUNT}`);
+    // A Terragrunt repo's units map to branches by the same globs: the waves are then cut from the units this branch applies.
     const cut = branchLayers(options.layers, options.branches, options.branch || undefined);
     console.log(`wave ${options.wave}: ${cut.note}`);
     if (cut.layers.flat().length === 0) {
-      console.log(`wave ${options.wave}: no root applies from ${options.branch || "this branch"}, so there is nothing to apply`);
+      console.log(`wave ${options.wave}: no ${options.terragrunt ? "unit" : "root"} applies from ${options.branch || "this branch"}, so there is nothing to apply`);
       return EXIT.applied;
     }
-    options = { ...options, layers: cut.layers, branches: undefined };
+    const elsewhere = options.layers.flat().filter((r) => !cut.layers.flat().includes(r));
+    options = { ...options, layers: cut.layers, branches: undefined, ...(elsewhere.length ? { elsewhere } : {}) };
   }
   if (!options.rest) return (await applyOneWave(repo, options)).code;
   if (!options.terragrunt) throw new ConfigError("--rest runs the waves of a Terragrunt repo, so it needs --terragrunt");
@@ -1874,7 +1877,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   if (cut.length !== listed.length) {
     console.log(`wave ${wave}: Terragrunt's edges cut the pipeline's ${waves(listed.length)} into ${cut.length}; run terragucci init to give each wave its own job`);
   }
-  const unlisted = found.units.map((u) => u.path).filter((u) => !listed.some((l) => l.includes(u)));
+  const unlisted = found.units.map((u) => u.path).filter((u) => !listed.some((l) => l.includes(u)) && !options.elsewhere?.includes(u));
   if (unlisted.length > 0) console.log(`wave ${wave}: the pipeline does not list ${unlisted.join(", ")}, so no wave applies it; run terragucci init to add it`);
   const whole = cut[wave - 1];
   const deciding = options.shares !== undefined && options.share === undefined;

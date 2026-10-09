@@ -27,11 +27,11 @@ packages/terragucci/src/render-review.ts  review-*
 packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers tg-gate-* tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions tg-estate-graph tg-apply-branches
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* tg-require-attested check-diagnostics tg-check tg-mock-lint description-check generate
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-* generate chat-* apply-branches own-jobs-kept state-roles tg-cost-gate tg-steps-gate tg-wave-jobs
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-* generate chat-* apply-branches own-jobs-kept state-roles tg-cost-gate tg-steps-gate tg-wave-jobs tg-apply-branches
 packages/terragucci/src/synth.ts          cdktn-*
 packages/terragucci/src/steps.ts          steps-* tg-steps-gate
 packages/terragucci/src/linked.ts         linked-*
@@ -140,7 +140,7 @@ stack/fixtures/linked-states              linked-*
 stack/fixtures/tg-preview                 tg-preview*
 stack/fixtures/unlock-state               unlock-state
 stack/fixtures/cost-policy                cost-gate cost-policy tg-cost-gate
-stack/fixtures/tg-gated-waves             tg-gate-* tg-sealed tg-policy tg-credentials tg-cost-gate tg-steps-gate tg-wave-jobs tg-respond-fmt tg-state-versions
+stack/fixtures/tg-gated-waves             tg-gate-* tg-sealed tg-policy tg-credentials tg-cost-gate tg-steps-gate tg-wave-jobs tg-respond-fmt tg-state-versions tg-apply-branches
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat notify-webhook chat-* cost-estimate
 stack/fixtures/provider-cache             provider-cache-once
 stack/break-bundle.mjs                    plan-no-lock sensitive-redacted provider-cache-once mcp-last-apply

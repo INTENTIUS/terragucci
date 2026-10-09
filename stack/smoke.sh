@@ -354,6 +354,7 @@ tg-root-pins|three Terragrunt units of one wave plan with their own releases: th
 tg-choudoufu|in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH|
 tg-estate-graph|in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block|
 tg-state-export|terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle|
+tg-apply-branches|with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved|
 tg-stacks|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
 chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
 chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
@@ -750,6 +751,70 @@ claim_apply_branches() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "main applied the fleet roots and never canary/one; release applied canary/one alone, once its wave was approved"
+  return $rc
+}
+
+claim_tg_apply_branches() {
+  # The Terragrunt gated-waves fixture with apply.branches: {release:
+  # ["live/canary/*"]}. Push main: its wave 1 is the fleet units, which wait;
+  # live/canary/one is release's. Approve it and push main again: the fleet
+  # units apply and live/canary/one has no state. Push the same tree to
+  # release: its wave 1 is live/canary/one alone, which waits at the same
+  # gate. Approve it and push release again: live/canary/one applies.
+  # BREAK: the pushed pipeline loses --branches and --branch, so the map is
+  # ignored: main's wave 1 is live/canary/one, which applies from main.
+  log() { echo "[smoke tg-apply-branches] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-apply-branches" wf sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo tg-apply-branches tg-gated-waves || { drop_work "$work"; return 1; }
+  printf 'apply:\n  branches:\n    release: ["live/canary/*"]\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "github.ref == 'refs/heads/release'" "$wf" || { log "the apply jobs do not run on release"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -e "s# --branch \"\$GITHUB_REF_NAME\"##g" -e "s# --branches 'release=live/canary/\*'##g" "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    ! grep -q -- "--branches" "$wf" || { log "BREAK left --branches in the pipeline"; drop_work "$work"; return 1; }
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "tg-apply-branches: main")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  if [ $rc = 0 ]; then
+    applied="$(tg_gated_applied tg-apply-branches)"
+    log "main, first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a unit applied before wave 1 was approved"; rc=1; }
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+    grep -q "apply.branches: live/canary/one applies from release, not here" <<<"$logs" || { log "main's wave did not say live/canary/one applies from release"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve tg-apply-branches 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "tg-apply-branches: main, wave 1 approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(tg_gated_applied tg-apply-branches)"
+    log "main, after the approval: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "live/fleet/three live/fleet/two " ] || { log "expected the fleet units alone to apply from main"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" release "tg-apply-branches: release")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(tg_gated_applied tg-apply-branches)"
+    log "release, first push: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "live/fleet/three live/fleet/two " ] || { log "live/canary/one applied from release before its wave was approved"; rc=1; }
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -q "apply.branches: release applies live/canary/one" <<<"$logs" || { log "release's wave did not say it applies live/canary/one alone"; rc=1; }
+    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "release's wave 1 did not wait for its approval"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve tg-apply-branches 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" release "tg-apply-branches: release, wave 1 approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(tg_gated_applied tg-apply-branches)"
+    log "release, after the approval: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "expected live/canary/one to apply from release once approved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "main applied the fleet units and never live/canary/one; release applied live/canary/one alone, once its wave was approved"
   return $rc
 }
 
@@ -15601,6 +15666,7 @@ tg-choudoufu         weight=120
 tg-stacks            weight=150
 tg-estate-graph      weight=200
 tg-state-export      weight=200
+tg-apply-branches    runner self! weight=300
 chat-approve         runner self! weight=300
 chat-approve-teams   runner self! weight=300
 chat-approve-lambda  runner self! weight=350
