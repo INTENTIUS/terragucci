@@ -200,7 +200,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
 | `--share` | | with `--shares`: plan this share's roots and apply them when each plan has the digest in the decision file; exit 4 when one moved |
 | `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
-| `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots of `--branch` when the map names it, and otherwise every root no branch's glob matches |
+| `--branches` | | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) as `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`: the stage applies only the roots (in a Terragrunt repo, the units) of `--branch` when the map names it, and otherwise every root no branch's glob matches |
 | `--branch` | | with `--branches`: the branch the push applies; unset means the default branch |
 
 ## publish

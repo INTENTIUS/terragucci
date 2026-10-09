@@ -69,7 +69,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, BRANCHES_NOT_TERRAGRUNT, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND } from "./config";
+import { APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { ROOT_ROLES_ENV, rootRoles } from "./roles";
 import { MR_VAR } from "./comment-apply-gitlab";
@@ -1649,7 +1649,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
   const applyBranches = input.applyBranches && Object.keys(input.applyBranches).length > 0 ? input.applyBranches : undefined;
-  if (applyBranches && tg) throw new RenderError(`apply.branches: ${BRANCHES_NOT_TERRAGRUNT}`);
   if (applyBranches && input.applyWhen === "pull-request") throw new RenderError(`apply.branches: ${BRANCHES_NOT_PR_APPLY}`);
   const branchNames = applyBranches ? Object.keys(applyBranches) : [];
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
