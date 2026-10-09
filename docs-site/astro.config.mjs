@@ -105,6 +105,7 @@ export default defineConfig({
 								{ label: 'Publish your modules', slug: 'guides/publish-modules' },
 								{ label: 'Re-plan from a comment', slug: 'guides/re-plan-from-a-comment' },
 								{ label: 'Apply a pull request before it merges', slug: 'guides/apply-before-merge' },
+								{ label: 'Move resources between roots', slug: 'guides/move-resources-between-roots' },
 							],
 						},
 						{
@@ -113,6 +114,7 @@ export default defineConfig({
 								{ label: 'Turn on drift checks', slug: 'guides/turn-on-drift-checks' },
 								{ label: 'Keep reports in a bucket', slug: 'guides/keep-reports-in-a-bucket' },
 								{ label: 'See every project in one page', slug: 'guides/see-every-project' },
+								{ label: 'Find the state version an apply left', slug: 'guides/find-a-state-version' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
 							],
 						},
@@ -151,6 +153,7 @@ export default defineConfig({
 						{ label: 'The reports bucket', slug: 'reference/reports-bucket' },
 						{ label: 'Webhook event schema', slug: 'reference/notify-event' },
 						{ label: 'The audit trail', slug: 'reference/audit-trail' },
+						{ label: 'Migration files', slug: 'reference/migration-files' },
 						{ label: 'Delivery metrics', slug: 'reference/delivery-metrics' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
 						{ label: 'Tips', slug: 'reference/tips' },

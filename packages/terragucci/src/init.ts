@@ -37,6 +37,7 @@ import { reportsBase } from "./report/store";
 import { agentCommentInput } from "./agent-comment";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
+import { migrationFiles } from "./migrate";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
@@ -289,6 +290,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
     ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
+    ...(migrationFiles(repo).length > 0 ? { migrations: true } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),
   });

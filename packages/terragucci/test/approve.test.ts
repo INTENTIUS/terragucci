@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { approve, describeStored, overrideDenial, waitingWaves } from "../src/approve";
+import { approve, describeMigration, describeStored, overrideDenial, waitingMigrations, waitingWaves } from "../src/approve";
+import { keptPath } from "../src/migrate";
 import { approvedPath, parseLedger } from "../src/apply";
 import { init, signerLine } from "../src/init";
 import { decideOverride, OVERRIDE_LEDGER, overrideDigest, recordedDenials } from "../src/override";
@@ -104,6 +105,68 @@ describe("terragucci approve", () => {
     expect((await approve(none, { plan: "jcs1-sha256:aa", log: (l) => void lines.push(l) })).code).toBe(1);
     expect(lines[0]).toMatch(/^not approved: no wave waits for jcs1-sha256:aa: no wave waits for an approval/);
     await expect(approve(two, { plan: "", dryRun: true, log: () => {} })).rejects.toThrow(/--plan takes the digest/);
+  });
+});
+
+describe("terragucci approve, a state migration", () => {
+  const mpending = (gate: string, digest: string, h: number) => ({ ...pending(gate, digest, h), op: "tf-migrate", description: `migration ${gate}: one, two`, runId: "88", commit: "c".repeat(40) });
+  const mresolution = (gate: string, digest: string, h: number) => ({ ...resolution(gate, digest, h), op: "tf-migrate" });
+  const record = JSON.stringify({ moves: [{ from: "one", to: "two", addresses: ["terraform_data.b"] }], roots: [{ root: "one", location: "s3://b/one.tfstate", before: { version_id: "v1", digest: "sha256:x" } }, { root: "two", location: "s3://b/two.tfstate", before: { digest: null } }] });
+
+  /** A checkout whose origin's chant/lifecycle holds `migrations` in the migration ledger, `waves` in the waves', and the plan record kept for split-b. */
+  function checkout(migrations: string, waves = ""): string {
+    const dir = tmp("tg-approve-mig-");
+    const origin = join(dir, "origin.git");
+    execFileSync("git", ["init", "-q", "--bare", origin]);
+    const life = join(dir, "life");
+    git(dir, "init", "-q", "-b", "chant/lifecycle", life);
+    write(life, { "_gates/tf-migrate.jsonl": migrations, ...(waves ? { "_gates/tf-apply.jsonl": waves } : {}), [keptPath("split-b", "jcs1-sha256:mm")]: record });
+    git(life, "add", "-A");
+    git(life, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger");
+    git(life, "push", "-q", origin, "chant/lifecycle");
+    const work = join(dir, "work");
+    git(dir, "init", "-q", "-b", "main", work);
+    git(work, "remote", "add", "origin", origin);
+    return work;
+  }
+
+  it("is waiting until an approval of its newest digest answers it", () => {
+    const ledger = parseLedger(jsonl(mpending("split-b", "jcs1-sha256:aa", 1), mpending("split-b", "jcs1-sha256:mm", 3), mresolution("split-b", "jcs1-sha256:aa", 4), mpending("merge-c", "jcs1-sha256:cc", 1), mresolution("merge-c", "jcs1-sha256:cc", 2)));
+    expect(waitingMigrations(ledger).map((m) => [m.migration, m.digest, m.runId])).toEqual([["split-b", "jcs1-sha256:mm", "88"]]);
+    expect(describeMigration(record)).toEqual(["  moves terraform_data.b from one to two", "  one: s3://b/one.tfstate at version v1", "  two: s3://b/two.tfstate, no state yet", "  every root planned with no change against its new state"]);
+  });
+
+  it("alone, a dry run says what it moves and prints chant approve tf-migrate for its digest", async () => {
+    const lines: string[] = [];
+    const r = await approve(checkout(jsonl(mpending("split-b", "jcs1-sha256:mm", 1))), { dryRun: true, log: (l) => void lines.push(l) });
+    expect(r.command).toBe("chant approve tf-migrate split-b --plan jcs1-sha256:mm");
+    expect(r.migration?.migration).toBe("split-b");
+    expect(lines).toContain("  moves terraform_data.b from one to two");
+    expect(lines.at(-1)).toBe("would run: chant approve tf-migrate split-b --plan jcs1-sha256:mm");
+  });
+
+  it("is named, or found by its digest, beside a waiting wave; a stale digest or another name approves nothing", async () => {
+    const work = checkout(jsonl(mpending("split-b", "jcs1-sha256:mm", 1)), jsonl(pending("wave-2", "jcs1-sha256:cc", 1)));
+    await expect(approve(work, { dryRun: true, log: () => {} })).rejects.toThrow(/2 gates wait \(wave-2, migration split-b\)/);
+    expect((await approve(work, { wave: "split-b", dryRun: true, log: () => {} })).command).toBe("chant approve tf-migrate split-b --plan jcs1-sha256:mm");
+    expect((await approve(work, { plan: "jcs1-sha256:mm", dryRun: true, log: () => {} })).command).toBe("chant approve tf-migrate split-b --plan jcs1-sha256:mm");
+    expect((await approve(work, { wave: "wave-2", dryRun: true, log: () => {} })).command).toBe("chant approve tf-apply wave-2 --plan jcs1-sha256:cc");
+    const lines: string[] = [];
+    expect(await approve(work, { wave: "split-b", plan: "jcs1-sha256:old", log: (l) => void lines.push(l) })).toEqual({ code: 1, command: "" });
+    expect(lines[0]).toContain("migration split-b waits for jcs1-sha256:mm, not jcs1-sha256:old");
+    await expect(approve(work, { wave: "merge-c", dryRun: true, log: () => {} })).rejects.toThrow(/no migration merge-c waits; waiting: split-b|no migration merge-c waits for an approval; waiting: split-b/);
+  });
+
+  it("runs the chant it is given, with --sign under approval: sealed, then says how wave 1 resumes", async () => {
+    const work = checkout(jsonl(mpending("split-b", "jcs1-sha256:mm", 1)));
+    write(work, { "terragucci.yml": "approval: sealed\n" });
+    write(join(work, ".."), { "chant.sh": `#!/bin/sh\necho "$@" > ${JSON.stringify(join(work, "..", "args"))}\n` });
+    execFileSync("chmod", ["+x", join(work, "..", "chant.sh")]);
+    const lines: string[] = [];
+    expect((await approve(work, { chant: join(work, "..", "chant.sh"), log: (l) => void lines.push(l) })).code).toBe(0);
+    expect(readFileSync(join(work, "..", "args"), "utf-8").trim()).toBe("approve tf-migrate split-b --plan jcs1-sha256:mm --sign");
+    expect(lines).toContain("approved migration split-b");
+    expect(lines.at(-1)).toMatch(/^not resumed from here: the origin is not on github.com or gitlab.com.*run wave 1 again/);
   });
 });
 

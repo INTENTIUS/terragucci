@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/state-versions/v1/state-versions.schema.json",
+  "title": "terragucci.state-versions/v1",
+  "description": "states.json in a project's directory of a reports prefix: for each root, where its state is, whether its backend keeps versions, and the version ids its tf-apply waves left, newest first. Version ids, never a state's contents. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "roots"],
+  "properties": {
+    "schema": { "const": "terragucci.state-versions/v1" },
+    "roots": {
+      "type": "array",
+      "description": "By root path.",
+      "items": {
+        "type": "object",
+        "required": ["root", "backend", "versioning", "checked", "versions"],
+        "properties": {
+          "root": { "type": "string" },
+          "backend": { "type": "string", "description": "The backend the root initialised: s3, local, gcs and so on." },
+          "location": { "type": "string", "description": "s3://<bucket>/<key>, or the local file's path in the root." },
+          "versioning": { "enum": ["on", "off", "unknown"], "description": "As the newest apply found it." },
+          "note": { "type": "string", "description": "Why the version could not be read, or what off means for this backend." },
+          "checked": { "type": "string", "description": "When the newest apply that recorded the root finished." },
+          "versions": {
+            "type": "array",
+            "description": "Newest first, at most 20.",
+            "items": {
+              "type": "object",
+              "required": ["version_id", "commit", "finished", "path"],
+              "properties": {
+                "version_id": { "type": "string" },
+                "commit": { "type": "string" },
+                "finished": { "type": "string", "description": "When the wave that recorded the version finished." },
+                "wave": { "type": "integer" },
+                "path": { "type": "string", "description": "The wave's run directory, relative to the project's index.json." }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
