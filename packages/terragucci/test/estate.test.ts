@@ -220,7 +220,7 @@ const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: 
 const index = (reports: IndexEntry[]): string => JSON.stringify({ schema: "terragucci.report-index/v1", reports });
 
 describe("terragucci estate", () => {
-  it("in a single repo, reads the top index for the projects, each project's index.json, inventory.json and changes.json and the audit summary, and nothing else", async () => {
+  it("in a single repo, reads the top index for the projects, each project's index.json, inventory.json and changes.json and the audit summary and record, and nothing else", async () => {
     const objects = new Map<string, string>();
     const all = threeProjects();
     objects.set("acme-reports:reports/index.json", index(all.flatMap((p) => p.reports!)));
@@ -241,13 +241,15 @@ describe("terragucci estate", () => {
       "GET acme-reports:reports/gitlab.example.com/platform/network/inventory.json",
       "GET acme-reports:reports/gitlab.example.com/platform/network/changes.json",
       "GET acme-reports:reports/audit.json",
+      "GET acme-reports:reports/audit.jsonl",
     ]);
     for (const g of gets) expect(g).not.toMatch(/plan\.(txt|json)$|report\.json$/);
-    expect(requests.filter((q) => q.startsWith("PUT "))).toEqual(["PUT acme-reports:reports/estate.json", "PUT acme-reports:reports/estate.html"]);
+    expect(requests.filter((q) => q.startsWith("PUT "))).toEqual(["PUT acme-reports:reports/estate.json", "PUT acme-reports:reports/estate.html", "PUT acme-reports:reports/dora.json"]);
+    expect(JSON.parse(objects.get("acme-reports:reports/dora.json")!)).toEqual(r.dora);
     expect(r.estate.totals).toMatchObject({ projects: 3, waiting: 1, drifted_projects: 1 });
     expect(JSON.parse(objects.get("acme-reports:reports/estate.json")!)).toEqual(r.estate);
     expect(readInlineEstate(objects.get("acme-reports:reports/estate.html")!)).toEqual(r.estate);
-    for (const f of ["estate.html", "estate.json"]) expect(existsSync(join(cwd, "terragucci-estate", f))).toBe(true);
+    for (const f of ["estate.html", "estate.json", "dora.json"]) expect(existsSync(join(cwd, "terragucci-estate", f))).toBe(true);
     expect(readFileSync(join(cwd, "terragucci-estate", "estate.html"), "utf-8")).toBe(objects.get("acme-reports:reports/estate.html"));
     expect(r.link?.url).toMatch(/^http:\/\/minio:9000\/acme-reports\/reports\/estate\.html\?X-Amz-Algorithm=.*X-Amz-Expires=3600&.*X-Amz-Signature=[0-9a-f]{64}$/);
     expect(r.link?.expires).toBe("2026-10-07T13:00:00.000Z");
@@ -255,7 +257,7 @@ describe("terragucci estate", () => {
     const text = describeEstate(r, cwd);
     expect(text).toContain("estate: 3 projects, 1 wave waiting, 1 project drifted, 0 roots failed");
     expect(text).toContain("gitlab.example.com/platform/network: wave 2 waits, for 3h 0m");
-    expect(text).toContain("wrote terragucci-estate/estate.json and terragucci-estate/estate.html");
+    expect(text).toContain("wrote terragucci-estate/estate.json, terragucci-estate/estate.html and terragucci-estate/dora.json");
   });
 
   it("from a control repo, reads each project from its own bucket, keeps going past one it cannot read, and writes under defaults", async () => {
@@ -284,6 +286,7 @@ describe("terragucci estate", () => {
       "GET locked:github.com/acme/locked/index.json",
       "GET central:r/github.com/acme/fresh/index.json",
       "GET central:r/audit.json",
+      "GET central:r/audit.jsonl",
     ]);
     expect(r.estate.projects.map((p) => [p.project, p.status])).toEqual([[web.project, "ok"], [data.project, "ok"], ["github.com/acme/locked", "error"], ["github.com/acme/fresh", "no-index"]]);
     // Another bucket's runs link through its own address; one with no address is not linked.

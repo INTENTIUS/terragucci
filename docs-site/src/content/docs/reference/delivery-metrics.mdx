@@ -1,0 +1,94 @@
+---
+title: Delivery metrics
+description: The four DORA metrics, per project and for the estate, computed by terragucci estate from the audit trail and each project's report index.
+prompt: |
+  Read https://intentius.io/terragucci/reference/delivery-metrics/.
+  Download dora.json from the top of my reports prefix with a read-only identity, validate it against
+  the JSON Schema the page names, and tell me, per project, the deployment frequency, the lead time with
+  its split, the change failure rate and the time to restore, and which weeks moved most.
+  Read only: write nothing to the bucket.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+[`terragucci estate`](/terragucci/guides/see-every-project/#delivery-metrics) computes the four DORA metrics for each project and for the whole estate, and writes them to `dora.json` beside `estate.json` and to the Delivery section of `estate.html`. The numbers come from records already in your bucket: the [audit trail](/terragucci/reference/audit-trail/) (`audit.jsonl`) and each project's `index.json`.
+
+## The metrics
+
+| Metric | terragucci counts | From |
+|---|---|---|
+| Deployment frequency | applied waves per week | `apply` entries with result `applied` in `audit.jsonl` |
+| Lead time | the median time from a change's first plan to its wave applied, split in three (below) | `tf-plan` rows in `index.json`, and the `approval-requested`, `approval` and `apply` entries in `audit.jsonl` |
+| Change failure rate | failed applies, plus applied waves whose roots drifted within 7 days, over all applies | `apply` entries with result `failed`, and `tf-drift` rows that found drift |
+| Time to restore | the median time from a failed apply to the next apply of those roots, and from drift found to the next drift check that found none | `apply` entries, and `tf-drift` rows |
+
+A refused wave is the gate working: it is not an apply, and it never counts as a failure. A wave still waiting for its approval is not an apply yet.
+
+Infrastructure ships less often than an application. The page shows frequency per project as a trend and never rates a project against DORA's performance tiers.
+
+## The window
+
+Every number covers the newest eight weeks, Monday to Sunday in UTC, the current week included. Each week also has its own row, `trend` in `dora.json`, with the same counts for that week alone.
+
+## Lead time and its split
+
+Lead time starts at the first plan. terragucci finds the plan of an applied wave by its commit, or by the wave's digest: a `tf-plan` row lists each wave's set digest and review digest (`wave_digests`), and a merge commit's wave binds the same digest its pull request planned. The clock then starts at the first plan of that pull request.
+
+| Part | From | To |
+|---|---|---|
+| before the gate | the first plan | the wave asking for an approval; the apply when no gate held the wave |
+| at the gate | the wave asking for an approval | the approval |
+| after the gate | the approval | the wave applied |
+
+An applied wave with no plan in the index has no lead time. The page shows the median of the total and of each part, so the three parts need not add up to the total.
+
+## Change failures and restores
+
+An applied wave counts as failed when its roots drift within 7 days and no later apply of those roots came first. A `tf-drift` row lists the roots that drifted (`drifted_roots`). A row written before that field existed matches any root of its project.
+
+A failed apply opens an incident for the roots it failed on. The incident closes when an apply has applied each of those roots again. A second failure of roots already failing joins the open incident. Drift opens an incident at the first drift check that finds any, and closes at the next check that finds none, as the [drift issue](/terragucci/guides/turn-on-drift-checks/) does. Checks of the same commit share one row of the index, so each `tf-drift` row carries the open drift forward: `drift_since` on a row that found drift, and `drift_cleared` on the row that found none after it. `restore.open` counts the incidents still open.
+
+## What it needs
+
+| Record | Without it |
+|---|---|
+| `audit.jsonl` | no apply counts: deployments, lead time and failed applies are zero, and the page says so. Run `terragucci audit` before `terragucci estate`. |
+| `tf-plan` rows in each `index.json` | no lead time |
+| `tf-drift` rows | no drift counts as a failure or a restore |
+
+An index keeps its newest 500 rows. Plans and drift checks older than that drop out of the lead time and the drift counts; the audit trail keeps every apply.
+
+## dora.json
+
+`dora.json` is `terragucci.dora/v1`, with its JSON Schema in the package as `dist/dora.schema.json`.
+
+| Field | What it holds |
+|---|---|
+| `generated` | when it was built |
+| `weeks`, `window` | how many weeks it covers, and the first Monday and the end |
+| `drift_window_seconds` | how soon after an apply drift counts against it |
+| `audit` | whether `audit.jsonl` was read |
+| `estate` | the metrics across every project |
+| `projects[]` | each project's metrics, with `project` |
+
+Each set of metrics holds:
+
+| Field | What it holds |
+|---|---|
+| `deployments`, `per_week` | applied waves in the window, and per week |
+| `lead_time` | `changes` counted, `median_seconds`, and the split as `before_gate_seconds`, `at_gate_seconds` and `after_gate_seconds`; `null` when nothing counts |
+| `change_failure` | `applies`, `failed`, `drifted` and `rate`; `rate` is `null` with no applies |
+| `restore` | `restored`, `open`, `median_seconds`, and how many restores were of applies and of drift |
+| `trend[]` | a row per week, oldest first: `week`, `deployments`, `applies`, `failures`, `lead_time_seconds`, `restore_seconds` |
+
+## Gauges
+
+With `OTEL_EXPORTER_OTLP_ENDPOINT` (or the metrics endpoint) set, `terragucci estate` sends one batch of gauges, labelled `project`. The estate's own values carry `project="*"`. The Estate dashboard graphs them in its Delivery row.
+
+| Gauge | Labels |
+|---|---|
+| `terragucci_dora_deployments_per_week` | `project` |
+| `terragucci_dora_lead_time_seconds` | `project`, `segment`: `total`, `before_gate`, `at_gate`, `after_gate` |
+| `terragucci_dora_change_failure_ratio` | `project` |
+| `terragucci_dora_restore_seconds` | `project` |
+
+A metric with nothing to count, such as a lead time with no plan found, is not sent. [Traces and metrics](/terragucci/reference/observability/) covers the collector and the dashboards.

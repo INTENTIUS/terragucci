@@ -100,6 +100,10 @@ if [ -n "$LAB" ]; then
   [ -f "$STATE_DIR/gitlab.env" ] || fail "no GitLab lab; run 'just gitlab-lab up' first"
   # shellcheck disable=SC1091
   . "$STATE_DIR/gitlab.env"
+  # The lab's jobs run this tree's bundle, in an image of the lab's own, and
+  # leave the shared CI image tags alone (push_tree names it).
+  [ -n "${TG_TOFU_IMAGE:-}" ] || TG_TOFU_IMAGE="$("$HERE/gitlab/gitlab.sh" image)" || fail "the lab's image did not build"
+  export TG_TOFU_IMAGE
 fi
 # shellcheck source=lib.sh
 LIB_FORGE=gitlab . "$HERE/lib.sh"
@@ -573,8 +577,8 @@ OUT
     [ -n "$issue" ] || fail "the drift run opened no issue"
     take drift "/$REPO/-/issues/$issue" --height 860
 
-    hash="$(cd "$ROOT" && find example -type f ! -path '*/.terraform/*' | LC_ALL=C sort | while read -r f; do
-      printf '%s\0' "$f"; cat "$f"; done | shasum -a 256 | cut -c1-16)"
+    # The hash tutorial-check computes, as every capture records it.
+    hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
     shots='{}'
     for view in required note check waiting drift; do
       for scheme in light dark; do

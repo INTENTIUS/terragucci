@@ -58,8 +58,20 @@
  * the pipeline still applies it. The gate, the ledger and the seals are the
  * ones above.
  *
- * Exit codes: 0 applied (or nothing to apply); 1 a root failed; 3 the wave
- * waits for an approval; 4 the wave's plans changed after approval.
+ * A wave of plain roots can spread across jobs (`waves.jobs`). With
+ * `--shares <n>` the wave's job plans every root, runs the policy, decides the
+ * gate and records the approval it uses, all as above, but applies nothing:
+ * it writes the plan digest of each root to `terragucci-wave/wave-<k>.json`
+ * and the pipeline's share jobs apply. With `--share <s>` a job plans only
+ * its share of the wave's roots (waveShares), and applies them only when each
+ * plan has the digest the wave's job decided on. A share whose plans moved
+ * since applies nothing and exits 4. The gate, its ledger record and the
+ * applied record stay one per wave.
+ *
+ * Exit codes: 0 applied (or nothing to apply; for a wave split across jobs,
+ * decided and its shares may apply); 1 a root failed; 3 the wave waits for an
+ * approval; 4 the wave's plans changed after approval, or a share's after its
+ * wave decided.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -117,6 +129,54 @@ export function applyWaves(layers: string[][], canary: readonly string[] = []): 
   const first = layers.map((l) => l.filter(isCanary));
   const rest = layers.map((l) => l.filter((r) => !isCanary(r)));
   return [...first, ...rest].filter((l) => l.length > 0);
+}
+
+/**
+ * A wave's roots split across `jobs` jobs: as many shares as there are jobs,
+ * never more than there are roots, the roots dealt out in wave order. One
+ * share is the whole wave.
+ */
+export function waveShares(roots: readonly string[], jobs: number): string[][] {
+  const n = Math.max(1, Math.min(Math.floor(jobs), roots.length));
+  const shares: string[][] = Array.from({ length: n }, () => []);
+  roots.forEach((r, i) => shares[i % n].push(r));
+  return shares;
+}
+
+/** Where a split wave's job leaves its decision for the share jobs: the run's artifact of that name. */
+export const DECIDED_DIR = "terragucci-wave";
+export const decidedPath = (wave: number): string => `${DECIDED_DIR}/wave-${wave}.json`;
+
+/**
+ * What the job of a wave split across jobs decided, for its shares: the set
+ * digest, how the gate let it through, and every root's plan digest. A share
+ * applies only plans with these digests. Digests only, never a plan.
+ */
+export interface WaveDecision {
+  version: 1;
+  wave: number;
+  /** How many shares the wave is split into. */
+  shares: number;
+  digest: string;
+  approval: "approved" | "not-required";
+  /** The changes the wave's plans make; with none a share has nothing to apply. */
+  changes: number;
+  commit?: string;
+  members: WaveMember[];
+}
+
+/** Read a decision file. Throws a ConfigError naming what is wrong with it. */
+export function readDecision(file: string): WaveDecision {
+  let d: Partial<WaveDecision>;
+  try {
+    d = JSON.parse(readFileSync(file, "utf-8"));
+  } catch (e) {
+    throw new ConfigError(`the wave's decision ${file} cannot be read (${(e as Error).message.split("\n")[0]}); the wave's own job writes it before its shares run`);
+  }
+  if (d.version !== 1 || typeof d.wave !== "number" || typeof d.shares !== "number" || typeof d.digest !== "string" || !Array.isArray(d.members) || typeof d.changes !== "number") {
+    throw new ConfigError(`the wave's decision ${file} is not one terragucci wrote`);
+  }
+  return d as WaveDecision;
 }
 
 // ── the gate ledger ──────────────────────────────────────────────────────
@@ -521,6 +581,12 @@ export interface ApplyWaveOptions {
   terragruntExec?: TerragruntExec;
   /** The forge API calls of `approval: pr-review`. Default: fetch. */
   fetch?: Fetch;
+  /** Plain roots only: the most jobs the wave's roots spread across (`waves.jobs`). Without `share`, this job decides the wave and its share jobs apply. */
+  shares?: number;
+  /** With `shares`: this job applies share `share` (from 1) of the wave, the plans the wave's job decided on. */
+  share?: number;
+  /** The decision file the wave's job writes and its shares read. Default: terragucci-wave/wave-<k>.json in the checkout. */
+  decided?: string;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
@@ -587,6 +653,10 @@ interface WaveRun {
   failed?: string[];
   /** The roots it applied, and those it had nothing to apply to: the report lists the resources each holds. */
   applied?: Set<string>;
+  /** A wave split across jobs that decided and left the applies to its shares: its report stays with the job, and the shares' go to the bucket. */
+  decided?: boolean;
+  /** The share of a wave split across jobs this job applies. */
+  share?: number;
 }
 
 /**
@@ -607,7 +677,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     plans.set(p.root, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
   }
   const report = buildReport({
-    run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
+    run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => {
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
@@ -628,7 +698,9 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   writeReportDir(dir, report, plans, links.note);
   const slowest = report.timings?.roots[0];
   if (slowest) console.log(`wave ${wave}: report in terragucci-report/, slowest root ${slowest.root} (${slowest.seconds}s)`);
-  if (settings.reports?.bucket) {
+  if (settings.reports?.bucket && w.decided) {
+    console.log(`wave ${wave}: the report stays with the job; the reports of its shares, which apply, go to ${settings.reports.bucket}`);
+  } else if (settings.reports?.bucket) {
     try {
       const up = await uploadReport(storeFromEnv(settings.reports, env), dir, report, settings.reports.prefix);
       console.log(`wave ${wave}: report copied to ${up.prefix}${report.run.report_url ? `, at ${report.run.report_url}` : ""}`);
@@ -669,14 +741,22 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   if (!GATES.includes(gate)) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
   if (options.approval !== undefined && !APPROVALS.includes(options.approval)) throw new ConfigError(`--approval must be one of ${APPROVALS.join(", ")}`);
   if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("--wave must be a wave number from 1");
+  if (options.shares !== undefined && !(Number.isInteger(options.shares) && options.shares >= 1)) throw new ConfigError("--shares must be a whole number of 1 or more");
+  if (options.share !== undefined && (options.shares === undefined || !Number.isInteger(options.share) || options.share < 1 || options.share > options.shares)) {
+    throw new ConfigError("--share must be a share number from 1 to --shares");
+  }
+  if (options.terragrunt && options.shares !== undefined) throw new ConfigError("--shares splits a wave of plain roots; a Terragrunt wave applies its units with one run --all");
   if (options.terragrunt) return runTerragruntWave(repo, options, work, w, facts);
   const waves = applyWaves(options.layers, options.canary);
-  const roots = waves[wave - 1];
-  if (!roots) {
+  const whole = waves[wave - 1];
+  if (!whole) {
     facts.nothing = true;
     console.log(`wave ${wave}: this repo has ${waves.length} waves, so there is nothing to apply`);
     return EXIT.applied;
   }
+  const shares = options.shares !== undefined ? waveShares(whole, options.shares) : [whole];
+  if (options.share !== undefined) return runShare(repo, options, work, w, facts, { whole, shares, count: waves.length });
+  const roots = whole;
   facts.roots = roots;
   const label = `wave ${wave} of ${waves.length}`;
   console.log(`${label}: planning ${roots.join(", ")}`);
@@ -727,8 +807,125 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   if (held !== undefined) return held;
   recordOverridesUsed(repo, options, planned);
 
+  if (shares.length > 1) {
+    // The share jobs apply: this job hands them the digest of every plan it decided on, and applies nothing itself.
+    const env = options.env ?? process.env;
+    const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+    const decision: WaveDecision = {
+      version: 1,
+      wave,
+      shares: shares.length,
+      digest,
+      approval: w.approval === "approved" ? "approved" : "not-required",
+      changes,
+      ...(commit ? { commit } : {}),
+      members: all,
+    };
+    const file = options.decided ?? join(repo, decidedPath(wave));
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, JSON.stringify(decision, null, 2) + "\n");
+    w.decided = true;
+    for (const [i, share] of shares.entries()) console.log(`${label}: share ${i + 1} of ${shares.length} applies ${share.join(", ")}`);
+    console.log(`${label}: ${changes === 0 ? "nothing to apply" : w.approval === "approved" ? "approved" : "no approval needed"}; its ${shares.length} share jobs apply these plans`);
+    return EXIT.applied;
+  }
+
   // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
+  const ok: boolean[] = new Array(planned.length);
+  await eachLimited(planned, limit.value, async (p, i) => {
+    ok[i] = await applyRoot(repo, binary, p, w.observer);
+  });
+  w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
+  if (ok.includes(false)) {
+    w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
+    console.log(`${label}: an apply failed`);
+    return EXIT.failed;
+  }
+  console.log(`${label} applied`);
+  return EXIT.applied;
+}
+
+/**
+ * One share of a wave split across jobs. The wave's job already planned every
+ * root, ran the policy, decided the gate and recorded the approval it used;
+ * this job plans its own share again and applies those plans only when each
+ * has the digest the wave's job decided on. A share whose plans moved since
+ * applies nothing (exit 4), as a wave whose plans moved after an approval.
+ */
+async function runShare(
+  repo: string,
+  options: ApplyWaveOptions,
+  work: string,
+  w: WaveRun,
+  facts: WaveFacts,
+  ctx: { whole: string[]; shares: string[][]; count: number },
+): Promise<number> {
+  const { wave, binary } = options;
+  const share = options.share!;
+  const roots = ctx.shares[share - 1];
+  const label = `wave ${wave} of ${ctx.count}, share ${share} of ${ctx.shares.length}`;
+  if (!roots) {
+    facts.nothing = true;
+    console.log(`wave ${wave} of ${ctx.count}: its ${ctx.whole.length} roots make ${ctx.shares.length} shares, so share ${share} has nothing to apply`);
+    return EXIT.applied;
+  }
+  facts.roots = roots;
+  w.share = share;
+  const env = options.env ?? process.env;
+  const decision = readDecision(options.decided ?? join(repo, decidedPath(wave)));
+  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  if (decision.wave !== wave || decision.shares !== ctx.shares.length || (decision.commit && commit && decision.commit !== commit)) {
+    console.log(`${label}: the decision it was handed is for wave ${decision.wave} in ${decision.shares} shares${decision.commit ? ` at ${decision.commit.slice(0, 8)}` : ""}, not this one, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const decided = new Map(decision.members.map((m) => [m.member, m.planDigest]));
+  const missing = roots.filter((r) => !decided.has(r));
+  if (missing.length > 0) {
+    console.log(`${label}: the wave's job decided on no plan of ${missing.join(", ")}, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  w.digest = decision.digest;
+  w.approval = decision.approval;
+  if (decision.changes === 0) {
+    facts.nothing = true;
+    console.log(`${label}: the wave's plans change nothing, so there is nothing to apply`);
+    return EXIT.applied;
+  }
+  console.log(`${label}: planning ${roots.join(", ")}`);
+  const configPath = options.config ?? findConfig(repo);
+  const read = await waveSettings(repo, options, configPath);
+  if ("error" in read) {
+    console.log(`${label}: ${read.error}, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const settings = (w.settings = read.settings);
+  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
+  if (roots.length > 1) console.log(`${label}: planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
+  const planned: PlannedRoot[] = new Array(roots.length);
+  w.started = new Date().toISOString();
+  await w.observer.collectSpans((l) => console.log(l));
+  const cache = waveCache(work, process.env);
+  await eachLimited(roots, limit.value, async (r, i) => {
+    planned[i] = await planRoot(repo, binary, r, work, i, w.observer, cache);
+  });
+  w.planned = planned;
+  w.roots = roots;
+  for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.summary}`);
+  const failed = planned.filter((p) => p.error);
+  if (failed.length > 0) {
+    for (const p of failed) console.log(indent(p.error!));
+    console.log(`${label}: ${failed.length} root${failed.length === 1 ? "" : "s"} failed to plan, so nothing in it was applied`);
+    return EXIT.failed;
+  }
+  const moved = planned.filter((p) => !samePlanDigest(decided.get(p.root), p.member!.planDigest)).map((p) => p.root).sort();
+  if (moved.length > 0) {
+    console.log(`${label}: these roots planned differently since wave ${wave} decided on ${decision.digest}: ${moved.join(", ")}`);
+    console.log(`${label}: nothing in this share was applied; run the pipeline again to plan and decide the wave anew`);
+    if (decision.approval === "approved") w.refused = { reason: "approval", approved: decision.digest, roots: moved };
+    writeOutcome(options.env, `wave ${wave} share ${share} changed since the wave decided: ${moved.join(", ")}`, w);
+    return EXIT.refused;
+  }
   const ok: boolean[] = new Array(planned.length);
   await eachLimited(planned, limit.value, async (p, i) => {
     ok[i] = await applyRoot(repo, binary, p, w.observer);

@@ -13,7 +13,7 @@ prompt: |
 |---|---|
 | `init` | finds roots, binary and forge, and writes the pipeline; under `approval: sealed`, also [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) |
 | `reconcile` | from a control repo, opens a pull request in each project that needs a change |
-| `estate` | writes one page for every project, `estate.html` and `estate.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
+| `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
@@ -84,7 +84,7 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 | `--link-hours` | how long the link lives; default 24, at most 168 |
 | `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), in place of `reports` in a repo's config |
 
-It reads each project's `index.json`, `inventory.json` and `changes.json`, then writes `estate.html` and `estate.json` at the top of the prefix, and `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` when the audit trail is there. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. When `audit.json` is beside the page, the page links the audit trail. Exit code 1 when a project's index could not be read; the page names it.
+It reads each project's `index.json`, `inventory.json` and `changes.json`, then writes `estate.html` and `estate.json` at the top of the prefix, and `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` when the audit trail is there. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. When `audit.json` is beside the page, the page links the audit trail. From `audit.jsonl` and the indexes it computes the [delivery metrics](/terragucci/reference/delivery-metrics/), writes them to `dora.json` and the page, and sends them as gauges when an OTLP endpoint is set. Exit code 1 when a project's index could not be read; the page names it.
 
 ## audit
 
@@ -113,6 +113,7 @@ terragucci stage tf-plan [--root <glob>] [--project <host/path>] [--config <file
 terragucci stage tf-drift [the same flags as tf-plan]
 terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>]
     [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
+    [--shares <n> [--share <s>] [--decided <file>]]
 ```
 
 | Flag | Environment | Meaning |
@@ -141,6 +142,9 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--gate` | | `always`, `on-destroy` (the default) or `never` |
 | `--approval` | | the mode when the config at base names none and `chant.workspace.json` there lists no gate; a control repo's pipeline passes it |
 | `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, approval mode, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
+| `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |
+| `--share` | | with `--shares`: plan this share's roots and apply them when each plan has the digest in the decision file; exit 4 when one moved |
+| `--decided` | | the decision file, when it is not `terragucci-wave/wave-<n>.json` |
 
 ## publish
 
@@ -389,14 +393,14 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | 1 | one or more projects or roots failed |
 | 2 | a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
-| 4 | a wave's plans changed after an approval or a policy override no run applied, so `stage tf-apply` applied nothing |
+| 4 | a wave's plans changed after an approval or a policy override no run applied, or a share's plans changed after its wave decided, so `stage tf-apply` applied nothing |
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
 | `init` | done | | an existing config file needs a line added | | |
 | `reconcile` | done | a project failed | | | |
 | `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
-| `stage tf-apply` | wave applied | a root failed, or the policy denied one | `--json` | waits for an approval | plans changed after an approval or a policy override no run applied |
+| `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one | `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
 | `publish` | done | | OCI tag exists already; git tag exists with different content | | |
 | `rollout` | complete | stopped | | waiting | |
 | `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |
