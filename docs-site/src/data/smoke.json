@@ -689,6 +689,14 @@
       "commit": "abdef33f"
     },
     {
+      "claim": "provider-project",
+      "says": "the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "29a262ee"
+    },
+    {
       "claim": "pr-requires",
       "says": "with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable",
       "needs": null,

@@ -84,3 +84,18 @@ export const installTofu = (version: string): InstanceType<typeof Step> =>
       `tofu version`,
     ].join("\n"),
   });
+
+/** Go for the provider's tests (`just provider-test`), at the version its go.mod names. */
+export const GO_VERSION = "1.25.5";
+
+export const installGo = (version: string): InstanceType<typeof Step> =>
+  new Step({
+    name: "Install Go",
+    run: [
+      `arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac`,
+      `curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go${version}.linux-$arch.tar.gz`,
+      `sudo tar -xzf /tmp/go.tar.gz -C /usr/local`,
+      `echo /usr/local/go/bin >> "$GITHUB_PATH"`,
+      `/usr/local/go/bin/go version`,
+    ].join("\n"),
+  });
