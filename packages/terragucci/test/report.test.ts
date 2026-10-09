@@ -347,6 +347,14 @@ describe("where reports go", () => {
     expect(runPath({ ...small(), run: { ...RUN, stage: "tf-apply", wave: 2 } })).toBe(`2026/10/${RUN.commit}/tf-apply-wave-2`);
   });
 
+  it("each share of a wave split across jobs goes under its own directory and keeps its own index row", () => {
+    const share = (n: number) => ({ ...small(), run: { ...RUN, stage: "tf-apply" as const, wave: 2, share: n } });
+    expect(runPath(share(1))).toBe(`2026/10/${RUN.commit}/tf-apply-wave-2-share-1`);
+    const one = addToIndex(undefined, indexEntry(share(1), runPath(share(1))));
+    const both = addToIndex(JSON.stringify(one), indexEntry(share(2), runPath(share(2))));
+    expect(both.reports.map((r) => [r.wave, r.share])).toEqual(expect.arrayContaining([[2, 1], [2, 2]]));
+  });
+
   it("signs a request as AWS's Signature Version 4 example does", () => {
     // AWS's documented example: GET /test.txt from examplebucket with a Range header.
     const h = sign(

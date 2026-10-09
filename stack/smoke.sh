@@ -307,7 +307,8 @@ notify-chat|with notify naming a Slack and a Teams webhook secret and approval: 
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
-cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|'
+cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
+wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -627,6 +628,75 @@ claim_waves() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
+  return $rc
+}
+
+claim_wave_jobs() {
+  # The gated-waves fixture with waves.jobs: 2. Wave 1 (canary/one) is one root
+  # and one job; wave 2 (fleet/*, four roots) gets apply-wave-2, which plans
+  # and gates the wave, and two share jobs of two roots each. Push, approve
+  # wave 1, push: wave 1 applies and wave 2 waits at its one gate, its shares
+  # skipped. Approve wave 2 once and push: each share applies its own two
+  # roots, and the ledger holds one approval of wave 2, used once.
+  # BREAK: the share jobs lose --shares 2 --share <s>, so each one plans,
+  # gates and applies the whole wave: each applies all four roots and records
+  # the approval as used again.
+  log() { echo "[smoke wave-jobs] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/wave-jobs" sha applied rc=0 wf s want got ledger used approvals
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo wave-jobs || { drop_work "$work"; return 1; }
+  echo "  jobs: 2" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init with waves.jobs: 2 failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  apply-wave-2-share-2:' "$wf" || { log "init wrote no share jobs for wave 2"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed 's# --shares 2 --share [0-9]##' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  job_log() { # run id, job name
+    local id
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '.[] | select(.name == $n) | .id' | head -1)"
+    [ -n "$id" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null
+  }
+  job_status() { # run id, job name
+    api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '[.[] | select(.name == $n)][0].status // "missing"'
+  }
+  sha="$(push_tree "$work/tree" "$repo" main "wave-jobs: first")"
+  wait_run "$repo" "$sha"
+  gated_approve wave-jobs 1 || rc=1
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "wave-jobs: after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied wave-jobs)"
+    log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}; share jobs $(job_status "$RUN_ID" apply-wave-2-share-1), $(job_status "$RUN_ID" apply-wave-2-share-2)"
+    [ "$applied" = "canary/one " ] || { log "expected canary/one alone to apply, wave 2 waiting at its gate"; rc=1; }
+    job_log "$RUN_ID" apply-wave-2 | grep "chant approve tf-apply wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve wave-jobs 2 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "wave-jobs: after wave 2 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(gated_applied wave-jobs)"
+    log "after wave 2's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run ended $RUN_STATUS"; rc=1; }
+    [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "expected every root to have state"; rc=1; }
+    # Wave 2's roots in wave order, dealt out in turn: share 1 gets five and three, share 2 four and two.
+    for s in 1 2; do
+      want="$([ $s = 1 ] && echo "fleet/five fleet/three" || echo "fleet/four fleet/two")"
+      got="$(job_log "$RUN_ID" "apply-wave-2-share-$s" | sed -n 's#.*applied \(fleet/[a-z]*\): .*#\1#p' | sort | tr '\n' ' ' | sed 's/ $//')"
+      log "apply-wave-2-share-$s applied: ${got:-nothing}"
+      [ "$got" = "$want" ] || { log "apply-wave-2-share-$s should have applied $want alone"; rc=1; }
+    done
+    job_log "$RUN_ID" apply-wave-2 | grep "applied fleet/" >/dev/null && { log "apply-wave-2 applied a root itself"; rc=1; }
+    ledger="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl)"
+    used="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply/applied.jsonl | jq -s '[.[] | select(.gate == "wave-2")] | length')"
+    approvals="$(jq -s '[.[] | select(.gate == "wave-2" and .kind != "pending")] | length' <<<"$ledger")"
+    log "wave 2 on the ledger: $approvals approval(s), used $used time(s)"
+    { [ "$approvals" = 1 ] && [ "$used" = 1 ]; } || { log "expected one approval of wave 2, used once"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 2 waited at one gate, then its two share jobs each applied their own roots under that one approval"
   return $rc
 }
 
@@ -10767,6 +10837,7 @@ notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
+wave-jobs            runner self! weight=250
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

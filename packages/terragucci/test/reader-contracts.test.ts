@@ -71,6 +71,8 @@ function runs(): Report[] {
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", plan: created, applied: true, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 2, finished: at(10) }, roots: smallFixture().slice(0, 2), waves: [{ number: 2, roots: ["envs/dev/orders", "envs/dev/search"], approval: "waiting", waitingSince: at(9) }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 3, finished: at(10, 30) }, roots: smallFixture().slice(0, 1), waves: [{ number: 3, roots: ["envs/dev/orders"], approval: "approved" }] }),
+    // A share of a wave split across jobs (waves.jobs).
+    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 4, share: 2, finished: at(10, 40) }, roots: smallFixture().slice(1, 2), waves: [{ number: 4, roots: ["envs/dev/search"], approval: "approved" }] }),
   ];
 }
 
