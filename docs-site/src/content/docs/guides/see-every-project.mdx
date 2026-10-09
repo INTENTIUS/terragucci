@@ -22,6 +22,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 | each waiting wave and how long it has waited | the newest commit that ran `tf-apply` |
 | roots applied under a [policy override](/terragucci/reference/policy/#overriding-a-denial), when there are any | a fifth count, and the apply wave that applied them |
 | per project: latest plan, latest drift check, apply waves | each project's `index.json` |
+| each project's roots by wave, an arrow from each root to the roots that read its state, dashed between projects, and a list of the reads between projects | the run view of each project's newest applied commit, `runs/<commit>/run.json` |
 | the 20 newest runs | every project's `index.json` |
 | the resources each root holds, by project, root and type, with a filter box | each project's `inventory.json` |
 | each resource's change history, on `history.html` | each project's `changes.json`, and `audit.jsonl` for the approvers |
@@ -29,7 +30,9 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 | a link to the [audit trail](/terragucci/reference/audit-trail/), when the job writes one | `audit.json` beside the page |
 | the four DORA metrics per project and for the estate, week by week, also in `dora.json` | `audit.jsonl` and each project's `index.json` |
 
-The page reads `index.json`, `inventory.json`, `changes.json`, `states.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
+The page reads `index.json`, `inventory.json`, `changes.json`, `states.json`, `run.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
+
+A read between projects is a `terraform_remote_state` block in one project whose bucket and key name the state another project's root holds in its backend block. A project shows on the graph once one of its applies wrote a run view, which needs `reports.bucket` in its own config. The graph and the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) are inline SVG in the page: no script loads.
 
 ## Before you start
 
@@ -64,7 +67,7 @@ The page reads `index.json`, `inventory.json`, `changes.json`, `states.json`, `a
    {
      "Version": "2012-10-17",
      "Statement": [
-       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
+       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/*/runs/*/run.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
        { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/audit.html", "arn:aws:s3:::acme-terragucci/reports/audit.json"] }
      ]
    }

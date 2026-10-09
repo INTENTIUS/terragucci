@@ -23,10 +23,10 @@ packages/terragucci/src/render-review.ts  review-*
 packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states estate-graph
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* tg-require-attested check-diagnostics tg-check tg-mock-lint description-check generate
-packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-*
+packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph
 packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-* rollout-continue policy-source reconcile-parallelism wave-jobs steps-* generate chat-*
 packages/terragucci/src/synth.ts          cdktn-*
 packages/terragucci/src/steps.ts          steps-*
@@ -86,8 +86,9 @@ packages/terragucci/src/report/changes.schema.json reader-contracts
 packages/terragucci/src/report/history.schema.json reader-contracts
 packages/terragucci/src/report/dora.schema.json dora reader-contracts
 packages/terragucci/src/report/audit.ts   audit* state-versions migrate-split
-packages/terragucci/src/report/run.schema.json reader-contracts linked-states
-packages/terragucci/src/report/run-view.ts linked-states wave-jobs
+packages/terragucci/src/report/run.schema.json reader-contracts linked-states estate-graph
+packages/terragucci/src/report/run-view.ts linked-states wave-jobs estate-graph
+packages/terragucci/src/report/graph.ts   estate-graph linked-states
 packages/terragucci/src/report/highlight.ts highlight*
 packages/terragucci/src/report/azure-blob.ts blob-azure*
 packages/terragucci/src/report/gcs.ts     blob-gcs*
