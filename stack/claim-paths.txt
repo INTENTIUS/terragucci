@@ -85,7 +85,7 @@ packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alert
 packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-*
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
-packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue
+packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue cdktn-tips cdktn-refused
 packages/terragucci/src/publish/require.ts require-*
 packages/terragucci/src/publish           publish publish-attest require-* version-bump-job
 packages/terragucci/src/rollout           rollout rollout-*
