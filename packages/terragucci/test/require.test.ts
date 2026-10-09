@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError, validateConfig } from "../src/config";
 import { checkRoot, checkUnitPins } from "../src/check";
-import type { TerragruntExec } from "../src/binary-env";
+import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { publish } from "../src/publish";
 import { checkedSources, checkRootPins, governingModules, normalizeSource, pinChecker, splitGitSource } from "../src/publish/require";
 import { runStage } from "../src/report/stage";

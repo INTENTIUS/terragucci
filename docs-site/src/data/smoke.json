@@ -986,6 +986,14 @@
       "commit": "8fd354f"
     },
     {
+      "claim": "generate",
+      "says": "terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
       "claim": "root-pins",
       "says": "two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root",
       "needs": null,
