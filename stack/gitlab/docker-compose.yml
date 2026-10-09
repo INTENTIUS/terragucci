@@ -1,0 +1,88 @@
+# The GitLab lab: GitLab CE, one gitlab-runner with the docker executor and
+# floci, under the compose project tglab. It shares nothing with the
+# validation stack in stack/docker-compose.yml: other container, network and
+# volume names, other host ports, its own job cache. So the GitLab smoke
+# claims (SMOKE_FORGE=gitlab) run while the Forgejo claims hold that stack,
+# and `just stack-down` leaves the lab alone.
+#
+#   stack/gitlab/gitlab.sh up       start it, mint the root token, register the runner
+#   stack/gitlab/gitlab.sh stop     stop the containers, keep GitLab's volumes
+#   stack/gitlab/gitlab.sh down     remove its containers, network and volumes
+#
+# The pins are the validation stack's gitlab profile's (stack/README.md,
+# Pins). GitLab CE is linux/amd64 only, so on Apple silicon it runs under
+# emulation; the runner, floci and the job containers are native.
+name: tglab
+
+networks:
+  default:
+    name: tglab
+
+volumes:
+  gitlab-config:
+    name: tglab-gitlab-config
+  gitlab-data:
+    name: tglab-gitlab-data
+  gitlab-logs:
+    name: tglab-gitlab-logs
+  gitlab-runner-config:
+    name: tglab-gitlab-runner-config
+  # Mounted at /cache in every job container: the OpenTofu provider cache.
+  job-cache:
+    name: tglab-job-cache
+
+services:
+  floci:
+    image: ghcr.io/lex00/floci@sha256:b08cd3d507429fae9201b85cca58dcb5e6708bca3bde37eaface7b7fb1419813
+    container_name: tglab-floci
+    environment:
+      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: "false"
+    ports:
+      - "${TGLAB_FLOCI_PORT:-4710}:4566"
+    networks:
+      default:
+        aliases: [floci, 000000000000.floci]
+
+  # external_url is the service name, so every URL a job is handed (clone,
+  # API) resolves on the tglab network; the host reaches the same server on
+  # the published port. Everything GitLab can run without is off, to keep it
+  # near 4 GB.
+  gitlab:
+    image: gitlab/gitlab-ce:17.11.0-ce.0
+    platform: linux/amd64
+    container_name: tglab-gitlab
+    shm_size: "256m"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab:8929'
+        gitlab_rails['initial_root_password'] = 'Tg9QvK3mNt8RpLb2WdHf'
+        gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
+        gitlab_rails['rack_attack_git_basic_auth'] = {}
+        gitlab_rails['gitlab_default_can_create_group'] = true
+        gitlab_rails['usage_ping_enabled'] = false
+        prometheus_monitoring['enable'] = false
+        gitlab_kas['enable'] = false
+        puma['worker_processes'] = 0
+        sidekiq['max_concurrency'] = 5
+    ports:
+      - "${TGLAB_GITLAB_PORT:-8959}:8929"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-data:/var/opt/gitlab
+      - gitlab-logs:/var/log/gitlab
+    networks:
+      default:
+        aliases: [gitlab]
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:v17.11.0
+    container_name: tglab-gitlab-runner
+    depends_on: [gitlab]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab-runner-config:/etc/gitlab-runner
+      - job-cache:/cache
+    networks:
+      default:
+        aliases: [gitlab-runner]
+    restart: unless-stopped

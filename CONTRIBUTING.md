@@ -257,6 +257,18 @@ just example-gitlab shot /root/example/-/merge_requests/1 note-dark.png dark --s
 
 `GITLAB_HIDE` is the hide list, like the tutorial's `FORGEJO_HIDE`: the left sidebar and its toggle, broadcast messages and the instance's alert banners (the "add an SSH key" one), callouts and feature highlights. `GITLAB_STYLE` gives the content the sidebar's width. Both are defaults in `stack/example-gitlab.sh` and can be overridden from the environment. Gravatar is off on the stack, so avatars are GitLab's initials.
 
+### The smoke claims on GitLab
+
+A smoke claim ported to GitLab runs on the GitLab lab, `stack/gitlab/`: GitLab CE, a gitlab-runner and floci under a compose project of their own (`tglab`), beside the validation stack and touching none of its names. `stack/README.md` (The GitLab lab) has its ports, what it costs the machine, and how a run on it is laid out.
+
+```bash
+just gitlab-lab up                    # several minutes; nothing else starts it
+just gitlab-claims tips note-footer   # plain and under BREAK=1; GitLab rows into smoke.json
+just gitlab-lab down
+```
+
+`SMOKE_FORGE=gitlab` switches `stack/smoke.sh` to the claims in `stack/smoke-gitlab.sh` (`GITLAB_CLAIMS`, `GITLAB_CLAIM_GROUPS`, `gitlab_claim_<name>`). A port is a new line in `GITLAB_CLAIMS` with the name of the Forgejo claim it matches, its group line and its function, and `just lint` holds the table to the same rules as `CLAIMS`. Its row in `smoke.json` carries `forge: "gitlab"`, sits after the Forgejo row of the same claim, and shows in the GitLab column of the validation page.
+
 ### The real-AWS pilot (SMOKE_AWS=1)
 
 floci is the AWS the smoke claims run against, in `just smoke`, `just smoke-record` and CI. `SMOKE_AWS=1` runs five of them on a real account instead, the one the default AWS CLI profile signs in to: boot, drift, respond-drift, tg-drift and report. Any other claim exits with a refusal under it, and so does `--record`, since `smoke.json` is floci's record. forgejo-oidc stays on floci. The ruling and the cost research are in terragucci#116.

@@ -246,6 +246,14 @@ sandbox *args:
 scale *args:
     stack/scale/scale.sh {{args}}
 
+[doc("The GitLab lab, on its own stack (compose project tglab): up, status, stop, down. Off until up; GitLab takes about 4 GB of memory.")]
+gitlab-lab *args:
+    stack/gitlab/gitlab.sh {{args}}
+
+[doc("Run the named smoke claims on the GitLab lab, plain and under BREAK=1, in parallel, and write their GitLab rows into smoke.json.")]
+gitlab-claims +names:
+    SMOKE_FORGE=gitlab stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
+
 [doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
 see-runs:
     stack/see-runs.sh

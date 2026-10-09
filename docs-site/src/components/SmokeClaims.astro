@@ -7,15 +7,30 @@ import record from '../data/smoke.json';
 // stays off the table.
 const STACK_ONLY = new Set(['steward']);
 
-const claims = (record.claims as Array<{
+type Row = {
 	claim: string;
 	says: string;
 	needs: string | null;
 	verdict: string;
 	break: string | null;
-}>).filter((c) => !STACK_ONLY.has(c.claim));
+	forge?: string;
+};
+const rows = record.claims as Row[];
 
-const result = (c: (typeof claims)[number]) => {
+// A row with no forge is Forgejo's; a GitLab row carries forge: "gitlab" and
+// sits in the GitLab column of its claim, which shows only once one exists.
+const forgejo = rows.filter((c) => (c.forge ?? 'forgejo') === 'forgejo' && !STACK_ONLY.has(c.claim));
+const gitlab = new Map(rows.filter((c) => c.forge === 'gitlab').map((c) => [c.claim, c]));
+const claims = [
+	...forgejo.map((c) => ({ claim: c.claim, says: c.says, forgejo: c as Row | undefined, gitlab: gitlab.get(c.claim) })),
+	...[...gitlab.values()]
+		.filter((g) => !forgejo.some((c) => c.claim === g.claim))
+		.map((g) => ({ claim: g.claim, says: g.says, forgejo: undefined, gitlab: g })),
+];
+const withGitlab = gitlab.size > 0;
+
+const result = (c: Row | undefined) => {
+	if (!c) return '';
 	if (c.verdict === 'pending') return 'not recorded';
 	if (c.verdict === 'pass' && c.break === 'caught') return 'passes, and fails when broken';
 	if (c.verdict === 'pass') return 'passes';
@@ -25,14 +40,15 @@ const result = (c: (typeof claims)[number]) => {
 <div class="tg-smoke not-content">
 	<table>
 		<thead>
-			<tr><th>Check</th><th>What it shows</th><th>Result</th></tr>
+			<tr><th>Check</th><th>What it shows</th>{withGitlab ? <><th>Forgejo</th><th>GitLab</th></> : <th>Result</th>}</tr>
 		</thead>
 		<tbody>
 			{claims.map((c) => (
 				<tr>
 					<td><code>{c.claim}</code></td>
 					<td>{c.says}</td>
-					<td class={`v-${c.verdict}`}>{result(c)}</td>
+					<td class={c.forgejo ? `v-${c.forgejo.verdict}` : ''}>{result(c.forgejo)}</td>
+					{withGitlab && <td class={c.gitlab ? `v-${c.gitlab.verdict}` : ''}>{result(c.gitlab)}</td>}
 				</tr>
 			))}
 		</tbody>

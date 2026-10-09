@@ -17,7 +17,7 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 
 
 - `github`: GitHub has no self-hostable edition. `mock-github/server.mjs` is a small stateful GitHub: it creates repos, serves their git over smart HTTP (`git http-backend`), opens, lists and merges pull requests, and stores issue comments. The runner is `act` on the host, which runs the repo's real workflow file with its job containers on the `terragucci` network. A push is a git push to the mock, and a run is `act push` on a fresh clone of the pushed commit with a push event for that branch, so `github.ref` and the default-branch condition behave as on GitHub. act checks out from the clone and fetches the workflow's other actions, `actions/upload-artifact` and (in a Terragrunt repo) `actions/cache`, from github.com, as a hosted runner does; the uploads go to act's own artifact server for the length of the run. `act` has to be installed (`brew install act`).
-- `gitlab`: GitLab CE 17.11 and gitlab-runner 17.11 with the docker executor, taken from gitlab-warden's e2e stack. The GitLab image is linux/amd64 only, so on Apple silicon it runs under emulation and cold boot takes a few minutes. Speed does not matter here, and the runner and the job containers are native. `bootstrap.sh` mints a root token with `gitlab-rails runner`, creates an instance runner over `POST /api/v4/user/runners` and registers it with `--docker-network-mode terragucci`.
+- `gitlab`: GitLab CE 17.11 and gitlab-runner 17.11 with the docker executor, taken from gitlab-warden's e2e stack. The GitLab image is linux/amd64 only, so on Apple silicon it runs under emulation and cold boot takes a few minutes. Speed does not matter here, and the runner and the job containers are native. `bootstrap.sh` runs `gitlab-boot.sh`, which mints a root token with `gitlab-rails runner`, creates an instance runner over `POST /api/v4/user/runners` and registers it with `--docker-network-mode terragucci`. The GitLab lab (below) is the same pair on a stack of its own.
 - `fountain`: laid out after waterpark's `compose/`. `bootstrap.sh fountain` builds `terragucci-fountain-steward:local` (`fountain/Dockerfile`: the tofu CI image, the fountain 0.21.0 CLI and the chant terragucci pins, with its fountain lexicon), registers the admin account, mints an API key and starts `fountain runner` with it. A sandbox is a directory in that container and inherits its floci credentials. `steward.sh` does the rest for a repo: it declares the steward on fountain through `POST /api/apply` (an Environment whose setup makes the sandbox a checkout of the repo, an Agent on the `acp` runtime running `chant acp`, and a Teammate so its turns share one thread), stores the fountain key as the repo's `FOUNTAIN_TOKEN` secret, and rewrites a pushed tree so the pipeline's wave jobs become one `apply` job running `chant run tf-apply --on fountain` in the steward image, with a `tf-apply` Op that runs the same `terragucci stage tf-apply` waves on the steward. fountain points a turn's working directory at the sandbox itself, which is why the sandbox, not a subdirectory, is the checkout.
 
 ## The example and the smoke claims
@@ -113,6 +113,28 @@ Host ports are off the usual defaults so the stack can run beside another harnes
 
 The compose project is `terragucci`, the network is `terragucci`, and every container and volume name starts with `terragucci-`. `down.sh` removes those and nothing else.
 
+## The GitLab lab
+
+`gitlab/` is a second stack for the smoke claims on GitLab: GitLab CE, one gitlab-runner with the docker executor and floci, under the compose project `tglab`. It has its own network (`tglab`), volumes (`tglab-*`, the job cache among them) and ports, so it runs beside the validation stack and the scale bench, its claims never wait on a lock of theirs, and `down.sh` leaves it alone. The pins are the gitlab profile's, and both boot through `gitlab-boot.sh`: wait for GitLab to serve, mint the root token with `gitlab-rails runner`, register the runner on the stack's network with the stack's job cache, create `root/validate`.
+
+| Service | Host | On the network | Override |
+|---|---|---|---|
+| GitLab | 8959 | `http://gitlab:8929` | `TGLAB_GITLAB_PORT` |
+| floci | 4710 | `http://floci:4566` | `TGLAB_FLOCI_PORT` |
+
+```bash
+just gitlab-lab up                       # boot it; writes stack/gitlab/.state/gitlab.env
+just gitlab-claims note-footer tips      # GitLab's claims, plain and under BREAK=1, rows into smoke.json
+SMOKE_FORGE=gitlab stack/smoke.sh tips   # one run, for debugging; BREAK=1 as usual
+just gitlab-lab status                   # its containers, their memory, its volumes
+just gitlab-lab stop                     # stop it and keep GitLab's data
+just gitlab-lab down                     # containers, job containers, network and volumes
+```
+
+Nothing starts the lab but `up`: a claim run on GitLab fails at once, saying so, when it is down. `up` refuses when the data volume has less than `TGLAB_MIN_FREE_GB` (40) free.
+
+`SMOKE_FORGE=gitlab` points `smoke.sh` at the claims in `smoke-gitlab.sh`: the table `GITLAB_CLAIMS`, the locks `GITLAB_CLAIM_GROUPS`, and a `gitlab_claim_<name>` per claim. Their locks and logs are under `stack/gitlab/.state/`. Each run pushes a one-root repo with the pipeline `terragucci init --forge gitlab` writes to a new project named after the claim and the run (`smoke-tips-plain-<time>`), and its state to the lab's floci under the same name, so a claim's plain and `BREAK=1` runs go at once. The next run of a claim deletes the projects the last one left. A GitLab row in `smoke.json` carries `forge: "gitlab"` and replaces only the GitLab row of its claim; a row with no `forge` is Forgejo's. The validation page shows GitLab rows in a column of their own, and `tutorial-check` and `tutorial-capture` read only the Forgejo rows. `just claims-affected` picks Forgejo claims; run GitLab's by name.
+
 ## Networking rules
 
 These came from choudoufu's GitLab run and hold here too.
@@ -145,7 +167,7 @@ The `lock-wait` claim needs choudoufu, because OpenTofu sends no span for a lock
 | AWS provider | `hashicorp/aws` 6.67.0, with `.terraform.lock.hcl` for linux_arm64, linux_amd64 and darwin_arm64 |
 | mock GitHub | `node:22-bookworm` running `mock-github/server.mjs` |
 | act | 0.2.89 on the host |
-| GitLab | `gitlab/gitlab-ce:17.11.0-ce.0`, `gitlab/gitlab-runner:v17.11.0` |
+| GitLab | `gitlab/gitlab-ce:17.11.0-ce.0`, `gitlab/gitlab-runner:v17.11.0`, in the gitlab profile and the lab |
 | fountain | `ghcr.io/managoat/fountain:v0.21.0@sha256:c90f8ceb…` (amd64 and arm64), `postgres:16`, the fountain 0.21.0 CLI from its GitHub release in `terragucci-fountain-steward:local` |
 
 Jobs fetch `actions/checkout@v4` from data.forgejo.org and OpenTofu from GitHub releases, so the forgejo profile needs network access. The github and gitlab pipelines run in terragucci's tofu image, built into the local daemon by `bootstrap.sh` when it is missing; they download the AWS provider on every run.

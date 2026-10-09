@@ -225,82 +225,18 @@ if [ "$PROFILE" = "github" ]; then
 fi
 
 # ── gitlab ─────────────────────────────────────────────────────────────────
+# stack/gitlab-boot.sh, which the GitLab lab (stack/gitlab/gitlab.sh) runs too.
 if [ "$PROFILE" = "gitlab" ]; then
-  GITLAB_URL="http://localhost:${GITLAB_PORT}"
-  # A throwaway token on a throwaway instance, minted through gitlab-rails the
-  # way gitlab-warden's e2e does.
-  GITLAB_TOKEN="glpat-terragucci-local-0001"
-  # Poll the sign-in page, not /-/health: the monitoring endpoints are
-  # restricted by IP and a request from the host arrives from the bridge gateway.
-  # Cold boot under emulation takes ten minutes or more.
-  log "waiting for GitLab to serve (cold boot under emulation is slow)…"
-  for i in $(seq 1 360); do
-    curl -fsS -o /dev/null -m 5 "$GITLAB_URL/users/sign_in" 2>/dev/null && { log "serving after ~$((i * 5))s"; break; }
-    sleep 5
-    [ $((i % 24)) -eq 0 ] && log "still booting… ~$((i * 5))s"
-    if [ "$i" = 360 ]; then "${COMPOSE[@]}" --profile gitlab logs --tail=60 gitlab >&2 || true; die "GitLab did not serve in 30 minutes"; fi
-  done
-  log "minting a root token with gitlab-rails…"
-  for i in $(seq 1 30); do
-    if "${COMPOSE[@]}" exec -T gitlab gitlab-rails runner "
-      u = User.find_by_username('root')
-      u.personal_access_tokens.where(name: 'terragucci').delete_all
-      t = u.personal_access_tokens.create!(scopes: ['api'], name: 'terragucci', expires_at: 1.day.from_now)
-      t.set_token('${GITLAB_TOKEN}'); t.save!
-    " >/dev/null 2>&1; then break; fi
-    sleep 10
-    [ "$i" = 30 ] && die "could not mint a token with gitlab-rails"
-  done
-  glapi() { curl -fsS -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$@"; }
-  for i in $(seq 1 12); do glapi -o /dev/null "$GITLAB_URL/api/v4/version" 2>/dev/null && break; sleep 5; done
-  glapi -o /dev/null "$GITLAB_URL/api/v4/version" || die "the token does not authenticate"
-  log "GitLab $(glapi "$GITLAB_URL/api/v4/version" | jq -r .version)"
-
   ensure_ci_image
-  runner_online() { glapi "$GITLAB_URL/api/v4/runners/all?status=online" | jq -e 'map(select(.description == "terragucci-docker")) | length > 0' >/dev/null 2>&1; }
-  if runner_online; then
-    log "the runner is already registered and online"
-  else
-    # Runners from an earlier registration that are no longer polling.
-    for stale in $(glapi "$GITLAB_URL/api/v4/runners/all" | jq -r '.[] | select(.description == "terragucci-docker") | .id'); do
-      glapi -o /dev/null -X DELETE "$GITLAB_URL/api/v4/runners/$stale" || true
-    done
-    log "registering gitlab-runner…"
-    RUNNER_TOKEN="$(glapi -X POST "$GITLAB_URL/api/v4/user/runners" \
-      --data-urlencode "runner_type=instance_type" --data-urlencode "description=terragucci-docker" \
-      --data-urlencode "run_untagged=true" | jq -r .token)"
-    [ -n "$RUNNER_TOKEN" ] && [ "$RUNNER_TOKEN" != null ] || die "runner creation returned no token"
-    "${COMPOSE[@]}" exec -T gitlab-runner rm -f /etc/gitlab-runner/config.toml
-    # network mode: job containers join the terragucci network. The cache
-    # volume holds the provider plugin cache. Every job's AWS is floci.
-    "${COMPOSE[@]}" exec -T gitlab-runner gitlab-runner register --non-interactive \
-      --url http://gitlab:8929 --token "$RUNNER_TOKEN" --executor docker \
-      --docker-image "$CI_IMAGE" --docker-pull-policy if-not-present \
-      --docker-network-mode "$NETWORK" --docker-volumes "terragucci-job-cache:/cache" \
-      --env TF_PLUGIN_CACHE_DIR=/cache \
-      --env AWS_ENDPOINT_URL=http://floci:4566 --env AWS_ACCESS_KEY_ID=test \
-      --env AWS_SECRET_ACCESS_KEY=test --env AWS_REGION=us-east-1 >&2
-    # A reconcile run leaves a pipeline running on an untouched project; let
-    # the one the claim waits on start beside it.
-    "${COMPOSE[@]}" exec -T gitlab-runner sed -i 's/^concurrent = .*/concurrent = 4/' /etc/gitlab-runner/config.toml
-    "${COMPOSE[@]}" restart gitlab-runner >&2
-    log "waiting for the runner to come online…"
-    for i in $(seq 1 60); do
-      runner_online && { log "runner online after ~$((i * 2))s"; break; }
-      sleep 2
-      if [ "$i" = 60 ]; then "${COMPOSE[@]}" logs --tail=40 gitlab-runner >&2 || true; die "the runner did not come online"; fi
-    done
-  fi
-
-  log "creating root/$REPO (an existing one is kept)…"
-  if ! glapi -o /dev/null "$GITLAB_URL/api/v4/projects/root%2F$REPO" 2>/dev/null; then
-    glapi -o /dev/null -X POST "$GITLAB_URL/api/v4/projects" \
-      --data-urlencode "name=$REPO" --data-urlencode "visibility=public" --data-urlencode "initialize_with_readme=false" \
-      --data-urlencode "default_branch=main"
-  fi
+  # shellcheck source=gitlab-boot.sh
+  . "$HERE/gitlab-boot.sh"
+  GL_URL="http://localhost:${GITLAB_PORT}"
+  GL_TOKEN="glpat-terragucci-local-0001"
+  GL_CONTAINER=terragucci-gitlab GL_NETWORK="$NETWORK" GL_CACHE_VOLUME=terragucci-job-cache GL_RUNNER=terragucci-docker \
+    gitlab_boot
   write_env gitlab \
-    "TERRAGUCCI_GITLAB_URL=$GITLAB_URL" \
-    "TERRAGUCCI_GITLAB_TOKEN=$GITLAB_TOKEN" \
+    "TERRAGUCCI_GITLAB_URL=$GL_URL" \
+    "TERRAGUCCI_GITLAB_TOKEN=$GL_TOKEN" \
     "TERRAGUCCI_GITLAB_USER=root" \
     "TERRAGUCCI_GITLAB_REPO=root/$REPO" \
     "TERRAGUCCI_FLOCI_URL=$FLOCI_URL"
