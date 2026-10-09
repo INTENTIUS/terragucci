@@ -87,6 +87,9 @@ push_tree() { # dir, repo, branch, message -> prints the pushed sha
     if [ -z "${TG_KEEP_DIGESTS:-}" ]; then
       for f in .forgejo/workflows/*.yml .github/workflows/*.yml .gitlab/*.yml .gitlab-ci.yml; do
         if [ -f "$f" ]; then perl -pi -e 's#(ghcr\.io/intentius/terragucci-[a-z]+:[^@\s]+)\@sha256:[0-9a-f]{64}#$1#g' "$f"; fi
+        # This tree's own tags (TG_IMAGE_SUFFIX, set by smoke.sh): any suffix a ref
+        # already has is replaced, so a pipeline pushed twice keeps one.
+        if [ -f "$f" ] && [ -n "${TG_IMAGE_SUFFIX:-}" ]; then perl -pi -e 's#(ghcr\.io/intentius/terragucci-(?:tofu|terraform|terragrunt|choudoufu):[A-Za-z0-9_.-]+?)(?:-t[0-9a-f]{12})?(?=[\s"\x27]|$)#$1$ENV{TG_IMAGE_SUFFIX}#g' "$f"; fi
         # The GitLab lab's image: the tofu image with this tree's bundle (gitlab.sh image).
         if [ -f "$f" ] && [ -n "${TG_TOFU_IMAGE:-}" ]; then TG_TOFU_IMAGE="$TG_TOFU_IMAGE" perl -pi -e 's#ghcr\.io/intentius/terragucci-tofu:[^@\s"'"'"']+#$ENV{TG_TOFU_IMAGE}#g' "$f"; fi
       done
