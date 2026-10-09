@@ -1018,11 +1018,13 @@ provider "aws" {
     mk "$WORK/in-line" "inline-$FORGE" "$p-inline"
     # in-line's pipeline is rendered with the same settings the control repo
     # hands every project (they change the pipeline: token_env adds the plan
-    # job's token), so the claim cannot drift from the renderer.
+    # job's token), so the claim cannot drift from the renderer. Its
+    # terragucci.yml stays: the jobs read token_env there, and reconcile
+    # leaves a project's own file alone when it holds the control repo's value.
     DEFAULTS="forge: $FORGE
 binary: tofu
 token_env: $FORGE_TOKEN_ENV"
-    (cd "$WORK/in-line" && git init -q -b main && echo "$DEFAULTS" > terragucci.yml && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
+    (cd "$WORK/in-line" && git init -q -b main && echo "$DEFAULTS" > terragucci.yml && "$TERRAGUCCI" init >/dev/null)
     # Pushed as init writes it, digests and all, so reconcile finds it in line;
     # the github forge_run drops the digests from the clone it runs.
     TG_KEEP_DIGESTS=1 forge_push "$WORK/in-line" in-line main "Two roots, pipeline in line" >/dev/null

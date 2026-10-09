@@ -25,13 +25,13 @@ packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
-packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-estimate rollout-continue
+packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-zero-config pr-base-config check-diagnostics cdktn-* notify-chat notify-webhook cost-estimate rollout-continue policy-source reconcile-parallelism
 packages/terragucci/src/synth.ts          cdktn-*
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-*
 packages/terragucci/src/install.ts        pinned-install tf-terraform tg-terraform cdf-* cost-estimate
 packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
 packages/terragucci/src/override.ts       policy-override* estate-override
-packages/terragucci/src/reconcile.ts      reconcile estate-control audit-control
+packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate-control audit-control
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts
 packages/terragucci/src/audit.ts          audit*
 packages/terragucci/src/notify.ts         notify-chat notify-webhook

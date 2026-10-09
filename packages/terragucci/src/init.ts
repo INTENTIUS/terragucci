@@ -17,6 +17,8 @@ import {
   gitlabPrApplyProblems,
   findConfig,
   loadConfig,
+  BUILT_IN,
+  PROJECT_FILE_KEYS,
   resolveRepo,
   responseTo,
   type Approval,
@@ -308,7 +310,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
 
   // A control repo's project reads policy and reports from its own terragucci.yml, so the control repo's keys are written there.
   if (options.settings) {
-    const projectFile = await projectConfigFile(repo, { policy: options.settings.policy, reports: options.settings.reports });
+    const projectFile = await projectConfigFile(repo, options.settings);
     if (projectFile) files.push(projectFile);
   }
 
@@ -379,31 +381,36 @@ function sameData(a: unknown, b: unknown): boolean {
   return JSON.stringify(sorted(a ?? null)) === JSON.stringify(sorted(b ?? null));
 }
 
-/** The keys a control repo writes into a project's terragucci.yml: the project's jobs read them from there, not from the pipeline. */
-type CarriedKeys = Pick<ResolvedSettings, "policy" | "reports">;
+/** A key's value as a project's jobs see it: absent when it is the built-in one, which they fall back to. */
+function carriedValue(settings: ResolvedSettings, k: (typeof PROJECT_FILE_KEYS)[number]): unknown {
+  const v = settings[k];
+  return v === undefined || sameData(v, (BUILT_IN as ProjectSettings)[k]) ? undefined : v;
+}
 
 /**
- * The project's terragucci.yml, for a control repo whose settings set
- * `policy:` or `reports:`. The project's jobs read `policy` from the project's
- * own config at the base, and the apply waves read `reports` from it, so the
- * control repo's keys are written there, and rewritten while the file is the
- * one terragucci wrote. A config of the project's own must already carry the
- * same keys; otherwise the project fails with what to change.
+ * The project's terragucci.yml, for a control repo's project. The project's
+ * jobs read the keys PROJECT_FILE_KEYS names from the project's own config
+ * (`policy` and `approval` at the base), and no pipeline flag carries them, so
+ * the control repo's values are written there, and rewritten while the file is
+ * the one terragucci wrote. A config of the project's own must already carry
+ * the same values; otherwise the project fails with what to change.
  */
-async function projectConfigFile(repo: string, carried: CarriedKeys): Promise<FileChange | undefined> {
+async function projectConfigFile(repo: string, settings: ResolvedSettings): Promise<FileChange | undefined> {
   const found = findConfig(repo);
   const path = join(repo, "terragucci.yml");
   const ours = found === path && readFileSync(path, "utf-8").startsWith(PROJECT_CONFIG_HEADER);
-  const keys = (["policy", "reports"] as const).filter((k) => carried[k] !== undefined);
+  const keys = PROJECT_FILE_KEYS.filter((k) => carriedValue(settings, k) !== undefined);
   if (found && !ours) {
-    const own = await loadConfig(found);
-    const differ = (["policy", "reports"] as const).filter((k) => !sameData(own[k], carried[k]));
+    const own = resolveRepo(await loadConfig(found));
+    const differ = PROJECT_FILE_KEYS.filter((k) => !sameData(carriedValue(own, k), carriedValue(settings, k)));
     if (differ.length === 0) return undefined;
-    const fix = differ.map((k) => (carried[k] ? `set its ${k} key to the control repo's (${JSON.stringify(carried[k])})` : `remove its ${k} key`)).join(" and ");
+    const fix = differ
+      .map((k) => (carriedValue(settings, k) !== undefined ? `set its ${k} key to the control repo's (${JSON.stringify(settings[k])})` : `remove its ${k} key`))
+      .join(" and ");
     throw new ConfigError(`${relative(repo, found)} exists and terragucci did not write it, and the jobs read ${differ.join(" and ")} from it; ${fix}, or remove the file so the control repo writes it`);
   }
   if (keys.length === 0 && !ours) return undefined;
-  const body = keys.length ? emitYAML(Object.fromEntries(keys.map((k) => [k, carried[k]])), 0).trim() : "{}";
+  const body = keys.length ? emitYAML(Object.fromEntries(keys.map((k) => [k, settings[k]])), 0).trim() : "{}";
   return plan(path, `${PROJECT_CONFIG_HEADER}\n${body}\n`);
 }
 

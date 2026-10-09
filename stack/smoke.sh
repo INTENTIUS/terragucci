@@ -213,6 +213,7 @@ summed-timings|with binary: choudoufu past its span budget the report lists the 
 foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
 tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
+reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
 pr-requires|with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable|
 pr-lock|/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named|
 front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|
@@ -789,8 +790,10 @@ provider "aws" {
   sed -i.bak 's#reconcile/#inline/#; s#tg-reconcile-#tg-inline-#' "$work/in-line/network/main.tf" "$work/in-line/app/main.tf"
   rm -f "$work/in-line/network/main.tf.bak" "$work/in-line/app/main.tf.bak"
   # The same settings as the control repo's defaults, so init writes what reconcile would.
+  # The file stays: the jobs read token_env there, and reconcile leaves a
+  # project's own file alone when it holds the control repo's value.
   printf 'forge: forgejo\nbinary: tofu\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' > "$work/in-line/terragucci.yml"
-  (cd "$work/in-line" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml)
+  (cd "$work/in-line" && "$TERRAGUCCI" init >/dev/null)
   # in-line must hold exactly what init writes, digest pins included, or reconcile
   # sees a change; its push runs a pipeline the claim never waits on.
   TG_KEEP_DIGESTS=1 push_tree "$work/in-line" "$USER/in-line" main "Two roots, pipeline in line" >/dev/null
@@ -4851,6 +4854,49 @@ YML
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "the project has no policy directory, reconcile wrote the control repo source into its terragucci.yml, and the wave fetched $repo at $ref and refused app with its denial"
+  return $rc
+}
+
+claim_reconcile_parallelism() {
+  # A control repo whose defaults set parallelism: 1 is reconciled in a dry
+  # run over one project of two roots, with no terragucci.yml of its own. The
+  # terragucci.yml reconcile would write is committed to the project, and
+  # tf-plan runs there in the tofu CI image with no --parallelism. It must plan
+  # one root at a time and name terragucci.yml as the reason.
+  # BREAK: the control repo's defaults set parallelism: 2, so the plan job
+  # plans both roots at once and the claim's check of one at a time fails.
+  log() { echo "[smoke reconcile-parallelism] $*" >&2; }
+  local work want=1 file code=0 rc=0
+  [ -n "${BREAK:-}" ] && want=2
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/project/app" "$work/project/app2"
+  cp "$HERE/fixtures/policy-wave/app/main.tf" "$work/project/app/"
+  sed 's/input = "policy"/input = "parallelism"/' "$HERE/fixtures/policy-wave/app/main.tf" > "$work/project/app2/main.tf"
+  git -C "$work/project" init -q -b main
+  git -C "$work/project" add -A && git -C "$work/project" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "two roots, no terragucci.yml"
+  cat > "$work/control.yml" <<YML
+defaults:
+  forge: forgejo
+  binary: tofu
+  parallelism: $want
+projects:
+  localhost/smoke/parallelism-project:
+    url: /repo/project
+YML
+  in_image "$work" sh -c 'terragucci reconcile --config control.yml --json > reconcile.json' >&2 || { log "reconcile failed: $(head -c 2000 "$work/reconcile.json" 2>/dev/null)"; drop_work "$work"; return 1; }
+  file="$(jq -r '.results.projects[0].changes[] | select(.path == "terragucci.yml") | .content' "$work/reconcile.json")"
+  [ -n "$file" ] || { log "reconcile would write no terragucci.yml into the project"; drop_work "$work"; return 1; }
+  grep -q "^parallelism: $want\$" <<<"$file" || { log "the project terragucci.yml does not set parallelism: $want"; rc=1; }
+  printf '%s\n' "$file" > "$work/project/terragucci.yml"
+  git -C "$work/project" add -A && git -C "$work/project" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "terragucci.yml from the control repo"
+  in_image "$work/project" terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'app,app2' > "$work/plan.log" 2>&1 || code=$?
+  clean_mounted "$work/project" "$(image_tag tofu)"
+  cat "$work/plan.log" >&2
+  [ "$code" = 0 ] || { log "tf-plan exited $code, not 0"; rc=1; }
+  grep -q "planning one root at a time (terragucci.yml)" "$work/plan.log" || { log "the plan job did not plan one root at a time from terragucci.yml"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "reconcile wrote the control repo's parallelism: 1 into the project's terragucci.yml, and the plan job planned its two roots one at a time"
   return $rc
 }
 
@@ -10389,6 +10435,7 @@ summed-timings       weight=90
 foreign-checkout     ex after=boot weight=150
 tg-layers            runner self! weight=300
 policy-source        self! weight=150
+reconcile-parallelism weight=120
 pr-requires          runner self! weight=300
 pr-lock              runner self! weight=200
 front-door           self! weight=40
