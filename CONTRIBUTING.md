@@ -221,9 +221,11 @@ just example-gitlab reset               # close merge requests, drop branches, a
 just example-gitlab verify              # every resource main declares is in floci
 just example-gitlab logs                # the failing lines of the last pipeline with a failed job
 just example-gitlab change drift        # delete a queue, run the drift schedule, print the issue
+just example-gitlab plan-comment        # note /terragucci plan on change/one-root and wait for the re-plan
+just example-gitlab pr-apply            # apply before merge: a reviewer approves, /terragucci apply applies and merges
 ```
 
-The GitLab screenshots the docs place in their GitLab tabs (the plan note, the failed check, the waiting wave's log, the drift issue and the Pipelines must succeed setting, each light and dark) come from `just example-gitlab capture`, which writes `docs-site/src/data/tutorial/gitlab.json` and `docs-site/src/assets/tutorial/gitlab-*.png`. On the GitLab lab it is `TGLAB=1 just example-gitlab up`, then `TGLAB=1 just example-gitlab capture`, about 11 minutes; there the jobs run this tree's bundle in the lab's own image, as the GitLab claims do.
+The GitLab screenshots the docs place in their GitLab tabs (the plan note, the note after `/terragucci plan`, the failed check, the waiting wave's log, the drift issue, the replies of an apply before merge and the Pipelines must succeed setting, each light and dark) come from `just example-gitlab capture`, which writes `docs-site/src/data/tutorial/gitlab.json` and `docs-site/src/assets/tutorial/gitlab-*.png`. On the GitLab lab it is `TGLAB=1 just example-gitlab up`, then `TGLAB=1 just example-gitlab capture`, about 15 minutes; there the jobs run this tree's bundle in the lab's own image, as the GitLab claims do.
 
 | Step | Took on an Apple silicon Mac, GitLab under emulation |
 |---|---|
@@ -326,6 +328,7 @@ just sandbox merge destroy         # wave 4 waits, with its approve command
 just sandbox approve               # chant approve --plan ... --sign, then re-run the stopped jobs
 just sandbox approve --hold        # approve only; then change and merge module-bump: wave 4 is refused
 just sandbox drift                 # delete a file staging orders keeps, run the drift job, wait for its issue
+just sandbox pr-apply              # apply before merge: /terragucci apply applies and merges a pull request
 just sandbox shot list             # the pages the steps recorded
 just sandbox shot all              # each one logged out, light and dark
 just sandbox reset                 # close the pull requests and issues, delete the branches, tags and secrets, main back to its first commit
