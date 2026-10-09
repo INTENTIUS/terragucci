@@ -285,7 +285,13 @@ audit-control|terragucci audit in a control repo fetches each project ledger fro
 notify-chat|with notify naming a Slack and a Teams webhook secret, a wave that waits posts the wave, its root, the approve command and the run link to each|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
-cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|'
+cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
+sql-ch-plan|the plan note of a ClickHouse database unit classes each change and binds its approval to a digest, and a change that needs a rebuild is refused naming ClickHouseRebuildOp|619
+sql-ch-apply|a ClickHouse database unit applies the digest approved from its note after the merge, and applies nothing when the server moved after the approval|619
+sql-ch-drift|the drift job of a ClickHouse database unit opens the drift issue naming an object changed outside the code|619
+sql-pg-plan|the plan note of a Postgres database unit names the lock of each change and binds its approval to a digest, and a column rename is refused naming PostgresMigrationOp|619
+sql-pg-apply|a Postgres database unit applies the digest approved from its note after the merge, and applies nothing when the server moved after the approval|619
+sql-pg-drift|the drift job of a Postgres database unit opens the drift issue naming an object dropped outside the code|619'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -4337,6 +4343,272 @@ claim_pr_lock() {
   [ $rc = 0 ] && log "A locked canary/one without applying, and B was refused naming A"
   return $rc
 }
+
+# ── SQL Yodeler: database units ───────────────────────────────────────────
+# The six sql-* claims run example-sql/<dialect> on its own scratch repo, against
+# chant's sql emulator (`chant emulator up --lexicon sql`, from the example's
+# project) put on the stack's network as `clickhouse` and `pgdb`, the hosts the
+# examples' profiles name. Each starts from a database that already holds the
+# example's schema, applied by the claim as the writer, as a team adopting the
+# unit starts. The jobs hold a read-only user (yodel_reader) in the plan and
+# drift jobs and a writer (yodel_writer) in the apply jobs, from the repo's
+# secrets. d is the dialect's short name: ch or pg.
+#
+# The examples install @intentius/chant-lexicon-sql from npm. SMOKE_SQL_TARBALL
+# names a packed lexicon to install instead, for a run before a release; --record
+# refuses it, since the guide tells a reader to install from npm.
+SQL_EXAMPLES="$HERE/../example-sql"
+
+sql_dialect() { case "$1" in ch) echo clickhouse ;; pg) echo postgres ;; esac; }
+
+sql_q() { # d, statement -> run on the emulator as its admin
+  case "$1" in
+    ch) docker exec -i chant-clickhouse clickhouse-client --multiquery --query "$2" ;;
+    pg) docker exec -i chant-postgres psql -U postgres -v ON_ERROR_STOP=1 -tAc "$2" ;;
+  esac
+}
+
+sql_has_column() { # d, column -> 0 when the example's users table has it
+  case "$1" in
+    ch) [ "$(sql_q ch "SELECT count() FROM system.columns WHERE database = 'analytics' AND table = 'users' AND name = '$2'")" = 1 ] ;;
+    pg) [ "$(sql_q pg "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'app' AND table_name = 'users' AND column_name = '$2'")" = 1 ] ;;
+  esac
+}
+
+# The edits a claim makes to a checkout of the example.
+sql_edit() { # d, scenario, dir
+  local src="$3/db/src"
+  case "$1:$2" in
+    ch:classified) perl -pi -e 's/INTERVAL 180 DAY/INTERVAL 90 DAY/' "$src/events.ts" ;;
+    ch:refused) perl -pi -e 's/ORDER BY \(user_id, kind, ts\)/ORDER BY (kind, user_id, ts)/' "$src/events.ts" ;;
+    ch:column) perl -pi -e "s/^(    plan        LowCardinality\\(String\\) DEFAULT 'free',)\$/\$1\\n    country     LowCardinality(String) DEFAULT '',/" "$src/users.ts" ;;
+    ch:column2) perl -pi -e "s/^(    plan        LowCardinality\\(String\\) DEFAULT 'free',)\$/\$1\\n    referrer    String DEFAULT '',/" "$src/users.ts" ;;
+    pg:classified)
+      perl -0pi -e 's/    placed_at  timestamptz NOT NULL DEFAULT now\(\)\n/    placed_at  timestamptz NOT NULL DEFAULT now(),\n    shipped_at timestamptz\n/' "$src/orders.ts"
+      printf '\nexport const ordersStatus = index`\n  CREATE INDEX CONCURRENTLY orders_status_idx ON ${orders} (${orders.columns.status})`;\n' >> "$src/orders.ts" ;;
+    pg:refused)
+      perl -pi -e 's/^    placed_at  timestamptz NOT NULL DEFAULT now\(\)$/    ordered_at timestamptz NOT NULL DEFAULT now()  -- previously: placed_at/; s/orders\.columns\.placed_at/orders.columns.ordered_at/' "$src/orders.ts" ;;
+    pg:column) perl -pi -e 's/^(    email      text NOT NULL UNIQUE,.*)$/$1\n    nickname   text,/' "$src/users.ts" ;;
+    pg:column2) perl -pi -e 's/^(    email      text NOT NULL UNIQUE,.*)$/$1\n    locale     text,/' "$src/users.ts" ;;
+  esac
+  git -C "$3" diff --quiet && { log "the $2 edit changed nothing"; return 1; }
+  return 0
+}
+
+# Run terragucci from this tree in the CI image, on the stack's network, with ENVS (`-e NAME=value ...`).
+sql_in_image() { # dir, envs, command...
+  local dir="$1" envs="$2" image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift 2
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
+  [ -f "$bundle" ] || build_cli || return 1
+  # shellcheck disable=SC2086
+  run_copied --rm --network terragucci -v "$dir:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' $envs "$image" "$@"
+}
+
+sql_users() { # d -> the envs the writer's apply runs with
+  case "$1" in
+    ch) echo "-e CLICKHOUSE_USER=yodel_writer -e CLICKHOUSE_PASSWORD=writer-pw" ;;
+    pg) echo "-e POSTGRES_USER=yodel_writer -e POSTGRES_PASSWORD=writer-pw" ;;
+  esac
+}
+
+# A scratch repo $USER/<name> holding the example with its pipeline at main,
+# in $work/tree, its first run green, and the emulator holding the example's
+# schema and nothing else.
+sql_up() { # d, name
+  local d="$1" name="$2" dialect tree="$work/tree" repo="$USER/$2" sha kv tarball
+  dialect="$(sql_dialect "$d")"
+  mkdir -p "$tree"; cp -R "$SQL_EXAMPLES/$dialect/." "$tree/"
+  if [ -n "${SMOKE_SQL_TARBALL:-}" ]; then
+    tarball="$(basename "$SMOKE_SQL_TARBALL")"
+    mkdir -p "$tree/db/vendor"; cp "$SMOKE_SQL_TARBALL" "$tree/db/vendor/$tarball"
+    jq --arg f "file:vendor/$tarball" '.devDependencies["@intentius/chant-lexicon-sql"] = $f' "$tree/db/package.json" > "$tree/db/package.json.new" \
+      && mv "$tree/db/package.json.new" "$tree/db/package.json"
+  fi
+  (cd "$tree/db" && npm install --no-audit --no-fund >&2) || { log "npm install in the $dialect example failed"; return 1; }
+  (cd "$tree/db" && npx chant emulator up --lexicon sql >&2) || { log "chant emulator up --lexicon sql failed"; return 1; }
+  docker network connect --alias clickhouse terragucci chant-clickhouse 2>/dev/null || true
+  docker network connect --alias pgdb terragucci chant-postgres 2>/dev/null || true
+  # The host's packages are for the host; the jobs install their own from the lock file.
+  rm -rf "$tree/db/node_modules"
+  case "$d" in
+    ch) sql_q ch "DROP DATABASE IF EXISTS analytics SYNC;
+                  CREATE USER IF NOT EXISTS yodel_reader IDENTIFIED WITH plaintext_password BY 'reader-pw' SETTINGS readonly = 1;
+                  GRANT SELECT, SHOW ON *.* TO yodel_reader;
+                  CREATE USER IF NOT EXISTS yodel_writer IDENTIFIED WITH plaintext_password BY 'writer-pw';
+                  GRANT CURRENT GRANTS ON *.* TO yodel_writer" >&2 || return 1 ;;
+    pg) sql_q pg "DROP SCHEMA IF EXISTS app CASCADE" >&2 || return 1
+        sql_q pg "DO \$\$ BEGIN
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'yodel_reader') THEN CREATE ROLE yodel_reader LOGIN PASSWORD 'reader-pw'; END IF;
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'yodel_writer') THEN CREATE ROLE yodel_writer LOGIN PASSWORD 'writer-pw'; END IF;
+                  END \$\$" >&2 || return 1
+        sql_q pg "GRANT pg_read_all_data TO yodel_reader" >&2 && sql_q pg "GRANT CREATE ON DATABASE postgres TO yodel_writer" >&2 || return 1 ;;
+  esac
+  # The database the team already has: the example's schema, applied as the writer. chant runs an Op in a git checkout.
+  git -C "$tree" init -q -b main && git -C "$tree" add -A \
+    && git -C "$tree" -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false commit -qm "the schema the server holds" || return 1
+  sql_in_image "$tree" "$(sql_users "$d")" terragucci stage tf-apply --wave 1 --layers db@prod --binary tofu --gate never >&2 \
+    || { log "the example's schema did not apply to the emulator"; return 1; }
+  rm -rf "$tree/db/node_modules" "$tree/db/dist" "$tree/terragucci-report"
+  fresh_repo "$name" || return 1
+  for kv in CH_READER_USER=yodel_reader CH_READER_PASSWORD=reader-pw CH_WRITER_USER=yodel_writer CH_WRITER_PASSWORD=writer-pw \
+            PG_READER_USER=yodel_reader PG_READER_PASSWORD=reader-pw PG_WRITER_USER=yodel_writer PG_WRITER_PASSWORD=writer-pw; do
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d "{\"data\":\"${kv#*=}\"}" "$URL/api/v1/repos/$repo/actions/secrets/${kv%%=*}" || return 1
+  done
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  # The jobs run the CI image built from this tree.
+  perl -pi -e "s#ghcr\\.io/intentius/terragucci-tofu:[^\\s'\"]+#$(image_tag tofu)#g" "$tree/.forgejo/workflows/terragucci.yml"
+  sha="$(push_tree "$tree" "$repo" main "The shop's $dialect schema, as the server holds it")" || return 1
+  wait_run "$repo" "$sha" push
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "main's first run ended $RUN_STATUS"; return 1; }
+  run_logs "$repo" "$RUN_ID" | grep -q "db@prod: No changes." || { log "main's first run did not plan db@prod with no change"; return 1; }
+}
+
+sql_branch() { # name, branch, d, scenario... -> pushes a pull request with the edits; sets SQL_PR and SQL_SHA, waits for its plan run
+  local name="$1" branch="$2" d="$3" repo="$USER/$1" dir="$work/$2" s; shift 3
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" "$dir" || return 1
+  for s in "$@"; do sql_edit "$d" "$s" "$dir" || return 1; done
+  SQL_SHA="$(push_tree "$dir" "$repo" "$branch" "$branch")" || return 1
+  api -o /dev/null -H 'content-type: application/json' -X POST \
+    -d "$(jq -n --arg h "$branch" '{title:$h, head:$h, base:"main"}')" "$URL/api/v1/repos/$repo/pulls" || return 1
+  SQL_PR="$(open_pr "$repo" "$branch")"
+  wait_run "$repo" "$SQL_SHA" pull_request
+}
+
+sql_note() { # repo, pr
+  api "$URL/api/v1/repos/$1/issues/$2/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))][0].body // ""'
+}
+
+sql_plan_status() { # repo, sha
+  api "$URL/api/v1/repos/$1/commits/$2/statuses" | jq -r '[.[] | select(.context == "terragucci/plan")][0].status // ""'
+}
+
+sql_approve() { # name, digest
+  local clone="$work/approve-$RANDOM"
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/$1.git" "$clone" || return 1
+  git -C "$clone" config user.name smoke-approver
+  git -C "$clone" config user.email smoke-approver@terragucci.local
+  (cd "$clone" && "$CHANT" approve tf-apply wave-1 --plan "$2" --actor smoke-approver) >&2 || { log "chant approve tf-apply wave-1 --plan $2 failed"; return 1; }
+}
+
+sql_merge() { # name, pr -> waits for main's run; sets RUN_*
+  local repo="$USER/$1" sha
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$2/merge" || return 1
+  sha="$(remote_head "$repo" main)"
+  wait_run "$repo" "$sha" push
+}
+
+sql_out_of_band() { # d -> a change made on the server, outside the code
+  case "$1" in
+    ch) sql_q ch "ALTER TABLE analytics.events MODIFY TTL ts + INTERVAL 30 DAY" ;;
+    pg) sql_q pg "DROP INDEX app.orders_user_id_idx" ;;
+  esac
+}
+
+claim_sql_plan() { # d
+  # A pull request with a change the database makes in place gets a plan note
+  # with each change's class (ClickHouse: a TTL change, a background rewrite;
+  # Postgres: a column and a CONCURRENTLY index, each naming its lock) and the
+  # digest the wave's approval binds, and terragucci/plan passes. A pull
+  # request with a change it cannot make in place (ClickHouse: a new sort key;
+  # Postgres: a column rename) is refused on the note, naming the Op that makes
+  # it, and terragucci/plan fails.
+  # BREAK: neither branch carries its edit, so no class and no refusal is shown.
+  local d="$1" name="sql-$1-plan" repo note rc=0 op scenario work
+  log() { echo "[smoke $name] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  repo="$USER/$name"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  sql_up "$d" "$name" || return 1
+  scenario=classified; [ -z "${BREAK:-}" ] || scenario=""
+  sql_branch "$name" change/classified "$d" $scenario || return 1
+  note="$(sql_note "$repo" "$SQL_PR")"
+  case "$d" in
+    ch) grep -q '\[background rewrite\] ttl:' <<<"$note" && grep -q SQLCH205 <<<"$note" || { log "the note does not class the TTL change as a background rewrite"; rc=1; } ;;
+    pg) grep -q 'under ACCESS EXCLUSIVE' <<<"$note" && grep -q 'SHARE UPDATE EXCLUSIVE' <<<"$note" || { log "the note does not name the column's and the index's locks"; rc=1; } ;;
+  esac
+  grep -q 'chant approve tf-apply wave-1 --plan jcs1-sha256:' <<<"$note" || { log "the note gives no approve command bound to a digest"; rc=1; }
+  [ "$(sql_plan_status "$repo" "$SQL_SHA")" = success ] || { log "terragucci/plan is $(sql_plan_status "$repo" "$SQL_SHA"), not success"; rc=1; }
+  [ $rc = 0 ] || return 1
+  op=ClickHouseRebuildOp; [ "$d" = ch ] || op=PostgresMigrationOp
+  scenario=refused; [ -z "${BREAK:-}" ] || scenario=""
+  sql_branch "$name" change/refused "$d" $scenario || return 1
+  note="$(sql_note "$repo" "$SQL_PR")"
+  grep -q "refused to plan.*$op" <<<"$note" || { log "the note does not refuse db@prod naming $op"; rc=1; }
+  [ "$(sql_plan_status "$repo" "$SQL_SHA")" = failure ] || { log "terragucci/plan is $(sql_plan_status "$repo" "$SQL_SHA") for a refused change, not failure"; rc=1; }
+  [ $rc = 0 ] && log "the note classed the change and bound its approval to a digest, and a change the database cannot make in place was refused naming $op"
+  return $rc
+}
+
+claim_sql_apply() { # d
+  # The digest the note shows is approved and the pull request merged: the
+  # wave plans the unit again as the writer, finds the approved digest and runs
+  # the ApplyOp, and the column is on the server. A second pull request's
+  # digest is approved, the server is changed outside the code, and it is
+  # merged: the wave plans another digest, applies nothing and says the wave
+  # changed after it was approved, and the second column is not on the server.
+  # BREAK: the first pull request is merged unapproved, so its wave waits and the column is not added.
+  local d="$1" name="sql-$1-apply" repo digest rc=0 col=country col2=referrer work
+  log() { echo "[smoke $name] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  repo="$USER/$name"
+  [ "$d" = ch ] || { col=nickname; col2=locale; }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  sql_up "$d" "$name" || return 1
+  sql_branch "$name" change/column "$d" column || return 1
+  digest="$(sql_note "$repo" "$SQL_PR" | grep -o 'chant approve tf-apply wave-1 --plan jcs1-sha256:[0-9a-f]*' | head -1 | awk '{ print $NF }')"
+  [ -n "$digest" ] || { log "the note gives no digest to approve"; return 1; }
+  [ -n "${BREAK:-}" ] || sql_approve "$name" "$digest" || return 1
+  sql_merge "$name" "$SQL_PR" || return 1
+  [ "$RUN_STATUS" = success ] || { log "the merge's run ended $RUN_STATUS"; rc=1; }
+  sql_has_column "$d" "$col" || { log "$col is not on the server after the approved wave"; rc=1; }
+  [ $rc = 0 ] || return 1
+  sql_branch "$name" change/column2 "$d" column2 || return 1
+  digest="$(sql_note "$repo" "$SQL_PR" | grep -o 'chant approve tf-apply wave-1 --plan jcs1-sha256:[0-9a-f]*' | head -1 | awk '{ print $NF }')"
+  sql_approve "$name" "$digest" || return 1
+  sql_out_of_band "$d" >&2 || { log "the change outside the code failed"; return 1; }
+  sql_merge "$name" "$SQL_PR" || return 1
+  [ "$RUN_STATUS" = failure ] || { log "the merge after the server moved ended $RUN_STATUS, not failure"; rc=1; }
+  run_logs "$repo" "$RUN_ID" | grep -q "wave 1 changed after it was approved, so nothing in it was applied" || { log "the wave did not refuse the plan that moved"; rc=1; }
+  ! sql_has_column "$d" "$col2" || { log "$col2 was applied although the plan moved after its approval"; rc=1; }
+  [ $rc = 0 ] && log "the approved digest applied $col, and a plan that moved after its approval applied nothing"
+  return $rc
+}
+
+claim_sql_drift() { # d
+  # The server is changed outside the code (ClickHouse: the events TTL;
+  # Postgres: an index dropped), and the drift job, dispatched, opens the
+  # drift issue naming the object.
+  # BREAK: the server is not changed, so the job opens no issue.
+  local d="$1" name="sql-$1-drift" repo sha issues body object work
+  log() { echo "[smoke $name] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  repo="$USER/$name"
+  object=events.ttl; [ "$d" = ch ] || object=ordersUserId
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  sql_up "$d" "$name" || return 1
+  [ -n "${BREAK:-}" ] || { sql_out_of_band "$d" >&2 || { log "the change outside the code failed"; return 1; }; }
+  sha="$(remote_head "$repo" main)"
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"ref":"main"}' "$URL/api/v1/repos/$repo/actions/workflows/terragucci.yml/dispatches" || return 1
+  wait_run "$repo" "$sha" workflow_dispatch
+  [ "$RUN_STATUS" = success ] || { log "the drift run ended $RUN_STATUS"; return 1; }
+  issues="$(api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -c '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))]')"
+  [ "$(jq length <<<"$issues")" = 1 ] || { log "expected one open drift issue, found $(jq length <<<"$issues")"; return 1; }
+  body="$(jq -r '.[0].body' <<<"$issues")"
+  grep -q "db@prod" <<<"$body" && grep -q "$object" <<<"$body" || { log "the issue does not name db@prod and $object"; return 1; }
+  log "the drift job opened one issue naming db@prod and $object"
+}
+
+claim_sql_ch_plan() { claim_sql_plan ch; }
+claim_sql_pg_plan() { claim_sql_plan pg; }
+claim_sql_ch_apply() { claim_sql_apply ch; }
+claim_sql_pg_apply() { claim_sql_apply pg; }
+claim_sql_ch_drift() { claim_sql_drift ch; }
+claim_sql_pg_drift() { claim_sql_drift pg; }
 
 run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   local name="$1" row issue started secs
@@ -9852,6 +10124,12 @@ notify-chat          runner self! weight=150
 cost-estimate        runner self! weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
+sql-ch-plan          runner sql! weight=240
+sql-ch-apply         runner sql! weight=260
+sql-ch-drift         runner sql! weight=200
+sql-pg-plan          runner sql! weight=240
+sql-pg-apply         runner sql! weight=260
+sql-pg-drift         runner sql! weight=200
 '
 
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
@@ -10217,6 +10495,12 @@ disk_check() {
 }
 
 # SMOKE_AWS=1: the pilot on real AWS (stack/smoke-aws.sh, CONTRIBUTING.md).
+# The sql-* claims install the sql lexicon from npm, as the guide tells a
+# reader to; a run on a packed lexicon (SMOKE_SQL_TARBALL) is not a record.
+if [ -n "${SMOKE_SQL_TARBALL:-}" ] && [ "${1:-}" = --record ]; then
+  echo "smoke: SMOKE_SQL_TARBALL does not record; the sql-* claims record on the lexicon npm has" >&2; exit 2
+fi
+
 # Five claims run there; any other refuses, and so does --record, which is
 # floci's record.
 if [ -n "${SMOKE_AWS:-}" ]; then

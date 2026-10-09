@@ -499,8 +499,8 @@ export function movedRoots(roots: string[]): string {
     "fi",
     'moved=""',
     `for dir in ${roots.map(sh).join(" ")}; do`,
-    // A database unit (dir@env) moves with its project's directory.
-    '  if [ -z "$changed" ] || printf \'%s\\n\' "$changed" | grep "^${dir%@*}/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi',
+    // A database unit (dir@env, sql.ts) moves with its project's directory.
+    `  if [ -z "$changed" ] || printf '%s\\n' "$changed" | grep "^${roots.some((r) => r.lastIndexOf("@") > 0) ? "\${dir%@*}" : "$dir"}/" >/dev/null; then moved="\${moved:+$moved,}$dir"; fi`,
     "done",
   ].join("\n");
 }
