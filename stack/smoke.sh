@@ -263,6 +263,7 @@ signer-trust|init --signer writes the signers line from git config user.signingk
 rollout-control|from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied|
 rollout-provider|rollout --provider moves that provider alone in the lock file and its exact constraint, one pull request per wave|
 rollout-pins|rollout moves an oci:// tag and a registry version pin, each in the shape it had|
+rollout-continue|with rollouts set, once wave 1 merged and applied the rollout job opens wave 2 with no manual run|
 policy-opa|with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings|
 policy-hcp|with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave|
 policy-hcl|with a policies.hcl a mandatory policy denies the wave and an advisory one warns|
@@ -8268,6 +8269,90 @@ claim_rollout_pins() {
   return $rc
 }
 
+claim_rollout_continue() {
+  # One repo, dev/app (the canary) and prod/app on modules/network 0.1.0 by
+  # git tag, with rollouts set and token_env naming a repo secret that holds
+  # the admin's token. init writes the rollout workflow beside the pipeline.
+  # 0.2.0 is tagged and rollout --mode apply opens wave 1 (dev/app). It is
+  # merged and its push run applies. Then the rollout workflow runs once, as
+  # its schedule would, and wave 2's pull request (prod/app alone) must be
+  # open when that run ends: no rollout command was run by hand after wave 1.
+  # The workflow's cron is a day a year, so only the dispatch runs it.
+  # BREAK: respond.rollout: off, so init writes no rollout workflow, the
+  # dispatch has nothing to run, and wave 2 never opens; the check is made
+  # once, right after the dispatch, never by waiting.
+  log() { echo "[smoke rollout-continue] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/rollout-continue" tree out pr sha run status deadline wf=".forgejo/workflows/terragucci-rollout.yml"
+  local b1="terragucci/rollout/modules-network-0.2.0/wave-1" b2="terragucci/rollout/modules-network-0.2.0/wave-2"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  rollout_repo rollout-continue || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d "{\"data\":\"$TOKEN\"}" "$URL/api/v1/repos/$repo/actions/secrets/TERRAGUCCI_FORGEJO_TOKEN" \
+    || { log "could not set the TERRAGUCCI_FORGEJO_TOKEN secret"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  tree="$work/tree"
+  local source="git::http://forgejo:3000/$repo.git//modules/network?ref=modules/network/v0.1.0" r
+  # The module first, with no pipeline, so its 0.1.0 tag is there before any run reads it.
+  mkdir -p "$tree/modules/network" "$tree/dev/app" "$tree/prod/app"
+  printf 'variable "name" {}\n\noutput "name" {\n  value = var.name\n}\n' > "$tree/modules/network/main.tf"
+  ( cd "$tree" && git init -q -b main && git remote add origin "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$repo.git" ) || { drop_work "$work"; return 1; }
+  push_tree "$tree" "$repo" main "feat: modules/network 0.1.0" >/dev/null || { drop_work "$work"; return 1; }
+  ( cd "$tree" && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.1.0 -m "modules/network 0.1.0" \
+    && git push -q origin refs/tags/modules/network/v0.1.0 ) 2>/dev/null || { log "could not push the 0.1.0 tag"; drop_work "$work"; return 1; }
+  for r in dev/app prod/app; do
+    printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "rollout-continue/%s.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nmodule "network" {\n  source = "%s"\n  name   = "%s"\n}\n' "${r%/app}" "$source" "${r%/app}" > "$tree/$r/main.tf"
+  done
+  printf 'binary: tofu\nforge: forgejo\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\nwaves:\n  canary: ["dev/*"]\nrollouts: "0 0 1 1 *"\n' > "$tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] && printf 'respond:\n  rollout: "off"\n' >> "$tree/terragucci.yml"
+  out="$(cd "$tree" && "$TERRAGUCCI" init --forge forgejo --binary tofu 2>&1)" || { echo "$out" >&2; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  if [ -f "$tree/$wf" ]; then log "init wrote $wf"; else log "init wrote no $wf"; fi
+  sha="$(push_tree "$tree" "$repo" main "feat: two roots on modules/network 0.1.0")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha"
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the first apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
+
+  # 0.2.0 of the module, tagged; then wave 1, opened by hand as the guide says.
+  printf '\noutput "version" {\n  value = "0.2.0"\n}\n' >> "$tree/modules/network/main.tf"
+  sha="$(push_tree "$tree" "$repo" main "feat(network): a version output")" || { drop_work "$work"; return 1; }
+  ( cd "$tree" && git -c user.name=terragucci -c user.email=t@t tag -a modules/network/v0.2.0 -m "modules/network 0.2.0" \
+    && git push -q origin refs/tags/modules/network/v0.2.0 ) 2>/dev/null || { log "could not push the 0.2.0 tag"; drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha"
+  out="$(cd "$tree" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" rollout modules/network 0.2.0 --mode apply 2>&1)" || true
+  echo "$out" >&2
+  pr="$(branch_pr "$repo" "$b1")"
+  [ -n "$pr" ] || { log "rollout opened no wave 1"; drop_work "$work"; return 1; }
+  [ "$(pr_files "$repo" "$pr")" = "dev/app/main.tf" ] || { log "wave 1 changes $(pr_files "$repo" "$pr"), not dev/app/main.tf"; drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" \
+    || { log "could not merge wave 1"; drop_work "$work"; return 1; }
+  sha="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r .merge_commit_sha)"
+  wait_run "$repo" "$sha" push
+  [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "wave 1's apply ended $RUN_STATUS"; drop_work "$work"; return 1; }
+  [ -z "$(branch_pr "$repo" "$b2")" ] || { log "wave 2 opened before the rollout job ran"; drop_work "$work"; return 1; }
+
+  # The rollout job, once, as its schedule runs it. Then wave 2 is open, or it never will be.
+  dispatched() { api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -c '.workflow_runs // []'; }
+  if run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' \
+      "$URL/api/v1/repos/$repo/actions/workflows/terragucci-rollout.yml/dispatches" 2>/dev/null)"; then
+    run="$(jq -r '.id // empty' <<<"$run" 2>/dev/null || true)"
+    deadline=$(( $(date +%s) + TIMEOUT )); status=""
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      status="$(dispatched | jq -r --arg r "${run:-0}" '[.[] | select($r == "0" or .id == ($r | tonumber))] | (.[0].status // "")')"
+      case "$status" in success|failure|cancelled|skipped) break ;; esac
+      sleep 3
+    done
+    log "the rollout job ended '${status:-unknown}'"
+    [ "$status" = success ] || { [ -n "$run" ] && print_logs "$repo" "$run" >&2; }
+  else
+    log "Forgejo has no rollout workflow to run in $repo"
+  fi
+  pr="$(branch_pr "$repo" "$b2")"
+  [ -n "$pr" ] || { log "wave 1 merged and applied, and the rollout job opened no wave 2"; drop_work "$work"; return 1; }
+  [ "$(pr_files "$repo" "$pr")" = "prod/app/main.tf" ] || { log "wave 2 changes $(pr_files "$repo" "$pr"), not prod/app/main.tf"; drop_work "$work"; return 1; }
+  drop_work "$work"
+  log "wave 1 merged and applied; one run of the rollout job opened wave 2 (#$pr, prod/app alone) with no rollout run by hand"
+}
+
 # ── policy engines and Terragrunt ─────────────────────────────────────────
 
 claim_policy_opa() {
@@ -9829,6 +9914,7 @@ signer-trust         runner self! weight=250
 rollout-control      runner self! weight=400
 rollout-provider     self! weight=120
 rollout-pins         self! weight=80
+rollout-continue     runner self! weight=300
 policy-opa           weight=150
 policy-hcp           weight=150
 policy-hcl           weight=150

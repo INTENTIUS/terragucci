@@ -107,8 +107,11 @@ A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`
 |---|---|
 | `event`, `response`, `text` | the event, the response it got and the text printed |
 | `skipped`, `data`, `proposals`, `agent_input` | set only when the response has them |
+| `exit` | set when the command exits other than 0 |
 
-Exit 0 when handled. An unknown event or a missing flag exits 2 with `results` null.
+`respond rollout` with no module puts `mode` and `rollouts` in `data`: for each rollout in flight, `kind`, `name`, `from`, `to`, `wave` (its newest), `waves`, `action` (`ran`, `waiting`, `stopped`, `done` or `failed`), `reason`, `pullRequests`, and `result`, [the rollout](#rollout) when it ran.
+
+Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not run. An unknown event or a missing flag exits 2 with `results` null.
 
 ## config check
 

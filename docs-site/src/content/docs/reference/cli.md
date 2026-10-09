@@ -161,7 +161,10 @@ terragucci rollout --provider <address> <version> [--from <version>] [--mode dry
 
 ```bash
 terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
+terragucci respond rollout [--mode dry-run|apply]
 ```
+
+`respond rollout` with a module runs that rollout's next step. With none, it continues every rollout in flight, and exits 1 only when one of them could not run.
 
 | Flag | Used by | Meaning |
 |---|---|---|
