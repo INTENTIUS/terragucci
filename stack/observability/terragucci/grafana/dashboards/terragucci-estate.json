@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Roots per project, the binary and terragucci versions they run, module pins across repos and tips by rule.",
+  "description": "Roots per project, the binary and terragucci versions they run, the DORA metrics terragucci estate computes, module pins across repos and tips by rule.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -124,7 +124,7 @@
     {
       "type": "row",
       "collapsed": false,
-      "title": "Modules and tips",
+      "title": "Delivery",
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -135,15 +135,164 @@
       "panels": []
     },
     {
-      "type": "table",
+      "type": "timeseries",
       "id": 5,
+      "title": "Deployments per week",
+      "description": "Applied waves per week over the newest eight weeks, as terragucci estate last computed them, by project; * is the estate.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max by (project) (last_over_time(terragucci_dora_deployments_per_week{project=~\"$project\"}[1d]))",
+          "legendFormat": "{{project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Lead time",
+      "description": "Median time from a change's first plan to its wave applied, by project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max by (project) (last_over_time(terragucci_dora_lead_time_seconds{project=~\"$project\", segment=\"total\"}[1d]))",
+          "legendFormat": "{{project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Change failure rate",
+      "description": "Failed applies and applied waves followed by drift, over all applies, by project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max by (project) (last_over_time(terragucci_dora_change_failure_ratio{project=~\"$project\"}[1d]))",
+          "legendFormat": "{{project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "Time to restore",
+      "description": "Median time from a failed apply or drift found to restored, by project.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max by (project) (last_over_time(terragucci_dora_restore_seconds{project=~\"$project\"}[1d]))",
+          "legendFormat": "{{project}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Modules and tips",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 9,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 10,
       "title": "Module pins",
       "description": "Each module call's pin, by project and root.",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 10
+        "y": 27
       },
       "datasource": {
         "type": "prometheus",
@@ -170,14 +319,14 @@
     },
     {
       "type": "table",
-      "id": 6,
+      "id": 11,
       "title": "Tips by rule",
       "description": "Tips the latest run of each project gave, by rule.",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 10
+        "y": 27
       },
       "datasource": {
         "type": "prometheus",

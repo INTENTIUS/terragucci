@@ -16,6 +16,9 @@
  * `terragucci audit` writes (./audit.ts), so the page can link the audit
  * trail, and, when an apply changed a resource, the record `audit.jsonl`,
  * for the approver of each apply in `history.html` (report/history.ts).
+ * The same record and the index rows give the DORA metrics (report/dora.ts):
+ * `dora.json` beside the page, a section on it, and, when an OTLP endpoint
+ * is set, gauges beside the stages' metrics.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -27,6 +30,9 @@ import { AUDIT_FILES, readRecord, type AuditEntry } from "./report/audit";
 import { buildHistory, CHANGES_SCHEMA, historyId, renderHistoryHtml, type ChangeRow, type Changes, type History } from "./report/history";
 import { INVENTORY_SCHEMA, type Inventory } from "./report/inventory";
 import { changesKey, inventoryKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
+import { buildDora, DORA_FILE, doraGauges, duration, type Dora } from "./report/dora";
+import { metricsBody, send, telemetryFromEnv, type OtlpFetch } from "./telemetry";
+import { version as VERSION } from "../package.json";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
 
@@ -38,6 +44,8 @@ export interface EstateOptions {
   /** The bucket to read and write, in place of the config's `reports` (a single repo only). */
   reports?: Reports;
   fetch?: StoreFetch;
+  /** Where the DORA gauges go, when an OTLP endpoint is set. */
+  otlpFetch?: OtlpFetch;
   env?: NodeJS.ProcessEnv;
   now?: Date;
 }
@@ -52,6 +60,10 @@ export interface EstateResult {
   link?: { url: string; expires: string };
   /** Projects whose index could not be read. */
   unreadable: string[];
+  /** The DORA metrics, also in dora.json. */
+  dora: Dora;
+  /** The DORA gauges: sent, or why not. Absent when no OTLP metrics endpoint is set. */
+  metrics?: { sent: number } | { problem: string };
 }
 
 export const DEFAULT_LINK_SECONDS = 24 * 3600;
@@ -215,20 +227,29 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
     const trail = await auditTrail(client(out), out.prefix ?? "");
     if (trail) page.audit = trail;
   }
+  const audit = out?.bucket ? await auditEntries(client(out), out.prefix ?? "") : undefined;
+  // The DORA metrics from the audit trail and the index rows.
+  const dora = buildDora(indexes.map((p) => ({ project: p.project, rows: p.reports ?? [] })), audit, now);
+  page.dora = { file: DORA_FILE, generated: dora.generated, deployments: dora.estate.deployments };
   // The history of every address an apply changed, with each wave's approver from the audit trail, on a page of its own.
   let history: History | undefined;
   const changed = indexes.filter((p) => p.changes && p.changes.length > 0);
   if (changed.length > 0) {
-    const audit = out?.bucket ? await auditEntries(client(out), out.prefix ?? "") : undefined;
     history = buildHistory(changed.map((p) => ({ project: p.project, changes: p.changes!, ...(p.base !== undefined ? { base: p.base } : {}) })), audit, now);
     linkHistory(page, history);
   }
-  const files: Record<string, string> = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page) };
+  const files: Record<string, string> = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page, dora), [DORA_FILE]: JSON.stringify(dora, null, 2) + "\n" };
   if (history) Object.assign(files, { [HISTORY_FILES.json]: JSON.stringify(history, null, 2) + "\n", [HISTORY_FILES.page]: renderHistoryHtml(history) });
   const dir = resolve(cwd, options.out ?? "terragucci-estate");
   mkdirSync(dir, { recursive: true });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
-  const result: EstateResult = { estate: page, files: Object.keys(files).map((f) => join(dir, f)), unreadable: indexes.filter((i) => i.error !== undefined).map((i) => i.project) };
+  const result: EstateResult = { estate: page, files: Object.keys(files).map((f) => join(dir, f)), unreadable: indexes.filter((i) => i.error !== undefined).map((i) => i.project), dora };
+  const tel = telemetryFromEnv(env);
+  if (tel?.metrics) {
+    const gauges = doraGauges(dora);
+    const problem = await send(tel.metrics, metricsBody(gauges, { ...tel.resource, "service.version": VERSION }, VERSION), options.otlpFetch);
+    result.metrics = problem ? { problem } : { sent: gauges.length };
+  }
   if (out?.bucket) {
     const store = client(out);
     const keys: string[] = [];
@@ -258,6 +279,10 @@ export function describeEstate(r: EstateResult, cwd: string): string {
     if (p.drifted > 0) lines.push(`  ${p.project}: ${plural(p.drifted, "root", "roots")} drifted`);
     if (p.status === "error") lines.push(`  ${p.project}: the index could not be read: ${p.error}`);
   }
+  const d = r.dora;
+  const c = d.estate.change_failure.rate;
+  lines.push(`dora: ${d.estate.per_week} deployments per week, lead time ${duration(d.estate.lead_time.median_seconds)}, change failure rate ${c === null ? "none" : `${Math.round(c * 1000) / 10}%`}, time to restore ${duration(d.estate.restore.median_seconds)}`);
+  if (r.metrics) lines.push("sent" in r.metrics ? `sent ${plural(r.metrics.sent, "DORA gauge", "DORA gauges")}` : `the DORA gauges were not sent: ${r.metrics.problem}`);
   lines.push(`wrote ${listed(r.files.map((f) => (f.startsWith(cwd + "/") ? f.slice(cwd.length + 1) : f)))}`);
   if (r.uploaded) lines.push(`copied to ${named(r.uploaded.bucket)}/${listed(r.uploaded.keys)}`);
   if (r.link) lines.push(`link, until ${r.link.expires}:`, r.link.url);

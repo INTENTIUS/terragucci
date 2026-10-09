@@ -136,6 +136,8 @@ A stage pushes its metrics once, when it ends; point Prometheus exporter or remo
 | `terragucci_drift_since_seconds`, `terragucci_drift_clear_seconds` | | when the open drift was first found (its drift issue opened), and when a drift run last found none | one each |
 | `terragucci_wave_roots` | `wave` | roots in a `tf-apply` wave | one per wave |
 | `terragucci_wave_waiting_since_seconds`, `terragucci_wave_settled_seconds` | `wave` | when a wave started waiting for its approval, and when it last stopped waiting | one per wave |
+| `terragucci_dora_deployments_per_week`, `terragucci_dora_change_failure_ratio`, `terragucci_dora_restore_seconds` | `project` only, `*` for the estate; sent by `terragucci estate` | the [delivery metrics](/terragucci/reference/delivery-metrics/) | one each per project |
+| `terragucci_dora_lead_time_seconds` | `project` only, and `segment`; sent by `terragucci estate` | the median lead time and its split | four per project |
 
 ### Label cardinality
 
@@ -184,7 +186,7 @@ Nine dashboards are written: the six below, and one for each of the three SLOs.
 | Change review | roots changed and groups for each pull request, and creates, updates, replaces and destroys over time |
 | Rollouts and waves | waves waiting for an approval and for how long, wave runs by result, and how many roots pin each module version |
 | Drift | drifted roots by project, how old the open drift is, and roots corrected |
-| Estate | roots per project, the binary and terragucci versions each runs, module pins and tips by rule |
+| Estate | roots per project, the binary and terragucci versions each runs, the delivery metrics `terragucci estate` sends, module pins and tips by rule |
 | Runs | the slowest roots, root applies and resources, provider start-up, lock waits, stage durations, and the trace of each run from Tempo |
 | One per SLO | the SLI against its objective, the error budget left and the burn rates |
 

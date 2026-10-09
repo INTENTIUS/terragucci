@@ -78,6 +78,10 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON S
 | `roots`, `groups`, `totals`, `refused` | the report's counts |
 | `failed` | roots that failed to plan or apply |
 | `changed` | roots with a change; on a `tf-drift` row, the roots that drifted |
+| `wave_digests` | on a `tf-plan` row, each wave's set digest and review digest: the digests an apply of the same plans binds |
+| `drifted_roots` | on a `tf-drift` row, up to 50 of the roots that drifted |
+| `drift_since` | on a `tf-drift` row that found drift, when the project's open drift was first found |
+| `drift_cleared` | on a `tf-drift` row that found none after one that found some: `since`, when that drift was first found, and its `roots`; a later check of the same commit replaces the row that found it, so this row keeps it |
 | `approval`, `waiting_since` | a `tf-apply` wave's gate, and when a waiting wave began waiting |
 | `applied` | when a `tf-apply` wave finished applying |
 | `overridden` | roots the policy denied that a recorded override let through; absent when none |
@@ -94,6 +98,7 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON S
 | `recent[]` | the 20 newest runs across every project |
 | `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |
 | `history` | the resource history beside the page: `page`, how many addresses it holds (`resources`) and `generated`, once an apply changed a resource; each listed resource with a history links its section as `history` |
+| `dora` | the [delivery metrics](/terragucci/reference/delivery-metrics/) beside the page: `file` (`dora.json`), `generated`, and the estate's applied waves in their window as `deployments` |
 
 Each project's `inventory.json` is `terragucci.inventory/v1`, with its JSON Schema in the package as `dist/inventory.schema.json`. A `tf-apply` wave's upload replaces the list of each root it applied, unless the file holds a newer one.
 

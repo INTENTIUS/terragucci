@@ -303,6 +303,7 @@ audit-refused|a wave whose plans changed after approval is in the audit record a
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
 inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
 resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
+dora|terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each|
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
@@ -10283,6 +10284,130 @@ claim_resource_history() {
   return $rc
 }
 
+claim_dora() {
+  # A repo with one root, app, holding an SQS queue in floci with a timeout
+  # of 30, reports in the bucket. Change 1 is planned, waits at wave 1's gate
+  # (gate always), smoke-approver approves it and the next run applies.
+  # Change 2 is planned and applies with no gate. Change 3 is broken HCL and
+  # its apply fails; change 4 fixes it and applies app again. Then the queue's
+  # timeout is set to 45 in floci: a drift check finds app drifted, the
+  # timeout goes back to 30 and the next check finds none. After terragucci
+  # audit, terragucci estate writes dora.json, which holds to its schema:
+  # three deployments, two changes with a lead time (one held at the gate),
+  # four applies of which one failed and one drifted, a 50% change failure
+  # rate, and two restores, the failed apply and the drift, none open. The
+  # estate page shows the Delivery section.
+  # BREAK: the failed apply's entry is dropped from audit.jsonl before the
+  # estate job runs, so the record has three applies, none failed, and the
+  # numbers change.
+  log() { echo "[smoke dora] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="dora-$STAMP" queue="dora-$STAMP" url n dora page project code
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  dora_root() { # extra HCL -> app/main.tf, a queue with a tag, so floci reads no tags drift
+    printf 'terraform {\n  required_providers {\n    aws = {\n      source  = "hashicorp/aws"\n      version = "6.67.0"\n    }\n  }\n\n  backend "local" {}\n}\n\nprovider "aws" {\n  region = "us-east-1"\n}\n\nresource "aws_sqs_queue" "jobs" {\n  name                       = "%s"\n  visibility_timeout_seconds = 30\n  tags                       = { owner = "smoke" }\n%s}\n' "$queue" "$1" > "$work/wave/app/main.tf"
+  }
+  dora_commit() { git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "$1"; }
+  dora_stage() { # stage args... -> AUDIT_CODE
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage "$@" --layers app > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    grep -E 'wave 1|FAILED|drift' "$work/run.log" >&2 || true
+    clean_mounted "$work/wave" "$image"
+  }
+  mkdir -p "$work/wave/app"
+  dora_root ""
+  cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/wave/app/"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  # Change 1: planned, waits at the gate, approved, applied.
+  dora_stage tf-plan
+  [ "$AUDIT_CODE" = 0 ] || { log "the plan of change 1 exited $AUDIT_CODE"; rc=1; }
+  if [ $rc = 0 ]; then
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 3 ] || { log "change 1: wave 1 exited $AUDIT_CODE, not 3: it did not wait"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then audit_approve "$work/origin.git" "$work/ledger" smoke-approver wave-1 || { log "could not approve wave 1"; rc=1; }; fi
+  if [ $rc = 0 ]; then
+    audit_wave "$work" always
+    [ "$AUDIT_CODE" = 0 ] || { log "change 1: the run after the approval exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  # Change 2: planned, applied with no gate.
+  if [ $rc = 0 ]; then
+    dora_root '  delay_seconds              = 1
+'
+    dora_commit "change 2: a delay"
+    dora_stage tf-plan
+    [ "$AUDIT_CODE" = 0 ] || { log "the plan of change 2 exited $AUDIT_CODE"; rc=1; }
+    audit_wave "$work" never
+    [ "$AUDIT_CODE" = 0 ] || { log "change 2: wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  # Change 3 fails to apply; change 4 fixes it and applies app again.
+  if [ $rc = 0 ]; then
+    printf 'resource "aws_sqs_queue" "broken" {\n' > "$work/wave/app/broken.tf"
+    dora_commit "change 3: broken HCL"
+    audit_wave "$work" never
+    [ "$AUDIT_CODE" = 1 ] || { log "change 3: wave 1 exited $AUDIT_CODE, not 1: the apply did not fail"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    : > "$work/wave/app/broken.tf"
+    dora_commit "change 4: the fix"
+    audit_wave "$work" never
+    [ "$AUDIT_CODE" = 0 ] || { log "change 4: wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  # A drift cycle: the timeout moves outside OpenTofu, then back.
+  if [ $rc = 0 ]; then
+    url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+    [ -n "$url" ] || { log "$queue is not in floci"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null || { log "could not change the timeout"; rc=1; }
+    dora_stage tf-drift
+    jq -e '[.roots[] | select(.path == "app" and (.changes | length > 0))] | length == 1' "$work/wave/terragucci-report/report.json" >/dev/null 2>&1 || { log "the drift check did not find app drifted"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"30\"}}" >/dev/null || { log "could not set the timeout back"; rc=1; }
+    dora_stage tf-drift
+    jq -e '[.roots[].changes[]] | length == 0' "$work/wave/terragucci-report/report.json" >/dev/null 2>&1 || { log "the second drift check still found drift"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_run "$work"
+    [ "$AUDIT_CODE" = 0 ] || { log "terragucci audit exited $AUDIT_CODE"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -n "${BREAK:-}" ]; then
+    curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/audit.jsonl" | jq -c 'select(.result != "failed")' \
+      | curl -fsS -o /dev/null -X PUT -H 'content-type: application/x-ndjson' --data-binary @- "$FLOCI/$REPORT_BUCKET/$prefix/audit.jsonl" || { log "could not drop the failed apply"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    curl -fsS -o "$work/dora.json" "$FLOCI/$REPORT_BUCKET/$prefix/dora.json" || { log "no dora.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    (cd "$HERE/.." && npx tsx scripts/schema-check.ts packages/terragucci/dist/dora.schema.json "$work/dora.json") >&2 || { log "dora.json does not hold to dora.schema.json"; rc=1; }
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    dora="$(jq -c --arg p "$project" '.projects[] | select(.project == $p) | {deployments, lead: .lead_time.changes, gated: (.lead_time.at_gate_seconds != null and .lead_time.after_gate_seconds > 0), change_failure, restore}' "$work/dora.json")"
+    log "dora: $dora"
+    jq -e '.deployments == 3 and .lead == 2 and .gated and .change_failure == {applies: 4, failed: 1, drifted: 1, rate: 0.5} and .restore.restored == 2 and .restore.apply_restored == 1 and .restore.drift_restored == 1 and .restore.open == 0' <<<"$dora" >/dev/null \
+      || { log "the metrics are not three deployments, two lead times one of them gated, a failed and a drifted apply of four, and two restores"; rc=1; }
+    jq -e '.estate.deployments == 3 and .estate.change_failure.rate == 0.5 and (.estate.trend | length == .weeks) and (([.estate.trend[].deployments] | add) == 3)' "$work/dora.json" >/dev/null \
+      || { log "the estate's metrics or this week's row do not match the project's"; rc=1; }
+    grep -q '<table id="dora">' <<<"$page" && grep -q 'Change failure rate' <<<"$page" || { log "estate.html has no Delivery section"; rc=1; }
+  fi
+  n="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" 2>/dev/null | jq -r '.QueueUrl // empty')"
+  [ -z "$n" ] || sqs DeleteQueue "{\"QueueUrl\":\"$n\"}" >/dev/null 2>&1 || true
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "dora.json counts three deployments, a 50% change failure rate from the failed apply and the drift, lead times with the gate's share, and both restores"
+  return $rc
+}
+
 claim_notify_chat() {
   # The gated fixture (gate: always) with approval: pr-review and notify
   # naming two secrets, which hold the addresses of a webhook stand-in: one
@@ -10756,6 +10881,7 @@ audit-refused        weight=150
 audit-control        weight=150
 inventory            weight=150
 resource-history     weight=200
+dora                 weight=250
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150
