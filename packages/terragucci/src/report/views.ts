@@ -11,6 +11,7 @@ import { groupAnchor, planFiles, rootAnchor } from "./build";
 import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
+import { notePreviews } from "../tg-preview";
 import { signed } from "./cost";
 import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportStep, type ReportWave } from "./schema";
 import { duration } from "./spans";
@@ -329,10 +330,22 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : w.replans_after?.length ? "after the re-plan" : "no change"} | ${when}${by} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
-    head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })) }), "");
+    const previews = notePreviews(report.roots);
+    head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })), ...(previews.length ? { previews } : {}) }), "");
   } else if (report.waves.length > 0) {
     let t = "| Wave | Roots | Set digest | Approval |\n|---|---|---|---|\n";
     for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.replans_after?.length ? `none yet: it plans again once wave ${w.replans_after.join(", ")} applies` : w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
+    blocks.push({ kind: "line", units: 0, text: t + "\n" });
+  }
+  // A wave planned at its gate, against the preview the pull request's plan note showed of it.
+  const previewed = report.waves.filter((w) => w.preview);
+  for (const w of previewed) {
+    const p = w.preview!;
+    const moved = p.units.filter((u) => u.differences?.length);
+    let t = moved.length
+      ? `**Wave ${w.number} plans differently from the preview in pull request ${p.pull_request} (${moved.length} of ${p.units.length}):**\n\n`
+      : `**Wave ${w.number} plans as pull request ${p.pull_request} previewed it (${plural(p.units.length, unitWord)}).**\n\n`;
+    for (const u of moved) for (const d of u.differences!) t += `- ${to(code(u.unit), rootAnchor(u.unit))}: ${d}\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
   const linked = report.roots.flatMap((r) => (r.reads ?? []).filter((x) => x.outputs === "planned").map((x) => ({ root: r.path, ...x })));
@@ -453,14 +466,17 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
  * binary.
  */
 export function binariesLine(report: Report): string | undefined {
-  if (!report.roots.some((r) => r.binary?.pin)) return undefined;
+  const pinOf = (b: NonNullable<Report["roots"][number]["binary"]>): string | undefined =>
+    [b.pin, b.terragrunt?.pin ? `Terragrunt ${b.terragrunt.version}, ${b.terragrunt.pin}` : undefined].filter(Boolean).join("; ") || undefined;
+  if (!report.roots.some((r) => r.binary && pinOf(r.binary))) return undefined;
   const byBinary = new Map<string, { pinned: string[]; others: number }>();
   for (const r of report.roots) {
     if (!r.binary) continue;
     const key = binaryText({ name: r.binary.name, ...(r.binary.version ? { version: r.binary.version } : {}) });
     const g = byBinary.get(key) ?? { pinned: [], others: 0 };
     byBinary.set(key, g);
-    if (r.binary.pin) g.pinned.push(`${code(r.path)} (${r.binary.pin})`);
+    const pin = pinOf(r.binary);
+    if (pin) g.pinned.push(`${code(r.path)} (${pin})`);
     else g.others++;
   }
   // The binaries roots pinned first, then the job's.

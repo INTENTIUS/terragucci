@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 22;
+export const REPORT_MINOR = 25;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -235,11 +235,14 @@ export interface ReportRootBinary {
   version?: string;
   /** Where the root pinned its version: `.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`. Absent when it runs the job's binary unpinned. */
   pin?: string;
+  /** A Terragrunt unit: the Terragrunt release that ran it, and `terragrunt_version_constraint` when the unit pinned it (minor 24). */
+  terragrunt?: { version: string; pin?: string };
 }
 
 /** A root's binary as the note, the report and the log name it: `tofu 1.10.6 (.opentofu-version)`. */
 export function binaryText(b: ReportRootBinary): string {
-  return `${b.name}${b.version ? ` ${b.version}` : ""}${b.pin ? ` (${b.pin})` : ""}`;
+  const tg = b.terragrunt?.pin ? ` under Terragrunt ${b.terragrunt.version} (${b.terragrunt.pin})` : "";
+  return `${b.name}${b.version ? ` ${b.version}` : ""}${b.pin ? ` (${b.pin})` : ""}${tg}`;
 }
 
 export interface ReportRoot {
@@ -293,6 +296,12 @@ export interface ReportRoot {
   steps?: ReportStep[];
   /** The roots whose state it reads through `terraform_remote_state`, and which outputs it planned on (minor 21). Absent when it reads none. */
   reads?: ReportRead[];
+  /**
+   * A Terragrunt unit's `dependency` and `dependencies` blocks (minor 23): the
+   * units whose outputs it reads, as plain paths in its `terragrunt.hcl`.
+   * Absent when it names none.
+   */
+  dependencies?: string[];
 }
 
 /**
@@ -304,7 +313,7 @@ export interface ReportRoot {
  */
 export interface ReportRead {
   upstream: string;
-  /** The block's label: a `terraform_remote_state` data block's. */
+  /** The block's label: a `terraform_remote_state` data block's, or a Terragrunt unit's `dependency` blocks' (minor 25), `dependency` when no block names the upstream plainly. */
   data: string;
   /** `planned`: the outputs the upstream's plan in this run makes. `applied`: its state as it stands. */
   outputs: "planned" | "applied";
@@ -479,6 +488,20 @@ export interface ReportWave {
    * this run's digests applies it.
    */
   replans_after?: number[];
+  /**
+   * A `tf-apply` wave of Terragrunt units (minor 25): its plans against the
+   * preview of them the merged pull request's plan note showed, made on the
+   * planned outputs of the waves before it. Absent when no pull request
+   * previewed any of its units.
+   */
+  preview?: ReportWavePreview;
+}
+
+/** A wave's plans against the pull request's preview of them (minor 25). */
+export interface ReportWavePreview {
+  pull_request: number;
+  /** Each unit of the wave the note previewed. `differences` is absent when it plans as previewed. */
+  units: { unit: string; differences?: string[] }[];
 }
 
 /** One wave's monthly cost (minor 19). */

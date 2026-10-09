@@ -1,0 +1,6 @@
+forge: forgejo
+binary: tofu
+gate: always
+approval: pr-review
+terragrunt:
+  dependents: plan

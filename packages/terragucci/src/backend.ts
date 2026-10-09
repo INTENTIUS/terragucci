@@ -124,10 +124,11 @@ export function stateClient(o: Extract<StateObject, { target: S3Target }>, fetch
 
 /**
  * The state version a root's backend holds now, from the object's metadata.
- * Never throws: a version that cannot be read is `unknown`, with why.
+ * `backend` stands in for the one `init` recorded: a Terragrunt unit's, from
+ * its evaluated `remote_state` block. Never throws: a version that cannot be read is `unknown`, with why.
  */
-export async function stateVersion(dir: string, env: NodeJS.ProcessEnv = process.env, fetchFn?: S3Fetch): Promise<ReportStateVersion> {
-  const o = stateObject(dir, env);
+export async function stateVersion(dir: string, env: NodeJS.ProcessEnv = process.env, fetchFn?: S3Fetch, backend?: InitialisedBackend): Promise<ReportStateVersion> {
+  const o = backend ? stateObject(dir, env, backend) : stateObject(dir, env);
   if ("unsupported" in o) return { backend: o.backend, versioning: "unknown", note: o.unsupported };
   if (o.backend === "local") return { backend: "local", location: (o as { path: string }).path, versioning: "off", note: "a local backend keeps only the latest state" };
   const s3 = o as Extract<StateObject, { target: S3Target }>;

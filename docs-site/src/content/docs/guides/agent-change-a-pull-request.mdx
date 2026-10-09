@@ -12,7 +12,7 @@ prompt: |
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-This is one of the three features that run a model; the others are [summarizing a refused wave](/terragucci/guides/agent-refused-wave/) and [reviewing a pull request](/terragucci/guides/agent-review-a-pull-request/). It is off unless `agent.comment` is set, and every other feature runs with no agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
+This is one of the four features that run a model; the others are [summarizing a refused wave](/terragucci/guides/agent-refused-wave/), [fixing drift](/terragucci/guides/agent-fix-drift/) and [reviewing a pull request](/terragucci/guides/agent-review-a-pull-request/). It is off unless `agent.comment` is set, and every other feature runs with no agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
 
 ## What you end up with
 
@@ -146,6 +146,13 @@ agent:
 `agent-push` refuses a guarded path whichever agent wrote the patch.
 
 <Shot step="agent" view="refused" alt="terragucci's reply to an ask whose change touches .forgejo/workflows/terragucci.yml: an agent may not change CI, terragucci.yml, chant.workspace.json, the signers file, .chant/, the policy directory, code owners, agent instructions or git settings, so nothing was pushed" />
+
+## MCP or `--json`
+
+| Where the agent runs | What it uses |
+|---|---|
+| in the `agent` job | the shell: `terragucci config check` and `terragucci init --dry-run`, which edit nothing. The default command loads no MCP server, and the job has no bucket credentials to give one |
+| at your desk, before you ask | [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/) to read the pull request's plan reports (`index`, then `report`) and a root's last apply; the CLI with `--json` to check a config it wrote |
 
 ## Next
 
