@@ -49,7 +49,7 @@ REPO="validate"
 
 # The image every job runs in, under both labels a workflow may ask for. The
 # chant forgejo dialect maps ubuntu-latest to docker.
-JOB_IMAGE="node:22-bookworm"
+JOB_IMAGE="public.ecr.aws/docker/library/node:22-bookworm"
 
 # Jobs the Forgejo runner runs at once. The smoke runner runs several claims
 # together; apply-serial's BREAK run holds the runner alone, so its applies are
@@ -287,6 +287,32 @@ else
   [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || die "could not mint a token"
 fi
 api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
+
+# Pull the job image once, before any job runs. The runner (force_pull: false)
+# pulls only an image the daemon lacks, so without this the first jobs, up to
+# RUNNER_CAPACITY at once, each ask ECR Public for it, and its anonymous rate
+# limit (per source IP, shared on hosted CI runners) answers
+# "toomanyrequests: Rate exceeded" and fails the job before its first step.
+# Retry with backoff; if ECR Public keeps refusing, take the same official
+# image from Docker Hub (which CI reaches through its registry mirror) and tag
+# it under JOB_IMAGE, the name the runner's labels ask for.
+ensure_job_image() {
+  docker image inspect "$JOB_IMAGE" >/dev/null 2>&1 && return 0
+  local i
+  for i in 1 2 3 4 5; do
+    log "pulling the job image $JOB_IMAGE (attempt $i)…"
+    docker pull -q "$JOB_IMAGE" >&2 && return 0
+    sleep $((i * 5))
+  done
+  local hub="docker.io/library/${JOB_IMAGE##*/library/}"
+  log "ECR Public refused $JOB_IMAGE; pulling $hub instead"
+  for i in 1 2 3; do
+    docker pull -q "$hub" >&2 && docker tag "$hub" "$JOB_IMAGE" && return 0
+    sleep $((i * 5))
+  done
+  die "could not pull the job image $JOB_IMAGE or $hub"
+}
+ensure_job_image
 
 # Runner registration on Forgejo 16 / forgejo-runner 13. `forgejo-runner
 # register` and `create-runner-file` are both marked deprecated; the current
