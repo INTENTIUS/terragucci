@@ -17,7 +17,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "2d19653"
     },
     {
       "claim": "affected",
@@ -57,7 +57,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "refuse",
@@ -65,7 +65,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "sealed",
@@ -164,7 +164,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "apply-serial",
@@ -437,7 +437,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "check-diagnostics",
@@ -887,7 +887,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "2d19653"
     },
     {
       "claim": "note-report-link",
@@ -943,7 +943,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "2d19653"
+    },
+    {
+      "claim": "root-pins",
+      "says": "two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2d19653"
     },
     {
       "claim": "drift-close",
@@ -1135,7 +1143,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "policy-hcl",
@@ -1143,7 +1151,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "tg-policy",
@@ -1352,7 +1360,23 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
+    },
+    {
+      "claim": "cost-gate",
+      "says": "with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4b0ca65"
+    },
+    {
+      "claim": "cost-policy",
+      "says": "with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4b0ca65"
     },
     {
       "claim": "approval-used",
@@ -1360,7 +1384,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "4b0ca65"
     },
     {
       "claim": "cdktn-affected",
@@ -1377,6 +1401,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "df3c5bf"
+    },
+    {
+      "claim": "steps-before-plan",
+      "says": "a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2d19653"
+    },
+    {
+      "claim": "steps-stop",
+      "says": "a step before apply that exits 1 fails the wave job before anything applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2d19653"
+    },
+    {
+      "claim": "steps-gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2d19653"
     },
     {
       "claim": "mr-widget",

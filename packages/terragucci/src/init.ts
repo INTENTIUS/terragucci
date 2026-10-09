@@ -28,6 +28,7 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
+import { STEPS_NOT_TERRAGRUNT } from "./steps";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
@@ -36,6 +37,7 @@ import { agentCommentInput } from "./agent-comment";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { terragruntInstalls } from "./render-terragrunt";
+import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
 
 export interface InitOptions {
@@ -87,11 +89,20 @@ export interface InitResult {
   binary: { value: Binary; reason: string };
   image?: string;
   version: { value: string; reason: string };
+  /** Roots that run a version of their own, and where each pins it. */
+  pins: RootVersion[];
   forge: { value: ForgeName; reason: string };
   files: FileChange[];
   /** Settings the pipeline does not act on yet, with why. */
   notes: string[];
   configNote: string;
+}
+
+/** A root that pins its own version, and where. */
+export interface RootVersion {
+  root: string;
+  version: string;
+  source: string;
 }
 
 function plan(path: string, content: string): FileChange {
@@ -127,6 +138,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; use terragrunt.exclude");
     if (settings.cost) throw new ConfigError("cost estimates read each root's plan from tf-plan, and a Terragrunt repo plans its units with run --all; remove cost");
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
+    if (settings.steps?.length) throw new ConfigError(STEPS_NOT_TERRAGRUNT);
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {
@@ -170,13 +182,30 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
 
+  if (tgMode && versionGlobs(settings.version)) {
+    throw new ConfigError("version as a map pins plain roots by glob; a Terragrunt repo runs one release of its binary for every unit, so give version one release");
+  }
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
-  const version = settings.version
+  // The repo's own .opentofu-version or .terraform-version, for the binary it names.
+  const fileTool = tgMode ? undefined : pinnedTool(binary.value);
+  const versionFile = fileTool ? join(repo, VERSION_FILES[fileTool]) : undefined;
+  const filed = versionFile && existsSync(versionFile) ? versionFileRelease(readFileSync(versionFile, "utf-8")) : undefined;
+  const version = typeof settings.version === "string"
     ? { value: settings.version, reason: "terragucci.yml" }
-    : pinned
-      ? { value: pinned, reason: "required_version" }
-      : { value: (TOOL_VERSIONS as Record<string, string>)[binary.value] ?? "", reason: "the image" };
+    : filed && fileTool
+      ? { value: filed, reason: VERSION_FILES[fileTool] }
+      : pinned
+        ? { value: pinned, reason: "required_version" }
+        : { value: (TOOL_VERSIONS as Record<string, string>)[binary.value] ?? "", reason: "the image" };
+  // Roots that pin a version of their own, other than the one every job runs: each runs its own, installed in the job.
+  const pins: RootVersion[] = [];
+  if (!tgMode) {
+    for (const root of roots) {
+      const pin = rootPin(repo, root, binary.value, settings.version);
+      if (pin && pin.version !== version.value) pins.push({ root, ...pin });
+    }
+  }
 
   const detectedForge = detectForge(repo);
   const forgeChoice = settings.forge
@@ -227,8 +256,11 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     forge: forgeChoice.value,
     binary: binary.value,
     version: version.value,
-    image: imageReference(ref),
+    // image: the repo's own, built FROM terragucci's, so the jobs still carry terragucci and the binary.
+    image: settings.image ?? imageReference(ref),
+    ...(settings.image ? { imageFromConfig: true } : {}),
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
+    ...(pins.length > 0 ? { rootPins: true } : {}),
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,
@@ -242,7 +274,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(rollouts ? { rollouts } : {}),
     ...(settings.synth ? { synth: settings.synth } : {}),
     ...(settings.notify ? { notify: settings.notify } : {}),
-    ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command } } : {}),
+    ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command, ...(settings.cost !== true && settings.cost.approve_above !== undefined ? { approveAbove: true } : {}) } } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
     ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
@@ -369,7 +401,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: imageReference(ref), version, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), binary, image: settings.image ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
 }
 
 /** The first line of the terragucci.yml a control repo writes into a project, so a later run knows it may rewrite it. */
@@ -525,6 +557,7 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
         `parallelism ${tg.parallelism.value} (${tg.parallelism.reason}), forge ${r.forge.value} (${r.forge.reason})`
       : `found ${plural(r.roots.length, "root")} in ${plural(r.layers.length, "layer")}, ` +
         `${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`,
+    ...(r.pins.length > 0 ? [`${plural(r.pins.length, "root")} ${r.pins.length === 1 ? "pins its" : "pin their"} own version: ${r.pins.map((p) => `${p.root} ${r.binary.value} ${p.version} (${p.source})`).join(", ")}`] : []),
     ...r.files.map((f) => `${verb(f.status)} ${relative(repo, f.path)}`),
     r.configNote,
     ...r.notes.map((n) => `note: ${n}`),
@@ -541,6 +574,7 @@ export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<s
     ...(r.terragrunt ? { terragrunt: r.terragrunt } : {}),
     binary: r.binary,
     version: r.version,
+    ...(r.pins.length > 0 ? { pins: r.pins } : {}),
     forge: r.forge,
     image: r.image,
     files: r.files.map((f) => ({ path: relative(repo, f.path), status: f.status, content: f.content })),
