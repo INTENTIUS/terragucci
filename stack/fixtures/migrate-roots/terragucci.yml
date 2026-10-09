@@ -1,5 +1,4 @@
 forge: forgejo
 binary: tofu
-gate: never
 apply:
   resume: 5
