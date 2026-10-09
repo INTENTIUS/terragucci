@@ -337,7 +337,9 @@ chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run
 chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
 chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
 linked-plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
-linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|'
+linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|
+mcp-last-apply|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
+drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1147,10 +1149,17 @@ build_cli() {
   # each rebuild it. build-cli.mjs renames the finished files into place, so a
   # build that does run never leaves another run a half-written bundle.
   local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
-  if [ -f "$bundle" ] && [ -z "$(find "$HERE/../packages/terragucci/src" "$HERE/../packages/terragucci/package.json" "$HERE/../scripts/build-cli.mjs" -type f -newer "$bundle" -print -quit 2>/dev/null)" ]; then
+  if [ -f "$bundle" ] && [ -z "$(find "$HERE/../packages/terragucci/src" "$HERE/../packages/terragucci/package.json" "$HERE/../scripts/build-cli.mjs" "$HERE/../scripts/cli-bundle.mjs" -type f -newer "$bundle" -print -quit 2>/dev/null)" ]; then
     return 0
   fi
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null)
+}
+
+# The CLI bundle with cuts in its sources (stack/break-bundle.mjs), for a
+# claim whose BREAK takes its property out of the code itself: written to
+# out, and mounted in place of the bundle build_cli wrote.
+break_bundle() { # out, then file find replace, once or more
+  (cd "$HERE/.." && node stack/break-bundle.mjs "$@") >&2
 }
 
 report_run() {
@@ -11398,6 +11407,188 @@ claim_state_versions() {
   return $rc
 }
 
+# ── the MCP server ────────────────────────────────────────────────────────
+claim_mcp_last_apply() {
+  # A repo with one root, app (a terraform_data, local state), whose reports
+  # go to the reports bucket under a fresh prefix, applied in tf-apply wave 1
+  # with gate never. terragucci mcp then runs in the CI image over stdio, with
+  # floci's keys in its environment and the bucket on its command line, and
+  # the official SDK's client (stack/mcp-client.mjs) lists its tools and calls
+  # them as an agent would. last_apply for app names the wave's commit,
+  # wave 1, applied, and app's create of terraform_data.app. Every tool is
+  # read-only and none is named for a write; a call to approve is refused with
+  # the CLI's answer, and a token argument is refused.
+  # BREAK: a bundle whose server lists an approve tool (break_bundle cuts
+  # mcp.ts: the tool goes into TOOLS and the start-up guard is skipped), and
+  # the tool list gives it away.
+  log() { echo "[smoke mcp-last-apply] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" rc=0 prefix="mcp-$STAMP${BREAK:+-break}" out commit writes
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    # shellcheck disable=SC2016 # TypeScript, not shell
+    break_bundle "$bundle" mcp.ts '  assertReadOnly(tools);
+' '' mcp.ts 'export const TOOLS: Tool[] = [
+' 'export const TOOLS: Tool[] = [
+  { name: "approve", description: "Approve a waiting wave.", inputSchema: { type: "object", properties: { wave: { type: "string", description: "wave-<k>" } }, additionalProperties: false }, async run(a) { return `approved ${String(a.wave)}`; } },
+' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  audit_repo "$work" "$prefix"
+  audit_wave "$work" never
+  [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE, not 0"; drop_work "$work"; return 1; }
+  commit="$(git -C "$work/wave" rev-parse HEAD)"
+  # The server: the bundle copied into the CI image, stdin and stdout the protocol's, floci's keys in its environment.
+  out="$(cd "$HERE/.." && node stack/mcp-client.mjs app -- bash -c '. "$1/mounted.sh"; shift; run_copied --rm -i "$@"' mcp "$HERE" \
+    --network terragucci -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+    "$image" terragucci mcp --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix")" \
+    || { log "the MCP client failed"; drop_work "$work"; return 1; }
+  jq -c '{server, tools: [.tools[].name], last_apply: (.last_apply.json // .last_apply.text | if type == "object" then {commit, wave, applied, approval, report, result: {path: .result.path, status: .result.status, changes: .result.changes}} else . end)}' <<<"$out" >&2
+  writes="$(jq -r '[.tools[] | select((.name | test("approve|override|unlock|merge|revoke|^apply|write|delete|push")) or .readOnly == false or .destructive) | .name] | join(",")' <<<"$out")"
+  if [ -n "$writes" ]; then log "the server lists tools that would write or are not read-only: $writes"; rc=1; fi
+  [ "$(jq -r '.server.name' <<<"$out")" = terragucci ] || { log "the server is not terragucci"; rc=1; }
+  jq -e '[.tools[].name] | index("last_apply") != null and index("estate") != null and index("audit") != null and index("dora") != null and index("state_versions") != null' <<<"$out" >/dev/null \
+    || { log "the server does not list last_apply, estate, audit, dora and state_versions"; rc=1; }
+  if jq -e '.last_apply.error' <<<"$out" >/dev/null; then
+    log "last_apply for app failed: $(jq -r '.last_apply.text' <<<"$out")"; rc=1
+  else
+    jq -e --arg c "$commit" '.last_apply.json | .commit == $c and .wave == 1 and .applied == true and .result.path == "app" and .result.status == "planned"' <<<"$out" >/dev/null \
+      || { log "last_apply does not name app's wave 1 at ${commit:0:8}, applied"; rc=1; }
+    jq -e '.last_apply.json.result.changes | any(.address == "terraform_data.app" and .action == "create")' <<<"$out" >/dev/null \
+      || { log "last_apply does not list the create of terraform_data.app"; rc=1; }
+    [ "$(jq -r '.last_apply.json.report' <<<"$out")" = "$(jq -r '.index.json[0].report' <<<"$out")" ] || { log "last_apply's report is not the newest tf-apply row's"; rc=1; }
+  fi
+  jq -e '.approve.error and (.approve.text | contains("terragucci mcp is read-only") and contains("chant refuses a gate approval made over MCP"))' <<<"$out" >/dev/null \
+    || { log "a call to approve was not refused with the CLI's answer: $(jq -r '.approve.text' <<<"$out")"; rc=1; }
+  jq -e '.token.error and (.token.text | contains("reads credentials from its own environment"))' <<<"$out" >/dev/null \
+    || { log "a token argument was not refused: $(jq -r '.token.text' <<<"$out")"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the client read app's last apply at ${commit:0:8} over MCP; every tool reads, and approve and a token argument were refused"
+  return $rc
+}
+
+# ── the drift agent ───────────────────────────────────────────────────────
+claim_drift_agent() {
+  # A scratch repo with one root, app: a queue on floci with a visibility
+  # timeout of 30, its state in floci's S3, and a drift schedule. terragucci.yml
+  # turns agent.drift on with a stand-in agent: .smoke/drift-agent.sh reads
+  # the prompt on stdin, and when it names visibility_timeout_seconds as live
+  # 45 it sets the root's timeout to 45. The stand-in also says whether its
+  # step holds any forge token and, if it does, pushes the branch
+  # agent-direct with it. respond.drift is off. The agent's token
+  # (AGENT_TOKEN) is the admin's.
+  # The push to main applies the queue; then the timeout goes to 45 outside
+  # OpenTofu, and the drift workflow runs once (workflow_dispatch). Its drift
+  # job opens the drift issue, the drift-agent job runs the stand-in, and the
+  # drift-agent-push job opens a pull request from terragucci/drift-agent-<n>
+  # that sets the timeout to 45, comments its link on the issue, and the pull
+  # request gets its own terragucci/plan statuses. main does not move, and no
+  # agent-direct branch exists.
+  # BREAK: the pushed pipeline gives the agent's step the agent's token
+  # (TG_TOKEN), so the stand-in pushes agent-direct itself.
+  log() { echo "[smoke drift-agent] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/drift-agent" queue="tg-drift-agent-$STAMP" key="respond/drift-agent-$STAMP.tfstate" url main_sha run status issue pr head i rc=0 wf s
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo drift-agent || return 1
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true,"has_issues":true}' "$URL/api/v1/repos/$repo"
+  for s in AGENT_TOKEN:"$TOKEN" AGENT_KEY:stand-in; do
+    api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "${s#*:}" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/${s%%:*}" \
+      || { log "could not set the ${s%%:*} secret"; return 1; }
+  done
+  respond_tree "$work" "$repo" "$(respond_root "$key" "resource \"aws_sqs_queue\" \"jobs\" {
+  name                       = \"$queue\"
+  visibility_timeout_seconds = 30
+  tags                       = { owner = \"smoke\" }
+}")"
+  mkdir -p "$work/tree/.smoke"
+  cat > "$work/tree/.smoke/drift-agent.sh" <<'SH'
+#!/bin/sh
+# A stand-in drift agent: the prompt comes on stdin, and it edits one file.
+prompt="$(cat)"
+held=""
+for v in GITHUB_TOKEN FORGEJO_TOKEN GITEA_TOKEN TG_TOKEN ACTIONS_RUNTIME_TOKEN; do
+  eval "x=\${$v:-}"
+  [ -n "$x" ] && held="$held $v"
+done
+echo "stand-in drift agent: forge tokens in its step:${held:- none}"
+if [ -n "${TG_TOKEN:-}" ]; then
+  git -c "http.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 -w0)" push -q "http://forgejo:3000/$GITHUB_REPOSITORY.git" HEAD:refs/heads/agent-direct \
+    && echo "stand-in drift agent: pushed agent-direct with its own token"
+fi
+if printf '%s\n' "$prompt" | grep -q 'visibility_timeout_seconds: state 30, live 45'; then
+  sed -i 's/visibility_timeout_seconds = 30/visibility_timeout_seconds = 45/' app/main.tf
+  echo "stand-in drift agent: set app's visibility timeout to 45"
+fi
+SH
+  printf 'gate: never\ndrift: "0 6 * * *"\nrespond:\n  drift: off\nagent:\n  via: forge\n  token_env: AGENT_TOKEN\n  drift:\n    command: sh .smoke/drift-agent.sh\n    key_secret: AGENT_KEY\n    timeout: 10\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  drift-agent-push:' "$wf" || { log "the pipeline has no drift-agent-push job"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    # The agent's step gets the agent's token beside the model's key.
+    awk '/^  drift-agent:/ { job = 1 } /^  drift-agent-push:/ { job = 0 } job && /^ +AGENT_KEY: / { print; match($0, /^ */); print substr($0, 1, RLENGTH) "TG_TOKEN: ${{ secrets.AGENT_TOKEN }}"; next } { print }' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'TG_TOKEN: \${{ secrets.AGENT_TOKEN }}' "$wf" || { log "could not give the agent's step the token"; drop_work "$work"; return 1; }
+  fi
+  main_sha="$(push_tree "$work/tree" "$repo" main "drift-agent: a queue with a timeout of 30")" || { drop_work "$work"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
+  wait_run "$repo" "$main_sha" || { drop_work "$work"; return 1; }
+  [ "$RUN_STATUS" = success ] || { log "the push to main did not go green ($RUN_STATUS)"; drop_work "$work"; return 1; }
+  url="$(sqs GetQueueUrl "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
+  [ -n "$url" ] || { log "$queue is not in floci after the apply"; drop_work "$work"; return 1; }
+  sqs SetQueueAttributes "{\"QueueUrl\":\"$url\",\"Attributes\":{\"VisibilityTimeout\":\"45\"}}" >/dev/null
+  # The drift workflow, once, as its schedule would run it.
+  run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' "$URL/api/v1/repos/$repo/actions/workflows/terragucci.yml/dispatches" | jq -r '.id // empty' 2>/dev/null || true)"
+  [ -n "$run" ] || { log "Forgejo did not start the drift workflow"; rc=1; }
+  status=""
+  if [ $rc = 0 ]; then
+    for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+      status="$(api "$URL/api/v1/repos/$repo/actions/runs?event=workflow_dispatch&limit=50" | jq -r --arg r "$run" '[.workflow_runs // [] | .[] | select(.id == ($r | tonumber))] | (.[0].status // "")')"
+      case "$status" in success|failure|cancelled|skipped) break ;; esac
+      sleep 3
+    done
+    log "the drift run $run ended '${status:-unknown}'"
+    print_logs "$repo" "$run" 2>/dev/null | grep -E 'terragucci( drift-agent)?:|stand-in drift agent|drift issue' | cut -c1-300 | sed 's/^/[smoke drift-agent]   /' >&2 || true
+  fi
+  if [ $rc = 0 ]; then
+    issue="$(api "$URL/api/v1/repos/$repo/issues?state=open&type=issues&limit=50" | jq -r '[.[] | select((.body // "") | contains("<!-- terragucci:drift -->"))] | .[0].number // empty')"
+    [ -n "$issue" ] || { log "the drift run opened no drift issue"; rc=1; }
+  fi
+  if [ -n "$(remote_head "$repo" agent-direct)" ]; then log "the agent's step held a forge token and pushed agent-direct itself"; rc=1; fi
+  if [ $rc = 0 ]; then
+    pr="$(open_pr "$repo" "terragucci/drift-agent-$issue")"
+    if [ -z "$pr" ]; then
+      log "no pull request from terragucci/drift-agent-$issue"; rc=1
+    else
+      head="$(remote_head "$repo" "terragucci/drift-agent-$issue")"
+      [ "$(pr_files "$repo" "$pr")" = "app/main.tf" ] || { log "pull request $pr changes $(pr_files "$repo" "$pr"), not app/main.tf"; rc=1; }
+      grep -q 'visibility_timeout_seconds = 45' <<<"$(file_at "$repo" "terragucci/drift-agent-$issue" "$head" app/main.tf)" || { log "pull request $pr does not set the timeout to 45"; rc=1; }
+      [ "$(api "$URL/api/v1/repos/$repo/git/commits/$head" | jq -r '.parents[0].sha')" = "$main_sha" ] || { log "the agent's commit is not on top of main"; rc=1; }
+      api "$URL/api/v1/repos/$repo/issues/$issue/comments?limit=50" | jq -r '.[].body' | grep -q "^terragucci: the drift agent opened .*/pulls/$pr" \
+        || { log "drift issue $issue does not link pull request $pr"; rc=1; }
+      for i in $(seq 1 $(( TIMEOUT / 3 ))); do
+        [ "$(api "$URL/api/v1/repos/$repo/commits/$head/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length')" -ge 1 ] && break
+        sleep 3
+      done
+      [ "$(api "$URL/api/v1/repos/$repo/commits/$head/statuses?limit=100" | jq '[.[] | select(.context == "terragucci/plan")] | length')" -ge 1 ] \
+        || { log "pull request $pr was not planned (no terragucci/plan status on ${head:0:8})"; rc=1; }
+      [ $rc = 0 ] && log "drift issue $issue opened, and the drift agent's pull request $pr sets the timeout to 45 and was planned"
+    fi
+  fi
+  [ "$(remote_head "$repo" main)" = "$main_sha" ] || { log "main moved"; rc=1; }
+  [ -z "$url" ] || sqs DeleteQueue "{\"QueueUrl\":\"$url\"}" >/dev/null 2>&1 || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "the drift agent ran with no forge token and its change came back as a pull request that planned; nothing applied or merged"
+  return $rc
+}
+
 # ── state migrations ──────────────────────────────────────────────────────
 # A root in the migrate repo: a terraform_data per name, its state <root>.tfstate
 # in the claim's state bucket (s3 backend, use_lockfile).
@@ -13022,6 +13213,8 @@ chat-approve         runner self! weight=300
 chat-approve-teams   runner self! weight=300
 chat-approve-lambda  runner self! weight=350
 chat-replan          self! weight=90
+mcp-last-apply       weight=120
+drift-agent          runner self! weight=250
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
