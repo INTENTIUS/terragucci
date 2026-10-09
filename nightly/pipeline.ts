@@ -56,7 +56,7 @@ export const sandbox = new Job({
       env: token,
       run: [
         `if [ -z "$TERRAGUCCI_SANDBOX_TOKEN" ]; then`,
-        `  echo "::error::The repo secret TERRAGUCCI_SANDBOX_TOKEN is not set. Add a token that can push to INTENTIUS/terragucci-sandbox and administer it: a fine-grained token on that repo with Administration, Contents, Workflows, Pull requests, Issues and Actions read and write and Commit statuses read, or a classic token with repo and workflow, from an admin of the repo."`,
+        `  echo "::error::The repo secret TERRAGUCCI_SANDBOX_TOKEN is not set. Add a token that can push to INTENTIUS/terragucci-sandbox and administer it: a fine-grained token on that repo with Administration, Contents, Workflows, Pull requests, Issues, Actions and Secrets read and write and Commit statuses read, or a classic token with repo and workflow, from an admin of the repo."`,
         `  exit 1`,
         `fi`,
       ].join("\n"),
