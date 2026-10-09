@@ -11625,6 +11625,12 @@ runner_prep() {
   echo "[smoke] logs in $SMOKE_LOG_DIR, $SMOKE_JOBS at a time" >&2
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || { echo "[smoke] the CLI did not build" >&2; return 1; }
   export SMOKE_CLI_BUILT=1
+  # This tree's own image tags: a run from another worktree builds its own, so
+  # neither runs the other's bundle (scripts/images.ts, push_tree in lib.sh).
+  if [ "$SMOKE_FORGE" != gitlab ]; then
+    TG_IMAGE_SUFFIX="-t$(cd "$HERE/.." && cat packages/terragucci/dist/terragucci.mjs images/Dockerfile.* | shasum -a 256 | cut -c1-12)"
+    export TG_IMAGE_SUFFIX
+  fi
   SMOKE_TOFU_IMAGE="$(image_tag tofu)"; SMOKE_TG_IMAGE="$(image_tag terragrunt)"
   export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE
   # The lab is never started here: GitLab is heavy, and `just gitlab-lab up`
