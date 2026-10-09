@@ -164,7 +164,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "cb0fa61"
     },
     {
       "claim": "apply-serial",
@@ -357,7 +357,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "cb0fa61"
     },
     {
       "claim": "import-atlantis",
@@ -365,7 +365,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "cb0fa61"
     },
     {
       "claim": "comment-atlantis",
@@ -373,7 +373,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "cb0fa61"
     },
     {
       "claim": "lock-wait",
@@ -1007,7 +1007,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "cb0fa61"
     },
     {
       "claim": "note-stale",

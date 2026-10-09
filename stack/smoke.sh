@@ -3046,12 +3046,6 @@ claim_comment_atlantis() {
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
   local work repo="$USER/comment-atlantis" main_sha head_sha pr i rc=0 before after replies root cfg
-  # The jobs run this tree's bundle in the tofu image under a tag of its own,
-  # so a rebuild of the shared tag by another tree cannot swap the code under
-  # the run (push_tree points the pipeline at TG_TOFU_IMAGE).
-  local TG_TOFU_IMAGE
-  TG_TOFU_IMAGE="$("$HERE/gitlab/gitlab.sh" image)" || { log "could not build the image with this tree's bundle"; return 1; }
-  export TG_TOFU_IMAGE
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo comment-atlantis || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
