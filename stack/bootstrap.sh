@@ -259,13 +259,22 @@ fi
 # creates a fresh one rather than piling up tokens or failing on the name.
 # A token from an earlier run that still signs in as the admin is kept: claims
 # running in parallel hold it, and replacing it would fail their next call.
+# Every worktree of this repo shares the one stack, so a working token held by
+# another worktree is reused too: minting would delete it under that
+# worktree's claims.
+token_works() {
+  [ -n "$1" ] && [ "$(curl -fsS -H "Authorization: token $1" "$FORGEJO_URL/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null)" = "$ADMIN_USER" ]
+}
 TOKEN=""
-if [ -f "$STATE/forgejo.env" ]; then
-  TOKEN="$(sed -n 's/^export TERRAGUCCI_FORGEJO_TOKEN=//p' "$STATE/forgejo.env")"
-  if [ -z "$TOKEN" ] || [ "$(curl -fsS -H "Authorization: token $TOKEN" "$FORGEJO_URL/api/v1/user" 2>/dev/null | jq -r '.login // empty' 2>/dev/null)" != "$ADMIN_USER" ]; then
-    TOKEN=""
+for env in "$STATE/forgejo.env" $(git -C "$HERE" worktree list --porcelain 2>/dev/null | sed -n 's|^worktree \(.*\)|\1/stack/.state/forgejo.env|p'); do
+  [ -f "$env" ] || continue
+  t="$(sed -n 's/^export TERRAGUCCI_FORGEJO_TOKEN=//p' "$env")"
+  if token_works "$t"; then
+    TOKEN="$t"
+    [ "$env" = "$STATE/forgejo.env" ] || log "reusing the API token of $(dirname "$(dirname "$(dirname "$env")")")"
+    break
   fi
-fi
+done
 if [ -n "$TOKEN" ]; then
   log "keeping the API token, which still works"
 else
