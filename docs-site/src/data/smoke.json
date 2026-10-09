@@ -694,7 +694,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "bef822d"
     },
     {
       "claim": "drift-overdue",
@@ -975,7 +975,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "bef822d"
     },
     {
       "claim": "comment-refused",
@@ -1272,7 +1272,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "bef822d"
     },
     {
       "claim": "audit-override",
@@ -1304,7 +1304,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "bef822d"
     },
     {
       "claim": "resource-history",
@@ -1315,12 +1315,20 @@
       "commit": "df3c5bf"
     },
     {
+      "claim": "state-versions",
+      "says": "a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bef822d"
+    },
+    {
       "claim": "dora",
       "says": "terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "bef822d"
     },
     {
       "claim": "notify-chat",
