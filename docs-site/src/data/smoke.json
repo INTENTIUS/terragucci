@@ -853,8 +853,8 @@
       "says": "with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock",
       "needs": null,
       "verdict": "pass",
-      "break": "fail",
-      "commit": "c64d95fa"
+      "break": "caught",
+      "commit": "1468a6e6"
     },
     {
       "claim": "plan-lock-release",
@@ -1790,9 +1790,9 @@
       "claim": "tip-moved",
       "says": "a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "1468a6e6"
     },
     {
       "claim": "mcp-last-apply",
