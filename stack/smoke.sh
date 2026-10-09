@@ -10137,7 +10137,7 @@ claim_tg_preview_gate() {
     { [ -n "$merge" ] && wait_run "$repo" "$merge" push; } || rc=1
   fi
   if [ $rc = 0 ]; then
-    logs="$(print_logs "$repo" "$RUN_ID")"
+    logs="$(run_logs "$repo" "$RUN_ID")"
     log "after the merge: run $RUN_STATUS; $(grep -m1 'previewed live/app\|plans as pull request' <<<"$logs" || echo 'nothing said of the preview')"
     grep -q "wave 1 of 3: pull request $pr was approved on its head" <<<"$logs" || { log "wave 1 did not apply on the review"; rc=1; }
     grep -qF "wave 2 of 3: pull request $pr previewed live/app on the planned outputs of the waves before; this unit plans differently now:" <<<"$logs" \
