@@ -162,13 +162,18 @@ export function detectBinary(repo: string, roots: string[]): Detected<Binary> {
 /** The binary's version when every root pins the same exact one (`= 1.13.1` or `1.13.1`). A range is not a pin. */
 export function detectVersion(repo: string, roots: string[]): string | undefined {
   const seen = new Set<string>();
-  for (const r of roots) {
-    for (const f of tfFiles(join(repo, r))) {
-      const m = stripComments(readFileSync(f, "utf-8")).match(/required_version\s*=\s*"\s*=?\s*(\d+\.\d+\.\d+)\s*"/);
-      if (m) seen.add(m[1]);
-    }
-  }
+  for (const r of roots) for (const v of exactRequiredVersions(join(repo, r))) seen.add(v);
   return seen.size === 1 ? [...seen][0] : undefined;
+}
+
+/** Every exact `required_version` (`= 1.13.1` or `1.13.1`) in one directory's Terraform files. */
+export function exactRequiredVersions(dir: string): string[] {
+  const out: string[] = [];
+  for (const f of tfFiles(dir)) {
+    const m = stripComments(readFileSync(f, "utf-8")).match(/required_version\s*=\s*"\s*=?\s*(\d+\.\d+\.\d+)\s*"/);
+    if (m && !out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
 }
 
 /** The forge: a workflow directory already in the repo, then the `origin` remote's host. */
