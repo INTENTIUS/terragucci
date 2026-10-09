@@ -407,17 +407,17 @@
       "claim": "check-diagnostics",
       "says": "tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "df05c7f"
+      "commit": "8519a0b"
     },
     {
       "claim": "comment-not-affected",
       "says": "a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "df05c7f"
+      "commit": "8519a0b"
     },
     {
       "claim": "drift-attribute",
@@ -447,9 +447,9 @@
       "claim": "oidc-clouds",
       "says": "a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "df05c7f"
+      "commit": "8519a0b"
     },
     {
       "claim": "comment-apply",
@@ -825,7 +825,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df05c7f"
+      "commit": "8519a0b"
     },
     {
       "claim": "note-split",
@@ -993,7 +993,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df05c7f"
+      "commit": "8519a0b"
     },
     {
       "claim": "fork-no-plan",
