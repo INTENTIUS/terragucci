@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { resolveProject, resolveRepo, validateConfig, type ResolvedSettings } from "../src/config";
-import { checkGenerated, combineGenerate, GENERATED_MARKER, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
+import { checkGenerated, combineGenerate, GENERATED_MARKER, includesGenerated, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
 import { init } from "../src/init";
 import { checkScript } from "../src/render";
 import { bareFrom, git, tmp, write } from "./helpers";
@@ -265,6 +265,12 @@ terraform {
       // Once written, --check passes and a second run changes nothing.
       expect(checkGenerated(dir, settingsOf(dir))).toMatchObject({ ok: true, log: ["generated files match terragucci.yml: 1 file for 3 units"] });
       expect(generate(dir).files.map((f) => f.status)).toEqual(["unchanged"]);
+    });
+
+    it("takes an include of terragucci.hcl however its path is built", () => {
+      expect(includesGenerated(INCLUDE)).toBe(true);
+      expect(includesGenerated('include "terragucci" {\n  path = "${get_repo_root()}/terragucci.hcl"\n}\n')).toBe(true);
+      expect(includesGenerated('# include "terragucci" { path = "terragucci.hcl" }\ninclude "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n')).toBe(false);
     });
 
     it("keeps an interpolation out of the files Terragrunt writes", () => {

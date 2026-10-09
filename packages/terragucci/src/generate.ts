@@ -338,7 +338,7 @@ const hclComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, 
 
 /** Whether a unit's terragrunt.hcl includes terragucci.hcl as `include "terragucci"`. */
 export function includesGenerated(text: string): boolean {
-  return new RegExp(`^\\s*include\\s+"${TERRAGRUNT_INCLUDE}"\\s*\\{[^}]*${TERRAGRUNT_FILE.replace(".", "\\.")}`, "m").test(hclComments(text));
+  return hclBlocks(hclComments(text), `include(?=\\s+"${TERRAGRUNT_INCLUDE}")`).some((b) => b.includes(TERRAGRUNT_FILE));
 }
 
 /**
