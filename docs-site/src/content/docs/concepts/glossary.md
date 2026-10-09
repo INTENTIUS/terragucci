@@ -9,7 +9,7 @@ Each docs page links a word here the first time it uses it, unless the page expl
 
 ### root
 
-A directory whose files hold a `backend` or `cloud` block or configure a provider. `init` finds roots, or `roots:` names them by glob. Every stage runs the binary once in each.
+A directory whose files hold a `backend` or `cloud` block, or choudoufu's `live` block, or configure a provider. `init` finds roots, or `roots:` names them by glob. Every stage runs the binary once in each.
 
 A root with a `cloud` block on remote execution runs on HCP Terraform's workers, where the job's `oidc` roles do not reach. Local execution keeps the runs in your CI.
 
