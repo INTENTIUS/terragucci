@@ -150,6 +150,14 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "module-registry",
+      "says": "with modules.registry each release is written as the module registry protocol to a bucket, and a root that pins ~> 1.0 resolves the newest 1.x from it; with modules.test an untested release is refused",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9dc70fca"
+    },
+    {
       "claim": "tips",
       "says": "tips are on by default and name their rule",
       "needs": null,
@@ -1507,12 +1515,33 @@
       "commit": "abdef33f"
     },
     {
+      "claim": "cdktn-migrate",
+      "says": "a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
       "claim": "cdktn-refused",
       "says": "with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "commit": "abdef33f"
+    },
+    {
+      "claim": "apply-branches",
+      "says": "with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "claim": "own-jobs-kept",
+      "says": "with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
     },
     {
       "claim": "wave-jobs",

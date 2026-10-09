@@ -37,7 +37,8 @@
  *
  * State contents never leave the job: the record holds version ids and
  * digests. It moves states between `s3` backends that take a lock file and
- * `local` backends, and refuses roots with a `cloud` block.
+ * `local` backends, in roots of `.tf` files and CDK Terrain's synthesized
+ * `*.tf.json` stacks alike, and refuses roots with a `cloud` block.
  *
  * A Terragrunt unit takes part as a root does: Terragrunt prepares it once
  * (unitPlace), and the migration runs the binary in the directory Terragrunt
@@ -523,13 +524,32 @@ export function refusal(repo: string, root: string): string | undefined {
   if (!existsSync(dir)) return `${root} is not a directory in the repo`;
   // A Terragrunt unit's code and backend are what Terragrunt makes of its terragrunt.hcl: placeOf prepares it.
   if (existsSync(join(dir, "terragrunt.hcl"))) return undefined;
-  const tf = readdirSync(dir).filter((f) => f.endsWith(".tf") && f !== OVERRIDE_FILE);
-  if (tf.length === 0) return `${root} holds no .tf files`;
-  for (const f of tf) {
+  // A CDK Terrain stack is a root whose code is JSON: cdktf.out/stacks/<stack>/cdk.tf.json.
+  const files = readdirSync(dir).filter((f) => (f.endsWith(".tf") || f.endsWith(".tf.json")) && f !== OVERRIDE_FILE);
+  if (files.length === 0) return `${root} holds no .tf or .tf.json files`;
+  const cloud = `${root} uses a cloud block, whose state HCP Terraform keeps; migrations move state in s3 and local backends`;
+  for (const f of files) {
     const text = readFileSync(join(dir, f), "utf-8");
-    if (/^\s*cloud\s*\{/m.test(text)) return `${root} uses a cloud block, whose state HCP Terraform keeps; migrations move state in s3 and local backends`;
+    if (f.endsWith(".tf")) {
+      if (/^\s*cloud\s*\{/m.test(text)) return cloud;
+      continue;
+    }
+    let doc: unknown;
+    try {
+      doc = JSON.parse(text);
+    } catch {
+      return `${root}: ${f} is not JSON`;
+    }
+    if (jsonCloud(doc)) return cloud;
   }
   return undefined;
+}
+
+/** Whether a root's JSON code gives a `terraform` block a `cloud` block, as `terraform.cloud` or a list of terraform blocks. */
+function jsonCloud(doc: unknown): boolean {
+  const tf = doc && typeof doc === "object" ? (doc as Record<string, unknown>).terraform : undefined;
+  const blocks = Array.isArray(tf) ? tf : tf ? [tf] : [];
+  return blocks.some((b) => b && typeof b === "object" && "cloud" in (b as object));
 }
 
 /** Which backends a migration writes to, or why not. */

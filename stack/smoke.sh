@@ -164,6 +164,7 @@ publish-attest|with modules.attest each release is signed, attested and recorded
 require-attested|with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved|
 require-recorded|with modules.require: attested tf-plan refuses a root that pins a version the release ledger does not record|
 tg-require-attested|with modules.require: attested in a Terragrunt repo tf-check and tf-plan refuse a unit whose terraform source pins an unattested release, and pass one that pins an attested release|
+module-registry|with modules.registry each release is written as the module registry protocol to a bucket, and a root that pins ~> 1.0 resolves the newest 1.x from it; with modules.test an untested release is refused|
 tips|tips are on by default and name their rule|
 zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
@@ -328,7 +329,10 @@ approval-used|once a wave applied under its approval, the next merge that moves 
 cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
 cdktn-apply|with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is|
 cdktn-tips|with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out|
+cdktn-migrate|a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files|
 cdktn-refused|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
+apply-branches|with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved|
+own-jobs-kept|with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes|
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
@@ -674,6 +678,120 @@ claim_waves() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "wave 2 stayed out until wave 1 was approved, and then waited at its own gate"
+  return $rc
+}
+
+claim_apply_branches() {
+  # The gated-waves fixture with apply.branches: {release: ["canary/*"]}.
+  # Push main: its wave 1 is fleet/*, which waits; canary/one is release's.
+  # Approve it and push main again: fleet/* applies and canary/one has no
+  # state. Push the same tree to release: its wave 1 is canary/one alone,
+  # which waits at the same gate. Approve it and push release again:
+  # canary/one applies.
+  # BREAK: the pushed pipeline loses --branches and --branch, so the map is
+  # ignored: main's wave 1 is canary/one, which applies from main.
+  log() { echo "[smoke apply-branches] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/apply-branches" wf sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo apply-branches || { drop_work "$work"; return 1; }
+  printf 'apply:\n  branches:\n    release: ["canary/*"]\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "github.ref == 'refs/heads/release'" "$wf" || { log "the apply jobs do not run on release"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed -e "s# --branch \"\$GITHUB_REF_NAME\"##g" -e "s# --branches 'release=canary/\*'##g" "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    ! grep -q -- "--branches" "$wf" || { log "BREAK left --branches in the pipeline"; drop_work "$work"; return 1; }
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "apply-branches: main")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  if [ $rc = 0 ]; then
+    applied="$(gated_applied apply-branches)"
+    log "main, first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a root applied before wave 1 was approved"; rc=1; }
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve apply-branches 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "apply-branches: main, wave 1 approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(gated_applied apply-branches)"
+    log "main, after the approval: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "fleet/five fleet/four fleet/three fleet/two " ] || { log "expected the fleet roots alone to apply from main"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" release "apply-branches: release")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(gated_applied apply-branches)"
+    log "release, first push: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "fleet/five fleet/four fleet/three fleet/two " ] || { log "canary/one applied from release before its wave was approved"; rc=1; }
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -q "apply.branches: release applies canary/one" <<<"$logs" || { log "release's wave did not say it applies canary/one alone"; rc=1; }
+    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "release's wave 1 did not wait for its approval"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve apply-branches 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" release "apply-branches: release, wave 1 approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(gated_applied apply-branches)"
+    log "release, after the approval: run ${RUN_STATUS:-none}, state for: ${applied:-nothing}"
+    [ "$applied" = "canary/one fleet/five fleet/four fleet/three fleet/two " ] || { log "expected canary/one to apply from release once approved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "main applied the fleet roots and never canary/one; release applied canary/one alone, once its wave was approved"
+  return $rc
+}
+
+claim_own_jobs_kept() {
+  # The gated-waves fixture under gate: never, with own_jobs: ci/own-jobs.yml
+  # naming one job that needs check and prints a marker. init runs twice; the
+  # pipeline still holds the job as the file has it, and on the push the job
+  # runs and passes, its log carrying the marker.
+  # BREAK: the second init runs without own_jobs, as init did before the key,
+  # so it drops the job.
+  log() { echo "[smoke own-jobs-kept] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/own-jobs-kept" wf image sha job id marker="own job ran for own-jobs-kept" rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo own-jobs-kept || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  image="$(awk '/^  check:/{c=1} c && /image:/{print $2; exit}' "$wf")"
+  [ -n "$image" ] || { log "no image on the check job"; drop_work "$work"; return 1; }
+  sed 's#^gate: always#gate: never#' "$work/tree/terragucci.yml" > "$work/tree/terragucci.yml.new" && mv "$work/tree/terragucci.yml.new" "$work/tree/terragucci.yml"
+  mkdir -p "$work/tree/ci"
+  cat > "$work/tree/ci/own-jobs.yml" <<EOF
+own-job:
+  needs: check
+  runs-on: ubuntu-latest
+  container:
+    image: $image
+  steps:
+    - name: Say the job ran
+      run: echo "$marker on \${{ github.ref_name }}"
+EOF
+  printf 'own_jobs: ci/own-jobs.yml\n' >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "the first init failed"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    grep -v '^own_jobs:' "$work/tree/terragucci.yml" > "$work/tree/terragucci.yml.new" && mv "$work/tree/terragucci.yml.new" "$work/tree/terragucci.yml"
+  fi
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "the second init failed"; drop_work "$work"; return 1; }
+  grep -q '^  own-job:$' "$wf" || { log "after the second init the pipeline has no own-job"; rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "own-jobs-kept: init twice")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    job="$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -c '[.[] | select(.name == "own-job")][0] // {}')"
+    log "own-job: $(jq -r '.status // "none"' <<<"$job")"
+    [ "$(jq -r '.status // ""' <<<"$job")" = success ] || { log "own-job did not run and pass"; rc=1; }
+    id="$(jq -r '.id // ""' <<<"$job")"
+    [ -n "$id" ] && { api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null | grep -q "$marker on main" || { log "own-job's log has no marker"; rc=1; }; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "init ran twice and kept own-job, which ran after check and passed"
   return $rc
 }
 
@@ -1894,6 +2012,78 @@ require_claim() { # claim name, tampered|unrecorded
 
 claim_require_attested() { require_claim require-attested tampered; }
 claim_require_recorded() { require_claim require-recorded unrecorded; }
+
+claim_module_registry() {
+  # modules.registry with modules.test, the CLI in the CI image: two releases
+  # of modules/network, 1.0.0 and 1.1.0, each tested with tofu test first, are
+  # written to a floci bucket as the module registry protocol's files. A TLS
+  # server in front of the bucket serves it as the registry host
+  # 127.0.0.1:8443, and a root whose call pins version "~> 1.0" resolves 1.1.0
+  # with tofu init. BREAK: the second release has no tests, so modules.test
+  # refuses it, publish fails, and the registry still lists 1.0.0 alone.
+  log() { echo "[smoke module-registry] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work tree out rc=0 bucket="tg-registry-$(date +%s)$$${BREAK:+b}" versions
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  mkdir -p "$tree/modules/network/tests" "$tree/envs/dev"
+  # tofu reaches a registry host only over https: a certificate for localhost, made for this run.
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" -keyout "$work/tls.key" -out "$work/tls.crt" >/dev/null 2>&1 \
+    || { log "openssl could not make a certificate"; drop_work "$work"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "floci made no bucket $bucket"; drop_work "$work"; return 1; }
+  # The bucket served as a static site over TLS: each GET is the object at that key.
+  cat > "$work/serve.mjs" <<'JS'
+import https from "node:https";
+import http from "node:http";
+import { readFileSync } from "node:fs";
+const [bucket, port] = process.argv.slice(2);
+https.createServer({ key: readFileSync("/repo/tls.key"), cert: readFileSync("/repo/tls.crt") }, (req, res) => {
+  const path = req.url.split("?")[0];
+  http.get(`http://floci:4566/${bucket}${path}`, (up) => {
+    console.error(`serve: GET ${path} ${up.statusCode}`);
+    res.writeHead(up.statusCode, { "content-type": up.headers["content-type"] ?? "application/octet-stream" });
+    up.pipe(res);
+  }).on("error", (e) => { res.writeHead(502); res.end(String(e)); });
+}).listen(Number(port), "127.0.0.1", () => console.error(`serve: https://127.0.0.1:${port} -> ${bucket}`));
+JS
+  printf 'variable "name" {\n  type = string\n}\n\nresource "terraform_data" "net" {\n  input = var.name\n}\n\noutput "name" {\n  value = terraform_data.net.input\n}\n' > "$tree/modules/network/main.tf"
+  printf 'variables {\n  name = "dev"\n}\n\nrun "names" {\n  command = plan\n\n  assert {\n    condition     = terraform_data.net.input == "dev"\n    error_message = "the name is not passed through"\n  }\n}\n' > "$tree/modules/network/tests/main.tftest.hcl"
+  echo 1.0.0 > "$tree/modules/network/version"
+  printf 'module "network" {\n  source  = "127.0.0.1:8443/acme/network/generic"\n  version = "~> 1.0"\n  name    = "dev"\n}\n' > "$tree/envs/dev/main.tf"
+  printf 'binary: tofu\nroots: ["envs/*"]\nmodules:\n  path: modules/*\n  test: true\n  registry:\n    bucket: s3://%s\n    url: https://127.0.0.1:8443\n    namespace: acme\n' "$bucket" > "$tree/terragucci.yml"
+  git -C "$tree" init -q -b main
+  commitall() { git -C "$tree" add -A && git -C "$tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -q -m "$1"; }
+  commitall "feat: network"
+  publish_run() { in_image "$work" sh -c 'cd tree && terragucci publish' 2>&1; }
+  out="$(publish_run)" || { echo "$out" >&2; log "the first publish failed"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  grep -q "network 1.0.0: published to registry https://127.0.0.1:8443" <<<"$out" || { log "1.0.0 was not published"; drop_work "$work"; return 1; }
+  printf 'output "id" {\n  value = terraform_data.net.id\n}\n' > "$tree/modules/network/outputs.tf"
+  echo 1.1.0 > "$tree/modules/network/version"
+  # BREAK: the tests leave the module, so the release is untested.
+  [ -n "${BREAK:-}" ] && mv "$tree/modules/network/tests" "$work/tests.moved"
+  commitall "feat(network): an id output"
+  out="$(publish_run)" || rc=$?
+  echo "$out" >&2
+  versions="$(curl -fsS "$FLOCI/$bucket/v1/modules/acme/network/generic/versions" | jq -r '[.modules[0].versions[].version] | join(",")')" || versions=""
+  if [ "$rc" != 0 ]; then
+    grep -q "network 1.1.0: refused" <<<"$out" && log "modules.test refused 1.1.0: $(grep -m1 -o 'has no tests[^,]*' <<<"$out" || true); the registry lists '$versions'"
+    log "the second publish failed"; drop_work "$work"; return 1
+  fi
+  grep -q "network 1.1.0: published to registry https://127.0.0.1:8443" <<<"$out" || { log "1.1.0 was not published"; drop_work "$work"; return 1; }
+  [ "$versions" = "1.0.0,1.1.0" ] || { log "the versions endpoint lists '$versions', not 1.0.0,1.1.0"; drop_work "$work"; return 1; }
+  curl -fsS "$FLOCI/$bucket/.well-known/terraform.json" | jq -e '."modules.v1" == "/v1/modules/"' >/dev/null || { log "no service discovery file"; drop_work "$work"; return 1; }
+  # tofu, in the CI image, resolves "~> 1.0" against the registry and installs the newest 1.x.
+  out="$(in_image "$work" sh -c "node /repo/serve.mjs $bucket 8443 & sleep 1; cd tree/envs/dev && SSL_CERT_FILE=/repo/tls.crt tofu init -backend=false -input=false -no-color && cat .terraform/modules/modules.json" 2>&1)" \
+    || { echo "$out" >&2; log "tofu init could not resolve the module from the registry"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  grep -q "Downloading 127.0.0.1:8443/acme/network/generic 1.1.0 for network" <<<"$out" || { log "tofu init did not download 1.1.0"; drop_work "$work"; return 1; }
+  grep -q '"Version":"1.1.0"' <<<"$out" || { log "modules.json does not record 1.1.0"; drop_work "$work"; return 1; }
+  drop_work "$work"
+  log "both releases passed tofu test and reached the bucket; tofu resolved ~> 1.0 to 1.1.0 from the registry it serves"
+}
 
 claim_tg_require_attested() {
   # modules.require: attested in a Terragrunt repo whose pipeline publishes
@@ -12406,6 +12596,97 @@ migrate_wave() { # work, log name, [layers] -> AUDIT_CODE of wave 1 over mono an
   clean_mounted "$1/wave" "$(image_tag tofu)"
 }
 
+# The cdktn-migrate claim's app: one stack per key of STACKS (JSON), each
+# holding a terraform_data resource per name, its state in BUCKET under
+# <stack>.tfstate with a lock file.
+CDKTN_MIGRATE_APP='const { App, S3Backend, TerraformStack, TerraformResource } = require("cdktn");
+const STACKS = JSON.parse(process.env.STACKS);
+class Stack extends TerraformStack {
+  constructor(scope, id, names) {
+    super(scope, id);
+    new S3Backend(this, { bucket: process.env.BUCKET, key: `${id}.tfstate`, region: "us-east-1", usePathStyle: true, useLockfile: true });
+    for (const n of names) new TerraformResource(this, n, { terraformResourceType: "terraform_data" }).addOverride("input", `cm-${n}`);
+  }
+}
+const app = new App();
+for (const [name, names] of Object.entries(STACKS)) new Stack(app, name, names);
+app.synth();
+'
+
+claim_cdktn_migrate() {
+  # A CDK Terrain app on the cdktn fixture's packages, synthesized on the
+  # host: stack mono holds terraform_data.keep and terraform_data.moved, its
+  # state in a versioned bucket of the claim's own on floci, applied by wave
+  # 1. The app then moves moved to a new stack, split, and
+  # migrations/split-moved.yml names the two stacks' roots,
+  # cdktf.out/stacks/mono and cdktf.out/stacks/split, which hold
+  # cdk.tf.json and no .tf file. stage tf-plan proves the migration; wave 1
+  # waits for that digest, and once smoke-approver approves it writes both
+  # states, plans both with no change, and applies nothing. mono.tfstate then
+  # holds keep alone and split.tfstate moved.
+  # BREAK: split names the resource moved_too, so its address is not the one
+  # the migration moves, and the proof plans a change.
+  log() { echo "[smoke cdktn-migrate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 bucket="tgcm-$STAMP" stacks="cdktf.out/stacks/mono,cdktf.out/stacks/split" planned digest mono split moved=moved
+  [ -n "${BREAK:-}" ] && moved=moved_too
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; drop_work "$work"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket?versioning" -H 'content-type: application/xml' \
+    --data-binary '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>' \
+    || { log "could not turn on versioning for $bucket"; drop_work "$work"; return 1; }
+  mkdir -p "$work/wave"
+  cp "$HERE/fixtures/cdktn/package.json" "$HERE/fixtures/cdktn/package-lock.json" "$work/wave/"
+  printf '{\n  "language": "javascript",\n  "app": "node main.js",\n  "projectId": "terragucci-smoke-cdktn-migrate",\n  "targetVersions": { "opentofu": ">=1.10.0" }\n}\n' > "$work/wave/cdktf.json"
+  printf '%s' "$CDKTN_MIGRATE_APP" > "$work/wave/main.js"
+  printf 'node_modules/\n' > "$work/wave/.gitignore"
+  printf 'binary: tofu\n' > "$work/wave/terragucci.yml"
+  synth() { (cd "$work/wave" && STACKS="$1" BUCKET="$bucket" npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host"; return 1; }; }
+  (cd "$work/wave" && npm ci --no-audit --no-fund >/dev/null 2>&1) || { log "npm ci failed on the host"; drop_work "$work"; return 1; }
+  synth '{"mono":["keep","moved"]}' || { drop_work "$work"; return 1; }
+  [ -f "$work/wave/cdktf.out/stacks/mono/cdk.tf.json" ] && ! ls "$work/wave/cdktf.out/stacks/mono/"*.tf >/dev/null 2>&1 || { log "mono is not a root of cdk.tf.json alone"; drop_work "$work"; return 1; }
+  audit_origin "$work"
+  migrate_wave "$work" first cdktf.out/stacks/mono
+  [ "$AUDIT_CODE" = 0 ] || { log "the first apply of mono exited $AUDIT_CODE, not 0"; rc=1; }
+  if [ $rc = 0 ]; then
+    synth "{\"mono\":[\"keep\"],\"split\":[\"$moved\"]}" || rc=1
+    mkdir -p "$work/wave/migrations"
+    printf 'moves:\n  - from: cdktf.out/stacks/mono\n    to: cdktf.out/stacks/split\n    addresses: [terraform_data.moved]\n' > "$work/wave/migrations/split-moved.yml"
+    git -C "$work/wave" add -A && git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "moved goes from the mono stack to split"
+    audit_in "$work" terragucci stage tf-plan --layers "$stacks" --binary tofu > "$work/plan.log" 2>&1 || { log "stage tf-plan failed"; rc=1; }
+    cat "$work/plan.log" >&2
+    clean_mounted "$work/wave" "$image"
+    planned="$(sed -n 's/^migration split-moved: every root plans with no change against its new state; digest //p' "$work/plan.log")"
+    [ -n "$planned" ] || { log "stage tf-plan did not prove the migration"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" waits "$stacks"
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 1 exited $AUDIT_CODE, not 3: it did not wait for the migration"; rc=1; }
+    digest="$(sed -n 's/^migration split-moved waits for an approval of digest \([^ ]*\)\. .*/\1/p' "$work/waits.log")"
+    [ -n "$digest" ] && [ "$digest" = "$planned" ] || { log "wave 1 waits for [$digest], and the plan proved [$planned]"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_approve "$work/origin.git" "$work/ledger" smoke-approver split-moved "$digest" || { log "could not approve the migration"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    migrate_wave "$work" applies "$stacks"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE after the approval, not 0"; rc=1; }
+    grep -q "^migration split-moved applied$" "$work/applies.log" || { log "the log does not say the migration applied"; rc=1; }
+    grep -q "^wave 1 of 1: set digest .*, 0 changes, 0 destroys$" "$work/applies.log" || { log "the wave after the migration planned changes"; rc=1; }
+    mono="$(curl -fsS "$FLOCI/$bucket/mono.tfstate" | jq -r '[.resources[].name] | join(",")')"
+    split="$(curl -fsS "$FLOCI/$bucket/split.tfstate" | jq -r '[.resources[].name] | join(",")')"
+    log "mono.tfstate holds [$mono], split.tfstate [$split]"
+    [ "$mono" = keep ] && [ "$split" = moved ] || { log "mono holds [$mono] and split [$split], not keep and moved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the migration moved terraform_data.moved from the mono stack's state to split's, proved with no change and applied once approved"
+  return $rc
+}
+
 claim_migrate_resume_never() {
   # migrate-resume with gate: never in the fixture: no wave can wait, and a
   # migration still can, so init writes the resume workflow all the same, and
@@ -14254,6 +14535,7 @@ publish-attest  runner self! registry! weight=200
 require-attested runner self! weight=200
 require-recorded runner self! weight=200
 tg-require-attested runner self! weight=220
+module-registry self! weight=120
 forgejo-oidc    runner self! weight=200
 grouped         ex runner self! after=boot weight=200
 check           ex runner self! after=boot weight=200
@@ -14394,6 +14676,7 @@ estate-graph         weight=200
 resource-history     weight=200
 state-versions       weight=150
 migrate-split        weight=200
+cdktn-migrate        weight=200
 migrate-backend      weight=200
 migrate-revert       weight=250
 migrate-resume       runner self! weight=300
@@ -14410,6 +14693,8 @@ cdktn-apply          runner self! weight=300
 cdktn-tips           runner self! weight=200
 cdktn-refused        weight=60
 wave-jobs            runner self! weight=250
+own-jobs-kept        runner self! weight=120
+apply-branches       runner self! weight=300
 steps-before-plan    runner self! weight=200
 steps-stop           runner self! weight=150
 steps-gate           runner self! weight=200
