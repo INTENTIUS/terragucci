@@ -365,22 +365,6 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
-    },
-    {
-      "claim": "comment-atlantis",
-      "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "8fd354f"
-    },
-    {
-      "claim": "import-atlantis",
-      "says": "terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
       "commit": "cb0fa61"
     },
     {
@@ -1497,6 +1481,22 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "8fd354f"
+    },
+    {
+      "claim": "unlock-state",
+      "says": "terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies",
+      "needs": null,
+      "verdict": "fail",
+      "break": "caught",
+      "commit": "beaf3d9c"
+    },
+    {
+      "claim": "tip-moved",
+      "says": "a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "beaf3d9c"
     },
     {
       "claim": "mr-widget",
