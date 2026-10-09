@@ -318,6 +318,7 @@ steps-before-plan|a step before plan writes a file the plan reads, read from ter
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
 steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
 chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
+chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
 chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
 chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|'
 
@@ -10735,18 +10736,54 @@ relay_user() { # repo, user -> sets RELAY_TOKEN, for a new user with write acces
   [ -n "$RELAY_TOKEN" ] || { log "no token for $who"; return 1; }
 }
 
+# The Lambda Web Adapter and the Lambda runtime interface emulator, pinned by digest. With
+# RELAY_LAMBDA=1 the relay runs as the function the guide builds: its Dockerfile, under the
+# emulator, which stands in for Lambda's Runtime and Extensions APIs on the claim's own host.
+LWA_IMAGE="public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0@sha256:17cfd08eff1dfea3f6a9a1e9c65fdac80aa4919b6085e746615530f43f57d2f1"
+RIE_VERSION=v1.37
+RIE_SHA256_arm64=ec2e5d09633d853834c008b1ef264bf834b258a94d551d2b2074966494b39a21
+RIE_SHA256_x86_64=6b1e686e62ab2baf5759c412c4864276ef2a88b094fca53ec070637ccba9b9a5
+
 relay_up() { # repo, name, KEY=VALUE... -> RELAY (container id), RELAY_URL (from the host)
-  local repo="$1" name="$2" i hostport bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" kv
+  local repo="$1" name="$2" i hostport bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" kv arch sum port=8080 image
   shift 2
-  local -a envs=()
+  local -a envs=() entry=()
   for kv in "$@"; do envs+=(-e "$kv"); done
-  RELAY="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::8080 -v "$bundle:/usr/local/bin/terragucci:ro" \
-    -e PORT=8080 -e "TERRAGUCCI_RELAY_REPO=http://forgejo:3000/$repo.git" -e TERRAGUCCI_RELAY_FORGE=forgejo -e "TERRAGUCCI_RELAY_TOKEN=$RELAY_TOKEN" \
-    ${envs[@]+"${envs[@]}"} "$(image_tag tofu)" terragucci relay)" || return 1
-  hostport="$(docker port "$RELAY" 8080/tcp | head -1 | sed 's/.*://')"
+  image="$(image_tag tofu)"
+  if [ -n "${RELAY_LAMBDA:-}" ]; then
+    case "$(docker info --format '{{.Architecture}}')" in aarch64|arm64) arch=arm64 ;; *) arch=x86_64 ;; esac
+    sum="RIE_SHA256_$arch"
+    mkdir -p "$work/lambda"
+    curl -fsSLo "$work/lambda/aws-lambda-rie" "https://github.com/aws/aws-lambda-runtime-interface-emulator/releases/download/$RIE_VERSION/aws-lambda-rie-$arch" || { log "could not download the emulator"; return 1; }
+    echo "${!sum}  $work/lambda/aws-lambda-rie" | shasum -a 256 -c - >/dev/null || { log "the emulator's sha256 is not ${!sum}"; return 1; }
+    chmod +x "$work/lambda/aws-lambda-rie"
+    cp "$bundle" "$work/lambda/terragucci"
+    # The guide's Dockerfile, FROM this tree's image and bundle.
+    cat > "$work/lambda/Dockerfile" <<DOCKERFILE
+FROM $image
+COPY --chmod=0755 terragucci /usr/local/bin/terragucci
+COPY --from=$LWA_IMAGE /lambda-adapter /opt/extensions/lambda-adapter
+ENV PORT=8080
+ENV AWS_LWA_READINESS_CHECK_PATH=/healthz
+CMD ["terragucci", "relay"]
+DOCKERFILE
+    docker build -q -t "terragucci-relay-lambda:smoke" "$work/lambda" >/dev/null || { log "the function's image did not build"; return 1; }
+    image="terragucci-relay-lambda:smoke"
+    # The emulator takes invocations on 9000, so the relay keeps 8080 as it has on Lambda.
+    port=9000
+    entry=(--entrypoint /rie/aws-lambda-rie -v "$work/lambda/aws-lambda-rie:/rie/aws-lambda-rie:ro")
+    RELAY="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::9000 ${entry[@]+"${entry[@]}"} \
+      -e "TERRAGUCCI_RELAY_REPO=http://forgejo:3000/$repo.git" -e TERRAGUCCI_RELAY_FORGE=forgejo -e "TERRAGUCCI_RELAY_TOKEN=$RELAY_TOKEN" \
+      ${envs[@]+"${envs[@]}"} "$image" --runtime-interface-emulator-address 0.0.0.0:9000 terragucci relay)" || return 1
+  else
+    RELAY="$(run_copied -d --name "$name" --network terragucci -p 127.0.0.1::8080 -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -e PORT=8080 -e "TERRAGUCCI_RELAY_REPO=http://forgejo:3000/$repo.git" -e TERRAGUCCI_RELAY_FORGE=forgejo -e "TERRAGUCCI_RELAY_TOKEN=$RELAY_TOKEN" \
+      ${envs[@]+"${envs[@]}"} "$image" terragucci relay)" || return 1
+  fi
+  hostport="$(docker port "$RELAY" "$port/tcp" | head -1 | sed 's/.*://')"
   RELAY_URL="http://127.0.0.1:$hostport"
   for i in $(seq 1 60); do
-    curl -fsS -o /dev/null "$RELAY_URL/healthz" 2>/dev/null && { docker logs "$RELAY" 2>&1 | tail -3 >&2; return 0; }
+    relay_post GET /healthz text/plain "" 2>/dev/null && [ "$RELAY_CODE" = 200 ] && { docker logs "$RELAY" 2>&1 | grep -i 'terragucci relay\|lambda\|adapter' | tail -4 >&2; return 0; }
     [ "$(docker inspect -f '{{.State.Running}}' "$RELAY" 2>/dev/null)" = true ] || break
     sleep 1
   done
@@ -10754,18 +10791,38 @@ relay_up() { # repo, name, KEY=VALUE... -> RELAY (container id), RELAY_URL (from
   return 1
 }
 
+# One request to the relay: straight to its port, or with RELAY_LAMBDA as the function URL
+# event Lambda would hand the function, through the emulator's invoke endpoint.
+relay_post() { # method, path, content type, body, [header: value]... -> RELAY_CODE, the answer's body in $work/answer
+  local method="$1" path="$2" type="$3" body="$4" h event out
+  shift 4
+  if [ -z "${RELAY_LAMBDA:-}" ]; then
+    local -a hs=()
+    for h in "$@"; do hs+=(-H "$h"); done
+    RELAY_CODE="$(curl -sS -o "$work/answer" -w '%{http_code}' -X "$method" -H "content-type: $type" ${hs[@]+"${hs[@]}"} ${body:+--data-binary "$body"} "$RELAY_URL$path")" || return 1
+    return 0
+  fi
+  event="$(jq -cn --arg m "$method" --arg p "$path" --arg t "$type" --arg b "$body" --args '{version: "2.0", routeKey: "$default", rawPath: $p, rawQueryString: "", headers: ({"content-type": $t, host: "relay.lambda-url.us-east-1.on.aws"} + ([$ARGS.positional[] | capture("^(?<k>[^:]+): (?<v>.*)$") | {key: (.k | ascii_downcase), value: .v}] | from_entries)), requestContext: {domainName: "relay.lambda-url.us-east-1.on.aws", http: {method: $m, path: $p, protocol: "HTTP/1.1", sourceIp: "127.0.0.1", userAgent: "smoke"}, requestId: "smoke", routeKey: "$default", stage: "$default", timeEpoch: 0}, body: $b, isBase64Encoded: false}' "$@")"
+  out="$(curl -sS -X POST --data-binary "$event" "$RELAY_URL/2015-03-31/functions/function/invocations")" || return 1
+  RELAY_CODE="$(jq -r '.statusCode // empty' <<<"$out" 2>/dev/null)"
+  jq -r 'if .isBase64Encoded then (.body | @base64d) else (.body // "") end' <<<"$out" > "$work/answer" 2>/dev/null || return 1
+  [ -n "$RELAY_CODE" ]
+}
+
 relay_down() {
   [ -n "${RELAY:-}" ] && { docker logs "$RELAY" 2>&1 | grep -v '^$' | tail -10 >&2; docker stop -t 2 "$RELAY" >/dev/null 2>&1 || true; }
   RELAY=""
 }
 
-chat_approve() { # slack|teams
+chat_approve() { # slack|teams, [lambda]
   local app="$1" claim="chat-approve" work repo name stand sha digest reqs msg reply out code body ts sig secret who resolved run status deadline applied rc=0
+  local RELAY_LAMBDA="${2:-}"
   [ "$app" = teams ] && claim="chat-approve-teams"
+  [ -n "$RELAY_LAMBDA" ] && claim="chat-approve-lambda"
   log() { echo "[smoke $claim] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  repo="$USER/$claim"; name="tgs-relay-$app-$STAMP"; stand="tgs-chatin-$app-$STAMP"
+  repo="$USER/$claim"; name="tgs-relay-${claim#chat-approve}-$STAMP"; stand="tgs-chatin-${claim#chat-approve}-$STAMP"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   gated_repo "$claim" || { drop_work "$work"; return 1; }
   # The approver's line in the signers file also lists their chat ids.
@@ -10814,7 +10871,8 @@ chat_approve() { # slack|teams
         '{type: "block_actions", user: {id: $u, username: ("smoke-" + $u), team_id: "TSMOKE"}, team: {id: "TSMOKE"}, actions: [{action_id: "terragucci-approve", value: $v}], response_url: $r, container: {message_ts: "1700000000.000100"}}' | jq -sRr @uri)"
       ts="$(date +%s)"
       sig="v0=$(printf 'v0:%s:%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$secret" | sed 's/^.* //')"
-      code="$(curl -sS -o "$work/answer" -w '%{http_code}' -X POST -H 'content-type: application/x-www-form-urlencoded' -H "X-Slack-Request-Timestamp: $ts" -H "X-Slack-Signature: $sig" --data-binary "$body" "$RELAY_URL/slack")" || rc=1
+      relay_post POST /slack application/x-www-form-urlencoded "$body" "X-Slack-Request-Timestamp: $ts" "X-Slack-Signature: $sig" || rc=1
+      code="${RELAY_CODE:-}"
       reply="$(curl -fsS "$STANDIN_CTL/_requests" | jq -r '[.[] | select(.method == "POST" and .path == "/response")] | last | .body | select(.thread_ts == "1700000000.000100") | .text // empty')"
     else
       who=00000000-0000-0000-0000-00000000a001; [ -z "${BREAK:-}" ] || who=00000000-0000-0000-0000-00000000bad0
@@ -10822,7 +10880,8 @@ chat_approve() { # slack|teams
         || { log "the Teams card does not give the reply that approves wave 1 for $digest"; rc=1; }
       body="$(jq -cn --arg u "$who" --arg d "$digest" '{type: "message", id: "1700000000100", text: ("<at>terragucci</at> approve wave-1 " + $d), from: {id: "29:smoke", name: "Smoke Approver", aadObjectId: $u}}')"
       sig="HMAC $(printf '%s' "$body" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(printf '%s' "$secret" | base64 -d | od -An -tx1 | tr -d ' \n')" -binary | base64)"
-      code="$(curl -sS -o "$work/answer" -w '%{http_code}' -X POST -H 'content-type: application/json' -H "Authorization: $sig" --data-binary "$body" "$RELAY_URL/teams")" || rc=1
+      relay_post POST /teams application/json "$body" "Authorization: $sig" || rc=1
+      code="${RELAY_CODE:-}"
       reply="$(jq -r '.text // empty' "$work/answer" 2>/dev/null)"
     fi
     log "the relay answered $code; in the thread: ${reply:-nothing}"
@@ -10873,6 +10932,19 @@ claim_chat_approve() {
   # BREAK: the click is by a Slack user no line lists, so the relay refuses
   # it in the thread, records nothing, and nothing applies.
   chat_approve slack
+}
+
+claim_chat_approve_lambda() {
+  # As chat-approve, with the relay as the AWS Lambda function the guide
+  # builds: its Dockerfile (the Lambda Web Adapter 1.1.0 extension, PORT and
+  # the readiness path), run under the Lambda runtime interface emulator on
+  # this host, so no AWS account is touched. Each request reaches it as the
+  # function URL event Lambda hands the function: the signed Slack click,
+  # the approval recorded as smoke-approver, the reply in the thread, and the
+  # resume run applying canary/one.
+  # BREAK: the click is by a Slack user no line lists, so the function
+  # refuses it in the thread, records nothing, and nothing applies.
+  chat_approve slack lambda
 }
 
 claim_chat_approve_teams() {
@@ -11541,6 +11613,7 @@ steps-stop           runner self! weight=150
 steps-gate           runner self! weight=200
 chat-approve         runner self! weight=300
 chat-approve-teams   runner self! weight=300
+chat-approve-lambda  runner self! weight=350
 chat-replan          self! weight=90
 '
 
