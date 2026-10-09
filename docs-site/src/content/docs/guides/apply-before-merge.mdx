@@ -85,7 +85,23 @@ An open change that applies from its head in the same waves and gates as a merge
 
 6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
 
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   <Shot step="github" view="apply" alt="terragucci's reply on a GitHub pull request under merge: auto, from github-actions: it applied waves 1, 2, 3 and 4 of the pull request at its head, merged the pull request at that head, released its locks on envs/dev/orders, and links the run" />
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   <Shot step="gitlab" view="apply" alt="terragucci's replies on a GitLab merge request under merge: auto: mr-apply applied waves 1, 2, 3 and 4 of the merge request at its head and pr-merge merges it next; the merge request is merged; then pr-merge's reply that it merged the merge request at that head and released its locks on envs/dev/orders" />
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
    <Shot step="pr-apply" view="reply" alt="terragucci's reply on a Forgejo pull request under merge: auto: it applied waves 1 and 2 of pull request 1 at its head, merged the pull request at that head, released its locks on canary/one, and links the run" />
+
+   </TabItem>
+   </Tabs>
 
    After the merge, `confirm` plans every root, or every unit in a Terragrunt repo. Its `terragucci/apply` status passes when nothing plans a change.
 

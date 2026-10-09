@@ -230,7 +230,7 @@ validation-record *forges:
 example *args="up":
     stack/example.sh {{args}}
 
-[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], logs, reset, shot <url> <out.png> [light|dark], capture, down. TGLAB=1 runs it on the GitLab lab.")]
+[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], comments, plan-comment [scenario], pr-apply, logs, reset, shot <url> <out.png> [light|dark], capture, down. TGLAB=1 runs it on the GitLab lab.")]
 example-gitlab *args="up":
     stack/example-gitlab.sh {{args}}
 
@@ -238,7 +238,7 @@ example-gitlab *args="up":
 example-terragrunt *args="up":
     stack/example-terragrunt.sh {{args}}
 
-[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], drift, capture, prove [--record FILE], reset, shot <view>|all|list, minutes.")]
+[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], pr-apply, drift, capture, prove [--record FILE], reset, shot <view>|all|list, minutes.")]
 sandbox *args:
     stack/sandbox-github.sh {{args}}
 

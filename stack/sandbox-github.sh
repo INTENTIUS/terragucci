@@ -24,6 +24,12 @@
 #   stack/sandbox-github.sh plan-comment [s]  comment `/terragucci plan` on the
 #                                     scenario's pull request (default: the
 #                                     newest open one) and wait for the reply
+#   stack/sandbox-github.sh pr-apply       apply before merge: main gets
+#                                     apply.when: pull-request with merge: auto,
+#                                     a pull request on dev orders is opened by
+#                                     github-actions[bot] and approved, and
+#                                     /terragucci apply applies and merges it
+#                                     (reset takes main back)
 #   stack/sandbox-github.sh drift          delete a file a root keeps outside
 #                                     the code, run the drift job and wait for
 #                                     its issue
@@ -76,7 +82,7 @@ log()  { echo "[sandbox] $*" >&2; }
 fail() { log "FAIL: $*"; exit 1; }
 
 usage() { sed -n '3,/^set -/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'; }
-case "$CMD" in up|change|merge|approve|plan-comment|drift|capture|prove|reset|shot|minutes) ;; *) usage; exit 2 ;; esac
+case "$CMD" in up|change|merge|approve|plan-comment|pr-apply|drift|capture|prove|reset|shot|minutes) ;; *) usage; exit 2 ;; esac
 
 command -v gh >/dev/null 2>&1 || fail "gh is not installed"
 command -v jq >/dev/null 2>&1 || fail "jq is not installed"
@@ -1614,6 +1620,18 @@ case "$CMD" in
     printf '\n  Pull request  %s/pull/%s (the reply is in its conversation)\n  Re-plan       %s (%s)\n' "$WEB" "$pr" "$RUN_URL" "$RUN_CONCLUSION"
     ;;
 
+  pr-apply)
+    ( pr_config auto ) || fail "main could not be set up for apply before merge"
+    pr="$(bot_pr apply envs/dev/orders 600 "Keep dev orders' jobs ten minutes")"
+    at="$(head_of "$pr")"
+    reply="$(say "$pr" "/terragucci apply")"
+    record_view pr-apply-run "$WEB/actions/runs/$(cat "$DIR/last-run")"
+    record_view pr-apply "$WEB/pull/$pr" ".timeline-comment" "and merged pull request" 150
+    state="$(gh pr view "$pr" -R "$REPO" --json state -q .state)"
+    printf '\n  Pull request  %s/pull/%s at %s (%s)\n  Reply         %s\n' "$WEB" "$pr" "${at:0:8}" "$state" "${reply:-none}"
+    [ "$state" = MERGED ] || fail "pull request $pr was not merged after /terragucci apply"
+    ;;
+
   drift)
     # terraform_data reads nothing back, so a refresh finds no drift in it. A
     # local_file reads its file: staging orders keeps one, written by the state
@@ -1698,6 +1716,11 @@ EOF
     else
       log "no drift issue on $RELEASE; the drift view is left as it was"
     fi
+    # Apply before merge changes main's pipeline, so it runs on a reset sandbox.
+    "$0" reset
+    step pr-apply || fail "pr-apply failed"
+    take pr-apply
+    pairs="$pairs pr-apply:apply"
     # The files the docs use: step `github`, beside the Forgejo steps.
     # The example's hash, computed the way tutorial-check computes it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
