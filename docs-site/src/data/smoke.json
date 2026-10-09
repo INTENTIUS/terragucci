@@ -237,7 +237,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "7d260b59"
     },
     {
       "claim": "tg-check",
@@ -253,7 +253,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "7d260b59"
     },
     {
       "claim": "tg-mock-lint",
@@ -265,11 +265,11 @@
     },
     {
       "claim": "tg-refuse",
-      "says": "a unit whose plan would read mock_outputs is not planned; it waits for its upstream to apply",
+      "says": "a unit that reads a new upstream is planned on the planned outputs of that upstream, never on its mock_outputs",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "380413b9"
     },
     {
       "claim": "tg-mock-trap",
@@ -277,7 +277,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "7d260b59"
     },
     {
       "claim": "tg-drift",
@@ -670,7 +670,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "380413b9"
     },
     {
       "claim": "policy-source",
@@ -1231,7 +1231,23 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "7d260b59"
+    },
+    {
+      "claim": "tg-preview",
+      "says": "a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "380413b9"
+    },
+    {
+      "claim": "tg-preview-gate",
+      "says": "a Terragrunt wave whose plan differs from the preview of it in the pull request says so at its gate, naming what moved, before anyone approves",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "380413b9"
     },
     {
       "claim": "tf-terraform",

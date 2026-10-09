@@ -310,7 +310,26 @@
           },
           "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed." },
           "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read (minor 21)." },
-          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply and waits for an approval of that plan; its review digest is null (minor 21)." }
+          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply and waits for an approval of that plan; its review digest is null (minor 21)." },
+          "preview": {
+            "type": "object",
+            "required": ["pull_request", "units"],
+            "description": "A tf-apply wave of Terragrunt units: its plans against the preview of them the merged pull request's plan note showed (minor 25).",
+            "properties": {
+              "pull_request": { "type": "integer" },
+              "units": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["unit"],
+                  "properties": {
+                    "unit": { "type": "string" },
+                    "differences": { "type": "array", "items": { "type": "string" }, "description": "How its plan differs from the preview. Absent when it plans as previewed." }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

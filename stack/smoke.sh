@@ -176,7 +176,7 @@ tg-waves|the Terragrunt example boots in five waves, one job each: the dependenc
 tg-check|tf-check fails an unformatted Terragrunt file and names it|
 tg-affected|only the units a change reaches are planned, including a file a module reads that Terragrunt misses|
 tg-mock-lint|a dependency whose mock_outputs can stand in for apply is named by a tip|
-tg-refuse|a unit whose plan would read mock_outputs is not planned; it waits for its upstream to apply|
+tg-refuse|a unit that reads a new upstream is planned on the planned outputs of that upstream, never on its mock_outputs|
 tg-mock-trap|a new upstream and its dependent merge together and apply in order, so no mock reaches real state|
 tg-drift|drift is reported by unit in a Terragrunt repo, with the same tracking issue|
 respond-refused|a refused wave names each root whose plan moved and the attributes that moved|
@@ -295,6 +295,8 @@ policy-hcl|with a policies.hcl a mandatory policy denies the wave and an advisor
 tg-policy|in a Terragrunt repo a unit the policy denies fails tf-plan, and its wave applies nothing|
 tg-credentials|in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it|
 tg-dependents|terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out|
+tg-preview|a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in|
+tg-preview-gate|a Terragrunt wave whose plan differs from the preview of it in the pull request says so at its gate, naming what moved, before anyone approves|
 tf-terraform|with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform|
 tg-terraform|in a Terragrunt repo with binary: terraform the pipeline installs Terraform and Terragrunt applies every unit with it|
 tfquery-import|with binary: terraform a root with a .tfquery.hcl gets the drift pull request with the config terraform query generated for what it lists|
@@ -2737,11 +2739,15 @@ claim_tg_mock_lint() {
 }
 
 claim_tg_refuse() {
-  # new-service adds ledger and billing, which reads ledger's outputs. Ledger
-  # has none yet, so billing's plan would stand on its mocks: billing must not
-  # be planned, and the report must say it waits for ledger. Ledger plans.
-  # BREAK: ledger is applied first, so billing has real outputs and plans; the
-  # claim must notice billing was not held back.
+  # new-service adds ledger and billing, which reads ledger's logs_bucket and
+  # has a mock for it. Ledger has no state yet, so Terragrunt alone would hand
+  # billing the mock. Ledger's plan knows the bucket it makes, so billing plans
+  # on that planned output instead: the report says billing read ledger's
+  # planned outputs, its plan names shop-tg-dev-ledger and no mock, and no
+  # mock read is reported.
+  # BREAK: ledger is applied first, so its plan changes no output and billing
+  # plans on its applied state; the claim must notice billing did not read
+  # ledger's planned outputs.
   log() { echo "[smoke tg-refuse] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -2757,16 +2763,18 @@ claim_tg_refuse() {
   [ -f "$r" ] || { log "no report"; rc=1; }
   if [ $rc = 0 ]; then
     jq -e '.roots[] | select(.path == "live/dev/ledger" and .status == "planned")' "$r" >/dev/null || { log "ledger was not planned"; rc=1; }
-    jq -e '[.roots[] | select(.path == "live/dev/billing" and (.terragrunt.provisional | not))] | length == 0' "$r" >/dev/null || { log "billing was planned as real, on mock_outputs or ahead of ledger"; rc=1; }
-    jq -e '.deferred[] | select(.unit == "live/dev/billing" and (.after | index("live/dev/ledger")))' "$r" >/dev/null || { log "the report does not say billing waits for ledger"; rc=1; }
-    jq -e '.mock_reads[] | select(.unit == "live/dev/billing" and .upstream == "live/dev/ledger" and .reason == "no-outputs")' "$r" >/dev/null || { log "the report names no mock read for billing"; rc=1; }
+    jq -e '.roots[] | select(.path == "live/dev/billing" and .status == "planned" and .reads == [{upstream: "live/dev/ledger", data: "ledger", outputs: "planned"}])' "$r" >/dev/null \
+      || { log "billing did not plan on ledger's planned outputs: $(jq -c '[.roots[] | select(.path == "live/dev/billing") | {status, reads, error}], .deferred' "$r")"; rc=1; }
+    jq -e '[.roots[] | select(.path == "live/dev/billing") | .changes[].attributes[]? | (.after // "") | tostring | select(test("shop-tg-dev-ledger"))] | length > 0' "$r" >/dev/null || { log "billing's plan does not name ledger's planned bucket, shop-tg-dev-ledger"; rc=1; }
+    grep -q 'mock-ledger-bucket' "$r" && { log "billing's plan names the mock bucket"; rc=1; }
+    jq -e '[.mock_reads[]? | select(.unit == "live/dev/billing")] | length == 0' "$r" >/dev/null || { log "the report names a mock read for billing"; rc=1; }
   fi
   if [ -n "${BREAK:-}" ]; then
     TG_TREE="$tree" "$HERE/example-terragrunt.sh" tg run --working-dir live/dev/ledger -- destroy -auto-approve >&2 || true
     curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/terragrunt/live/dev/ledger/terraform.tfstate" || true
   fi
   drop_work "$work"
-  [ $rc = 0 ] && log "ledger planned; billing held back until ledger applies, with the mock read named"
+  [ $rc = 0 ] && log "ledger planned; billing planned on ledger's planned bucket, shop-tg-dev-ledger, and never on its mock"
   return $rc
 }
 
@@ -10574,6 +10582,144 @@ claim_tg_dependents() {
   return $rc
 }
 
+# ── Terragrunt previews ───────────────────────────────────────────────────
+# stack/fixtures/tg-preview: live/net; live/app, whose dependency reads net's
+# rev, which net's plan knows; live/edge, whose dependency reads app's out,
+# which app knows only once it applies. State in floci under the prefix.
+
+tg_preview_copy() { # dir, prefix -> the tg-preview fixture in dir, its state under <prefix>/
+  mkdir -p "$1"
+  cp -R "$HERE/fixtures/tg-preview/." "$1/"
+  sed "s#@PREFIX@#$2#" "$1/root.hcl" > "$1/root.hcl.new" && mv "$1/root.hcl.new" "$1/root.hcl"
+}
+
+tg_preview_apply() { # dir -> every unit of the fixture in dir applied as it stands, with Terragrunt in the CI image
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state" || true
+  run_copied --rm --network terragucci -v "$1:/repo" -w /repo -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TG_TF_PATH=tofu -e TG_NON_INTERACTIVE=true \
+    "$(tg_image)" terragrunt run --all --no-color -- apply -auto-approve -input=false >&2 || { clean_mounted "$1"; return 1; }
+  clean_mounted "$1"
+}
+
+tg_preview_unstate() { # prefix -> the fixture's state under it removed from floci
+  local key
+  for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$1/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  done
+}
+
+claim_tg_preview() {
+  # The fixture applied at rev 1; net's rev.txt goes to 2 and tf-plan runs in
+  # the CI image, as the plan job runs it. live/app plans on net's planned
+  # outputs, so its input moves from 1-r1 to 1-r2, and the report says it
+  # read net's planned outputs. live/edge reads app's out, which app knows
+  # only once it applies: it is not planned, and the report and the note name
+  # out and wave 2. No unit plans on a mock.
+  # BREAK: tf-plan plans live/app alone (--root live/app), so net is not
+  # planned with it and app plans on net's applied state: no change.
+  log() { echo "[smoke tg-preview] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work prefix="tg-preview-$STAMP${BREAK:+b}" r note app rc=0 args=()
+  [ -n "${BREAK:-}" ] && args=(--root live/app)
+  docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_preview_copy "$work/tree" "$prefix"
+  tg_preview_apply "$work/tree" || { log "could not apply the fixture at rev 1"; tg_preview_unstate "$prefix"; drop_work "$work"; return 1; }
+  echo 2 > "$work/tree/live/net/rev.txt"
+  git -C "$work/tree" init -q -b main
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "tg-preview: net at rev 2"
+  tg_fixture_stage "$work/tree" -- tf-plan --terragrunt --binary tofu ${args[@]+"${args[@]}"} || log "tf-plan exited non-zero"
+  r="$work/tree/terragucci-report/report.json"
+  [ -f "$r" ] || { log "tf-plan wrote no report"; tg_preview_unstate "$prefix"; drop_work "$work"; return 1; }
+  app="$(jq -c '.roots[] | select(.path == "live/app") | [.reads, [.changes[].attributes[]? | select(.path == "input") | [.before, .after]]]' "$r")"
+  log "live/app: ${app:-not planned}"
+  jq -e '.[1] == [["1-r1", "1-r2"]]' <<<"${app:-null}" >/dev/null 2>&1 || { log "live/app's input does not move from 1-r1 to 1-r2, net's planned rev"; rc=1; }
+  jq -e '.[0] == [{upstream: "live/net", data: "net", outputs: "planned"}]' <<<"${app:-null}" >/dev/null 2>&1 || { log "the report does not say live/app read live/net's planned outputs"; rc=1; }
+  jq -e '.deferred[]? | select(.unit == "live/edge" and .why == "reads `out` of live/app, unknown until wave 2 applies" and .previewed == false)' "$r" >/dev/null \
+    || { log "the report does not name out and wave 2 for live/edge: $(jq -c '.deferred' "$r")"; rc=1; }
+  jq -e '[.roots[] | select(.path == "live/edge")] | length == 0' "$r" >/dev/null || { log "live/edge was planned with a stand-in for app's out"; rc=1; }
+  note="$(cat "$work/tree/terragucci-report/note.md" 2>/dev/null || true)"
+  grep -qF '`live/edge` after `live/app`: reads `out` of live/app, unknown until wave 2 applies' <<<"$note" || { log "the note does not name out and wave 2 for live/edge"; rc=1; }
+  jq -e '(.mock_reads // []) | length == 0' "$r" >/dev/null || { log "a unit would have read mock_outputs"; rc=1; }
+  tg_preview_unstate "$prefix"
+  drop_work "$work"
+  [ $rc = 0 ] && log "live/app planned on net's planned rev (1-r1 -> 1-r2), and live/edge, which reads app's out, named with wave 2 and not planned"
+  return $rc
+}
+
+claim_tg_preview_gate() {
+  # The fixture with approval: pr-review and dependents: plan, its units
+  # applied at rev 1 and pushed. A pull request moves net to rev 2: its plan
+  # note previews live/app on net's planned outputs (input 1-r2), and the
+  # reviewer approves its head. Then a commit on main moves app to rev 5, so
+  # the merge plans app on another input than the preview showed. Merged:
+  # wave 1 applies net on the review; wave 2 plans app on the state net left,
+  # 5-r2, and before it waits for an approval says that app plans differently
+  # from the pull request's preview, naming the attribute.
+  # BREAK: nothing lands on main in between, so app plans as previewed and the
+  # gate names no difference.
+  log() { echo "[smoke tg-preview-gate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work name=tg-preview-gate repo="$USER/tg-preview-gate" sha head pr merge note logs five at wait rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  docker image inspect "$(tg_image)" >/dev/null 2>&1 || { log "no CI image $(tg_image); run 'just example-terragrunt up' first"; drop_work "$work"; return 1; }
+  gated_repo "$name" tg-preview || { drop_work "$work"; return 1; }
+  # gated_repo filled the prefix in: apply a copy of the tree, so no cache lands in what is pushed.
+  mkdir -p "$work/apply" && cp -R "$work/tree/live" "$work/tree/modules" "$work/tree/root.hcl" "$work/apply/"
+  tg_preview_apply "$work/apply" || { log "could not apply the fixture at rev 1"; tg_preview_unstate "$name"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" main "$name: first")"
+  wait_run "$repo" "$sha" || rc=1
+  log "first push, every unit applied at rev 1: run $RUN_STATUS"
+  [ $rc = 0 ] && { pr_reviewer "$repo" "reviewer-$name" || rc=1; }
+  if [ $rc = 0 ]; then
+    echo 2 > "$work/tree/live/net/rev.txt"
+    head="$(push_tree "$work/tree" "$repo" change "$name: net to rev 2")" || rc=1
+  fi
+  [ $rc = 0 ] && { pr="$(pr_open "$repo" change "$name: net to rev 2")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=50" | jq -r '[.[] | select(.body | contains("terragucci tf-plan"))] | last | .body // empty')"
+    grep -q '"unit":"live/app"' <<<"$note" || { log "the plan note of pull request $pr carries no preview of live/app"; rc=1; }
+    grep -qF 'reads `out` of live/app, unknown until wave 2 applies' <<<"$note" || { log "the plan note does not name out and wave 2 for live/edge"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    curl -fsS -o /dev/null -H "Authorization: token $PR_REVIEWER_TOKEN" -H 'content-type: application/json' -X POST \
+      -d "$(jq -cn --arg c "$head" '{event: "APPROVED", body: "read the plans", commit_id: $c}')" "$URL/api/v1/repos/$repo/pulls/$pr/reviews" || { log "the reviewer could not approve pull request $pr"; rc=1; }
+  fi
+  if [ $rc = 0 ] && [ -z "${BREAK:-}" ]; then
+    five="$(printf '5\n' | base64 | tr -d '\n')"
+    at="$(api "$URL/api/v1/repos/$repo/contents/live/app/rev.txt?ref=main" | jq -r '.sha // empty')"
+    sha="$(api -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg c "$five" --arg s "$at" '{content: $c, sha: $s, branch: "main", message: "tg-preview-gate: app to rev 5 after the review"}')" "$URL/api/v1/repos/$repo/contents/live/app/rev.txt" | jq -r '.commit.sha // empty')"
+    [ -n "$sha" ] || { log "could not commit to main"; rc=1; }
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" push || rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "pull request $pr did not merge"; rc=1; }
+    merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+    { [ -n "$merge" ] && wait_run "$repo" "$merge" push; } || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    log "after the merge: run $RUN_STATUS; $(grep -m1 'previewed live/app\|plans as pull request' <<<"$logs" || echo 'nothing said of the preview')"
+    grep -q "wave 1 of 3: pull request $pr was approved on its head" <<<"$logs" || { log "wave 1 did not apply on the review"; rc=1; }
+    grep -qF "wave 2 of 3: pull request $pr previewed live/app on the planned outputs of the waves before; this unit plans differently now:" <<<"$logs" \
+      || { log "wave 2 did not say live/app plans differently from the preview"; rc=1; }
+    grep -qF "wave 2 of 3:   live/app: terraform_data.this (update): input differs from the preview" <<<"$logs" || { log "wave 2 did not name the input that moved"; rc=1; }
+    # Before anyone approves: the difference comes before the approve command.
+    at="$(grep -n 'input differs from the preview' <<<"$logs" | head -1 | cut -d: -f1)"
+    wait="$(grep -n 'chant approve tf-apply wave-2' <<<"$logs" | head -1 | cut -d: -f1)"
+    { [ -n "$at" ] && [ -n "$wait" ] && [ "$at" -lt "$wait" ]; } || { log "wave 2 did not show the difference before its approve command"; rc=1; }
+  fi
+  tg_preview_unstate "$name"
+  api -o /dev/null -X DELETE "$URL/api/v1/admin/users/reviewer-$name?purge=true" 2>/dev/null || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 2 said live/app's input differs from pull request $pr's preview before it waited for an approval"
+  return $rc
+}
+
 # ── binary: terraform ─────────────────────────────────────────────────────
 
 claim_tf_terraform() {
@@ -14442,6 +14588,8 @@ policy-hcl           weight=150
 tg-policy            weight=200
 tg-credentials       weight=200
 tg-dependents        weight=250
+tg-preview           self! weight=120
+tg-preview-gate      runner self! weight=400
 tf-terraform         runner self! weight=300
 tg-terraform         runner self! weight=300
 tfquery-import       self! weight=120

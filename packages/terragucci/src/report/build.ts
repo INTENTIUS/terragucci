@@ -89,6 +89,8 @@ export interface WaveInput {
   reads?: number[];
   /** A `tf-plan` wave that plans again once these waves apply: no review digest binds it. */
   replansAfter?: number[];
+  /** A `tf-apply` wave of Terragrunt units: its plans against the pull request's preview of them. */
+  preview?: ReportWave["preview"];
 }
 
 export interface BuildInput {
@@ -349,6 +351,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.state ? { state: w.state } : {}),
       ...(w.reads?.length ? { reads: w.reads } : {}),
       ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
+      ...(w.preview ? { preview: w.preview } : {}),
     };
   });
 

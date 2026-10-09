@@ -94,6 +94,7 @@ import { globMatch, remoteStateReads, rootDependencies, rootStates } from "./det
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
+import { comparePreview } from "./tg-preview-gate";
 import { runPath } from "./report/store";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
@@ -817,6 +818,8 @@ interface WaveRun {
   reads?: Map<string, ReportRead[]>;
   /** The waves whose roots its roots read. */
   waveReads?: number[];
+  /** A Terragrunt wave: its plans against the merged pull request's preview of them. */
+  preview?: ReportWave["preview"];
   /** When its roots finished planning. */
   plannedAt?: string;
   /** When the wait at its gate began: the pending record its approval answered, or the first run that asked. */
@@ -930,7 +933,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
       return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...deps };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -1948,6 +1951,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   const members = changing.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const digest = waveSetDigest(members);
   console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
+  w.preview = await comparePreview({ repo, env: options.env ?? process.env, wave: options.wave, binary: options.binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
   const stop = await gateWave(repo, options, { label, roots: changing.map((p) => p.root), planned: changing, members, digest, changes, destroys }, facts, w);
   if (stop !== undefined) return stop;
   recordOverridesUsed(repo, options, changing);

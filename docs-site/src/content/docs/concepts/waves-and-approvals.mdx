@@ -60,8 +60,9 @@ For that plan, terragucci points the root's references to the block at a local h
 | a block with `count` or `for_each` | the applied state |
 | a plan on the planned outputs that fails, such as a `for_each` over a value known only after apply | the applied state |
 | a root in JSON syntax, or a block in a child module | the applied state; neither orders the waves either |
-| a Terragrunt unit's `dependency` | the upstream's applied outputs; a unit that depends on a changed unit plans once it applied |
 | `terragucci plan` on your machine | the applied state |
+
+A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#what-a-pull-request-shows-of-later-layers).
 
 ## The run view
 
