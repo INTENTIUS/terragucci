@@ -91,10 +91,21 @@ export function addCanary(repo: string, canary: string[]): { file: string; text:
 
 const list = (roots: string[]): string => roots.map((r) => `- \`${r}\``).join("\n");
 
-/** The tips' proposals, one pull request each. */
-export function tipProposals(repo: string, roots: string[], binary: string, opts: { canary?: string[]; platforms?: string[] }): Proposal[] {
+/**
+ * Why `synth` leaves the pin and lock file tips out: they edit the roots' own
+ * files, which the synth command writes and git does not hold.
+ */
+export const SYNTH_TIPS_LEFT = "left out with synth: the provider pin and lock file tips, since the synth command writes the roots' files and git does not hold them; pin providers in the app that writes them";
+
+/**
+ * The tips' proposals, one pull request each, and the tips left out. With
+ * `synth` only the canary tip is proposed: it edits terragucci.yml, which git
+ * holds, and the others would edit files the next synth writes again.
+ */
+export function tipProposals(repo: string, roots: string[], binary: string, opts: { canary?: string[]; platforms?: string[]; synth?: boolean }): { proposals: Proposal[]; left: string[] } {
   const out: Proposal[] = [];
-  for (const [provider, row] of pinFromLock(repo, roots)) {
+  const left = opts.synth ? [SYNTH_TIPS_LEFT] : [];
+  if (!opts.synth) for (const [provider, row] of pinFromLock(repo, roots)) {
     const versions = [...row.versions].join(", ");
     out.push({
       branch: `terragucci/tip/pin-${provider.replace(/[^a-z0-9]+/g, "-")}`,
@@ -103,7 +114,7 @@ export function tipProposals(repo: string, roots: string[], binary: string, opts
       files: row.files,
     });
   }
-  const unlocked = missingLocks(repo, roots);
+  const unlocked = opts.synth ? [] : missingLocks(repo, roots);
   const platforms = opts.platforms ?? PLATFORMS;
   if (unlocked.length) {
     out.push({
@@ -132,5 +143,5 @@ export function tipProposals(repo: string, roots: string[], binary: string, opts
       });
     }
   }
-  return out;
+  return { proposals: out, left };
 }

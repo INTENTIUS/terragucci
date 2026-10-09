@@ -16,6 +16,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseYAML } from "@intentius/chant/yaml";
 import { parseReportsBucket, type BucketRef } from "./report/object-store";
+import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
 
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
@@ -292,6 +293,26 @@ export interface AgentCommentSettings {
 
 export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
 
+/**
+ * `review`: a model reviews each pull request's intent against its plan
+ * (review-agent.ts), off unless `agent` is true. It posts a note and never
+ * approves; a `tf-apply` wave's policy reads its risk as `input.review`.
+ */
+export interface ReviewSettings {
+  /** Turns the review on. */
+  agent?: boolean;
+  /** The command line, run with the prompt on stdin; it prints the review. Default: Claude Code in print mode with no tools (REVIEW_COMMAND in review-agent.ts). */
+  command?: string;
+  /** The secret holding the model's API key, mapped into the review command's step alone. Default `ANTHROPIC_API_KEY`. */
+  key_secret?: string;
+  /** The instructions file, read from the default branch. Default `.terragucci/review.md`. */
+  instructions?: string;
+  /** Minutes before the review job is stopped. Default 10. */
+  timeout?: number;
+}
+
+export const REVIEW_KEYS = ["agent", "command", "key_secret", "instructions", "timeout"] as const;
+
 /** The settings one project (or one repo) can carry. Every key is optional. */
 export interface ProjectSettings {
   /** Globs of root directories. Detected when absent. */
@@ -303,6 +324,8 @@ export interface ProjectSettings {
    * glob to release, the version each root it matches runs (tofu and terraform, plain roots only).
    */
   version?: string | Record<string, string>;
+  /** Each plain root's backend, provider and version files, which `terragucci generate` writes; see generate.ts. */
+  generate?: GenerateSettings;
   /** The forge, for a host terragucci cannot name. */
   forge?: ForgeName;
   /** Where the project lives, for a forge not on https or the default port. */
@@ -342,9 +365,12 @@ export interface ProjectSettings {
    * Notifications: the names of the secrets holding a Slack or Teams
    * incoming webhook, and a generic webhook's address with the key that
    * signs its body. An apply job whose wave waits, is refused or fails posts
-   * to each (notify.ts).
+   * to each (notify.ts), and the drift job posts drift to Slack and Teams.
+   * `relay` names the customer's relay (relay.ts): a waiting wave's Slack
+   * message gets Approve and Decline buttons, its Teams card the reply
+   * `@<relay> approve wave-<k> <digest>`.
    */
-  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
   /**
    * Cost estimates per root in the plan note: Infracost on the customer's
    * own key (`key_secret`, default INFRACOST_API_KEY), or a `command` that
@@ -414,6 +440,8 @@ export interface ProjectSettings {
    * push to a pull request's branch; its role, when named, is read-only.
    */
   agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings };
+  /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
+  review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
   decide?: DecideSettings;
   /** The AWS region whose CloudTrail drift attribution reads. Default: the region the aws CLI already uses. */
@@ -483,11 +511,13 @@ export const PROJECT_FILE_KEYS = [
   "runtime",
   "telemetry",
   "respond",
+  "review",
   "decide",
   "audit_region",
   "modules",
   "terragrunt",
   "token_env",
+  "generate",
 ] as const satisfies ReadonlyArray<keyof ProjectSettings>;
 
 export class ConfigError extends Error {
@@ -519,7 +549,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -585,16 +615,22 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
   checkVersion(s.version, s.binary, where, problems);
+  checkGenerate(s.generate, `${where}.generate`, problems, s.terragrunt);
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
   }
   if (s.notify !== undefined) {
     const n = s.notify;
-    const keys = ["slack", "teams", "webhook", "webhook_key"];
+    const keys = ["slack", "teams", "webhook", "webhook_key", "relay"];
     if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: ${keys.join(", ")})`);
     else {
       for (const [k, v] of Object.entries(n)) {
         if (!keys.includes(k)) problems.push(`${where}.notify.${k} is not a setting (settings: ${keys.join(", ")})`);
+        else if (k === "relay") {
+          // The relay's name, as Teams shows its outgoing webhook: not a secret.
+          if (typeof v !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(v)) problems.push(`${where}.notify.relay must name your relay as your Teams outgoing webhook is named, such as terragucci`);
+          else if (n.slack === undefined && n.teams === undefined) problems.push(`${where}.notify.relay needs notify.slack or notify.teams: the buttons go on their messages`);
+        }
         else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the ${k === "webhook_key" ? "key that signs the webhook's body, such as WEBHOOK_KEY; never the key" : `webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address`} itself`);
       }
       // A generic webhook is always signed, so its receiver can tell terragucci's posts from anyone's.
@@ -614,6 +650,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
   }
+  if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(...synthProblems(s as ProjectSettings, where));
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
@@ -719,6 +756,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
     }
   }
+  if (s.review !== undefined) checkReview(s.review, `${where}.review`, problems);
   if (s.decide !== undefined) checkDecide(s.decide, `${where}.decide`, problems);
   if (s.dashboards !== undefined) checkDashboards(s.dashboards, `${where}.dashboards`, problems);
   if (s.modules !== undefined) {
@@ -819,6 +857,25 @@ export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wa
 /** Why `roots` is refused in a Terragrunt repo: its units are what Terragrunt's discovery lists. */
 export const ROOTS_NOT_TERRAGRUNT = "a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude";
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
+
+/**
+ * What `synth` rules out, each because it would edit the roots the synth
+ * command writes. Those files are output, not in git: a change to them is
+ * lost at the next synth, and their source is the app's code (a CDK Terrain
+ * app's TypeScript), which terragucci does not edit.
+ */
+export const SYNTH_DRIFT_PR_SHORT = "synth writes the roots, so a live value belongs in the app that writes them, which terragucci does not edit";
+export const SYNTH_DRIFT_PR = "the drift pull request writes each live value into a root's own files, and with synth the command writes those files and git does not hold them, so the value belongs in the app that writes them, which terragucci does not edit; set respond.drift to attribute, which names who changed each value in the drift issue, or to off";
+export const SYNTH_ROLLOUTS = "a rollout moves a pin in each root's files or its lock file, and with synth the command writes those files and git does not hold them, so the pin is in the app that writes them; move it there";
+
+/** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, and a rollouts schedule. */
+export function synthProblems(s: ProjectSettings, where: string): string[] {
+  if (!s.synth) return [];
+  const out: string[] = [];
+  if (s.drift && responseTo(s, "drift") === "pull-request") out.push(`${where}.respond.drift: ${SYNTH_DRIFT_PR}`);
+  if (s.rollouts && responseTo(s, "rollout") !== "off") out.push(`${where}.rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
+  return out;
+}
 
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
 export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
@@ -959,6 +1016,32 @@ function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problem
   if (typeof tokenEnv === "string" && tokenEnv !== "" && !SECRET_NAME.test(tokenEnv)) {
     problems.push(`${where} reads agent.token_env as a secret name, so token_env must be one, such as AGENT_FORGE_TOKEN`);
   }
+}
+
+/** `review`: a map of REVIEW_KEYS. */
+function checkReview(r: unknown, where: string, problems: string[]): void {
+  if (!isObject(r)) {
+    problems.push(`${where} must be a map (settings: ${REVIEW_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(r)) {
+    if (!(REVIEW_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${REVIEW_KEYS.join(", ")})`);
+  }
+  if (r.agent !== undefined && typeof r.agent !== "boolean") problems.push(`${where}.agent must be true or false`);
+  if (r.command !== undefined && (typeof r.command !== "string" || r.command.trim() === "" || /[\r\n]/.test(r.command))) {
+    problems.push(`${where}.command must be one command line that reads the prompt on stdin and prints the review, such as claude -p`);
+  }
+  if (r.key_secret !== undefined && !(typeof r.key_secret === "string" && SECRET_NAME.test(r.key_secret))) {
+    problems.push(`${where}.key_secret must name the secret holding the model's API key, such as ANTHROPIC_API_KEY`);
+  }
+  if (r.instructions !== undefined) {
+    const p = typeof r.instructions === "string" ? r.instructions.replace(/^\.\//, "") : "";
+    if (!p || p.startsWith("/") || p.split("/").some((x) => x === ".." || x === "") || !/^[A-Za-z0-9_.\/-]+$/.test(p)) {
+      problems.push(`${where}.instructions must be a file path inside the repository, such as .terragucci/review.md`);
+    }
+  }
+  if (r.timeout !== undefined && !(Number.isInteger(r.timeout) && (r.timeout as number) >= 1)) problems.push(`${where}.timeout must be a whole number of 1 or more`);
+  if (r.agent === undefined && Object.keys(r).length > 0) problems.push(`${where}.agent is missing, so no review runs; set ${where}.agent: true`);
 }
 
 const DECIDE_KEYS = ["backend", "url", "model", "token_env", "thresholds"];
@@ -1283,5 +1366,6 @@ function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings 
   if (base.policy || settings.policy) out.policy = { ...base.policy, ...settings.policy };
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
   if (base.apply || settings.apply) out.apply = { ...base.apply, ...settings.apply };
+  if (base.generate || settings.generate) out.generate = combineGenerate(base.generate, settings.generate);
   return out;
 }

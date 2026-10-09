@@ -30,11 +30,13 @@ import {
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
 import { terragruntStepsRefusal } from "./steps";
+import { TERRAGRUNT_GENERATE } from "./generate-config";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
 import { agentCommentInput } from "./agent-comment";
+import { reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { migrationFiles } from "./migrate";
@@ -144,6 +146,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
     const stepsRefused = terragruntStepsRefusal(settings.steps);
     if (stepsRefused) throw new ConfigError(stepsRefused);
+    if (settings.generate) throw new ConfigError(TERRAGRUNT_GENERATE);
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {
@@ -265,6 +268,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.image ? { imageFromConfig: true } : {}),
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
     ...(pins.length > 0 ? { rootPins: true } : {}),
+    ...(settings.generate && !tgInput ? { generate: true } : {}),
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,
@@ -291,6 +295,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
+    ...(reviewInput(settings) ? { review: reviewInput(settings) } : {}),
     ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
     ...(migrationFiles(repo).length > 0 ? { migrations: true } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),

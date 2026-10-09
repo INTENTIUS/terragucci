@@ -126,8 +126,10 @@ export default defineConfig({
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
 								{ label: 'Tell a chat channel when a wave stops', slug: 'guides/notify-a-chat-channel' },
+								{ label: 'Approve from Slack and Teams', slug: 'guides/approve-from-chat' },
 								{ label: 'Estimate the cost of a change', slug: 'guides/estimate-cost' },
 								{ label: 'Run steps around a stage', slug: 'guides/run-steps' },
+								{ label: 'Generate backend and provider files', slug: 'guides/generate-root-files' },
 							],
 						},
 						{
@@ -136,6 +138,7 @@ export default defineConfig({
 								{ label: 'Set up with a coding agent', slug: 'getting-started/agents' },
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
 								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
+								{ label: 'Have a model review a pull request', slug: 'guides/agent-review-a-pull-request' },
 							],
 						},
 					],

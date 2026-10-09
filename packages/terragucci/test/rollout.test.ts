@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { continueExit, continueRollouts, describeContinue, describeRollout, rollout, rolloutArgs, rolloutExit, waveBranch, type RolloutOptions } from "../src/rollout";
 import { appliedState, fetchForge, type CommitCheck, type RolloutForge, type WavePullRequest } from "../src/rollout/forge";
+import { SYNTH_ROLLOUTS } from "../src/config";
 import { moveConstraint, readLock } from "../src/rollout/lock";
 import { namesModule, shapePin } from "../src/rollout/pins";
 import type { Fetch } from "../src/forge";
@@ -331,6 +332,29 @@ describe("rollout from a control repo", () => {
     // From the control repo, a continue reads every project's pull requests: wave 2 is open, so nothing runs.
     const c = await continueRollouts(control, { mode: "apply", forge: ({ key }) => forges[key as keyof typeof forges] });
     expect(c.rollouts.map((x) => [x.wave, x.waves, x.action, x.pullRequests])).toEqual([[2, 4, "waiting", ["https://forge/one/pull/2"]]]);
+  });
+
+  it("lists a project whose roots synth writes as refused, with why, and rolls the rest out", async () => {
+    const one = bareFrom(pinnedRepo({ "terragucci.yml": "" }));
+    const two = bareFrom(write(tmp(), { "main.js": "", "cdktf.json": "{}" }));
+    const control = write(tmp(), {
+      "terragucci.yml": ["defaults:", "  forge: forgejo", "projects:", `  example.com/acme/one: { url: ${one} }`, `  example.com/acme/two: { url: ${two}, synth: npx cdktn synth }`, ""].join("\n"),
+    });
+    git(control, "init", "-q");
+    const forges = { "example.com/acme/one": new MemoryForge(one, "one"), "example.com/acme/two": new MemoryForge(two, "two") };
+    const r = await rollout(control, { kind: "module", name: "modules/network", to: "1.4.0", forge: ({ key }) => forges[key as keyof typeof forges] });
+    expect(r.roots.filter((x) => x.project === "example.com/acme/two")).toEqual([{ project: "example.com/acme/two", root: ".", state: "refused", reason: SYNTH_ROLLOUTS }]);
+    expect(r.waves.flatMap((w) => w.parts.map((p) => p.project))).not.toContain("example.com/acme/two");
+    expect(r.tips.filter((t) => t.project === "example.com/acme/two")).toEqual([]);
+    expect(describeRollout(r)).toContain("with synth the command writes those files");
+  });
+});
+
+describe("rollout with synth in one repo", () => {
+  it("is refused, by the rollout and by its continue, naming why", async () => {
+    const { repo } = checkout(write(tmp(), { "terragucci.yml": "forge: forgejo\nsynth: npx cdktn synth\n", "main.js": "" }));
+    await expect(rollout(repo, { kind: "module", name: "modules/network", to: "1.4.0", forge: () => new MemoryForge(repo) })).rejects.toThrow(`terragucci rollout: ${SYNTH_ROLLOUTS}`);
+    await expect(continueRollouts(repo, { forge: () => new MemoryForge(repo) })).rejects.toThrow(`terragucci respond rollout: ${SYNTH_ROLLOUTS}`);
   });
 });
 
