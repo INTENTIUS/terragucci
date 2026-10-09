@@ -149,8 +149,10 @@ export interface PipelineInput {
   decideTokenEnv?: string;
   /** A bucket for plan reports, besides the job's artifact. */
   reports?: PlanReportInput["reports"];
-  /** Set when `modules.publish` is: the pipeline gets a job that publishes changed modules after apply. */
+  /** Set when `modules.publish` or `modules.registry` is: the pipeline gets a job that publishes changed modules after apply. */
   publish?: boolean;
+  /** `modules.registry.bucket`: the publish job gets the bucket's key secrets, as a job that writes reports does (GitHub and Forgejo). */
+  publishBucket?: string;
   /** Set when `modules.attest` is: the publish job gets the signing key's two secrets (GitHub and Forgejo; GitLab's CI variables are already there). */
   attest?: boolean;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
@@ -2322,6 +2324,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TERRAGUCCI_REGISTRY_PASSWORD: "${{ secrets.TERRAGUCCI_REGISTRY_PASSWORD }}",
         TERRAGUCCI_REGISTRY_INSECURE: "${{ secrets.TERRAGUCCI_REGISTRY_INSECURE }}",
         ...(input.attest ? { COSIGN_PRIVATE_KEY: "${{ secrets.COSIGN_PRIVATE_KEY }}", COSIGN_PASSWORD: "${{ secrets.COSIGN_PASSWORD }}" } : {}),
+        ...(input.publishBucket ? reportKeyEnv(forge, { bucket: input.publishBucket }) : {}),
       },
       steps: [
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),

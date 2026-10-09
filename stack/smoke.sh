@@ -164,6 +164,7 @@ publish-attest|with modules.attest each release is signed, attested and recorded
 require-attested|with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved|
 require-recorded|with modules.require: attested tf-plan refuses a root that pins a version the release ledger does not record|
 tg-require-attested|with modules.require: attested in a Terragrunt repo tf-check and tf-plan refuse a unit whose terraform source pins an unattested release, and pass one that pins an attested release|
+module-registry|with modules.registry each release is written as the module registry protocol to a bucket, and a root that pins ~> 1.0 resolves the newest 1.x from it; with modules.test an untested release is refused|
 tips|tips are on by default and name their rule|
 zero-config|with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline|
 apply-serial|two pushes to main apply one after the other, and the commit carries one terragucci/apply status|
@@ -1870,6 +1871,78 @@ require_claim() { # claim name, tampered|unrecorded
 
 claim_require_attested() { require_claim require-attested tampered; }
 claim_require_recorded() { require_claim require-recorded unrecorded; }
+
+claim_module_registry() {
+  # modules.registry with modules.test, the CLI in the CI image: two releases
+  # of modules/network, 1.0.0 and 1.1.0, each tested with tofu test first, are
+  # written to a floci bucket as the module registry protocol's files. A TLS
+  # server in front of the bucket serves it as the registry host
+  # 127.0.0.1:8443, and a root whose call pins version "~> 1.0" resolves 1.1.0
+  # with tofu init. BREAK: the second release has no tests, so modules.test
+  # refuses it, publish fails, and the registry still lists 1.0.0 alone.
+  log() { echo "[smoke module-registry] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work tree out rc=0 bucket="tg-registry-$(date +%s)$$${BREAK:+b}" versions
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  mkdir -p "$tree/modules/network/tests" "$tree/envs/dev"
+  # tofu reaches a registry host only over https: a certificate for localhost, made for this run.
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" -keyout "$work/tls.key" -out "$work/tls.crt" >/dev/null 2>&1 \
+    || { log "openssl could not make a certificate"; drop_work "$work"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "floci made no bucket $bucket"; drop_work "$work"; return 1; }
+  # The bucket served as a static site over TLS: each GET is the object at that key.
+  cat > "$work/serve.mjs" <<'JS'
+import https from "node:https";
+import http from "node:http";
+import { readFileSync } from "node:fs";
+const [bucket, port] = process.argv.slice(2);
+https.createServer({ key: readFileSync("/repo/tls.key"), cert: readFileSync("/repo/tls.crt") }, (req, res) => {
+  const path = req.url.split("?")[0];
+  http.get(`http://floci:4566/${bucket}${path}`, (up) => {
+    console.error(`serve: GET ${path} ${up.statusCode}`);
+    res.writeHead(up.statusCode, { "content-type": up.headers["content-type"] ?? "application/octet-stream" });
+    up.pipe(res);
+  }).on("error", (e) => { res.writeHead(502); res.end(String(e)); });
+}).listen(Number(port), "127.0.0.1", () => console.error(`serve: https://127.0.0.1:${port} -> ${bucket}`));
+JS
+  printf 'variable "name" {\n  type = string\n}\n\nresource "terraform_data" "net" {\n  input = var.name\n}\n\noutput "name" {\n  value = terraform_data.net.input\n}\n' > "$tree/modules/network/main.tf"
+  printf 'variables {\n  name = "dev"\n}\n\nrun "names" {\n  command = plan\n\n  assert {\n    condition     = terraform_data.net.input == "dev"\n    error_message = "the name is not passed through"\n  }\n}\n' > "$tree/modules/network/tests/main.tftest.hcl"
+  echo 1.0.0 > "$tree/modules/network/version"
+  printf 'module "network" {\n  source  = "127.0.0.1:8443/acme/network/generic"\n  version = "~> 1.0"\n  name    = "dev"\n}\n' > "$tree/envs/dev/main.tf"
+  printf 'binary: tofu\nroots: ["envs/*"]\nmodules:\n  path: modules/*\n  test: true\n  registry:\n    bucket: s3://%s\n    url: https://127.0.0.1:8443\n    namespace: acme\n' "$bucket" > "$tree/terragucci.yml"
+  git -C "$tree" init -q -b main
+  commitall() { git -C "$tree" add -A && git -C "$tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -q -m "$1"; }
+  commitall "feat: network"
+  publish_run() { in_image "$work" sh -c 'cd tree && terragucci publish' 2>&1; }
+  out="$(publish_run)" || { echo "$out" >&2; log "the first publish failed"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  grep -q "network 1.0.0: published to registry https://127.0.0.1:8443" <<<"$out" || { log "1.0.0 was not published"; drop_work "$work"; return 1; }
+  printf 'output "id" {\n  value = terraform_data.net.id\n}\n' > "$tree/modules/network/outputs.tf"
+  echo 1.1.0 > "$tree/modules/network/version"
+  # BREAK: the tests leave the module, so the release is untested.
+  [ -n "${BREAK:-}" ] && mv "$tree/modules/network/tests" "$work/tests.moved"
+  commitall "feat(network): an id output"
+  out="$(publish_run)" || rc=$?
+  echo "$out" >&2
+  versions="$(curl -fsS "$FLOCI/$bucket/v1/modules/acme/network/generic/versions" | jq -r '[.modules[0].versions[].version] | join(",")')" || versions=""
+  if [ "$rc" != 0 ]; then
+    grep -q "network 1.1.0: refused" <<<"$out" && log "modules.test refused 1.1.0: $(grep -m1 -o 'has no tests[^,]*' <<<"$out" || true); the registry lists '$versions'"
+    log "the second publish failed"; drop_work "$work"; return 1
+  fi
+  grep -q "network 1.1.0: published to registry https://127.0.0.1:8443" <<<"$out" || { log "1.1.0 was not published"; drop_work "$work"; return 1; }
+  [ "$versions" = "1.0.0,1.1.0" ] || { log "the versions endpoint lists '$versions', not 1.0.0,1.1.0"; drop_work "$work"; return 1; }
+  curl -fsS "$FLOCI/$bucket/.well-known/terraform.json" | jq -e '."modules.v1" == "/v1/modules/"' >/dev/null || { log "no service discovery file"; drop_work "$work"; return 1; }
+  # tofu, in the CI image, resolves "~> 1.0" against the registry and installs the newest 1.x.
+  out="$(in_image "$work" sh -c "node /repo/serve.mjs $bucket 8443 & sleep 1; cd tree/envs/dev && SSL_CERT_FILE=/repo/tls.crt tofu init -backend=false -input=false -no-color && cat .terraform/modules/modules.json" 2>&1)" \
+    || { echo "$out" >&2; log "tofu init could not resolve the module from the registry"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  grep -q "Downloading 127.0.0.1:8443/acme/network/generic 1.1.0 for network" <<<"$out" || { log "tofu init did not download 1.1.0"; drop_work "$work"; return 1; }
+  grep -q '"Version":"1.1.0"' <<<"$out" || { log "modules.json does not record 1.1.0"; drop_work "$work"; return 1; }
+  drop_work "$work"
+  log "both releases passed tofu test and reached the bucket; tofu resolved ~> 1.0 to 1.1.0 from the registry it serves"
+}
 
 claim_tg_require_attested() {
   # modules.require: attested in a Terragrunt repo whose pipeline publishes
@@ -12860,6 +12933,7 @@ publish-attest  runner self! registry! weight=200
 require-attested runner self! weight=200
 require-recorded runner self! weight=200
 tg-require-attested runner self! weight=220
+module-registry self! weight=120
 forgejo-oidc    runner self! weight=200
 grouped         ex runner self! after=boot weight=200
 check           ex runner self! after=boot weight=200
