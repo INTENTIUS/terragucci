@@ -483,7 +483,44 @@ export interface ProjectSettings {
    * syntax, or the path of a YAML file in the repo that holds that map.
    */
   own_jobs?: string | Record<string, Record<string, unknown>>;
+  /** Roots each pull request gets a copy of, under a state key of its own, destroyed on close or once its TTL passes; see EphemeralSettings. */
+  ephemeral?: EphemeralSettings;
 }
+
+/**
+ * Ephemeral environments: each open pull request gets its own copy of the
+ * roots `roots` matches, applied from its head under the state key with
+ * `-pr-<n>` added (ephemeral.ts). Closing the pull request, or `ttl` passing
+ * since its last apply, destroys the copy through a planned destroy that the
+ * audit trail lists. Plain roots only, without synth.
+ */
+export interface EphemeralSettings {
+  /** Root globs. */
+  roots: string[];
+  /** How long a copy lives after the last apply that changed it: `<n>m`, `<n>h` or `<n>d`. Default 24h. */
+  ttl?: string;
+  /** Minutes between the sweep's runs, which destroy the copies whose TTL passed or whose pull request closed. 5 to 60; default 30. */
+  sweep?: number;
+}
+
+/** `ephemeral.ttl` when unset. */
+export const EPHEMERAL_TTL = "24h";
+/** `ephemeral.sweep` when unset. */
+export const EPHEMERAL_SWEEP = 30;
+
+/** A TTL in milliseconds: `<n>m`, `<n>h` or `<n>d`; undefined when it is none of them. */
+export function ttlMs(ttl: string): number | undefined {
+  const m = /^([1-9]\d*)([mhd])$/.exec(ttl);
+  if (!m) return undefined;
+  return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
+}
+
+/** Why ephemeral environments are refused in a Terragrunt repo. */
+export const EPHEMERAL_NOT_TERRAGRUNT = "a Terragrunt unit's state key comes from its remote_state block, which terragucci does not rewrite, and its units apply with one run --all; ephemeral copies plain roots, so leave ephemeral unset";
+/** Why ephemeral environments are refused with synth. */
+export const EPHEMERAL_NOT_SYNTH = "with synth the roots are written by the command in each job, and git holds no root a pull request's copy could be made from; leave ephemeral unset";
+/** Why ephemeral environments are refused on GitLab with gitlab.token: protected. */
+export const EPHEMERAL_NOT_PROTECTED = "a merge request pipeline applies the copy and records it on chant/lifecycle with the project token, and with gitlab.token: protected no merge request pipeline holds it; leave ephemeral unset or the token unprotected";
 
 /** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
 export interface TerragucciConfig extends ProjectSettings {
@@ -553,6 +590,7 @@ export const PROJECT_FILE_KEYS = [
   "terragrunt",
   "token_env",
   "generate",
+  "ephemeral",
 ] as const satisfies ReadonlyArray<keyof ProjectSettings>;
 
 export class ConfigError extends Error {
@@ -584,7 +622,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -689,6 +727,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(...synthProblems(s as ProjectSettings, where));
   if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
   if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
+  if (s.ephemeral !== undefined) checkEphemeral(s.ephemeral, `${where}.ephemeral`, problems, s);
   if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
     problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
   }
@@ -1078,6 +1117,24 @@ export function ownJobsProblems(v: unknown, where: string): string[] {
     else if (!isObject(job) || Object.keys(job).length === 0) problems.push(`${where}.${name} must be a job: a map of its keys, in the forge's own syntax`);
   }
   return problems;
+}
+
+const EPHEMERAL_KEYS = ["roots", "ttl", "sweep"];
+
+function checkEphemeral(e: unknown, where: string, problems: string[], s: Record<string, unknown>): void {
+  if (!isObject(e)) {
+    problems.push(`${where} must be a map (settings: ${EPHEMERAL_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(e)) if (!EPHEMERAL_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${EPHEMERAL_KEYS.join(", ")})`);
+  if (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+    problems.push(`${where}.roots must be a list of root globs, such as ["envs/preview/*"]`);
+  }
+  if (e.ttl !== undefined && !(typeof e.ttl === "string" && ttlMs(e.ttl) !== undefined)) problems.push(`${where}.ttl must be a duration in minutes, hours or days, such as 30m, 24h or 3d`);
+  if (e.sweep !== undefined && !(Number.isInteger(e.sweep) && (e.sweep as number) >= 5 && (e.sweep as number) <= 60)) problems.push(`${where}.sweep must be a whole number of minutes from 5 to 60`);
+  if (s.terragrunt !== undefined) problems.push(`${where}: ${EPHEMERAL_NOT_TERRAGRUNT}`);
+  if (typeof s.synth === "string" && s.synth.trim() !== "") problems.push(`${where}: ${EPHEMERAL_NOT_SYNTH}`);
+  if (s.forge === "gitlab" && isObject(s.gitlab) && s.gitlab.token === "protected") problems.push(`${where}: ${EPHEMERAL_NOT_PROTECTED}`);
 }
 
 const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches"];

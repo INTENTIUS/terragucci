@@ -169,6 +169,7 @@ dashboards: true
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
+| `ephemeral` | none (off) | `roots`, root globs each pull request gets a copy of under state keys of its own, `ttl` (`<n>m`, `<n>h` or `<n>d`, default `24h`) and `sweep` (minutes between the sweep's runs, 5 to 60, default 30); read at base; see [Ephemeral environments](#ephemeral-environments) |
 | `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts.
@@ -279,6 +280,28 @@ The waves are cut from the roots the branch applies, so a branch's wave 1 holds 
 The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) applies the default branch's waiting waves only. A wave waiting on a branch named here applies when its run runs again: `terragucci approve` re-runs it on GitHub and GitLab, and on Forgejo the branch's next push runs it.
 
 `config check` refuses a glob listed under two branches, `apply.branches` with `apply.when: pull-request`, where a push applies nothing, and in a Terragrunt repo. Run `npx terragucci init` after a change to the map: the apply jobs carry it. The fmt job never commits to a branch named here.
+
+## Ephemeral environments
+
+```yaml
+ephemeral:
+  roots: ["envs/preview/*"]
+  ttl: 24h
+```
+
+Each open pull request gets its own copy of the roots `roots` matches, applied from its head. A copy's state is the root's own backend with `-pr-<n>` added to the key: `envs/preview/app/terraform.tfstate` becomes `envs/preview/app/terraform-pr-12.tfstate`, and a `gcs` prefix `preview/app` becomes `preview/app-pr-12`. The root keeps its own state, and its own plan and apply waves, as before.
+
+| Event | What happens |
+|---|---|
+| a pull request opens, reopens or gets a push | its copy plans and waits at gate `tf-ephemeral pr-<n>` as `gate` says, then applies; the copy expires `ttl` after the last apply that changed it |
+| the pull request closes or merges | its copy is destroyed: a `plan -destroy` of each root, applied in reverse order, from the commit the copy applied; on GitLab, which starts no pipeline when a merge request closes, at the next sweep |
+| `ttl` passes | the sweep destroys the copy the same way, whether the pull request is open or not |
+
+Every apply and destroy is a line in `_gates/tf-ephemeral/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which the [audit trail](/terragucci/reference/audit-trail/) lists as `ephemeral-apply` and `ephemeral-destroy`. With `reports` set, the [estate page](/terragucci/guides/see-every-project/) lists each live copy and its expiry.
+
+A state key suffix, rather than a workspace: terragucci runs no CLI workspaces, and a suffixed key is a state of its own that the backend block, its lock file and a bucket listing all name. A copy works with an `s3`, `azurerm` or `gcs` backend, and a `local` one; a root on another backend or in HCP Terraform (a `cloud` block) fails its job with a config error naming it.
+
+`config check` refuses `ephemeral` in a Terragrunt repo, where a unit's state key comes from its `remote_state` block, with `synth`, where git holds no roots to copy, and on GitLab with `gitlab.token: protected`, where no merge request pipeline holds the token that records the copy. The binary makes no difference: OpenTofu, Terraform and choudoufu each take a copy. The settings are read from the default branch, so a pull request cannot widen `roots` or lengthen `ttl` for its own copy. Run `npx terragucci init` after adding the key: it writes the jobs. [Ephemeral environments per pull request](/terragucci/guides/ephemeral-environments/) walks through it.
 
 ## Jobs of your own
 
