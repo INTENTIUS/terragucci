@@ -1252,10 +1252,17 @@ export const STEP_TOKEN_VARS = ["TG_TOKEN", "TG_MERGE_TOKEN", "GITHUB_TOKEN", "G
  * `unset` alone would leave it in the shell's own process environment, which
  * the shell's children can read. The OIDC request variables stay: the step
  * asks for its cloud role with them.
+ *
+ * The restart needs the step's script file (a runner runs `<shell> <file>`,
+ * so `$0` is its path, never the shell's own) and `env` and the shell on the
+ * PATH. When any of them is missing (the script given to `sh -c`, or no PATH), the shell does not
+ * restart and drops the variables with `unset`, so its children still start
+ * without them, and the script runs on.
  */
 export function dropForgeTokens(shell: "bash" | "sh" = "bash"): string {
   const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
-  return `[ -n "\${TG_NO_FORGE_TOKEN:-}" ] || exec env ${STEP_TOKEN_VARS.map((v) => `-u ${v}`).join(" ")} TG_NO_FORGE_TOKEN=1 ${again}`;
+  const can = `[ -z "\${TG_NO_FORGE_TOKEN:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
+  return `if ${can}; then exec env ${STEP_TOKEN_VARS.map((v) => `-u ${v}`).join(" ")} TG_NO_FORGE_TOKEN=1 ${again}; fi; unset ${STEP_TOKEN_VARS.join(" ")}`;
 }
 
 /**

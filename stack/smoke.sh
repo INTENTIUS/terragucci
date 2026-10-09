@@ -3593,9 +3593,12 @@ claim_comment_not_affected() {
   #       API, so the forge call that fails is the pull request read, not the
   #       permission read; the token is refused outright (401), not short of
   #       a permission (403).
-  # BREAK: the pushed pipeline is the re-plan job as it was before: it neither
-  # answers a root the change does not reach nor fails when `terragucci
-  # comment` does (its `|| exit 1` is `|| exit 0`).
+  # The not-affected answer is `terragucci plan-note --root`, which the
+  # replan-note job runs after the re-plan job.
+  # BREAK: the pushed pipeline's replan-note job does not hand the re-plan's
+  # root to `terragucci plan-note`, so it posts a note and a status where it
+  # should answer that the root is not affected, and the re-plan job does not
+  # fail when `terragucci comment` does (its `|| exit 1` is `|| exit 0`).
   log() { echo "[smoke comment-not-affected] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -3629,10 +3632,11 @@ TF
   printf 'forge: forgejo\nbinary: tofu\ngate: never\n' > "$tree/terragucci.yml"
   (cd "$tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; return 1; }
   wf="$tree/.forgejo/workflows/terragucci.yml"
-  grep -q 'is not affected by this pull request' "$wf" || { log "the pipeline's re-plan job has no not-affected answer"; return 1; }
+  grep -q 'terragucci plan-note .*\${TG_ROOT:+--root "\$TG_ROOT"}' "$wf" || { log "the pipeline's replan-note job does not hand the re-plan's root to plan-note, which answers a root the change does not reach"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    sed -i.bak -e '/is not affected by this pull request/d' \
-      -e 's#--out terragucci-comment.json || exit 1#--out terragucci-comment.json || exit 0#' "$wf" && rm -f "$wf.bak"
+    sed -e '/terragucci plan-note /s#\${TG_ROOT:+--root "\$TG_ROOT"}##' \
+      -e 's#--out terragucci-comment.json || exit 1#--out terragucci-comment.json || exit 0#' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    if grep -q 'terragucci plan-note .*--root' "$wf"; then log "could not take the root from the replan-note job"; return 1; fi
   fi
   main_sha="$(push_tree "$tree" "$repo" main "comment-na: first")" || return 1
   wait_run "$repo" "$main_sha" || return 1
@@ -7057,9 +7061,9 @@ claim_note_diff() {
   # retention of dev orders to 604800 seconds. Its plan note must show the
   # change as the binary prints it, before the whole plans: a diff block whose
   # line for message_retention_seconds holds the value before and 604800
-  # after it. BREAK: the pushed pipeline deletes every line holding "->"
-  # from the note before it posts it, as a note that names only the
-  # attributes reads.
+  # after it. BREAK: the pushed pipeline's plan job deletes every line
+  # holding "->" from the note it writes for the plan-note job, as a note
+  # that names only the attributes reads.
   log() { echo "[smoke note-diff] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -7072,9 +7076,9 @@ claim_note_diff() {
   cp "$EXAMPLE/.forgejo/workflows/terragucci.yml" "$wf"
   git -C "$work/tree" apply "$EXAMPLE/changes/one-root.patch" || { drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    # shellcheck disable=SC2016 # written into the workflow, expanded by the job
-    sed -i.bak 's#tg note "\$note"#sed -i -e "/->/d" "$note"; tg note "$note"#' "$wf" && rm -f "$wf.bak"
-    grep -q 'sed -i -e "/->/d"' "$wf" || { log "BREAK found no tg note line to cut"; drop_work "$work"; return 1; }
+    # The plan job writes the note into the report, and the plan-note job posts it from there.
+    sed 's#\(cat terragucci-report/note.md; } >terragucci-report/plan-note.md\)$#\1; sed -i -e "/->/d" terragucci-report/plan-note.md#' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+    grep -q 'sed -i -e "/->/d" terragucci-report/plan-note.md' "$wf" || { log "BREAK found no line that writes the plan note to cut"; drop_work "$work"; return 1; }
   fi
   sha="$(push_tree "$work/tree" "$repo" "$branch" "smoke note-diff: one-root $(date +%s)")"
   pr="$(open_pr "$repo" "$branch")"
