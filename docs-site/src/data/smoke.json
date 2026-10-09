@@ -9,7 +9,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "check",
@@ -17,7 +17,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "affected",
@@ -25,7 +25,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "grouped",
@@ -33,7 +33,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "report",
@@ -41,7 +41,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "highlight",
@@ -49,7 +49,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "waves",
@@ -57,7 +57,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "refuse",
@@ -65,7 +65,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "sealed",
@@ -73,7 +73,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "drift",
@@ -81,7 +81,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "rollout",
@@ -89,7 +89,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "publish",
@@ -97,7 +97,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "publish-attest",
@@ -105,7 +105,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "require-attested",
@@ -113,7 +113,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "require-recorded",
@@ -121,7 +121,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tips",
@@ -129,7 +129,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "zero-config",
@@ -137,7 +137,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "apply-serial",
@@ -145,7 +145,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "reconcile",
@@ -153,7 +153,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "traces",
@@ -161,7 +161,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "metrics",
@@ -169,7 +169,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-zero-config",
@@ -177,7 +177,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-waves",
@@ -185,7 +185,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-check",
@@ -193,7 +193,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-affected",
@@ -201,7 +201,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-mock-lint",
@@ -209,7 +209,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-refuse",
@@ -217,7 +217,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-mock-trap",
@@ -225,7 +225,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-drift",
@@ -233,7 +233,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "respond-refused",
@@ -241,7 +241,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "respond-triage",
@@ -249,7 +249,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "respond-drift",
@@ -257,7 +257,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "respond-tips",
@@ -265,7 +265,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "respond-fmt",
@@ -273,7 +273,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "respond-notes",
@@ -281,7 +281,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "fresh-plan",
@@ -289,7 +289,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "forgejo-oidc",
@@ -297,7 +297,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "steward",
@@ -305,7 +305,7 @@
       "needs": "273",
       "verdict": "pending",
       "break": null,
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy",
@@ -313,7 +313,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "comment-plan",
@@ -321,7 +321,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "lock-wait",
@@ -329,7 +329,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "dash-pipeline",
@@ -337,7 +337,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "dash-changes",
@@ -345,7 +345,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "dash-waves",
@@ -353,7 +353,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "dash-drift",
@@ -361,7 +361,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "dash-estate",
@@ -369,7 +369,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "dash-runs",
@@ -377,7 +377,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "dash-slos",
@@ -385,7 +385,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "drill-down",
@@ -393,7 +393,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-wave",
@@ -401,23 +401,23 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "check-diagnostics",
       "says": "tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal",
       "needs": null,
-      "verdict": "pass",
+      "verdict": "fail",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "comment-not-affected",
       "says": "a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause",
       "needs": null,
-      "verdict": "pass",
+      "verdict": "fail",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "drift-attribute",
@@ -425,7 +425,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "version-bump-job",
@@ -433,7 +433,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-spans",
@@ -441,15 +441,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "oidc-clouds",
       "says": "a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud",
       "needs": null,
-      "verdict": "pass",
+      "verdict": "fail",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "comment-apply",
@@ -457,7 +457,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "comment-agent",
@@ -465,7 +465,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "wave-report",
@@ -473,7 +473,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-delete-key",
@@ -481,7 +481,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "report-oidc",
@@ -489,7 +489,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-gate-wait",
@@ -497,7 +497,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-gate-refuse",
@@ -505,7 +505,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-sealed",
@@ -513,7 +513,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-apply",
@@ -521,7 +521,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-apply-lock",
@@ -529,7 +529,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "230962e"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-apply-stale",
@@ -537,7 +537,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-comment-apply",
@@ -545,7 +545,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "provider-calls",
@@ -553,7 +553,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "summed-timings",
@@ -561,7 +561,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "foreign-checkout",
@@ -569,7 +569,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-layers",
@@ -577,7 +577,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-source",
@@ -585,7 +585,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
+    },
+    {
+      "claim": "reconcile-parallelism",
+      "says": "a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-requires",
@@ -593,7 +601,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-lock",
@@ -601,7 +609,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "front-door",
@@ -609,7 +617,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "ledger-default",
@@ -617,7 +625,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "approval-at-base",
@@ -625,7 +633,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "sealed-migrate",
@@ -633,7 +641,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "estate",
@@ -641,7 +649,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "drift-overdue",
@@ -649,7 +657,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-review",
@@ -657,7 +665,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-review-moved",
@@ -665,7 +673,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-review-status",
@@ -673,7 +681,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "cdf-concurrency",
@@ -681,7 +689,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "cdf-write-race",
@@ -689,7 +697,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "cdf-iam",
@@ -697,7 +705,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "resume-approve",
@@ -705,7 +713,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "resume-schedule",
@@ -713,7 +721,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "230962e"
+      "commit": "df05c7f"
     },
     {
       "claim": "approve-plan",
@@ -721,7 +729,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "approve-command",
@@ -729,7 +737,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-pr-apply",
@@ -737,7 +745,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-pr-apply-lock",
@@ -745,7 +753,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "plan-lock",
@@ -753,7 +761,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "plan-lock-release",
@@ -761,7 +769,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-override",
@@ -769,7 +777,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-override-moved",
@@ -777,7 +785,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-override-unlisted",
@@ -785,7 +793,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-override-applied",
@@ -793,7 +801,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "blob-azure",
@@ -801,7 +809,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "blob-gcs",
@@ -809,7 +817,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "note-diff",
@@ -817,7 +825,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "note-split",
@@ -825,7 +833,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "note-report-link",
@@ -833,7 +841,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "config-ts",
@@ -841,7 +849,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "role-refused",
@@ -849,7 +857,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "description-check",
@@ -857,7 +865,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "decide-backends",
@@ -865,7 +873,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "otlp-headers",
@@ -873,7 +881,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pinned-install",
@@ -881,7 +889,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "drift-close",
@@ -889,7 +897,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "estate-control",
@@ -897,7 +905,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "estate-override",
@@ -905,7 +913,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "reader-contracts",
@@ -913,7 +921,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "comment-refused",
@@ -921,7 +929,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "note-stale",
@@ -929,7 +937,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-confirm",
@@ -937,7 +945,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-base-config",
@@ -945,7 +953,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-guard",
@@ -953,7 +961,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pr-close-release",
@@ -961,7 +969,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-lock-fanout",
@@ -969,7 +977,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "token-scrub",
@@ -977,7 +985,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
+    },
+    {
+      "claim": "plan-token-free",
+      "says": "the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "df05c7f"
     },
     {
       "claim": "fork-no-plan",
@@ -985,7 +1001,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "highlight-sensitive",
@@ -993,7 +1009,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "approval-revoke",
@@ -1001,7 +1017,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "pending-expiry",
@@ -1009,7 +1025,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "signer-trust",
@@ -1017,7 +1033,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "rollout-control",
@@ -1025,7 +1041,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "rollout-provider",
@@ -1033,7 +1049,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "rollout-pins",
@@ -1041,7 +1057,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "230962e"
+      "commit": "df05c7f"
     },
     {
       "claim": "rollout-continue",
@@ -1049,7 +1065,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "230962e"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-opa",
@@ -1057,7 +1073,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-hcp",
@@ -1065,7 +1081,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "policy-hcl",
@@ -1073,7 +1089,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-policy",
@@ -1081,7 +1097,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-credentials",
@@ -1089,7 +1105,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-dependents",
@@ -1097,7 +1113,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tf-terraform",
@@ -1105,7 +1121,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tg-terraform",
@@ -1113,7 +1129,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "tfquery-import",
@@ -1121,7 +1137,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "alerts-fire",
@@ -1129,7 +1145,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "blob-gcs-key",
@@ -1137,7 +1153,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "blob-azure-key",
@@ -1145,7 +1161,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "index-writes",
@@ -1153,7 +1169,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "cdf-shared-bucket",
@@ -1161,7 +1177,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "cdktn-synth",
@@ -1169,7 +1185,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "apply-outcome",
@@ -1177,7 +1193,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "audit",
@@ -1185,7 +1201,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "audit-override",
@@ -1193,7 +1209,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "audit-refused",
@@ -1201,7 +1217,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "audit-control",
@@ -1209,7 +1225,23 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
+    },
+    {
+      "claim": "inventory",
+      "says": "after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "df05c7f"
+    },
+    {
+      "claim": "resource-history",
+      "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "df05c7f"
     },
     {
       "claim": "notify-chat",
@@ -1217,7 +1249,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "notify-webhook",
@@ -1225,7 +1257,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "cost-estimate",
@@ -1233,7 +1265,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "approval-used",
@@ -1241,7 +1273,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     },
     {
       "claim": "cdktn-affected",
@@ -1249,7 +1281,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "81c23aa"
+      "commit": "df05c7f"
     }
   ]
 }
