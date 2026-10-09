@@ -315,7 +315,7 @@ export async function main(argv: string[]): Promise<number> {
         }, json ? () => {} : console.error);
         let code = result.failed ? 1 : 0;
         // A pull request's plan proves each state migration it carries, read only (./migrate.ts).
-        if (args[0] === "tf-plan" && flags.terragrunt !== true) {
+        if (args[0] === "tf-plan") {
           const migrations = await runMigrations(cwd, { binary: str(flags, "binary") ?? result.report.run.binary ?? "tofu", planOnly: true, log: json ? console.error : console.log });
           if (migrations.code !== 0) code = 1;
         }

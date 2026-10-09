@@ -37,6 +37,8 @@ export interface TerragruntPipelineInput {
   exclude: string[];
   /** Plan and apply roles by unit glob, through the generated auth-provider-cmd. */
   credentials?: Record<string, RolePair>;
+  /** The repo has explicit stacks: the check job generates their units before it validates them. */
+  stacks?: boolean;
 }
 
 /** Where sources and providers are kept: under the repo, in a directory Terragrunt's discovery skips. */
@@ -59,17 +61,20 @@ export function cacheExports(): string {
   return `export TG_DOWNLOAD_DIR="$PWD/${TG_CACHE_DIR}/sources" TG_PROVIDER_CACHE_DIR="$PWD/${TG_CACHE_DIR}/providers"`;
 }
 
-/** The tools a job installs because the image does not carry them at the versions asked for. */
+/**
+ * The tools a job installs because the image does not carry them at the
+ * versions asked for. `carried` is what the job's image holds: the Terragrunt
+ * image carries Terragrunt and tofu, the choudoufu image choudoufu alone.
+ */
 export function terragruntInstalls(
   binary: Binary,
   binaryVersion: string,
   tgVersion: string,
-  carried: { tofu: string; terragrunt: string },
+  carried: Partial<Record<"tofu" | "terragrunt" | "choudoufu", string>>,
 ): { tool: Tool; version: string }[] {
   const out: { tool: Tool; version: string }[] = [];
   if (tgVersion !== carried.terragrunt) out.push({ tool: "terragrunt", version: tgVersion });
-  if (binary === "terraform") out.push({ tool: "terraform", version: binaryVersion });
-  else if (binary === "tofu" && binaryVersion !== carried.tofu) out.push({ tool: "tofu", version: binaryVersion });
+  if (binaryVersion !== carried[binary as keyof typeof carried]) out.push({ tool: binary, version: binaryVersion });
   return out;
 }
 
@@ -83,6 +88,8 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
     // The modules units call are plain Terraform: the binary formats them, Terragrunt formats its own files.
     `${binary} fmt -check -recursive -diff .`,
     "terragrunt hcl fmt --check --diff --no-color",
+    // An explicit stack's units are generated, not committed: generate them, then validate them with the rest.
+    ...(tg.stacks ? ["terragrunt stack generate --non-interactive --no-color"] : []),
     `terragrunt hcl validate --inputs --no-color ${filters(tg.exclude)}`,
     'echo "every unit is formatted and its inputs match its module"',
     // With `policy:` set, the policy's own tests; no `policy:` key prints nothing.

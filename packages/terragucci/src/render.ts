@@ -1602,10 +1602,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Only the jobs that run a stage send telemetry (plan, apply, drift), so only they get the headers secret; check and publish never see it.
   const headersEnv = headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {};
   // The service's key reaches the jobs that ask it: the plan jobs for the description check, the drift job
-  // when it attributes (plain roots only; a Terragrunt drift run does not attribute), and the version-bump job.
+  // when it attributes (plain roots and Terragrunt units alike), and the version-bump job.
   const decideSecret = input.decideTokenEnv ? { [input.decideTokenEnv]: `\${{ secrets.${input.decideTokenEnv} }}` } : {};
   const decideEnv = responds(input.respond, "description") ? decideSecret : {};
-  const driftDecideEnv = !tg && responseTo({ respond: input.respond }, "drift") === "attribute" ? decideSecret : {};
+  const driftDecideEnv = responseTo({ respond: input.respond }, "drift") === "attribute" ? decideSecret : {};
   const bumpOn = responds(input.respond, "version-bump");
   const installs = tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : [];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
@@ -1678,16 +1678,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
   const writesLedger = gate !== "never" || input.cost?.approveAbove === true || (forge === "github" && input.migrations === true);
   const what = tg ? "unit" : "root";
-  // The fmt commit: the binary's fmt, and in a Terragrunt repo terragrunt hcl fmt too. The drift pull request is for plain roots, where respond finds the roots itself.
+  // The fmt commit: the binary's fmt, and in a Terragrunt repo terragrunt hcl fmt too. The drift pull request, for roots and units:
+  // respond finds a Terragrunt repo's drifted units in the stage's report.
   const fmtOn = responds(input.respond, "fmt");
-  const driftPr = !tg && responds(input.respond, "drift") ? { tokenEnv } : undefined;
+  const driftPr = responds(input.respond, "drift") ? { tokenEnv } : undefined;
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
   const tipsOn = responds(input.respond, "tips");
   // An agent response writes its input file; the job keeps it as an artifact.
   const agentApply = responseTo({ respond: input.respond }, "apply-failed") === "agent";
   const agentDrift = !tg && responseTo({ respond: input.respond }, "drift") === "agent";
   // Attribution reads CloudTrail through the aws CLI, which the images do not carry.
-  const awsStep = !tg && responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
+  const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   if (forge === "gitlab") {

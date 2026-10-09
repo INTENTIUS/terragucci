@@ -41,6 +41,7 @@ import { migrationFiles } from "./migrate";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
 import { detectTerragrunt, discoverUnits, parallelism, pinnedTerragrunt, unitWaves } from "./terragrunt";
+import { unitTerragruntPin } from "./unit-pins";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -103,6 +104,8 @@ export interface InitResult {
 /** A root that pins its own version, and where. */
 export interface RootVersion {
   root: string;
+  /** The tool pinned, when it is not the binary: `terragrunt` for a unit's terragrunt_version_constraint. */
+  tool?: string;
   version: string;
   source: string;
 }
@@ -147,7 +150,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       throw new ConfigError(`found no Terragrunt units (${detectedTg.reason} turned Terragrunt mode on): no directory outside catalog/ holds a terragrunt.hcl`);
     }
     if (detectedTg.stacks.length > 0) {
-      notes.push(`explicit stacks (terragrunt.stack.hcl) are not supported, so ${detectedTg.stacks.join(", ")} is left out`);
+      notes.push(`explicit stacks: ${detectedTg.stacks.join(", ")}; terragrunt stack generate wrote their units, and every job generates them again before discovery`);
     }
     rootReasons = found.units.map((u) => ({ root: u.path, reason: found.source === "terragrunt find" ? "terragrunt find" : "terragrunt.hcl" }));
     try {
@@ -184,9 +187,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, detectBinary(repo, roots));
 
-  if (tgMode && versionGlobs(settings.version)) {
-    throw new ConfigError("version as a map pins plain roots by glob; a Terragrunt repo runs one release of its binary for every unit, so give version one release");
-  }
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || binary.value === "choudoufu" ? undefined : detectVersion(repo, roots);
   // The repo's own .opentofu-version or .terraform-version, for the binary it names.
@@ -201,12 +201,14 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
         ? { value: pinned, reason: "required_version" }
         : { value: (TOOL_VERSIONS as Record<string, string>)[binary.value] ?? "", reason: "the image" };
   // Roots that pin a version of their own, other than the one every job runs: each runs its own, installed in the job.
+  // A Terragrunt unit pins its binary the same ways, and its Terragrunt release with an exact terragrunt_version_constraint;
+  // the stage installs each in the job and runs the unit's wave as one run --all per pair of releases.
   const pins: RootVersion[] = [];
-  if (!tgMode) {
-    for (const root of roots) {
-      const pin = rootPin(repo, root, binary.value, settings.version);
-      if (pin && pin.version !== version.value) pins.push({ root, ...pin });
-    }
+  for (const root of roots) {
+    const pin = rootPin(repo, root, binary.value, settings.version);
+    if (pin && pin.version !== version.value) pins.push({ root, ...pin });
+    const tgPin = tgMode ? unitTerragruntPin(repo, root) : undefined;
+    if (tgPin && tgPin !== terragrunt?.version.value) pins.push({ root, tool: "terragrunt", version: tgPin, source: "terragrunt_version_constraint" });
   }
 
   const detectedForge = detectForge(repo);
@@ -237,16 +239,16 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   let ref: ImageRef;
   let tgInput: PipelineInput["terragrunt"];
   if (terragrunt) {
-    if (binary.value !== "tofu" && binary.value !== "terraform") {
-      throw new RenderError(`Terragrunt runs tofu or terraform in terragucci's pipeline; ${binary.value} is not supported with Terragrunt`);
-    }
-    ref = terragruntImage();
+    // Terragrunt calls the binary through TG_TF_PATH. tofu and terraform run in the Terragrunt image; choudoufu runs in its own
+    // image, which carries no Terragrunt, so the jobs install the Terragrunt release beside it.
+    ref = binary.value === "choudoufu" ? imageFor("choudoufu") : terragruntImage();
     tgInput = {
       version: terragrunt.version.value,
       parallelism: terragrunt.parallelism.value,
       exclude: settings.terragrunt?.exclude ?? [],
+      ...(detectedTg && detectTerragrunt(repo)!.stacks.length > 0 ? { stacks: true } : {}),
       ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
-      installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, TOOL_VERSIONS),
+      installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
     };
   } else {
     ref = imageFor(binary.value);
@@ -561,7 +563,7 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
         `parallelism ${tg.parallelism.value} (${tg.parallelism.reason}), forge ${r.forge.value} (${r.forge.reason})`
       : `found ${plural(r.roots.length, "root")} in ${plural(r.layers.length, "layer")}, ` +
         `${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`,
-    ...(r.pins.length > 0 ? [`${plural(r.pins.length, "root")} ${r.pins.length === 1 ? "pins its" : "pin their"} own version: ${r.pins.map((p) => `${p.root} ${r.binary.value} ${p.version} (${p.source})`).join(", ")}`] : []),
+    ...(r.pins.length > 0 ? [`${plural(r.pins.length, "root")} ${r.pins.length === 1 ? "pins its" : "pin their"} own version: ${r.pins.map((p) => `${p.root} ${p.tool ?? r.binary.value} ${p.version} (${p.source})`).join(", ")}`] : []),
     ...r.files.map((f) => `${verb(f.status)} ${relative(repo, f.path)}`),
     r.configNote,
     ...r.notes.map((n) => `note: ${n}`),

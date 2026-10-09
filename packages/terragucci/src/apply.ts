@@ -112,6 +112,7 @@ import { changesSomething, reviewDigest, reviewWave, type ReviewOutcome } from "
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
+import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion } from "./backend";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
@@ -127,7 +128,6 @@ export const waveGate = (wave: number): string => `wave-${wave}`;
 export const approveLine = (wave: number, digest: string, mode: Approval = "ledger"): string => approveCommand(wave, digest, mode === "sealed");
 
 /** The migration files in a repo's migrations/. */
-const listMigrationFiles = (repo: string): string[] => migrationFiles(repo);
 
 /** Exit codes of `stage tf-apply`. */
 export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
@@ -1008,15 +1008,11 @@ async function recordStateVersions(repo: string, applied: PlannedRoot[], limit: 
 async function migrationsFirst(repo: string, options: ApplyWaveOptions, w: WaveRun): Promise<number | undefined> {
   if (!existsSync(join(repo, MIGRATIONS_DIR))) return undefined;
   const env = options.env ?? process.env;
-  if (options.terragrunt) {
-    if (listMigrationFiles(repo).length === 0) return undefined;
-    console.log(`wave 1: ${MIGRATIONS_DIR}/ holds a migration, and migrations move the state of Terraform and OpenTofu roots, not Terragrunt units; nothing was applied`);
-    writeOutcome(options.env, "wave 1: migrations refuse Terragrunt units", w);
-    return EXIT.failed;
-  }
   const run = await runMigrations(repo, {
     binary: options.binary,
     env,
+    // A Terragrunt unit is prepared by Terragrunt, and its binary then runs where Terragrunt runs it.
+    ...(options.terragrunt ? { terragrunt: { ...(options.terragruntPath ? { path: options.terragruntPath } : {}), ...(options.terragruntExec ? { exec: options.terragruntExec } : {}) } } : {}),
     ...(options.now ? { now: options.now } : {}),
     ...(options.approval ? { approval: options.approval } : {}),
     ...(options.base ? { base: options.base } : {}),
@@ -1559,6 +1555,8 @@ interface PlannedUnit {
   policy?: ReportRootPolicy;
   /** The steps that ran in its directory. */
   steps?: ReportStep[];
+  /** What it ran, when the unit pins a release (unit-pins.ts). */
+  bin?: ReportRootBinary;
 }
 
 /** Whether a plan changes any of the root's outputs. */
@@ -1708,7 +1706,31 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   w.started = new Date().toISOString();
   w.roots = roots;
   const planDir = join(work, "plan");
-  const savedPlan = (unit: string): string => join(planDir, "plans", unit, "tfplan.tfplan");
+  // A unit that pins its binary or Terragrunt release runs it, installed here: one run --all per pair of releases, plan and apply alike.
+  const unitTools = new UnitBinaries(repo, binary, settings.version, terragrunt, env, options.installer);
+  const tools = new Map<string, UnitTools>();
+  const pinned = unitTools.pinsAny(roots);
+  {
+    const bad: string[] = [];
+    for (const u of roots) {
+      try {
+        const t = await unitTools.resolve(u);
+        tools.set(u, t);
+        if (t.report.pin || t.report.terragrunt?.pin) console.log(`${u}: ${binaryText(t.report)}`);
+      } catch (e) {
+        bad.push(u);
+        console.log(`FAILED ${u}: ${(e as Error).message}`);
+      }
+    }
+    if (bad.length > 0) {
+      w.failed = bad;
+      console.log(`${label}: a pinned release could not be installed, so nothing in it was planned or applied`);
+      return EXIT.failed;
+    }
+  }
+  const groups = groupUnits(roots, planDir, { terragrunt, binary }, pinned ? tools : undefined);
+  const unitDir = (unit: string): string => dirOf(groups, unit, planDir);
+  const savedPlan = (unit: string): string => join(unitDir(unit), "plans", unit, "tfplan.tfplan");
   // What each unit's steps came to, for the report; and the steps that hold the wave at its gate.
   const ran = new Map<string, ReportStep[]>();
   const holds = new Map<string, string[]>();
@@ -1741,7 +1763,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   }
   let result: Awaited<ReturnType<typeof planTerragruntWave>>;
   try {
-    result = await planTerragruntWave({ ...run, units: roots, workDir: planDir });
+    result = await planWaveGroups(groups, { dir: repo, exec });
   } catch (e) {
     if (e instanceof TerragruntMockRefusal) {
       for (const r of e.reads) console.log(`${r.unit} would plan on the mock_outputs of ${r.upstream}, which has no outputs`);
@@ -1753,24 +1775,26 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     return EXIT.failed;
   }
   if (result.code !== 0 && result.code !== 2) console.log(tail(result.log));
-  for (const [unit, t] of unitTimes(join(planDir, "plan-report.json"))) w.observer.unitTimed(unit, (t.end - t.start) / 1000, t);
+  for (const g of groups) for (const [unit, t] of unitTimes(join(g.workDir, "plan-report.json"))) w.observer.unitTimed(unit, (t.end - t.start) / 1000, t);
   const planned = new Map<string, PlannedUnit>();
   for (const part of result.parts) {
     const path = part.member.member;
     let plan: unknown;
     if (part.member.status !== "failed") {
       try {
-        plan = JSON.parse(readFileSync(join(planDir, "json", path, "tfplan.json"), "utf-8"));
+        plan = JSON.parse(readFileSync(join(unitDir(path), "json", path, "tfplan.json"), "utf-8"));
       } catch {
         plan = undefined;
       }
     }
+    const bin = tools.get(path)?.report;
     if (plan === undefined) {
-      planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it" });
+      planned.set(path, { root: path, changes: 0, destroys: 0, outputs: false, error: part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it", ...(bin ? { bin } : {}) });
       continue;
     }
     const changed = part.entries.filter((e) => e.action !== "no-op" && e.action !== "read");
     planned.set(path, {
+      ...(bin ? { bin } : {}),
       root: path,
       plan,
       member: { member: path, planDigest: part.member.planDigest ?? "" },
@@ -1812,7 +1836,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
       return EXIT.failed;
     }
     // The saved plans, and nothing planned anew.
-    const applied = await applyTerragruntWave({ ...run, units: changing.map((p) => p.root), workDir: planDir });
+    const applied = await applyWaveGroups(groups, changing.map((p) => p.root), { dir: repo, exec });
     console.log(applied.log.trim());
     const bad = applied.results.filter((r) => r.status !== "succeeded");
     // A unit with no change had nothing to apply; a changing one applied when Terragrunt says it succeeded.
