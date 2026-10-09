@@ -4,7 +4,7 @@ description: How a coding agent adopts terragucci in a repository, and the promp
 prompt: setup
 ---
 
-Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only three opt-in features [run a model](/terragucci/#opt-in-coding-agent).
+Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only four opt-in features [run a model](/terragucci/#opt-in-coding-agent).
 
 This page is for a coding agent setting terragucci up, and the person handing it the task. Run your coding agent in the repository and paste it the prompt above. The repository can hold Terraform, OpenTofu or Terragrunt roots.
 
@@ -35,12 +35,23 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 ## Rules for the agent
 
-- Run terragucci from the shell with `--json` and parse the envelope ([JSON output](/terragucci/reference/cli-json/)). Do not add an MCP server.
+- To set terragucci up or change its config, run it from the shell with `--json` and parse the envelope ([JSON output](/terragucci/reference/cli-json/)).
+- To read what terragucci already wrote, connect to `terragucci mcp` when the user has added it ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
 - Run `npx terragucci config check --json` after writing a config; it lists every problem at once.
 - Approvals belong to people. Print the `chant approve` command for a waiting wave but never run it. Over MCP or ACP, chant refuses to resolve a wave's gate.
 - [Responses to pipeline events](/terragucci/reference/responses/) need no model.
 - Credentials stay in the forge's secrets. The config names environment variables (`token_env`) and never holds a value.
 
+## MCP or `--json`
+
+| You want to | Use | Why |
+|---|---|---|
+| find the roots, binary and forge, write a config, check it, write the pipeline | the CLI with `--json` | these commands write files in the repo, and the envelope gives each finding and the exit code |
+| plan a root, or run a response in dry run | the CLI with `--json` | they run the binary in the checkout |
+| read the estate, a root's last apply, a run's report, the state versions, the audit trail or the DORA figures | `terragucci mcp` | it reads the reports bucket with the credentials in its own environment, and every tool only reads |
+| find a waiting wave and its digest | `terragucci mcp`'s `waiting` tool | it prints the `terragucci approve` command for a person to run |
+| approve, apply, override or merge | neither | these belong to a person at a shell; the server has no such tool, and chant refuses a gate approval made over MCP |
+
 ## Next
 
-After setup, see [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token), [change a pull request](/terragucci/guides/agent-change-a-pull-request/), and [review a pull request](/terragucci/guides/agent-review-a-pull-request/).
+After setup, see [read the estate over MCP](/terragucci/guides/agent-read-over-mcp/), [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token), [change a pull request](/terragucci/guides/agent-change-a-pull-request/), [fix drift](/terragucci/guides/agent-fix-drift/), and [review a pull request](/terragucci/guides/agent-review-a-pull-request/).

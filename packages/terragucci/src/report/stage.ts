@@ -14,10 +14,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { rootRoleEnv } from "../roles";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
-import { parseTerragruntReport } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
+import { parseTerragruntReport, terragruntEnv } from "@intentius/chant-lexicon-terraform/terragrunt/wave";
+import { terragruntRenderArgs } from "@intentius/chant-lexicon-terraform/terragrunt/mocks";
 import { describeTerragruntAffectedReason, findTerragruntAffected } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
 // Path rules only: no HCL parser, no compiler.
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
@@ -31,8 +33,9 @@ import { applyLayers, detectBinary, findRoots, globMatch, remoteStateReads, root
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
-import { detectTerragrunt, discoverUnits, generateStacks, refineWaves, unitWaves } from "../terragrunt";
+import { detectTerragrunt, discoverUnits, generateStacks, refineWaves, unitWaves, walkUnits } from "../terragrunt";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
+import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
 import { findIssue, ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
@@ -43,6 +46,7 @@ import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf, type Drifted } from "../respond/drift";
 import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./drift-schedule";
+import { DRIFT_ISSUE_FILE } from "../drift-agent";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
@@ -439,50 +443,116 @@ const tail = (s: string, n = 40): string => s.trim().split("\n").slice(-n).join(
 /** Why a unit is in the plan when there is no base to select against. With a base, affected selection (Terragrunt's git range and chant's supplements) gives each unit its own reason. */
 const SELECTED_ALL = "every unit: no base branch to compare against";
 
+/** One layer of a Terragrunt run: its wave as the apply jobs number it, the units it plans, and the dependents it previews. */
+interface UnitLayer {
+  number: number;
+  roots: string[];
+  preview: string[];
+}
+
+/** A unit not previewed, and the wave it would have planned in. */
+type Unpreviewed = PreviewBlock & { wave: number };
+
 /**
- * Plan a Terragrunt repo's units, one `terragrunt run --all` per wave, and
+ * Plan a Terragrunt repo's units, one `terragrunt run --all` per layer, and
  * read each unit's plan JSON and run-report row.
  *
- * A wave whose plans would read `mock_outputs` is refused by chant before
- * anything is planned. The refused units come out and the rest of the wave
+ * A unit that reads, through a `dependency` block, a unit planned in an
+ * earlier layer of the run plans on that plan's outputs (../tg-preview.ts),
+ * when every value it reads is known. One that reads a value known only once
+ * its upstream applies is not planned: it is named with the value and the
+ * wave that settles it. With `dependents: plan`, the dependents of the
+ * changed units are previewed the same way, in their own layers, marked
+ * provisional, so no digest or group of real plans takes them.
+ *
+ * A layer whose plans would read `mock_outputs` is refused by chant before
+ * anything is planned. The refused units come out and the rest of the layer
  * plans. A unit whose upstream has no outputs yet waits: it plans in a later
- * wave, after the upstream applied. With `dependents: plan` it is also
- * previewed here, marked provisional, so no digest or group of real plans
- * takes it. A unit whose block always reads its mocks (`skip_outputs`,
- * `enabled = false`) fails.
+ * wave, after the upstream applied, and is never previewed on its mocks. A
+ * unit whose block always reads its mocks (`skip_outputs`, `enabled = false`)
+ * fails.
  */
 async function planUnits(
   repo: string,
-  waves: string[][],
+  layers: UnitLayer[],
   binary: string,
   work: string,
-  options: StageOptions & { dependents?: "follow" | "plan"; selection: (unit: string) => string; preview: string[]; drift?: boolean; observer?: StageObserver; steps?: StepSettings[]; tools?: UnitBinaries },
+  options: StageOptions & { selection: (unit: string) => string; drift?: boolean; observer?: StageObserver; graph: TerragruntUnit[]; waveOf: ReadonlyMap<string, number>; steps?: StepSettings[]; tools?: UnitBinaries },
   log: (line: string) => void,
-): Promise<{ inputs: RootInput[]; plans: Map<string, { text?: string; json?: string }>; redacted: number; mockReads: ReportMockRead[]; waiting: string[]; names: Map<string, Map<string, string>>; found: Map<string, Drifted[]>; heldBySteps: Set<string> }> {
-  const drift = options.drift === true;
-  const names = new Map<string, Map<string, string>>();
+): Promise<{
+  inputs: RootInput[];
+  plans: Map<string, { text?: string; json?: string }>;
+  redacted: number;
+  mockReads: ReportMockRead[];
+  waiting: string[];
+  names: Map<string, Map<string, string>>;
+  unpreviewed: Map<string, Unpreviewed>;
+  /** Per wave, the waves whose planned outputs its units read. */
+  waveReads: Map<number, number[]>;
   /** tf-drift: what each unit's refresh found, unredacted, for attribution. */
+  found: Map<string, Drifted[]>;
+  /** Units a step after plan with `on_failure: approve` holds at the gate. */
+  heldBySteps: Set<string>;
+}> {
+  const drift = options.drift === true;
+  const env = options.env ?? process.env;
+  const names = new Map<string, Map<string, string>>();
   const found = new Map<string, Drifted[]>();
   const planner = plannerForBinary(binary);
-  const inputs: RootInput[] = [];
+  let inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
   const mockReads: ReportMockRead[] = [];
   let redacted = 0;
-  const terragrunt = options.terragruntPath ?? (options.env ?? process.env).TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
+  const terragrunt = options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
   // A drift plan takes no lock. A plan waits for one as long as a plain root's apply-time plan does.
-  const exec = drift ? refreshOnlyExec(options.terragruntExec) : lockTimeoutExec(options.terragruntExec, options.env ?? process.env);
-  /** One group's run: Terragrunt calls the group's binary through a wrapper that sends each unit's plan spans to the stage. */
+  const exec = drift ? refreshOnlyExec(options.terragruntExec) : lockTimeoutExec(options.terragruntExec, env);
+  const edges = new Map(options.graph.map((u) => [u.path, u.dependencies]));
+  const includes = new Map(options.graph.map((u) => [u.path, [...Object.values(u.include ?? {}), ...(u.reading ?? [])]]));
+  /** Every unit this run planned or meant to: its plan, when it has one, and its wave. */
+  const run = new Map<string, RunUpstream>();
+  /** Where each unit's plan ran, as the wrapper recorded it. */
+  const dirs = new Map<string, string>();
+  /** The upstreams whose planned outputs a later layer reads. */
+  const served = new Map<string, ServedUnit>();
+  const unpreviewed = new Map<string, Unpreviewed>();
+  const waveReads = new Map<number, number[]>();
+  const rec = join(work, "preview");
+  mkdirSync(join(rec, "out"), { recursive: true });
+
+  /** The runner with `TG_TF_PATH` pointed at a wrapper that hands over the served upstreams' planned outputs (drift: the runner as it is). */
+  const servingExec = (workDir: string): TerragruntExec => {
+    if (drift) return exec;
+    mkdirSync(workDir, { recursive: true });
+    const plansDir = join(resolve(workDir), "plans");
+    let real = plansDir;
+    try {
+      real = join(realpathSync(workDir), "plans");
+    } catch {
+      // The path as given is matched alone.
+    }
+    const dir = `${resolve(workDir)}.serve`;
+    mkdirSync(dir, { recursive: true });
+    const wrapper = join(dir, basename(binary) || "tofu");
+    writeFileSync(wrapper, servingWrapper(binary, [plansDir, real], rec, [...served.values()]));
+    chmodSync(wrapper, 0o755);
+    return (file, args, opts) => {
+      // The plan itself, apart from the mock check's render and output calls before it.
+      const phase = args.includes("--all") && args[args.indexOf("--") + 1] === "plan" ? "plan" : "check";
+      return exec(file, args, { ...opts, env: { ...opts.env, TG_TF_PATH: wrapper, TERRAGUCCI_TG_NEXT: opts.env.TG_TF_PATH ?? binary, [PHASE_ENV]: phase } });
+    };
+  };
+  /** One group's run: Terragrunt calls the group's binary through the wrappers, the spans one sending each unit's plan spans to the stage. */
   const planGroup: PlanWave = (input) => {
-    const wrapped = options.observer ? unitSpansExec(exec, input.binary ?? binary, [...input.units], input.workDir, options.observer, options.env ?? process.env) : exec;
-    return planTerragruntWave({ ...input, ...(wrapped ? { exec: wrapped } : {}) });
+    const inner = servingExec(input.workDir);
+    const wrapped = options.observer ? (unitSpansExec(inner, input.binary ?? binary, [...input.units], input.workDir, options.observer, env) ?? inner) : inner;
+    return planTerragruntWave({ ...input, exec: wrapped });
   };
   // Units that pin a binary or Terragrunt release of their own run it, installed once per version; one run --all per pair of releases.
   const tools = new Map<string, UnitTools>();
   const pinFailed = new Map<string, string>();
-  const everyUnit = [...new Set([...waves.flat(), ...options.preview])];
   // Every unit's releases go on its row of the report; only a unit that pins one installs anything.
   if (options.tools) {
-    for (const u of everyUnit) {
+    for (const u of [...new Set(layers.flatMap((l) => [...l.roots, ...l.preview]))]) {
       try {
         const t = await options.tools.resolve(u);
         tools.set(u, t);
@@ -492,21 +562,48 @@ async function planUnits(
       }
     }
   }
-  const groupsOf = (units: readonly string[], workDir: string): UnitGroup[] => groupUnits(units, workDir, { terragrunt, binary }, options.tools?.pinsAny(units) ? tools : undefined);
-  const planGroups = (units: string[], workDir: string, provisional = false): Promise<{ wave: TerragruntWavePlan; groups: UnitGroup[] }> => {
-    const groups = groupsOf(units, workDir);
-    return planWaveGroups(groups, { dir: repo, ...(provisional ? { provisional: true } : {}) }, planGroup).then((wave) => ({ wave, groups }));
+  const planGroups = async (units: string[], workDir: string): Promise<{ wave: TerragruntWavePlan; groups: UnitGroup[] }> => {
+    const groups = groupUnits(units, workDir, { terragrunt, binary }, options.tools?.pinsAny(units) ? tools : undefined);
+    return { wave: await planWaveGroups(groups, { dir: repo }, planGroup), groups };
   };
 
-  const read = ({ wave, groups }: { wave: TerragruntWavePlan; groups: UnitGroup[] }, provisional: boolean): void => {
+  /** Hand an upstream's planned outputs to the layers after it: its working directory, and the strings of its backend. */
+  const serve = async (up: string): Promise<ServedUnit> => {
+    const outputs = join(rec, "out", `${served.size + 1}.json`);
+    writeFileSync(outputs, JSON.stringify(servedOutputs(plannedOutputs(run.get(up)!.plan)!.outputs)) + "\n");
+    let backend: string[] = [];
+    const r = await servingExec(join(work, `render-${served.size + 1}`))(terragrunt, terragruntRenderArgs(up), { cwd: repo, env: terragruntEnv(binary) });
+    try {
+      if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop() ?? `exit ${r.code}`);
+      backend = backendStrings(JSON.parse(r.stdout));
+    } catch (e) {
+      log(`${up}: terragrunt render --json did not say where its state is (${(e as Error).message}), so only its own working directory answers with its planned outputs`);
+    }
+    const dir = dirs.get(up);
+    return { unit: up, ...(dir ? { dir } : {}), outputs, backend };
+  };
+
+  /** Take a unit out of the run's plans: it is not previewed, for `why`. */
+  const unpreview = (unit: string, wave: number, block: PreviewBlock): void => {
+    inputs = inputs.filter((i) => i.path !== unit);
+    plans.delete(unit);
+    run.set(unit, { wave });
+    unpreviewed.set(unit, { ...block, wave });
+    log(`${unit}: not previewed: ${block.why}`);
+  };
+
+  const read = ({ wave, groups }: { wave: TerragruntWavePlan; groups: UnitGroup[] }, number: number, provisional: ReadonlySet<string>, reads: ReadonlyMap<string, ReportRead[]>): void => {
     if (wave.code !== 0 && wave.code !== 2) log(tail(wave.log));
     if (options.observer) for (const g of groups) for (const [unit, t] of unitTimes(join(g.workDir, "plan-report.json"))) options.observer.unitTimed(unit, (t.end - t.start) / 1000, t);
     const results = new Map(wave.results.map((r) => [r.unit, r]));
     for (const part of wave.parts) {
       const path = part.member.member;
       const result = results.get(path);
-      const unit = { stack: stackOfUnit(path), selection: options.selection(path), provisional, run_result: result?.result ?? "not run" };
+      const preview = provisional.has(path);
+      const unit = { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: result?.result ?? "not run" };
       const file = join(dirOf(groups, path, groups[0]!.workDir), "json", path, "tfplan.json");
+      const bin = tools.get(path)?.report;
+      const read = reads.get(path) ?? [];
       let plan: unknown;
       if (part.member.status !== "failed" && existsSync(file)) {
         try {
@@ -515,13 +612,22 @@ async function planUnits(
           plan = undefined;
         }
       }
-      const bin = tools.get(path)?.report;
       if (plan === undefined) {
         const error = part.member.error ?? "Terragrunt reported the unit planned but wrote no plan JSON for it";
+        // An output the planned outputs left out: the unit read a value known only once its upstream applies.
+        const missing = read.length > 0 ? missingOutput(error) : undefined;
+        if (missing) {
+          const ups = read.map((r) => r.upstream);
+          const settles = wavesOf(options.waveOf, ups, number);
+          unpreview(path, number, { after: ups, why: `reads ${"`"}${missing}${"`"} of ${ups.join(", ")}, unknown until wave ${settles.join(", ") || number - 1} applies` });
+          continue;
+        }
+        run.set(path, { wave: number });
         inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: unit, ...(bin ? { binary: bin } : {}) });
         log(`${path}: ${error.split("\n")[0]}`);
         continue;
       }
+      if (!drift) run.set(path, { plan, wave: number });
       const safe = redactPlan(plan);
       redacted += safe.values;
       plans.set(path, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
@@ -529,12 +635,13 @@ async function planUnits(
         names.set(path, driftNames(plan));
         if (driftCount(plan) > 0) found.set(path, driftOf(plan));
       }
-      inputs.push({ path, plan: drift ? driftPlan(plan) : plan, planner, files: { json: planFiles(path).json }, preventDestroy: new Set(), terragrunt: unit, ...(bin ? { binary: bin } : {}) });
-      log(drift ? `${path}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${path}: ${provisional ? "previewed (provisional)" : "planned"}`);
+      inputs.push({ path, plan: drift ? driftPlan(plan) : plan, planner, files: { json: planFiles(path).json }, preventDestroy: new Set(), terragrunt: unit, ...(read.length ? { reads: read } : {}), ...(bin ? { binary: bin } : {}) });
+      for (const r of read) log(plannedReadLine(path, r));
+      log(drift ? `${path}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${path}: ${preview ? "previewed (provisional)" : "planned"}`);
     }
   };
 
-  // steps: each moment once for a wave's run --all, in the directory of every unit a step's globs match. A provisional preview runs none.
+  // steps: each moment once for a layer's run --all, in the directory of every unit a step's globs match. A provisional preview runs none.
   const steps = options.steps ?? [];
   const planStep = drift ? "drift" : "plan";
   const heldBySteps = new Set<string>();
@@ -543,7 +650,7 @@ async function planUnits(
     const failed = new Map<string, string>();
     if (steps.length === 0) return failed;
     const outcomes = await runUnitSteps(steps, when, units, {
-      repo, stage: drift ? "tf-drift" : "tf-plan", env: options.env ?? process.env, log,
+      repo, stage: drift ? "tf-drift" : "tf-plan", env, log,
       ...(groups ? { planFile: (u: string) => join(dirOf(groups, u, groups[0]!.workDir), "plans", u, "tfplan.tfplan") } : {}),
     });
     for (const [unit, o] of outcomes) {
@@ -553,38 +660,63 @@ async function planUnits(
     }
     return failed;
   };
-  /** A unit a step failed: no plan, the step's error. */
-  const stepFailed = (path: string, error: string, when: string): void => {
-    inputs.push({ path, planner, error, preventDestroy: new Set(), steps: ran.get(path) ?? [], terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: false, run_result: "not run" } });
-    log(`${path}: a step ${when} failed`);
+  /** A unit that did not plan for a reason of its own (a step, a pin): no plan, the error. */
+  const unitFailed = (path: string, error: string, number: number, preview: boolean): void => {
+    run.set(path, { wave: number });
+    inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
   };
 
   const allWaiting: string[] = [];
-  for (const [i, wave] of waves.entries()) {
-    let units = [...wave];
+  for (const layer of layers) {
+    const provisional = new Set(layer.preview);
+    const reads = new Map<string, ReportRead[]>();
+    /** The upstreams each unit plans on the planned outputs of. */
+    const needs = new Map<string, string[]>();
+    let units: string[] = [];
+    for (const u of [...layer.roots, ...layer.preview]) {
+      if (drift) {
+        units.push(u);
+        continue;
+      }
+      const p = previewReads(u, edges.get(u) ?? [], unitTexts(repo, u, includes.get(u)), run);
+      if ("why" in p) {
+        unpreview(u, layer.number, p);
+        continue;
+      }
+      units.push(u);
+      if (p.reads.length > 0) {
+        reads.set(u, p.reads);
+        needs.set(u, p.served);
+      }
+    }
+    for (const up of new Set([...needs.values()].flat())) if (!served.has(up)) served.set(up, await serve(up));
+    const ups = [...new Set([...reads.values()].flat().map((r) => r.upstream))];
+    if (ups.length > 0) waveReads.set(layer.number, wavesOf(options.waveOf, ups, layer.number));
+    writeFileSync(join(rec, SERVED_FILE), "");
     const waiting: string[] = [];
-    // A unit whose pinned release could not be installed does not plan; the rest of the wave does.
+    // A unit whose pinned release could not be installed does not plan; the rest of the layer does.
     for (const u of units.filter((x) => pinFailed.has(x))) {
-      inputs.push({ path: u, planner, error: pinFailed.get(u)!, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: options.selection(u), provisional: false, run_result: "not run" } });
+      unitFailed(u, pinFailed.get(u)!, layer.number, provisional.has(u));
       log(`${u}: ${pinFailed.get(u)!.split("\n")[0]}`);
     }
     units = units.filter((x) => !pinFailed.has(x));
-    // Before init and before the plan: a unit whose step fails does not plan, and the rest of the wave does.
+    // Before init and before the plan, for the layer's real units: a unit whose step fails does not plan, and the rest of the layer does.
     for (const when of ["before-init", `before-${planStep}`] as StepWhen[]) {
-      for (const [path, error] of await unitSteps(when, units)) {
-        stepFailed(path, error, when.replace("-", " "));
+      for (const [path, error] of await unitSteps(when, units.filter((u) => !provisional.has(u)))) {
+        unitFailed(path, error, layer.number, false);
+        log(`${path}: a step ${when.replace("-", " ")} failed`);
         units = units.filter((u) => u !== path);
       }
     }
     // Each refusal names every read of the units it checked, so one pass takes them all out.
     for (let attempt = 0; units.length > 0 && attempt < 2; attempt++) {
-      const workDir = join(work, `wave-${i + 1}${attempt ? `-${attempt}` : ""}`);
+      const workDir = join(work, `wave-${layer.number}${attempt ? `-${attempt}` : ""}`);
       try {
         const from = inputs.length;
         const planned = await planGroups(units, workDir);
-        read(planned, false);
+        read(planned, layer.number, provisional, reads);
         // After the plan, with each unit's saved plan: a unit whose step fails keeps its plan in the report and fails.
-        const after = await unitSteps(`after-${planStep}`, units.filter((u) => inputs.slice(from).some((r) => r.path === u && r.plan !== undefined)), planned.groups);
+        const after = await unitSteps(`after-${planStep}`, units.filter((u) => !provisional.has(u) && inputs.slice(from).some((r) => r.path === u && r.plan !== undefined)), planned.groups);
         for (let k = from; k < inputs.length; k++) {
           const r = inputs[k];
           const error = after.get(r.path);
@@ -596,33 +728,44 @@ async function planUnits(
         if (!(e instanceof TerragruntMockRefusal)) {
           const error = (e as Error).message;
           for (const path of units) {
-            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: false, run_result: "not run" } });
+            run.set(path, { wave: layer.number });
+            inputs.push({ path, planner, error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(path), selection: options.selection(path), provisional: provisional.has(path), run_result: "not run" } });
           }
-          log(`wave ${i + 1}: ${error}`);
+          log(`wave ${layer.number}: ${error}`);
           units = [];
           break;
         }
-        log(`wave ${i + 1}: ${e.message}`);
+        log(`wave ${layer.number}: ${e.message}`);
         mockReads.push(...e.reads.map((r) => ({ unit: r.unit, dependency: r.dependency, upstream: r.upstream, reason: r.reason, ...(r.keys ? { keys: r.keys } : {}) })));
         // Each refused unit waits; mock_reads says why, and which upstream it waits for.
         const refused = new Set(e.reads.map((r) => r.unit));
+        for (const u of refused) run.set(u, { wave: layer.number });
         waiting.push(...refused);
         units = units.filter((u) => !refused.has(u));
       }
     }
     allWaiting.push(...waiting);
-  }
-  // Dependents of changed units, and units waiting for an upstream, previewed when the project asks.
-  const preview = options.dependents === "plan" ? [...new Set([...options.preview, ...allWaiting])].filter((u) => !pinFailed.has(u)).sort() : [];
-  if (preview.length > 0) {
-    const workDir = join(work, "provisional");
-    try {
-      read(await planGroups(preview, workDir, true), true);
-    } catch (e) {
-      log(`no provisional preview: ${(e as Error).message}`);
+    if (drift) continue;
+    for (const [u, d] of readRecord(readText(join(rec, DIRS_FILE)))) dirs.set(u, d[0]!);
+    // A plan that read an upstream some other way than through the wrapper (straight from its state) is not on its planned outputs.
+    const answered = readServed(readText(join(rec, SERVED_FILE)));
+    for (const [u, ups] of needs) {
+      const missed = ups.filter((up) => !answered.get(up)?.has("plan"));
+      if (missed.length > 0 && run.get(u)?.plan !== undefined) {
+        unpreview(u, layer.number, { after: missed, why: `Terragrunt did not ask the binary for the outputs of ${missed.join(", ")}, so its plan is not on their planned outputs` });
+      }
     }
   }
-  return { inputs, plans, redacted, mockReads, waiting: allWaiting, names, found, heldBySteps };
+  return { inputs, plans, redacted, mockReads, waiting: allWaiting, names, unpreviewed, waveReads, found, heldBySteps };
+}
+
+/** A file's text, or nothing when there is none. */
+function readText(file: string): string {
+  try {
+    return readFileSync(file, "utf-8");
+  } catch {
+    return "";
+  }
 }
 
 /** `2026-10-05T10:00:01.123456789Z` as epoch milliseconds; the fraction past milliseconds is dropped. */
@@ -878,14 +1021,16 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const timing = observer.root(root);
     let bin = binaries.expected(root);
     let path = binary;
+    // The root's own role, when `oidc.roles` names one (../roles.ts).
+    const rootEnv = rootRoleEnv(binEnv, root);
     const run = (...args: string[]) =>
-      observer.commandAsync(timing, path, args, binEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+      observer.commandAsync(timing, path, args, rootEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
     const ran: ReportStep[] = [];
     const holds: string[] = [];
     /** Run one moment's steps; the error when one failed the root. */
     const step = async (when: StepWhen, file?: string): Promise<string | undefined> => {
       if (steps.length === 0) return undefined;
-      const o = await runSteps(steps, when, { repo, root, stage: drift ? "tf-drift" : "tf-plan", env: binEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
+      const o = await runSteps(steps, when, { repo, root, stage: drift ? "tf-drift" : "tf-plan", env: rootEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
       ran.push(...o.runs);
       holds.push(...o.holds);
       return o.error;
@@ -1011,7 +1156,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       await eachLimited(ups, limit.value, async (up) => {
         // The upstream's own binary reads its state; the job's when its pin cannot be installed, and its own plan says why.
         const upBinary = await binaries.resolve(up).then((b) => b.path, () => binary);
-        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), binEnv, initTurn));
+        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), rootRoleEnv(binEnv, up), initTurn));
       });
       const first = index;
       index += layer.length;
@@ -1078,6 +1223,8 @@ interface Planned {
   notices?: string[];
   /** tf-plan of plain roots: what the change reaches through the roots that read the changed roots' state. */
   blast?: ReportBlast;
+  /** A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads. */
+  dependencies?: ReadonlyMap<string, string[]>;
 }
 
 /**
@@ -1117,6 +1264,9 @@ async function runTerragruntStage(
   let waves = options.layers ?? unitWaves(units!, canary);
   // The pipeline's waves split by the edges terragrunt find gives now, as the apply jobs split them.
   if (options.layers && discovered) waves = refineWaves(waves, units!);
+  // The waves as the apply jobs number them, whatever this run selects of them.
+  const full = waves;
+  const waveOf = new Map(full.flatMap((w, i) => w.map((u) => [u, i + 1] as const)));
   waves = waves.map((w) => (options.root ? w.filter((u) => globMatch(options.root!, u)) : w)).filter((w) => w.length > 0);
   if (waves.length === 0) throw new ConfigError(options.root ? `no unit matches ${options.root}` : "found no Terragrunt units");
 
@@ -1135,7 +1285,7 @@ async function runTerragruntStage(
       for (const d of dependents) {
         const after = changed.filter((c) => terragruntDependents(units!, [c]).includes(d));
         reasons.set(d, `depends on ${after.join(", ")}, which changed`);
-        deferred.push({ unit: d, after, why: "depends on a changed unit", previewed: settings.terragrunt?.dependents === "plan" });
+        deferred.push({ unit: d, after, why: "depends on a changed unit", previewed: false });
       }
       preview = dependents;
       const selected = new Set(changed);
@@ -1172,15 +1322,32 @@ async function runTerragruntStage(
   // Each unit's plan sends its spans here through the TG_TF_PATH wrapper, for its per-resource timings.
   await observer.collectSpans(log);
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
+  // Each layer: the units it plans, and with dependents: plan the dependents it previews.
+  const selected = new Set(waves.flat());
+  const previewing = new Set(!drift && settings.terragrunt?.dependents === "plan" ? preview : []);
+  const layers = full
+    .map((w, i) => ({ number: i + 1, roots: w.filter((u) => selected.has(u)), preview: w.filter((u) => previewing.has(u)) }))
+    .filter((l) => l.roots.length > 0 || l.preview.length > 0);
   try {
     const terragrunt = options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
     const tools = new UnitBinaries(repo, binary, settings.version, terragrunt, env, options.installer);
-    const planned = await planUnits(repo, waves, binary, work, {
-      ...options, env, drift, dependents: drift ? "follow" : settings.terragrunt?.dependents, preview, observer, steps, tools,
+    const planned = await planUnits(repo, layers, binary, work, {
+      ...options, env, drift, observer, waveOf, steps, tools,
+      // The edges a preview follows: discovery's, else the plain paths the units' files name.
+      graph: units ?? walkUnits(repo, settings.terragrunt?.exclude),
       selection: (u) => reasons.get(u) ?? everyUnit,
     }, log);
     const { inputs, plans, redacted, mockReads } = planned;
     inputs.push(...refusedUnits);
+    /** Say why a unit waits; a dependent already listed gets the reason added. */
+    const defer = (unit: string, after: string[], why: string): void => {
+      const known = deferred.find((d) => d.unit === unit);
+      if (!known) deferred.push({ unit, after, why, previewed: false });
+      else {
+        known.after = [...new Set([...known.after, ...after])].sort();
+        known.why = `${known.why}; ${why}`;
+      }
+    };
     for (const u of planned.waiting) {
       if (drift) {
         // A refresh needs the upstream's real outputs; with none, the unit cannot be checked.
@@ -1188,8 +1355,7 @@ async function runTerragruntStage(
         inputs.push({ path: u, planner: plannerForBinary(binary), error, preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(u), selection: everyUnit, provisional: false, run_result: "not run" } });
         continue;
       }
-      const after = [...new Set(mockReads.filter((r) => r.unit === u).map((r) => r.upstream))].sort();
-      deferred.push({ unit: u, after, why: "would read mock_outputs", previewed: settings.terragrunt?.dependents === "plan" });
+      defer(u, [...new Set(mockReads.filter((r) => r.unit === u).map((r) => r.upstream))].sort(), "would read mock_outputs");
     }
     // Drift names who changed what when the project asks for it, for units as for plain roots: the same audit log and decision.
     const attributing = drift && responseTo(settings, "drift") === "attribute";
@@ -1204,23 +1370,33 @@ async function runTerragruntStage(
         }
       }
     }
+    for (const [u, b] of planned.unpreviewed) defer(u, [...b.after].sort(), b.why);
+    const previewed = new Set(inputs.filter((r) => r.terragrunt?.provisional && r.plan !== undefined).map((r) => r.path));
+    for (const d of deferred) d.previewed = previewed.has(d.unit);
     const all = (units ?? []).map((u) => u.path);
     const plannedPaths = inputs.map((r) => r.path);
     // A wave covers what it planned for real: no unit that waits for its upstream, and no preview.
     const real = new Set(inputs.filter((r) => !r.terragrunt?.provisional).map((r) => r.path));
+    // Each unit's dependencies, from discovery or, when the pipeline named the waves, its terragrunt.hcl.
+    const edges = units ?? walkUnits(repo, settings.terragrunt?.exclude);
     return await finish(repo, settings, options, env, log, {
       binary, started, inputs, plans, redacted, all: all.length ? all : plannedPaths, roots: plannedPaths, observer, mockReads,
+      dependencies: new Map(edges.map((u) => [u.path, u.dependencies])),
       ...(drift ? { stage: "tf-drift" as const, names: planned.names } : {}),
       ...(attributing ? { attributions } : {}),
       deferred: deferred.sort((a, b) => (a.unit < b.unit ? -1 : 1)),
       ...(existsSync(join(repo, "root.hcl")) ? { configDirs: ["."] } : {}),
-      // Drift is not applied, so there are no waves to gate.
-      waves: drift
-        ? []
-        : waves.map((w) => w.filter((u) => real.has(u))).filter((w) => w.length > 0).map((roots, i) => {
+      // Drift is not applied, so there are no waves to gate. Each wave keeps the number its apply job has.
+      waves: drift ? [] : layers
+        .map((l) => {
+          // A unit of the wave not previewed plans once the waves it reads apply: so does the wave, and no review binds it now.
+          const replansAfter = wavesOf(waveOf, l.roots.flatMap((u) => planned.unpreviewed.get(u)?.after ?? []), l.number);
+          const reads = planned.waveReads.get(l.number) ?? [];
+          const roots = l.roots.filter((u) => real.has(u));
           const holding = roots.filter((u) => planned.heldBySteps.has(u));
-          return { number: i + 1, roots, ...(holding.length ? { heldBySteps: holding } : {}) };
-        }),
+          return { number: l.number, roots, ...(reads.length ? { reads } : {}), ...(replansAfter.length ? { replansAfter } : {}), ...(holding.length ? { heldBySteps: holding } : {}) };
+        })
+        .filter((w) => w.roots.length > 0),
     });
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -1353,9 +1529,9 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast, dependencies }: Planned,
 ): Promise<StageResult> {
-  let inputs = planned;
+  let inputs = dependencies ? planned.map((i) => ({ ...i, ...(dependencies.get(i.path)?.length ? { dependencies: dependencies.get(i.path) } : {}) })) : planned;
   let policy: ReportPolicy | undefined;
   const drift = stage === "tf-drift";
   // cost: the estimator over each root's stored plan, before the policy, which reads the figures; a failed estimate is named and fails nothing.
@@ -1509,6 +1685,11 @@ async function finish(
     }
   }
   observer.pins = modulePins(inputs);
+  if (drift) {
+    // What happened to the issue, for the jobs after this one (agent.drift runs when this run opened it).
+    const kept = issue && "issue" in issue ? { action: issue.action, number: issue.issue.number, url: issue.issue.url } : { action: "none" as const };
+    writeFileSync(join(dir, DRIFT_ISSUE_FILE), JSON.stringify(kept) + "\n");
+  }
   if (drift && issue && "issue" in issue && issue.action !== "closed") {
     // A newly opened issue was opened by this run, so its drift starts now.
     observer.drift = { since: issue.action === "opened" ? report.run.finished : (issue.issue.created ?? report.run.finished) };

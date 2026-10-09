@@ -123,3 +123,64 @@ export function agentCommentJobs(forge: Exclude<ForgeName, "gitlab">, image: str
   } as never);
   return [["agent", run as never], ["agent-push", push as never]];
 }
+
+/**
+ * `agent.drift`'s two jobs, `drift-agent` and `drift-agent-push`, after the
+ * drift job (see drift-agent.ts). They run when the drift job opened the
+ * drift issue, on the commit it planned, from its report artifact.
+ */
+export function driftAgentJobs(forge: Exclude<ForgeName, "gitlab">, image: string, agent: AgentCommentInput, reportArtifact: string): [string, never][] {
+  const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
+  const download = forge === "forgejo" ? "actions/download-artifact@v3" : "actions/download-artifact@v4";
+  const secret = (name: string): string => `\${{ secrets.${name} }}`;
+  const opened = "needs.drift.outputs.agent == '1'";
+  // The agent runs here: a read-only job token, which its step runs without; no oidc and no role, whatever the drift job holds.
+  const run = new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    needs: "drift",
+    if: opened,
+    permissions: { contents: "read" },
+    "timeout-minutes": agent.timeout,
+    concurrency: { group: "terragucci-drift-agent-${{ github.repository }}", "cancel-in-progress": false },
+    steps: [
+      // The commit the drift job planned; the checkout keeps no credentials for the agent to find.
+      new Step({ name: "Check out the commit the drift job planned", uses: "actions/checkout@v4", with: { ref: "${{ github.sha }}", "persist-credentials": false } }),
+      new Step({ name: "Fetch the drift report", uses: download, with: { name: reportArtifact, path: `${AGENT_DIR}/drift` } }),
+      new Step({ name: "Write the agent's prompt from the drift report", shell: "bash", run: driftPromptScript(agent.policyDir) }),
+      new Step({
+        name: "Run the agent on the drift",
+        shell: "bash",
+        env: { TG_SHA: "${{ github.sha }}", TG_AGENT_MAX_TURNS: String(agent.maxTurns), [agent.keySecret]: secret(agent.keySecret) },
+        run: agentRunScript(agent.command),
+      }),
+      new Step({ name: "Keep the agent's change", uses: upload, with: { name: "terragucci-drift-agent", path: `${AGENT_CHANGE_DIR}/`, "if-no-files-found": "error" } }),
+    ],
+  } as never);
+  // A fresh container that never ran the agent: it holds the agent's token, applies the patch, refuses a forbidden path and opens the pull request.
+  const push = new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    needs: ["drift", "drift-agent"],
+    if: opened,
+    permissions: { contents: "read" },
+    concurrency: { group: "terragucci-drift-agent-push-${{ github.repository }}", "cancel-in-progress": false },
+    env: { TG_TOKEN: secret(agent.tokenSecret), TG_SHA: "${{ github.sha }}", TG_ISSUE: "${{ needs.drift.outputs.issue }}" },
+    steps: [
+      new Step({ name: "Check out the commit the drift job planned", uses: "actions/checkout@v4", with: { ref: "${{ github.sha }}", "persist-credentials": false } }),
+      new Step({ name: "Fetch the agent's change", uses: download, with: { name: "terragucci-drift-agent", path: AGENT_CHANGE_DIR } }),
+      new Step({ name: "Open a pull request with the change, unless it touches CI, terragucci.yml or the policy", shell: "bash", run: driftPushScript(forge, agent.policyDir) }),
+    ],
+  } as never);
+  return [["drift-agent", run as never], ["drift-agent-push", push as never]];
+}
+
+/** The drift agent's first step: the prompt, from the drift job's report and its issue.json. */
+export function driftPromptScript(policyDir: string): string {
+  return ["set -uo pipefail", `terragucci drift-agent prompt --report ${AGENT_DIR}/drift --out ${AGENT_DIR}/prompt.md --policy-dir ${sh(policyDir)}`].join("\n");
+}
+
+/** The push job's step: apply, guard, commit, push, open the pull request and say so on the issue (`pushDriftChange`). */
+export function driftPushScript(forge: Exclude<ForgeName, "gitlab">, policyDir: string): string {
+  return ["set -uo pipefail", `terragucci drift-agent push --forge ${forge} --change ${AGENT_CHANGE_DIR} --policy-dir ${sh(policyDir)}`].join("\n");
+}

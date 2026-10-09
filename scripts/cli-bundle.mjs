@@ -22,6 +22,18 @@ const gzippedJson = {
   },
 };
 
+// The MCP SDK's server imports Ajv to validate what it asks a client to fill
+// in (elicitation). `terragucci mcp` asks for nothing, so the SDK's validator
+// module resolves to src/mcp-validator.ts, which refuses any schema, and Ajv
+// stays out of the bundle (terragucci#657).
+const noAjv = (pkgDir) => ({
+  name: "mcp-no-ajv",
+  setup(b) {
+    b.onResolve({ filter: /[\\/]validation[\\/]ajv-provider\.js$/ }, (args) =>
+      /[\\/]@modelcontextprotocol[\\/]sdk[\\/]/.test(args.importer) ? { path: join(pkgDir, "src/mcp-validator.ts") } : undefined);
+  },
+});
+
 /** The options for the bundle of the package at pkgDir; `plugins` run before the shipped ones. */
 export const bundleOptions = (pkgDir, plugins = []) => ({
   entryPoints: [join(pkgDir, "src/cli.ts")],
@@ -40,5 +52,5 @@ export const bundleOptions = (pkgDir, plugins = []) => ({
   minifyIdentifiers: true,
   keepNames: false,
   logLevel: "warning",
-  plugins: [...plugins, gzippedJson],
+  plugins: [...plugins, gzippedJson, noAjv(pkgDir)],
 });

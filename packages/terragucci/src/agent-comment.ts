@@ -76,6 +76,13 @@ export function agentCommentInput(settings: ProjectSettings): AgentCommentInput 
   };
 }
 
+/** `agent.drift`'s settings with their defaults, or undefined when it is not set: the same shape and defaults as the comment's. */
+export function agentDriftInput(settings: ProjectSettings): AgentCommentInput | undefined {
+  const d = settings.agent?.drift;
+  if (d === undefined || d === false || !settings.agent?.token_env) return undefined;
+  return agentCommentInput({ ...settings, agent: { ...settings.agent, comment: d } });
+}
+
 /** Where the agent job keeps the decision, the prompt and the change: outside the checkout, so none of it is in the diff. */
 export const AGENT_DIR = "/tmp/terragucci-agent";
 export const AGENT_CHANGE_DIR = `${AGENT_DIR}/change`;
@@ -250,7 +257,7 @@ export async function pushAgentChange(o: PushOptions): Promise<PushResult> {
 }
 
 /** The signers file `.chant/trust.json` names at HEAD, when it names one. */
-function signersAt(git: (args: string[]) => string): string | undefined {
+export function signersAt(git: (args: string[]) => string): string | undefined {
   try {
     const named = JSON.parse(git(["show", "HEAD:.chant/trust.json"])).signers;
     return typeof named === "string" ? named : undefined;
@@ -259,7 +266,7 @@ function signersAt(git: (args: string[]) => string): string | undefined {
   }
 }
 
-function firstLine(s: string): string {
+export function firstLine(s: string): string {
   return s.trim().split("\n")[0].slice(0, 300);
 }
 

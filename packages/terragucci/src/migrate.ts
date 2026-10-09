@@ -61,6 +61,7 @@ import { ConfigError, findConfig, type Approval } from "./config";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
+import { rootRoleEnv } from "./roles";
 
 export const MIGRATE_OP = "tf-migrate";
 export const MIGRATE_LEDGER = `_gates/${MIGRATE_OP}.jsonl`;
@@ -599,7 +600,9 @@ export async function unitPlace(repo: string, unit: string, binary: string, env:
 async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv): Promise<Map<string, Place>> {
   const out = new Map<string, Place>();
   for (const root of roots) {
-    out.set(root, existsSync(join(repo, root, "terragrunt.hcl")) ? await unitPlace(repo, root, options.binary, env, options.work, options.terragrunt) : { dir: join(repo, root), env });
+    // Each root with its own role, when `oidc.roles` names one (./roles.ts); a unit is prepared under it too.
+    const renv = rootRoleEnv(env, root);
+    out.set(root, existsSync(join(repo, root, "terragrunt.hcl")) ? await unitPlace(repo, root, options.binary, renv, options.work, options.terragrunt) : { dir: join(repo, root), env: renv });
   }
   return out;
 }
@@ -864,7 +867,7 @@ async function movedSince(repo: string, plan: PlannedMigration, options: Migrate
   const moved: string[] = [];
   for (const r of plan.record.roots) {
     const f = plan.files.get(r.root)!;
-    const { dir, env: renv } = plan.places.get(r.root) ?? { dir: join(repo, r.root), env };
+    const { dir, env: renv } = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
     const v = await versionOf(f.object, options.fetch);
     const s = await pullState(exec, options.binary, r.root, dir, renv);
     let same = (v ?? undefined) === r.before.version_id && (s ? stateDigest(s) : null) === r.before.digest;
@@ -901,7 +904,7 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
     for (const r of order) {
       const f = plan.files.get(r.root)!;
       const lockArgs = f.object.backend === "s3" ? ["-lock=false"] : [];
-      const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env };
+      const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
       const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], at.dir, at.env);
       if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
       log(`${r.root}: wrote its new state`);
@@ -909,7 +912,7 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
     const roots: MigrationRoot[] = [];
     for (const [i, r] of record.roots.entries()) {
       const f = plan.files.get(r.root)!;
-      const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env };
+      const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
       const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `${i}-verify`, f.object.backend !== "s3");
       const v = await versionOf(f.object, options.fetch);
       roots.push({ ...r, after: { ...r.after, ...(v ? { version_id: v } : {}) }, verify });

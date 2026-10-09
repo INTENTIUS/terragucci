@@ -10,7 +10,7 @@
  * `reports.role` of its own); the page goes to the bucket under `defaults`.
  * In a single repo the projects are the ones the top-of-prefix index lists.
  *
- * It reads each project's `index.json`, `inventory.json`, `changes.json` and `states.json`,
+ * It reads each project's `index.json`, `inventory.json`, `changes.json`, `states.json` and `edges.json`,
  * and the run view (`runs/<commit>/run.json`) of its newest applied commit for the dependency graph,
  * and never a report, a plan's text or a root's plan JSON (see
  * report/estate.ts). Beside the page it reads `audit.json`, the summary
@@ -31,8 +31,9 @@ import { AUDIT_FILES, readRecord, type AuditEntry } from "./report/audit";
 import { buildHistory, CHANGES_SCHEMA, historyId, renderHistoryHtml, type ChangeRow, type Changes, type History } from "./report/history";
 import { INVENTORY_SCHEMA, type Inventory } from "./report/inventory";
 import { readStateVersions, type StateVersions } from "./report/state-versions";
+import { readStateEdges, type StateEdges } from "./report/state-edges";
 import { RUN_SCHEMA, runViewKey, type RunView } from "./report/run-view";
-import { changesKey, inventoryKey, statesKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
+import { changesKey, edgesKey, inventoryKey, statesKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 import { buildDora, DORA_FILE, doraGauges, duration, type Dora } from "./report/dora";
 import { metricsBody, send, telemetryFromEnv, type OtlpFetch } from "./telemetry";
 import { version as VERSION } from "../package.json";
@@ -130,8 +131,9 @@ async function readProject(project: string, reports: Reports | undefined, out: R
   const inventory = rows ? await readInventoryOf(client(reports), inventoryKey(project, reports.prefix ?? "")) : undefined;
   const changes = rows ? await readChangesOf(client(reports), changesKey(project, reports.prefix ?? "")) : undefined;
   const states = rows ? await readStatesOf(client(reports), statesKey(project, reports.prefix ?? "")) : undefined;
+  const edges = rows ? await readEdgesOf(client(reports), edgesKey(project, reports.prefix ?? "")) : undefined;
   const run = rows ? await readRunOf(client(reports), project, rows, reports.prefix ?? "") : undefined;
-  return { project, ...(rows ? { reports: rows } : {}), ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(run ? { run } : {}), ...(base !== undefined ? { base } : {}) };
+  return { project, ...(rows ? { reports: rows } : {}), ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}), ...(run ? { run } : {}), ...(base !== undefined ? { base } : {}) };
 }
 
 /** The run view of the project's newest applied commit, for the dependency graph; one that cannot be read leaves the project out of the graph, never off the page. */
@@ -156,6 +158,19 @@ async function readStatesOf(store: ObjectStore, at: string): Promise<StateVersio
     const text = await store.get(at);
     if (text === undefined) return undefined;
     const parsed = readStateVersions(text);
+    return parsed.roots.length > 0 ? parsed : undefined;
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError) return undefined;
+    throw e;
+  }
+}
+
+/** A project's cross-state edges; an unreadable file leaves the project without them, never without its runs. */
+async function readEdgesOf(store: ObjectStore, at: string): Promise<StateEdges | undefined> {
+  try {
+    const text = await store.get(at);
+    if (text === undefined) return undefined;
+    const parsed = readStateEdges(text);
     return parsed.roots.length > 0 ? parsed : undefined;
   } catch (e) {
     if (e instanceof StoreError || e instanceof TypeError) return undefined;

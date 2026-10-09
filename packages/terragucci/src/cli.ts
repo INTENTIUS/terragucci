@@ -30,6 +30,7 @@
  *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
+ *   terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]   (ask for one version of a root's state, and once someone else approved it, download it to this machine)
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
@@ -42,11 +43,14 @@
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
- *   terragucci review prompt --report <dir> [--instructions <path>]   (write the review's prompt from the pull request, its plan and the default branch's instructions; run by the generated pipeline's review job)
+ *   terragucci review prompt --report <dir> [--instructions <path>]   (fetch the plan report of the pull request's run and write the review's prompt from the pull request, its plan and the default branch's instructions; run by the review workflow's review job)
  *   terragucci review post --dir <dir>   (post the review as a note on the pull request; run by the review-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *   terragucci notify drift [--report <dir>]   (post the drift job's findings to Slack and Teams, with a Re-plan button; run by the generated pipeline)
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
+ *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
+ *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
+ *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   (a read-only MCP server on stdio over what terragucci wrote to the reports bucket and the repo; credentials from the environment)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -63,14 +67,15 @@ import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
-import { approvalStatus } from "./review";
+import { approvalStatus, forgeCalls } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
 import { approve, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
-import { postReview, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
-import { detectForge } from "./detect";
+import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
+import { detectForge, findRoots } from "./detect";
+import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { describeImport, importConfig, IMPORT_SOURCES, type ImportSource } from "./import";
@@ -87,15 +92,18 @@ import { applyWave, parseBranches, readLedger } from "./apply";
 import { resumeStep } from "./resume";
 import { checkPolicyTests, checkRoot, checkUnitPins, emitCheck, policyBase } from "./check";
 import { pinChecker } from "./publish/require";
-import { authProviderOutput, walkUnits } from "./terragrunt";
+import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
 import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
+import { exportState } from "./export";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
 import { startRelay } from "./relay";
+import { mcp } from "./mcp";
+import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
 
@@ -133,10 +141,14 @@ const USAGE = `usage:
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
   terragucci notify drift [--report <dir>]
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
+  terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
+  terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
+  terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]   a read-only MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures; credentials from the environment
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
+  terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
   terragucci respond rollout [--mode dry-run|apply]   continue every rollout in flight
 
@@ -577,6 +589,18 @@ export async function main(argv: string[]): Promise<number> {
         const done = await overrideDenial(cwd, { root: args[0] ?? "", rules, reason: str(flags, "reason") ?? "", ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
       }
+      case "state": {
+        if (args[0] !== "export" || !args[1]) throw new ConfigError("state takes: state export <root> [--version <id>] [--out <file>] [--actor <name>]");
+        const done = await exportState(cwd, {
+          root: args[1],
+          ...(str(flags, "version") ? { version: str(flags, "version") } : {}),
+          ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
+          ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}),
+          ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}),
+          ...(str(flags, "config") ? { config: str(flags, "config") } : {}),
+        });
+        return done.code;
+      }
       case "migrate": {
         if (args[0] !== "revert" || !args[1]) throw new ConfigError("migrate takes: migrate revert <migration>");
         const file = writeRevert(cwd, args[1]);
@@ -620,6 +644,39 @@ export async function main(argv: string[]): Promise<number> {
         for (const line of await notify(waveNotice(event, wave, { ...(outcome ? { outcome } : {}), ...(result ? { result } : {}), reportDir: resolve(cwd, report ?? "terragucci-report") }))) console.log(`terragucci notify: ${line}`);
         return 0;
       }
+      case "drift-agent": {
+        const sub = args[0];
+        const policyDir = str(flags, "policy-dir") ?? "policy";
+        if (sub === "prompt") {
+          const report = str(flags, "report");
+          const out = str(flags, "out");
+          if (!report || !out) throw new ConfigError("drift-agent prompt needs --report <dir> and --out <file>");
+          const w = writeDriftPrompt({ report: resolve(cwd, report), out: resolve(cwd, out), policyDir });
+          console.log(`terragucci drift-agent: wrote the prompt for drift issue #${w.issue}, ${w.roots} root${w.roots === 1 ? "" : "s"} drifted`);
+          return 0;
+        }
+        if (sub === "push") {
+          const change = str(flags, "change");
+          if (!change) throw new ConfigError("drift-agent push needs --change <dir>");
+          const forge = str(flags, "forge") ?? "github";
+          if (forge !== "github" && forge !== "forgejo") throw new ConfigError("drift-agent push's --forge is github or forgejo");
+          const r = await pushDriftChange({ change: resolve(cwd, change), policyDir, forge });
+          console.log(`terragucci drift-agent: ${r.reason}`);
+          return r.fail ? 1 : 0;
+        }
+        throw new ConfigError("drift-agent is drift-agent prompt or drift-agent push");
+      }
+      case "mcp": {
+        // stdout is the protocol's: nothing else is printed there.
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const bucket = str(flags, "bucket");
+        await mcp({
+          cwd,
+          config: path ? await loadConfig(resolve(path)) : {},
+          ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
+        });
+        return 0;
+      }
       case "relay": {
         const port = Number(str(flags, "port") ?? process.env.PORT ?? 8080);
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError("terragucci relay --port takes a port number");
@@ -639,8 +696,18 @@ export async function main(argv: string[]): Promise<number> {
       case "review": {
         const sub = args[0];
         if (sub === "prompt") {
-          const report = str(flags, "report") ?? "terragucci-report";
-          const w = writeReviewPrompt({ report: resolve(cwd, report), instructions: str(flags, "instructions") ?? REVIEW_INSTRUCTIONS });
+          const report = resolve(cwd, str(flags, "report") ?? "terragucci-report");
+          // The review workflow's event names the pull request; its plan report comes from the pipeline's run of the head.
+          let event: unknown;
+          try {
+            event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf-8"));
+          } catch (e) {
+            throw new ConfigError(`review prompt reads the pull request from the event file, and could not (${(e as Error).message})`);
+          }
+          const f = forgeCalls(process.env);
+          const { subject, run } = await reviewSubject(event, f);
+          console.log(`terragucci review: ${await fetchPlanReport(f, artifactBytes(process.env), subject, run, report)}`);
+          const w = writeReviewPrompt({ report, instructions: str(flags, "instructions") ?? REVIEW_INSTRUCTIONS, pull: subject });
           console.log(`terragucci review: wrote the prompt for pull request ${w.pr} at ${w.head.slice(0, 8)}; instructions: ${w.instructions === "default" ? "the default branch's" : "none on the default branch"}${w.changed ? ", which this pull request changes" : ""}`);
           return 0;
         }
@@ -678,9 +745,18 @@ export async function main(argv: string[]): Promise<number> {
         const path = str(flags, "config") ?? findConfig(cwd);
         if (!path) throw new ConfigError("no terragucci config here; pass --config <file>");
         let problems: string[] = [];
+        let warnings: string[] = [];
+        let access: StateAccess | undefined;
         let approval: ApprovalMode | undefined;
         try {
           const config = await loadConfig(resolve(path), "check");
+          // Which state each role reaches, read from the roots' code, and a warning for each that reaches another environment's.
+          const repoDir = dirname(resolve(path));
+          if (!config.projects && config.oidc?.roles && detectTerragrunt(repoDir) === undefined) {
+            access = stateAccess(repoDir, findRoots(repoDir, config.roots), config.oidc);
+            warnings = access.warnings;
+          }
+          if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.
@@ -694,11 +770,16 @@ export async function main(argv: string[]): Promise<number> {
           problems = e.problems ?? [e.message];
         }
         const file = relative(cwd, resolve(path)) || path;
-        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(approval && problems.length === 0 ? { approval } : {}) }));
+        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(warnings.length ? { warnings } : {}), ...(access && problems.length === 0 ? { state_access: access.roles } : {}), ...(approval && problems.length === 0 ? { approval } : {}) }));
         if (problems.length === 0) {
           console.log(`${file}: ok`);
           if (approval) console.log(`approval: ${approval.mode} (${approval.source})${approval.note ? `\nnote: ${approval.note}` : ""}`);
+          if (access) {
+            console.log("state access:");
+            for (const r of access.roles) console.log(`  ${r.role} (${r.stage}, ${r.environment}): ${r.states.length ? r.states.join(", ") : "no state named in code"}${r.reads.length ? `; reads ${r.reads.join(", ")}` : ""}`);
+          }
         } else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
+        if (warnings.length) console.error(`${file}: ${warnings.length} warning(s)\n  ${warnings.join("\n  ")}`);
         return problems.length ? 2 : 0;
       }
       case "":
