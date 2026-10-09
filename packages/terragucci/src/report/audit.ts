@@ -27,7 +27,7 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 /** Where an entry was read: a ledger line and the commit that added or removed it, or a report in the bucket. */
@@ -81,6 +81,9 @@ export const OVERRIDE_LEDGER_FILE = "_gates/policy-override.jsonl";
 /** The state migrations' gates, and the record of each migration's writes beside them (../migrate.ts). */
 export const MIGRATE_LEDGER_FILE = "_gates/tf-migrate.jsonl";
 export const MIGRATE_DONE_FILE = "_gates/tf-migrate/done.jsonl";
+/** The state locks' release gates, and the record of each lock released beside them (../unlock.ts). */
+export const UNLOCK_LEDGER_FILE = "_gates/tf-unlock.jsonl";
+export const UNLOCK_DONE_FILE = "_gates/tf-unlock/done.jsonl";
 
 const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
 
@@ -142,6 +145,7 @@ const drop = <T extends Record<string, unknown>>(o: T): Partial<T> => Object.fro
  */
 export function ledgerEntries(project: string, path: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined = () => undefined): AuditEntry[] {
   if (path === MIGRATE_DONE_FILE) return migrationEntries(project, changes, commitUrl);
+  if (path === UNLOCK_DONE_FILE) return unlockEntries(project, changes, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   // An override line names its digest; the denial it answers (a pending line of that digest) holds the rules and the root's plan digest.
   const denials = new Map<string, Line>();
@@ -259,6 +263,45 @@ function migrationEntries(project: string, changes: LedgerChange[], commitUrl: (
       result: str(r.result) ?? "applied",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: MIGRATE_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
       detail: drop({ roots: Array.isArray(r.roots) ? r.roots : undefined, file_digest: str(r.file_digest), error: str(r.error), commit: str(r.commit), run_id: str(r.runId) }),
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of `_gates/tf-unlock/done.jsonl`: one per state lock released,
+ * with who released it, who approved it, and the lock it was: its ID, who
+ * took it and when.
+ */
+function unlockEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of changes) {
+    if (!c.added) continue;
+    const r = parse(c.line);
+    if (!r || r.version !== 1 || r.kind !== "unlock" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    const url = commitUrl(c.commit);
+    const lock = r.lock && typeof r.lock === "object" ? (r.lock as Line) : {};
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, UNLOCK_DONE_FILE, c.line),
+      kind: "unlock",
+      project,
+      at: r.timestamp,
+      who: str(r.releasedBy) ?? null,
+      what: r.gate,
+      digest: str(r.planDigest) ?? null,
+      result: "released",
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: UNLOCK_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({
+        location: str(r.location),
+        lock_id: str(lock.ID),
+        operation: str(lock.Operation),
+        locked_by: str(lock.Who),
+        locked_at: str(lock.Created),
+        approved_by: str(r.approvedBy),
+        approved_at: str(r.approvedAt),
+        commit: str(r.commit),
+      }),
     });
   }
   return out;

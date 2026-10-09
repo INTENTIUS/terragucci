@@ -30,6 +30,7 @@ import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043"
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
+import type { Rename } from "./moved";
 
 /** Chant's checks that become tips, by rule id. */
 export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
@@ -63,6 +64,8 @@ export interface TipOptions {
   planned?: number;
   /** More directories for the code tips only, such as a Terragrunt repo's top with its root.hcl. */
   configDirs?: readonly string[];
+  /** The renames the plans show (./moved.ts). Known only after a plan. */
+  renames?: readonly Rename[];
 }
 
 const codeTip = (rule: string, root: string, message: string): ReportTip => ({ rule, root, message, url: `${CHANT_RULES_URL}#${rule.toLowerCase()}` });
@@ -187,6 +190,14 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
         root,
       ));
     }
+  }
+
+  for (const r of options.renames ?? []) {
+    tips.push(ownTip(
+      "terragucci-moved",
+      `${r.from} is destroyed and ${r.to} created with the same configuration, so the block was renamed. A moved block (from = ${r.from}, to = ${r.to}) makes the plan move it instead; terragucci respond tips --report opens a pull request that adds it.`,
+      r.root,
+    ));
   }
 
   const planned = options.planned ?? roots.length;

@@ -37,6 +37,7 @@ import { buildReport, planFiles, type RootInput, type WaveInput } from "./build"
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
 import { describeTips, repoTips } from "../tips";
+import { renamesIn } from "../tips/moved";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf } from "../respond/drift";
@@ -1304,7 +1305,8 @@ async function finish(
     if (!parser) log("tips: the HCL parser is not installed, so the lint tips are left out (npm i -D @cdktn/hcl2json)");
     const destroying = [...new Set(report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => n.root))];
     try {
-      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}) });
+      const renames = inputs.flatMap((i) => (i.plan && !i.error ? renamesIn(i.path, i.plan) : []));
+      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}) });
     } catch (e) {
       log(`tips: skipped, ${(e as Error).message}`);
       report.tips = [];
