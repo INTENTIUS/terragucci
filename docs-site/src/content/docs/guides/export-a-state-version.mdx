@@ -1,7 +1,7 @@
 ---
 title: Export a state version
 description: Download one version of a root's state to your machine, once someone else approved the request, with the export recorded on chant/lifecycle and in the audit trail.
-claims: [state-export]
+claims: [state-export, tg-state-export]
 prompt: |
   Read https://intentius.io/terragucci/guides/export-a-state-version/.
   Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3 backend, bucket versioning), from the roots' backend blocks.
@@ -26,7 +26,7 @@ The state goes to the person who runs the command and nowhere else. It never goe
 | A checkout whose `origin` you can push to | the request and the record go to `chant/lifecycle` |
 | Someone else to approve | an approval by the person who asked does not count |
 
-The command refuses Terragrunt units and roots with a `cloud` block. A `local` backend, or a bucket that keeps no versions, has no version id to export.
+A Terragrunt unit exports the same way: name the unit, such as `terragucci state export live/app`. Terragrunt prepares it as a [migration](/terragucci/guides/move-resources-between-roots/) does, running `init` in the unit through its `remote_state` block, so the state is the one Terragrunt reads, and you need Terragrunt on the path. The command refuses roots with a `cloud` block. A `local` backend, or a bucket that keeps no versions, has no version id to export.
 
 ## Steps
 

@@ -47,14 +47,14 @@ packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply
 packages/terragucci/src/audit.ts          audit* migrate-split unlock-state state-export
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export
-packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split
+packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never unlock-state cdktn-migrate state-roles state-export tg-migrate-split tg-state-export
 packages/terragucci/src/generate.ts       generate reconcile
 packages/terragucci/src/generate-config.ts generate reconcile
 packages/terragucci/src/notify.ts         notify-chat notify-webhook chat-*
 packages/terragucci/src/relay.ts          chat-approve*
 packages/terragucci/src/unlock.ts         unlock-state
 packages/terragucci/src/roles.ts          state-roles
-packages/terragucci/src/export.ts         state-export
+packages/terragucci/src/export.ts         state-export tg-state-export
 packages/terragucci/src/notify.schema.json notify-webhook
 packages/terragucci/src/telemetry.ts      traces metrics lock-wait provider-calls summed-timings otlp-headers tg-spans dash-* drill-down alerts-fire
 

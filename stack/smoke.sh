@@ -353,6 +353,7 @@ tg-migrate-split|a migration file moves a resource from the state of one Terragr
 tg-root-pins|three Terragrunt units of one wave plan with their own releases: the tofu the .opentofu-version of a unit pins and the Terragrunt its terragrunt_version_constraint pins, each installed and checked in the job, and the releases of the image for the third, and the report names each|
 tg-choudoufu|in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH|
 tg-estate-graph|in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block|
+tg-state-export|terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle|
 tg-stacks|the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them|
 chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
 chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
@@ -12900,12 +12901,12 @@ claim_tg_stacks() {
 }
 
 # ── state access per environment, state export, cross-state edges ─────────
-state_in() { # work, command... -> as audit_in, with the docker arguments in STATE_IN_EXTRA
+state_in() { # work, command... -> as audit_in, with the docker arguments in STATE_IN_EXTRA, in the STATE_IN_IMAGE image (tofu)
   local work="$1" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"; shift
   run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    ${STATE_IN_EXTRA[@]+"${STATE_IN_EXTRA[@]}"} "$(image_tag tofu)" "$@"
+    ${STATE_IN_EXTRA[@]+"${STATE_IN_EXTRA[@]}"} "$(image_tag "${STATE_IN_IMAGE:-tofu}")" "$@"
 }
 
 state_roles_root() { # work, state bucket, env, [env whose state it reads]
@@ -13105,6 +13106,92 @@ claim_state_export() {
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "alice exported app's state version $v1 once bob approved it: the file is the version, recorded on chant/lifecycle and in the audit trail, and no state reached the bucket"
+  return $rc
+}
+
+claim_tg_state_export() {
+  # tg_state_versions_repo's unit, live/app, applies twice through Terragrunt
+  # into a versioned floci bucket, its backend only in root.hcl's
+  # remote_state block. In the Terragrunt image, as a person at a shell would:
+  # terragucci state export live/app --version <the first> --actor alice
+  # prepares the unit through Terragrunt, records a request for
+  # s3://<bucket>/live/app/terraform.tfstate and exits 3. bob approves it in a
+  # clone, and the same export writes the version to /out, mode 0600, byte for
+  # byte the version floci holds, and done.jsonl names alice, live/app, its
+  # state's location, the version and bob.
+  # BREAK: TERRAGUCCI_TERRAGRUNT names no Terragrunt, so nobody prepares the
+  # unit, and the export is refused and writes nothing.
+  log() { echo "[smoke tg-state-export] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="tgexport-$STAMP" bucket="tgtse-$STAMP" key="live/app/terraform.tfstate" n v1="" v2="" digest code clone done
+  local -a tg=()
+  [ -n "${BREAK:-}" ] && tg=(-e TERRAGUCCI_TERRAGRUNT=/nonexistent/terragrunt)
+  image="$(image_tag terragrunt)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/out"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket?versioning" -H 'content-type: application/xml' \
+    --data-binary '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>' \
+    || { log "could not turn on versioning for $bucket"; return 1; }
+  tg_state_versions_repo "$work" "$prefix" "$bucket" "tse-$STAMP-1"
+  for n in 1 2; do
+    [ $rc = 0 ] || break
+    if [ $n = 2 ]; then
+      tg_state_versions_unit "$work" "tse-$STAMP-2"
+      git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "live/app input 2"
+    fi
+    AUDIT_CODE=0
+    AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true terragucci stage tf-apply --wave 1 --layers live/app --binary tofu --gate never --terragrunt > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { cat "$work/run.log" >&2; log "apply $n exited $AUDIT_CODE, not 0"; rc=1; }
+    [ $n = 1 ] && v1="$(curl -fsS -o /dev/null -D - "$FLOCI/$bucket/$key" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-amz-version-id" { print $2 }')"
+    [ $n = 2 ] && v2="$(curl -fsS -o /dev/null -D - "$FLOCI/$bucket/$key" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-amz-version-id" { print $2 }')"
+  done
+  [ $rc = 0 ] && { [ -n "$v1" ] && [ -n "$v2" ] && [ "$v1" != "$v2" ] || { log "the bucket holds no two versions of $key ($v1, $v2)"; rc=1; }; }
+  if [ $rc = 0 ]; then
+    code=0
+    STATE_IN_EXTRA=(-v "$work/out:/out" ${tg[@]+"${tg[@]}"})
+    STATE_IN_IMAGE=terragrunt state_in "$work" terragucci state export live/app --version "$v1" --actor alice > "$work/ask.log" 2>&1 || code=$?
+    STATE_IN_EXTRA=()
+    clean_mounted "$work/wave" "$image"
+    cat "$work/ask.log" >&2
+    [ "$code" = 3 ] || { log "the request exited $code, not 3"; rc=1; }
+    grep -q "state export: alice asks for live/app's state, s3://$bucket/$key version $v1" "$work/ask.log" || { log "the request does not name live/app's state as its remote_state block puts it"; rc=1; }
+    digest="$(grep -o 'chant approve tf-state-export live/app --plan sha256:[0-9a-f]*' "$work/ask.log" | head -1 | awk '{print $NF}')"
+    [ -n "$digest" ] || { log "the request printed no chant approve command"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    clone="$work/approver"
+    git clone -q "$work/origin.git" "$clone"
+    (cd "$clone" && GIT_AUTHOR_NAME=bob GIT_AUTHOR_EMAIL=bob@localhost GIT_COMMITTER_NAME=bob GIT_COMMITTER_EMAIL=bob@localhost \
+      "$HERE/../node_modules/.bin/chant" approve tf-state-export live/app --plan "$digest" --actor bob) >&2 || { log "bob could not approve the request"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    code=0
+    # shellcheck disable=SC2016 # expanded by the container's shell
+    STATE_IN_EXTRA=(-v "$work/out:/out")
+    STATE_IN_IMAGE=terragrunt state_in "$work" sh -c 'terragucci state export live/app --version "$0" --actor alice --out /out/app.tfstate && stat -c "mode %a" /out/app.tfstate' "$v1" > "$work/get.log" 2>&1 || code=$?
+    STATE_IN_EXTRA=()
+    clean_mounted "$work/wave" "$image"
+    cat "$work/get.log" >&2
+    [ "$code" = 0 ] || { log "the export after bob's approval exited $code, not 0"; rc=1; }
+    [ -f "$work/out/app.tfstate" ] || { log "no file at /out/app.tfstate"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q '^mode 600$' "$work/get.log" || { log "the file is not mode 600"; rc=1; }
+    cmp -s "$work/out/app.tfstate" <(curl -fsS "$FLOCI/$bucket/$key?versionId=$v1") || { log "the file is not version $v1 as floci holds it"; rc=1; }
+    git -C "$clone" fetch -q origin "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"
+    done="$(git -C "$clone" show "refs/remotes/origin/chant/lifecycle:_gates/tf-state-export/done.jsonl" 2>/dev/null)"
+    printf '%s\n' "$done" >&2
+    jq -se --arg v "$v1" --arg d "$digest" --arg l "s3://$bucket/$key" 'map(select(.kind == "state-export" and .root == "live/app" and .location == $l and .version_id == $v and .exportedBy == "alice" and .approvedBy == "bob" and .planDigest == $d)) | length == 1' <<<"$done" >/dev/null \
+      || { log "done.jsonl does not record alice exporting live/app version $v1 of $key, approved by bob"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "alice exported live/app's state version $v1 once bob approved it, the state Terragrunt's remote_state names, recorded on chant/lifecycle"
   return $rc
 }
 
@@ -15513,6 +15600,7 @@ tg-root-pins         weight=150
 tg-choudoufu         weight=120
 tg-stacks            weight=150
 tg-estate-graph      weight=200
+tg-state-export      weight=200
 chat-approve         runner self! weight=300
 chat-approve-teams   runner self! weight=300
 chat-approve-lambda  runner self! weight=350

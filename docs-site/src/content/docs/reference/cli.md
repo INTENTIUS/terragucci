@@ -546,7 +546,7 @@ terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
 
 | Flag | Meaning |
 |---|---|
-| `<root>` | the root whose state to export, a directory of plain roots with an `s3` backend in a bucket that keeps versions |
+| `<root>` | the root whose state to export, with an `s3` backend in a bucket that keeps versions: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
 | `--version` | the version id, as the estate page's State versions section lists it; the bucket's current version by default |
 | `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
 | `--actor` | who asks; git's `user.name` by default |
