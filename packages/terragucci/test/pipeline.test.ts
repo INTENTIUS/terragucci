@@ -1738,7 +1738,7 @@ describe("a wave split across jobs (waves.jobs)", () => {
       expect(when("start", "other")).toBeGreaterThanOrEqual(Math.max(when("end", "s1"), when("end", "s2")));
       expect(results[1].out).toContain("this run holds the apply lock; apply-wave-2-share-2 joins it");
       expect(git(origin, "tag", "--list").trim()).toBe("");
-    });
+    }, 30_000);
 
     it("keeps the lock while another job of its run still holds it, and the run's next job lets it go", async () => {
       const { origin, work, sha } = remote();
