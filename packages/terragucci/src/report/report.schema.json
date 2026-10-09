@@ -71,6 +71,16 @@
         "required": ["path", "status", "plan_digest", "counts", "plan", "changes", "highlights", "fold", "why"],
         "properties": {
           "path": { "type": "string" },
+          "binary": {
+            "description": "The binary the root ran, its version, and where the root pinned that version when it did (minor 18).",
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "version": { "type": "string" },
+              "pin": { "type": "string" }
+            }
+          },
           "terragrunt": {
             "description": "Set when the root is a Terragrunt unit (minor 1).",
             "type": "object",
@@ -190,6 +200,21 @@
                 "previous_address": { "type": "string" }
               }
             }
+          },
+          "steps": {
+            "description": "The steps that ran for the root, in the order they ran (minor 17). failed: the root failed; approval: an on_failure: approve step failed, so the root's wave waits for an approval.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "when", "status", "exit", "seconds"],
+              "properties": {
+                "name": { "type": "string" },
+                "when": { "enum": ["before-init", "after-init", "before-plan", "after-plan", "before-apply", "after-apply", "before-drift", "after-drift"] },
+                "status": { "enum": ["passed", "failed", "approval"] },
+                "exit": { "type": ["integer", "null"] },
+                "seconds": { "type": "number" }
+              }
+            }
           }
         }
       }
@@ -232,9 +257,14 @@
               "url": { "type": "string" }
             }
           },
+          "held_by_steps": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "The roots whose on_failure: approve step failed: the gate holds the wave whatever the gate policy says, when it changes anything (minor 17)."
+          },
           "cost": {
             "type": "object",
-            "description": "The wave's monthly cost, when cost is on (minor 17): the sums over its roots estimated, and with cost.approve_above at base whether the change is over it, so the wave waits for an approval whatever the gate.",
+            "description": "The wave's monthly cost, when cost is on (minor 19): the sums over its roots estimated, and with cost.approve_above at base whether the change is over it, so the wave waits for an approval whatever the gate.",
             "required": ["currency", "monthly_delta", "monthly_total", "past_monthly_total"],
             "properties": {
               "currency": { "type": "string" },
@@ -294,7 +324,7 @@
       }
     },
     "cost": {
-      "description": "The cost estimate of a tf-plan run, or of a tf-apply wave's plans (minor 17), when cost is on (minor 12): each root's monthly cost from the estimator, and the sums over the roots estimated.",
+      "description": "The cost estimate of a tf-plan run, or of a tf-apply wave's plans (minor 19), when cost is on (minor 12): each root's monthly cost from the estimator, and the sums over the roots estimated.",
       "type": "object",
       "required": ["estimator", "currency", "monthly_delta", "monthly_total", "past_monthly_total", "roots"],
       "properties": {

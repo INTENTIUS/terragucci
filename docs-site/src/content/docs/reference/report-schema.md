@@ -34,6 +34,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
+| `roots[].binary` | the binary a plain root ran: `name` (`tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu)), `version`, and `pin`, where the root pinned that version (`.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`); `pin` is absent for a root that runs the job's binary unpinned |
 | `deferred[]` | Terragrunt units planned once the units they wait for apply, and what each waits for |
 | `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
 | `roots[].terragrunt` | for a Terragrunt unit: its stack, why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
@@ -47,6 +48,8 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
 | `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
 | `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
+| `roots[].steps` | the [steps](/terragucci/guides/run-steps/) that ran for the root, in order: `name`, `when` (such as `before-plan`), `status` (`passed`; `failed`, which failed the root; `approval`, a failed `on_failure: approve` step that holds the wave), `exit` and `seconds`; the steps' output stays in the job log |
+| `waves[].held_by_steps` | the roots whose `on_failure: approve` step failed, so the gate holds the wave when it changes anything, whatever `gate` says |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
 
 The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
@@ -65,6 +68,7 @@ The JSON Schema ships with the package as `@intentius/terragucci/report.schema.j
 | how long a root waited for its state lock | `roots[].timings.lock_waits`, with the attempts it took |
 | what the policy denied or warned about in a root | `roots[].policy` |
 | who overrode a denial, and why | `roots[].policy.override` |
+| the binary and version each root ran | `roots[].binary` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
 Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it.

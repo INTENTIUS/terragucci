@@ -18,7 +18,7 @@ With no `terragucci.yml`, `init` starts from these defaults:
 |---|---|
 | Roots | every directory whose `*.tf` or `*.tofu` files declare a backend or configure a provider, or, in a Terragrunt repo, each unit `terragrunt find` lists |
 | Binary | `.opentofu-version` gives `tofu`, `.terraform-version` gives `terraform`, then `.tofu` files, then the path, then `tofu` |
-| Version | the one `required_version` pins exactly, or terragucci's default for the binary |
+| Version | the repo's `.opentofu-version` or `.terraform-version`, then the one `required_version` pins exactly, or terragucci's default for the binary; a root that pins its own runs that one ([A version per root](#a-version-per-root)) |
 | Forge | from a workflow directory already in the repo, or the host of its `origin` remote |
 | Order | a root that reads another's state through `terraform_remote_state` applies after it |
 | Gate | `on-destroy`, so a wave waits for an approval only when it destroys or replaces something |
@@ -43,7 +43,7 @@ drift: "17 4 * * *"
 
 In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
 
-A project's jobs read these keys from the project's own `terragucci.yml`, so `reconcile` writes each one the control repo sets away from its default there: `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt` and `token_env`. The other keys reach the project in the pipeline `reconcile` writes: `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `dashboards` and `notify` (with `notify.webhook`).
+A project's jobs read these keys from the project's own `terragucci.yml`, so `reconcile` writes each one the control repo sets away from its default there: `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt` and `token_env`. The other keys reach the project in the pipeline `reconcile` writes: `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `dashboards`, `image` and `notify` (with `notify.webhook`).
 
 ```yaml
 defaults:
@@ -120,6 +120,8 @@ dashboards: true
 |---|---|---|
 | `roots` | detected | globs of root directories |
 | `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| `steps` | none | commands run before or after a root's `init`, `plan`, `apply` or `drift`, in the stage's own job: each has `run`, one of `before` and `after`, and optionally `name`, `roots` (globs) and `on_failure` (`fail`, the default, or `approve`, which holds the root's wave at its gate instead). Read from `terragucci.yml` at base. Plain roots only; see [Run steps around a stage](/terragucci/guides/run-steps/) |
+| `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
@@ -135,7 +137,7 @@ dashboards: true
 | `gitlab.token` | `unprotected` | GitLab only: `protected` keeps `GITLAB_TOKEN` (or the `token_env` variable) out of every merge request and branch pipeline. Mark the variable Protected and Masked. The plan job then holds no token and stops if it sees one, the comments job posts the plan notes, and the pipeline has no fmt job, so nothing commits formatting. Needs `comments`; see [the threat model](/terragucci/reference/threat-model/) |
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket` (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), `endpoint` (the store's address, for an S3-compatible store, an emulator or a sovereign cloud), `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index)) and `role` (an AWS role ARN that writes, `s3://` only); see [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
-| `version` | the one every root pins exactly, else terragucci's default for the binary | the binary's version |
+| `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
@@ -157,6 +159,27 @@ dashboards: true
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts.
+
+## A version per root
+
+A plain root can run its own OpenTofu or Terraform version, so one wave plans and applies roots on different versions. The first of these that names an exact version picks it:
+
+| Order | Where | Example |
+|---|---|---|
+| 1 | `version` in `terragucci.yml` as a map, the first glob the root's path matches | `"envs/legacy/*": "1.9.1"` |
+| 2 | a `.opentofu-version` (`tofu`) or `.terraform-version` (`terraform`) file in the root | `1.10.6` |
+| 3 | an exact `required_version` in the root | `required_version = "1.10.6"` |
+
+```yaml
+binary: tofu
+version:
+  "envs/legacy/*": "1.9.1"
+  envs/edge: "1.11.2"
+```
+
+A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
+
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version, and a Terragrunt repo runs one version of its binary for every unit. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version.
 
 ## Apply before merge
 

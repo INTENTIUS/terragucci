@@ -12,7 +12,7 @@ import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
 import { signed } from "./cost";
-import { actionWord, type Report, type ReportCost, type ReportNamed, type ReportWave } from "./schema";
+import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportStep, type ReportWave } from "./schema";
 import { duration } from "./spans";
 import { TACO_NOTE_URL } from "./taco";
 
@@ -96,6 +96,21 @@ export function costTable(cost: ReportCost, name: (root: string) => string = (r)
     t += r.error ? `| ${name(r.root)} | | | not estimated: ${r.error.split(/\s+/).join(" ").replace(/\|/g, "\\|")} |\n` : `| ${name(r.root)} | ${amount(r.past_monthly_total)} | ${amount(r.monthly_total)} | ${r.monthly_delta === null ? "" : signed(r.monthly_delta)} |\n`;
   }
   t += `| **Total** | ${amount(cost.past_monthly_total)} | ${amount(cost.monthly_total)} | **${cost.monthly_delta === null ? "none" : signed(cost.monthly_delta)}** |\n`;
+  return t;
+}
+
+/** What a step came to, in words. */
+export function stepResult(s: ReportStep): string {
+  const exit = s.exit === null ? "no exit code" : `exit ${s.exit}`;
+  return s.status === "passed" ? "passed" : s.status === "failed" ? `failed, ${exit}` : `asks for an approval, ${exit}`;
+}
+
+/** Every step that ran, by root, in the order each root ran them. */
+export function stepsTable(report: Report, name: (root: string) => string = (r) => `\`${r}\``): string | undefined {
+  const rows = report.roots.flatMap((r) => (r.steps ?? []).map((s) => ({ root: r.path, s })));
+  if (rows.length === 0) return undefined;
+  let t = `**Steps (${rows.length}):**\n\n| Root | When | Step | Result |\n|---|---|---|---|\n`;
+  for (const { root, s } of rows) t += `| ${name(root)} | ${s.when} | ${s.name.split(/\s+/).join(" ").replace(/\|/g, "\\|")} | ${stepResult(s)} |\n`;
   return t;
 }
 
@@ -233,6 +248,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   if (report.roots.length === 0 && run.stage === "tf-plan") head.push("This change reaches no root, so nothing was planned.", "");
   for (const n of options.notices ?? []) head.push(`> ${n}`, "");
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");
+  const binaries = binariesLine(report);
+  if (binaries) head.push(binaries, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
   if (report.cost) head.push(costLine(report.cost), "");
   const gateLine = report.cost ? costGateLine(report.waves) : undefined;
@@ -285,7 +302,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     let t = "| Wave | Roots | Digest of its changes | When it applies |\n|---|---|---|---|\n";
     for (const w of report.waves) {
       const when = w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
-      t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : "no change"} | ${when} |\n`;
+      const by = w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
+      t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : "no change"} | ${when}${by} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
     head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })) }), "");
@@ -294,6 +312,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
+  const steps = stepsTable(report, (root) => to(code(root), rootAnchor(root)));
+  if (steps) blocks.push({ kind: "line", units: 0, text: steps + "\n" });
   if (report.cost && report.cost.roots.length > 0) blocks.push({ kind: "line", units: 0, text: costTable(report.cost, (root) => to(code(root), rootAnchor(root))) + "\n" });
   const unitsWord = report.unit === "instance" ? "Instances" : "Roots";
   for (const g of report.groups) {
@@ -393,6 +413,33 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     else cut.lines++;
   }
   return top + blocks.map((b) => b.text).join("") + notice() + foot;
+}
+
+/**
+ * When a root pinned its own version: the binary each root ran, pinned roots
+ * by name with where each pinned it, the rest counted, the pinned binaries
+ * first. Nothing when no root pinned, since every root then ran the job's
+ * binary.
+ */
+export function binariesLine(report: Report): string | undefined {
+  if (!report.roots.some((r) => r.binary?.pin)) return undefined;
+  const byBinary = new Map<string, { pinned: string[]; others: number }>();
+  for (const r of report.roots) {
+    if (!r.binary) continue;
+    const key = binaryText({ name: r.binary.name, ...(r.binary.version ? { version: r.binary.version } : {}) });
+    const g = byBinary.get(key) ?? { pinned: [], others: 0 };
+    byBinary.set(key, g);
+    if (r.binary.pin) g.pinned.push(`${code(r.path)} (${r.binary.pin})`);
+    else g.others++;
+  }
+  // The binaries roots pinned first, then the job's.
+  const parts = [...byBinary].sort(([, a], [, b]) => Number(a.pinned.length === 0) - Number(b.pinned.length === 0)).map(([bin, g]) => {
+    const named = g.pinned.slice(0, 10);
+    const rest = g.pinned.length - named.length + g.others;
+    const who = [...named, ...(rest > 0 ? [named.length > 0 ? `${plural(rest, "other root")}` : plural(rest, "root")] : [])];
+    return `${bin} for ${who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who[who.length - 1]}` : who[0]}`;
+  });
+  return `Binaries: ${parts.join("; ")}.`;
 }
 
 interface NoteBlock {
