@@ -1,5 +1,5 @@
 ---
-title: Where it runs
+title: Runtimes
 description: Every stage runs on your forge's CI, and an approval is a record in your repository.
 ---
 

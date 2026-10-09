@@ -27,6 +27,6 @@ These files come from the applied commit's first parent, so a change cannot judg
 
 ## Next
 
-- [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/)
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
 - [The audit trail](/terragucci/reference/audit-trail/): the approvals and applies, overrides and refused waves of all your projects in one record
