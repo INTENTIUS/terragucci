@@ -1,0 +1,96 @@
+---
+title: Ephemeral environments per pull request
+description: Give each pull request its own copy of a set of roots, under state keys of its own, and have terragucci destroy the copy when the pull request closes or its TTL passes.
+draft: true
+claims: [ephemeral-pr, ephemeral-ttl]
+prompt: |
+  Read https://intentius.io/terragucci/guides/ephemeral-environments/.
+  Look at this repo's roots and tell me which of them could be copied per pull request with ephemeral: name each root's backend and the key its copy would get, and any root whose backend or Terragrunt setup rules it out.
+  Do not edit terragucci.yml or run terragucci init.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A reviewer wants to try a change before it merges. With `ephemeral` set, each open pull request gets an environment of its own: the roots you name, applied from its head under state keys nothing else uses.
+
+| When | What terragucci does |
+|---|---|
+| the pull request opens, or gets a push | plans the environment, waits at the gate as `gate` says, and applies it |
+| the pull request closes or merges | plans the environment's destroy and applies it |
+| its TTL passes first | the sweep destroys it the same way |
+
+The state key is the root's own with `-pr-<n>` added: `envs/preview/app/terraform.tfstate` becomes `envs/preview/app/terraform-pr-12.tfstate`. Nothing about the root itself changes. Every apply and destroy is on the [audit trail](/terragucci/reference/audit-trail/), and the [estate page](/terragucci/guides/see-every-project/) lists each live environment with its expiry.
+
+## Turn it on
+
+<Steps>
+
+1. Pick the roots. A root whose resources have fixed names collides with itself once a second state applies it, so let each environment name its resources apart, with a `random_id` suffix for example.
+
+2. Add the key to `terragucci.yml` on the default branch:
+
+   ```yaml
+   ephemeral:
+     roots: ["envs/preview/*"]
+     ttl: 24h      # default; m, h or d
+     sweep: 30     # minutes between the sweep's runs, 5 to 60
+   ```
+
+3. Run `npx terragucci init` and commit what it writes: the `ephemeral` job, and on GitHub and Forgejo the sweep workflow `terragucci-ephemeral.yml`.
+
+4. Open a pull request. The `ephemeral` job runs from the default branch's workflow. It checks out the pull request's head apart and applies the environment there:
+
+   ```text
+   terragucci ephemeral: pull request 12: its copy of envs/preview/app under the state keys suffixed -pr-12, from 3f9c21aa
+   terragucci ephemeral: envs/preview/app: 4 to change at s3://acme-state/envs/preview/app/terraform-pr-12.tfstate
+   terragucci ephemeral: applied envs/preview/app at s3://acme-state/envs/preview/app/terraform-pr-12.tfstate
+   terragucci ephemeral: pull request 12: its copy applied; it expires 2026-10-10T16:02:11.000Z, and closing the pull request destroys it before then
+   ```
+
+5. Close or merge it. The destroy plans and applies, and `_gates/tf-ephemeral/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) records it with the reason `closed`.
+
+</Steps>
+
+## The gate
+
+The environment waits at gate `pr-<n>` of op `tf-ephemeral` under the `gate` your waves use. With `always`, any change waits; with `on-destroy`, a change that destroys or replaces something waits. The job prints the command that approves it:
+
+```bash
+chant approve tf-ephemeral pr-12 --plan jcs1-sha256:6d2b...
+```
+
+Once someone runs it, the next push or a re-run of the job applies. Under `approval: sealed` only a sealed approval counts.
+
+No gate holds a destroy. Closing the pull request is the decision, and so is the TTL the default branch set. The destroy still plans first, and its record carries that plan's digest.
+
+## The TTL
+
+An environment expires `ttl` after the last apply that changed it, so a pull request that keeps getting pushes keeps it. The sweep runs every `sweep` minutes on the default branch. It destroys each environment whose TTL passed, and each one whose pull request the forge reports closed. A destroy that fails leaves the environment live, flagged on the estate page, for the next sweep to try again.
+
+## Per forge
+
+| Forge | It applies | It is destroyed on close |
+|---|---|---|
+| GitHub | in the `ephemeral` job, on `pull_request_target` from the default branch | by the same job, on the `closed` event |
+| Forgejo | the same | the same |
+| GitLab | in the `ephemeral` job of the merge request's pipeline, with terragucci.yml read from the default branch | by the sweep: GitLab starts no pipeline when a merge request closes. Add a pipeline schedule with `TERRAGUCCI_SCHEDULE=ephemeral` |
+
+Forks never get one. On GitLab the job needs the project token, so `ephemeral` with `gitlab.token: protected` is a config error.
+
+## What can be copied
+
+| Setup | Gets an environment |
+|---|---|
+| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu), with an `s3`, `azurerm`, `gcs` or `local` backend | yes |
+| a root in HCP Terraform (a `cloud` block), or on another backend | no: the job fails with a config error naming the root |
+| a Terragrunt repo | no: `config check` refuses it, since a unit's state key comes from its `remote_state` block |
+| `synth` (CDK Terrain) | no: `config check` refuses it, since git holds no roots to apply |
+
+terragucci never selects a CLI workspace. The environment's key sits in the backend block's own attribute (`key`, or `prefix` on `gcs`), so its lock file and a listing of the bucket name it plainly.
+
+Unmerged pull request code runs with the apply role in this job, as it does under [apply before merge](/terragucci/guides/apply-before-merge/). Scope that role to the `-pr-` keys with [a role per environment](/terragucci/guides/scope-state-access/), and require reviews in branch protection.
+
+Every flag is on [CLI commands](/terragucci/reference/cli/#ephemeral), and every key on [terragucci.yml keys](/terragucci/reference/config/#ephemeral-environments).

@@ -39,6 +39,7 @@ prompt: |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `resume` | applies a waiting wave once its approval stands; the generated resume job runs it |
+| `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
 | `profiles` | internal: prints the local stack profiles a config needs, `aws` and each project's forge |
@@ -588,6 +589,24 @@ terragucci unlock-state:   chant approve tf-unlock slow --plan jcs1-sha256:6d2b.
 
 An approval names one lock: when the lock was released some other way and another taken since, the approval does not release the new one, and it exits 4.
 
+## ephemeral
+
+```bash
+terragucci ephemeral up --pr <n> [--head <sha>] [--base <ref>] [--binary <b>] [--config <file>]
+terragucci ephemeral down --pr <n> --reason closed|expired [--base <ref>] [--binary <b>] [--config <file>]
+terragucci ephemeral sweep [--base <ref>] [--binary <b>] [--config <file>]
+```
+
+The generated pipeline runs it for [`ephemeral`](/terragucci/reference/config/#ephemeral-environments). It reads `ephemeral` from terragucci.yml in the checkout, which the jobs check out at the default branch, or at `--base`, and checks out the pull request's code apart, from the forge's pull request ref.
+
+| Subcommand | What it does |
+|---|---|
+| `up` | inits each root the globs match at `--head` with `-backend-config` naming its key with `-pr-<n>` added, plans it, and decides gate `pr-<n>` of op `tf-ephemeral` on the set digest as `gate` says, printing `chant approve tf-ephemeral pr-<n> --plan <digest>` and exiting 3 while it waits; then applies, and appends the copy, its expiry and who approved it to `_gates/tf-ephemeral/done.jsonl` |
+| `down` | plans the destroy of each root of the live copy and applies it, in reverse order, from the commit the copy applied, and appends the destroy with `--reason` and its digest; with no live copy it does nothing |
+| `sweep` | destroys each live copy whose TTL passed (`expired`), and each whose pull request the forge says is closed or merged (`closed`), reading it with `TG_TOKEN` |
+
+A root on a backend other than `s3`, `azurerm`, `gcs` or `local`, a backend block that names no key, a Terragrunt repo and `synth` are config errors (exit 2). A destroy that fails leaves the copy live, and the next sweep tries again.
+
 ## resume
 
 ```text
@@ -671,6 +690,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
 | `verify-release` | every target verified | a target refused | | | |
+| `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt repo, `synth` | the copy waits for an approval | an approval stands for other plans of the copy |
 | `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
 | `approve`, `override` | approved (chant's own code otherwise) | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
@@ -678,4 +698,4 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `mcp` | the client closed stdin | | a bad flag or config | | |
 | `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed | a bad flag, or a run that opened no drift issue | | |
 
-Code 4 comes from `stage tf-apply` and `unlock-state`, which have no `--json`.
+Code 4 comes from `stage tf-apply`, `unlock-state` and `ephemeral`, which have no `--json`.

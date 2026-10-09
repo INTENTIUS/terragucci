@@ -365,7 +365,9 @@ provider-cache-once|a wave of eight roots that use one provider downloads it onc
 unlock-state|terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies|
 tip-moved|a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing|
 mcp-last-apply|an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument|
-drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|'
+drift-agent|with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue|
+ephemeral-pr|with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed|
+ephemeral-ttl|with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -799,6 +801,167 @@ EOF
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "init ran twice and kept own-job, which ran after check and passed"
+  return $rc
+}
+
+# ── ephemeral environments ────────────────────────────────────────────────
+# The gated-waves fixture under gate: never, with ephemeral naming canary/*.
+# A pull request's copy of canary/one lives at <name>/canary/one-pr-<n>.tfstate.
+
+ephemeral_repo() { # name, ttl -> the repo in $work/tree, pushed to main and applied
+  gated_repo "$1" || return 1
+  sed -i.bak 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" && mv "$work/tree/terragucci.yml.bak" "$work/"
+  printf 'ephemeral:\n  roots: ["canary/*"]\n  ttl: %s\n  sweep: 60\n' "$2" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+  grep -q "terragucci ephemeral up" "$work/tree/.forgejo/workflows/terragucci.yml" || { log "init wrote no ephemeral job"; return 1; }
+  [ -f "$work/tree/.forgejo/workflows/terragucci-ephemeral.yml" ] || { log "init wrote no sweep workflow"; return 1; }
+}
+
+ephemeral_resources() { # name, pr -> how many resources the copy's state holds; empty when there is no state
+  curl -fsS "$FLOCI/shop-terraform-state/$1/canary/one-pr-$2.tfstate" 2>/dev/null | jq -r '[.resources[]?.instances[]?] | length' 2>/dev/null || true
+}
+
+ephemeral_done() { # repo -> chant/lifecycle's _gates/tf-ephemeral/done.jsonl
+  local d
+  d="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"
+  git clone -q --single-branch --branch chant/lifecycle "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$1.git" "$d/l" >/dev/null 2>&1 && cat "$d/l/_gates/tf-ephemeral/done.jsonl" 2>/dev/null || true
+  drop_work "$d"
+}
+
+ephemeral_runs() { # repo, head -> the ids of the default branch's pull_request_target runs on head, newest first
+  api "$URL/api/v1/repos/$1/actions/runs?head_sha=$2" | jq -r '[.workflow_runs[] | select(.trigger_event == "pull_request_target")] | .[].id'
+}
+
+ephemeral_wait() { # repo, run id -> waits for the run to finish; sets RUN_STATUS
+  local deadline=$(( $(date +%s) + TIMEOUT ))
+  RUN_STATUS=""
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    RUN_STATUS="$(api "$URL/api/v1/repos/$1/actions/runs/$2" | jq -r '.status // empty')"
+    case "$RUN_STATUS" in success|failure|cancelled|skipped) break ;; esac
+    sleep 3
+  done
+  log "run $2: ${RUN_STATUS:-unknown}"
+  [ "$RUN_STATUS" = success ] || print_logs "$1" "$2" >&2 || true
+}
+
+ephemeral_open() { # name, repo -> sets EPH_PR and EPH_HEAD once the pull request's copy applied
+  local i run=""
+  echo "eph $RANDOM" > "$work/tree/canary/one/rev.txt"
+  EPH_HEAD="$(push_tree "$work/tree" "$2" change "$1: change canary/one")" || return 1
+  EPH_PR="$(pr_open "$2" change "$1: change canary/one")" || return 1
+  for i in $(seq 1 60); do
+    run="$(ephemeral_runs "$2" "$EPH_HEAD" | head -1)"
+    [ -n "$run" ] && break
+    sleep 3
+  done
+  [ -n "$run" ] || { log "no pull_request_target run started for pull request $EPH_PR"; return 1; }
+  ephemeral_wait "$2" "$run"
+  [ "$RUN_STATUS" = success ] || { log "the ephemeral job of pull request $EPH_PR did not succeed"; return 1; }
+}
+
+claim_ephemeral_pr() {
+  # Push the fixture to main, which applies every root at its own key. Open a
+  # pull request that changes canary/one: the default branch's ephemeral job
+  # applies its copy under <name>/canary/one-pr-<n>.tfstate, and the root's
+  # own state stays as main left it. Close the pull request: the closed event
+  # runs the job again, which plans the destroy and applies it, so the copy's
+  # state holds no resource, and done.jsonl on chant/lifecycle records the
+  # apply and the destroy with the reason closed.
+  # BREAK: closed is cut from the pull_request_target types of the pushed
+  # pipeline, and the sweep workflow is left out, so nothing destroys the
+  # copy when the pull request closes.
+  log() { echo "[smoke ephemeral-pr] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/ephemeral-pr" wf sha n before after run="" i done_lines rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  ephemeral_repo ephemeral-pr 24h || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then
+    sed -i.bak '/^  pull_request_target:/,/^[a-z]/{/^      - closed$/d;}' "$wf" && mv "$wf.bak" "$work/"
+    mv "$work/tree/.forgejo/workflows/terragucci-ephemeral.yml" "$work/"
+    ! grep -A6 '^  pull_request_target:' "$wf" | grep -q -- '- closed' || { log "BREAK left closed in the pipeline"; drop_work "$work"; return 1; }
+  fi
+  sha="$(push_tree "$work/tree" "$repo" main "ephemeral-pr: main")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  [ $rc = 0 ] && { ephemeral_open ephemeral-pr "$repo" || rc=1; }
+  if [ $rc = 0 ]; then
+    n="$(ephemeral_resources ephemeral-pr "$EPH_PR")"
+    log "pull request $EPH_PR open: its copy holds ${n:-no state} resources at ephemeral-pr/canary/one-pr-$EPH_PR.tfstate"
+    [ "${n:-0}" -ge 1 ] || { log "the pull request got no copy of canary/one"; rc=1; }
+    [ "$(curl -fsS "$FLOCI/shop-terraform-state/ephemeral-pr/canary/one.tfstate" | jq -r '[.resources[]?.instances[]?.attributes.input | if type == "object" then .value else . end] | first // empty')" = 1 ] \
+      || { log "the copy's apply touched canary/one's own state"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    before="$(ephemeral_runs "$repo" "$EPH_HEAD" | wc -l | tr -d ' ')"
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"state":"closed"}' "$URL/api/v1/repos/$repo/pulls/$EPH_PR" || { log "pull request $EPH_PR did not close"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # The closed event's run, if the pipeline has one: give it a minute to start.
+    for i in $(seq 1 20); do
+      after="$(ephemeral_runs "$repo" "$EPH_HEAD" | wc -l | tr -d ' ')"
+      [ "$after" -gt "$before" ] && { run="$(ephemeral_runs "$repo" "$EPH_HEAD" | head -1)"; break; }
+      sleep 3
+    done
+    if [ -n "$run" ]; then ephemeral_wait "$repo" "$run"; else log "no run started when pull request $EPH_PR closed"; fi
+    n="$(ephemeral_resources ephemeral-pr "$EPH_PR")"
+    log "pull request $EPH_PR closed: its copy holds ${n:-no state} resources"
+    [ "$n" = 0 ] || { log "closing pull request $EPH_PR did not destroy its copy"; rc=1; }
+    done_lines="$(ephemeral_done "$repo")"
+    jq -c '{kind, pr, result, reason, roots: [.roots[].location]}' <<<"$done_lines" >&2 || true
+    jq -e --argjson pr "$EPH_PR" 'select(.kind == "ephemeral-destroy" and .pr == $pr and .reason == "closed" and .result == "destroyed" and (.planDigest | startswith("sha256:")))' <<<"$done_lines" >/dev/null \
+      || { log "chant/lifecycle records no destroy of the copy for the close"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "pull request $EPH_PR got its own copy of canary/one beside the root's state, and closing it destroyed the copy on the record"
+  return $rc
+}
+
+claim_ephemeral_ttl() {
+  # The same repo with ttl: 1m. The pull request's copy applies; once a
+  # minute has passed, one run of the sweep workflow (dispatched, as its
+  # schedule would run it) destroys the copy while the pull request is still
+  # open, and done.jsonl records the destroy with the reason expired.
+  # BREAK: the sweep workflow is left out of the pushed tree, so nothing
+  # destroys a copy whose TTL passed.
+  log() { echo "[smoke ephemeral-ttl] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/ephemeral-ttl" sha n run="" deadline status="" done_lines state rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  ephemeral_repo ephemeral-ttl 1m || { drop_work "$work"; return 1; }
+  [ -z "${BREAK:-}" ] || mv "$work/tree/.forgejo/workflows/terragucci-ephemeral.yml" "$work/"
+  sha="$(push_tree "$work/tree" "$repo" main "ephemeral-ttl: main")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  [ $rc = 0 ] && { ephemeral_open ephemeral-ttl "$repo" || rc=1; }
+  if [ $rc = 0 ]; then
+    n="$(ephemeral_resources ephemeral-ttl "$EPH_PR")"
+    log "pull request $EPH_PR open: its copy holds ${n:-no state} resources"
+    [ "${n:-0}" -ge 1 ] || { log "the pull request got no copy of canary/one"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    # The TTL is a minute from the copy's apply, which finished before the run did.
+    log "waiting out the copy's one-minute TTL"
+    sleep 65
+    if run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' \
+        "$URL/api/v1/repos/$repo/actions/workflows/terragucci-ephemeral.yml/dispatches" 2>/dev/null)"; then
+      run="$(jq -r '.id // empty' <<<"$run" 2>/dev/null || true)"
+      if [ -n "$run" ]; then ephemeral_wait "$repo" "$run"; else log "the dispatch named no run"; fi
+    else
+      log "Forgejo has no sweep workflow to run in $repo"
+    fi
+    n="$(ephemeral_resources ephemeral-ttl "$EPH_PR")"
+    state="$(api "$URL/api/v1/repos/$repo/pulls/$EPH_PR" | jq -r '.state')"
+    log "after the sweep: pull request $EPH_PR is $state, its copy holds ${n:-no state} resources"
+    [ "$state" = open ] || { log "pull request $EPH_PR is not open, so this is not the TTL's doing"; rc=1; }
+    [ "$n" = 0 ] || { log "the sweep did not destroy the expired copy"; rc=1; }
+    done_lines="$(ephemeral_done "$repo")"
+    jq -c '{kind, pr, result, reason, expiresAt}' <<<"$done_lines" >&2 || true
+    jq -e --argjson pr "$EPH_PR" 'select(.kind == "ephemeral-destroy" and .pr == $pr and .reason == "expired" and .result == "destroyed")' <<<"$done_lines" >/dev/null \
+      || { log "chant/lifecycle records no destroy of the copy for its TTL"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the copy of open pull request $EPH_PR was destroyed by the sweep once its TTL passed, on the record"
   return $rc
 }
 
@@ -15421,6 +15584,8 @@ unlock-state         runner self! weight=300
 tip-moved            self! weight=150
 mcp-last-apply       weight=120
 drift-agent          runner self! weight=250
+ephemeral-pr         runner self! weight=250
+ephemeral-ttl        runner self! weight=250
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

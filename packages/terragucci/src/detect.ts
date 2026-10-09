@@ -293,6 +293,48 @@ export function rootStates(repo: string, roots: string[]): Map<string, { state?:
   return out;
 }
 
+/**
+ * The backend a root's code declares: its type and the attributes written as
+ * plain strings, from its `.tf` files or Terraform's JSON syntax. `cloud` for
+ * a `cloud` block. Undefined when the root declares neither. Backend blocks
+ * take no expressions, so a string is all an attribute can be.
+ */
+export function backendBlock(dir: string): { type: string; attrs: Record<string, string> } | { cloud: true } | undefined {
+  for (const f of tfFiles(dir)) {
+    const raw = readFileSync(f, "utf-8");
+    if (isJson(f)) {
+      let doc: unknown;
+      try {
+        doc = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      const terraform = (doc as Record<string, unknown> | null)?.terraform;
+      for (const b of (Array.isArray(terraform) ? terraform : [terraform]) as Record<string, unknown>[]) {
+        if (!b || typeof b !== "object") continue;
+        if (b.cloud !== undefined) return { cloud: true };
+        const backends = b.backend && typeof b.backend === "object" ? (b.backend as Record<string, unknown>) : {};
+        const type = Object.keys(backends)[0];
+        if (!type) continue;
+        const body = (Array.isArray(backends[type]) ? (backends[type] as unknown[])[0] : backends[type]) as Record<string, unknown> | undefined;
+        const attrs = Object.fromEntries(Object.entries(body ?? {}).filter(([, v]) => typeof v === "string")) as Record<string, string>;
+        return { type, attrs };
+      }
+      continue;
+    }
+    const text = stripComments(raw);
+    const m = text.match(/\bbackend\s+"([^"]+)"\s*\{/);
+    if (m) {
+      const body = blockBody(text, m.index!);
+      const attrs: Record<string, string> = {};
+      for (const a of body.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"/gm)) attrs[a[1]] = a[2];
+      return { type: m[1], attrs };
+    }
+    if (/^\s*cloud\s*\{/m.test(text)) return { cloud: true };
+  }
+  return undefined;
+}
+
 /** Two addresses name one state: the same key, and the same bucket where both name one. */
 export const sameState = (a: StateAddress, b: StateAddress): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
 
