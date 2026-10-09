@@ -1,0 +1,66 @@
+---
+title: Release a state lock a killed job left
+description: When a job is killed mid-apply, free the backend's state lock it left with terragucci unlock-state, which checks the job is gone, waits for an approval of that lock, and records the release.
+draft: true
+claims: [unlock-state]
+prompt: |
+  Read https://intentius.io/terragucci/guides/release-a-state-lock/.
+  A plan or apply in this repo fails because the state of a root I name is locked. Read the lock file for that root and tell me its ID, who took it and when, and which of the forge's runs that began before then are still running.
+  Do not run `terragucci unlock-state`, `force-unlock` or any state command, and do not delete the lock file.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+A runner that kills a job mid-apply, on a timeout or a cancelled run, never lets the binary give back what it took on the state. The next plan of that root then waits until its timeout and fails. `terragucci unlock-state` does what a hand-run `force-unlock` would, with checks a hand run lacks:
+
+| Check | What it guards against |
+|---|---|
+| no run that began before it was taken is alive | freeing state that a job still applying holds, so that two applies write one state |
+| an approval of its ID | a release only the person typing agreed to, or one of a newer hold taken since |
+| a record on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) | a release nobody can find later; the [audit trail](/terragucci/reference/audit-trail/) lists it as `unlock` |
+
+It works on the lock file an `s3` backend takes with `use_lockfile = true`. A comment never runs it.
+
+## Free the state
+
+<Steps>
+
+1. Find the root. The failed job's log names the state and the ID:
+
+   ```text
+   Error: Error acquiring the state lock
+   Lock Info:
+     ID:        1f0c6a52-...
+     Path:      acme-state/envs/prod/app.tfstate
+     Operation: OperationTypeApply
+     Who:       root@runner-7
+     Created:   2026-10-09 18:02:11.420 +0000 UTC
+   ```
+
+2. Make sure the job that took it is over. Stop it on the forge if it is still going.
+
+3. In a checkout of the default branch, with the backend's credentials and the forge token in the variable `token_env` names (`FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN` by default), run:
+
+   ```bash
+   npx terragucci unlock-state envs/prod/app
+   ```
+
+   A run that began before the hold was taken and is still running may be the holder. Then nothing is freed, and the command exits 1 naming the run. With no such run, it records the release as waiting and prints the command that approves it:
+
+   ```text
+   terragucci unlock-state: envs/prod/app: releasing lock 1f0c6a52-..., OperationTypeApply by root@runner-7 at 2026-10-09T18:02:11.420Z waits for an approval of digest jcs1-sha256:6d2b.... Approve it with:
+   terragucci unlock-state:   chant approve tf-unlock envs/prod/app --plan jcs1-sha256:6d2b...
+   ```
+
+4. Whoever approves your waves reads the output above and runs that [chant](/terragucci/concepts/glossary/#chant) command, with `--sign` under `approval: sealed`. The approval names this ID and no other.
+
+5. Run `npx terragucci unlock-state envs/prod/app` again. It asks the forge about the runs once more and frees the state with the binary's `force-unlock` of that ID. The release goes in `_gates/tf-unlock/done.jsonl` with the approver and the person who ran it.
+
+6. Run the wave again, or push the next change. Its plan takes the state as usual.
+
+</Steps>
+
+Flags and exit codes are on [CLI commands](/terragucci/reference/cli/#unlock-state).
