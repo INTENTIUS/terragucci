@@ -29,8 +29,8 @@ describe("parseComment", () => {
     expect(parseComment("/terragucci lock envs/dev/app")).toMatchObject({ kind: "refused" });
   });
 
-  it("refuses approve and force-unlock by name, and anything else with the usage", () => {
-    for (const v of ["approve", "force-unlock"]) {
+  it("refuses approve, force-unlock and unlock-state by name, and anything else with the usage", () => {
+    for (const v of ["approve", "force-unlock", "unlock-state"]) {
       const r = parseComment(`/terragucci ${v} envs/dev/app`);
       expect(r).toMatchObject({ kind: "refused" });
       expect((r as { reason: string }).reason).toContain("never runs");

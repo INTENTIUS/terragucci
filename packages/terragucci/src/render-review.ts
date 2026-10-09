@@ -6,7 +6,7 @@ import { Job, Step } from "@intentius/chant-lexicon-github/generated/index";
 import type { ForgeName } from "./config";
 import { READS_EXIT } from "./render";
 import { RUNNER_TOKEN_VARS } from "./render-agent";
-import { REVIEW_DIR, REVIEW_FILE, REVIEW_OUT, REVIEW_WORK, type ReviewInput } from "./review-agent";
+import { REVIEW_ARTIFACT, REVIEW_DIR, REVIEW_FILE, REVIEW_OUT, REVIEW_WORK, type ReviewInput } from "./review-agent";
 
 const sh = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
@@ -61,7 +61,8 @@ export function reviewJobs(forge: Exclude<ForgeName, "gitlab">, image: string, r
         run: reviewPromptScript(o.reportDir, review.instructions),
       }),
       new Step({ name: "Run the review command on the prompt", if: "always() && steps.prompt.outcome == 'success'", shell: "bash", env: { [review.keySecret]: `\${{ secrets.${review.keySecret} }}` }, run: reviewRunScript(review.command) }),
-      new Step({ name: "Keep the review", if: "always() && steps.prompt.outcome == 'success'", uses: upload, with: { name: "terragucci-review", path: `${REVIEW_OUT}/`, "if-no-files-found": "error" } }),
+      // The verdict a tf-apply wave's policy reads comes from this artifact, bound by the forge to this run and its head (reviewOfPull).
+      new Step({ name: "Keep the review", if: "always() && steps.prompt.outcome == 'success'", uses: upload, with: { name: REVIEW_ARTIFACT, path: `${REVIEW_OUT}/`, "if-no-files-found": "error" } }),
     ],
   } as never);
   // A fresh container that never ran the model: it posts the review as a note, and nothing else.
@@ -73,7 +74,7 @@ export function reviewJobs(forge: Exclude<ForgeName, "gitlab">, image: string, r
     permissions: { "pull-requests": "write" },
     env: { TG_TOKEN: "${{ github.token }}", TG_PR: "${{ github.event.pull_request.number }}", TG_SHA: "${{ github.event.pull_request.head.sha }}" },
     steps: [
-      new Step({ name: "Fetch the review", uses: download, with: { name: "terragucci-review", path: REVIEW_OUT } }),
+      new Step({ name: "Fetch the review", uses: download, with: { name: REVIEW_ARTIFACT, path: REVIEW_OUT } }),
       new Step({ name: "Post the review as a note on the pull request", shell: "bash", run: `set -uo pipefail\nterragucci review post --dir ${REVIEW_OUT}` }),
     ],
   } as never);

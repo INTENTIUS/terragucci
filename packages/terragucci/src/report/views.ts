@@ -115,6 +115,26 @@ export function stepsTable(report: Report, name: (root: string) => string = (r) 
 }
 
 /** GitLab's `reports:terraform` artifact: create, update and delete counts for the merge-request widget. */
+/** How many downstream roots the note lists by name. */
+export const BLAST_LISTED = 40;
+
+/**
+ * The note's blast radius, when a root reads the state of a root this change
+ * changes: which roots change, and each root downstream with what it reads.
+ * Undefined when nothing reads a changed root's state.
+ */
+export function blastLines(report: Report, name: (root: string) => string = (r) => `\`${r}\``): string | undefined {
+  const b = report.blast;
+  if (!b || b.downstream.length === 0) return undefined;
+  let t = `**Blast radius:** ${plural(b.roots.length, "root")} ${b.roots.length === 1 ? "changes" : "change"} (${b.roots.slice(0, 10).map(code).join(", ")}${b.roots.length > 10 ? `, and ${b.roots.length - 10} more` : ""}), and ${plural(b.downstream.length, "root")} downstream ${b.downstream.length === 1 ? "reads" : "read"} their state:\n\n`;
+  for (const d of b.downstream.slice(0, BLAST_LISTED)) {
+    const who = d.planned ? name(d.root) : code(d.root);
+    t += `- ${who}${d.wave !== undefined ? ` (wave ${d.wave})` : ""} reads ${d.reads.map(code).join(", ")}${d.planned ? "" : "; not planned in this run"}\n`;
+  }
+  if (b.downstream.length > BLAST_LISTED) t += `- and ${b.downstream.length - BLAST_LISTED} more in the report's JSON\n`;
+  return t;
+}
+
 export function renderGitLabTerraform(report: Report): { create: number; update: number; delete: number } {
   const t = report.totals;
   // A replacement both deletes and creates.
@@ -321,6 +341,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     for (const x of linked) t += `- ${to(code(x.root), rootAnchor(x.root))} reads ${code(x.upstream)}${x.unknown?.length ? `; ${x.unknown.map(code).join(", ")} known once it applies` : ""}\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
+  const blast = blastLines(report, (root) => to(code(root), rootAnchor(root)));
+  if (blast) blocks.push({ kind: "line", units: 0, text: blast + "\n" });
   const steps = stepsTable(report, (root) => to(code(root), rootAnchor(root)));
   if (steps) blocks.push({ kind: "line", units: 0, text: steps + "\n" });
   if (report.cost && report.cost.roots.length > 0) blocks.push({ kind: "line", units: 0, text: costTable(report.cost, (root) => to(code(root), rootAnchor(root))) + "\n" });

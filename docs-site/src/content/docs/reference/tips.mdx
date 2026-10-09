@@ -54,3 +54,13 @@ A project has more than five roots and no `waves.canary`.
 ### terragucci-many-roots
 
 A hundred or more roots are planned on every change. Publish and pin shared modules.
+
+## Plan tips
+
+These read a root's plan, so they show only in the plan report and its note.
+
+### terragucci-moved
+
+A plan destroys one resource and creates another of the same type and provider, both in the root module and neither with a `count` or `for_each` key, and every value the create knows before apply equals the destroyed resource's value: the block was renamed. A `moved` block makes the plan move it instead. `terragucci respond tips --report <dir> --branch <branch> --mode apply` opens a pull request into the branch that adds it ([Responses](/terragucci/reference/responses/#tips-fmt-and-release-notes)).
+
+Values known only after apply, and sensitive ones, are not compared. A destroy that matches more than one create, or a create more than one destroy, gets no tip.

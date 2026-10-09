@@ -605,6 +605,34 @@ export interface Report {
   policy?: ReportPolicy;
   /** The cost estimate of a `tf-plan` run, or of a `tf-apply` wave's plans (minor 19), when `cost` is on (minor 12). */
   cost?: ReportCost;
+  /**
+   * A `tf-plan` run's blast radius (minor 22): the roots whose plan changes
+   * something, and every root of the repo that reads their state through
+   * `terraform_remote_state`, followed through. Absent when no root's plan
+   * changes anything, on a Terragrunt repo, and on other stages.
+   */
+  blast?: ReportBlast;
+}
+
+/** A change's blast radius (minor 22). */
+export interface ReportBlast {
+  /** The roots whose plan changes a resource or an output. */
+  roots: string[];
+  /** Nearest first: each root that reads the state of a root in the radius. */
+  downstream: ReportBlastRoot[];
+}
+
+/** A root downstream of a change (minor 22). */
+export interface ReportBlastRoot {
+  root: string;
+  /** The roots in the radius whose state it reads. */
+  reads: string[];
+  /** 1 when it reads a changed root's state itself, 2 when it reads such a reader's, and so on. */
+  depth: number;
+  /** The apply wave it is in. */
+  wave?: number;
+  /** Whether this run planned it. */
+  planned: boolean;
 }
 
 /** One root's monthly cost, from the estimator's output (minor 12). Null where the estimator gave no figure. */
