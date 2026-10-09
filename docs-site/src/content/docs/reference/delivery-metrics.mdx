@@ -45,7 +45,15 @@ An applied wave with no plan in the index has no lead time. The page shows the m
 
 An applied wave counts as failed when its roots drift within 7 days and no later apply of those roots came first. A `tf-drift` row lists the roots that drifted (`drifted_roots`). A row written before that field existed matches any root of its project.
 
-A failed apply opens an incident for the roots it failed on. The incident closes when an apply has applied each of those roots again. A second failure of roots already failing joins the open incident. Drift opens an incident at the first drift check that finds any, and closes at the next check that finds none, as the [drift issue](/terragucci/guides/turn-on-drift-checks/) does. Checks of the same commit share one row of the index, so each `tf-drift` row carries the open drift forward: `drift_since` on a row that found drift, and `drift_cleared` on the row that found none after it. `restore.open` counts the incidents still open.
+| Event | Incident | Field |
+|---|---|---|
+| an apply fails | opens one for the roots it failed on | |
+| another failure of roots already failing | joins the open incident | |
+| an apply applies each of those roots again | closes the apply's incident | |
+| the first drift check that finds drift | opens a drift incident, as the [drift issue](/terragucci/guides/turn-on-drift-checks/) does | `drift_since` on the `tf-drift` row |
+| the next drift check that finds none | closes it | `drift_cleared` on that row |
+
+Checks of the same commit share one row of the index, so each `tf-drift` row carries the open drift forward. `restore.open` counts the incidents still open.
 
 ## What it needs
 

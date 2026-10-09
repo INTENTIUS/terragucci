@@ -17,7 +17,7 @@ import Shot from '../../../components/Shot.astro';
 
 ## What you end up with
 
-Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch. Pick your forge in any tab; the other forge tabs on the site follow.
+Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Pick your forge in any tab; the other forge tabs on the site follow.
 
 <Shot step="boot" view="run" alt="A push to main on Forgejo: the check job and the four apply-wave jobs green, with the check report and each wave's report as artifacts" />
 
@@ -224,7 +224,7 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
 
    Then change a line in one root and push again, since a change that touches no root has nothing to plan.
 
-5. Require the status so that a failed plan blocks the merge.
+5. Require the status so that a failed plan blocks the merge. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the check also runs a live check with no cloud credentials.
 
    <Tabs syncKey="forge">
    <TabItem label="GitHub">

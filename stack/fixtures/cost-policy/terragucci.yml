@@ -1,0 +1,9 @@
+# The cost-policy claim's repo: one root, applied with no gate, and an HCP
+# Terraform policy set that denies on cost. The claim appends the cost key
+# unless BREAK is set.
+binary: tofu
+gate: never
+policy:
+  engine: opa
+  path: policy
+  input: hcp

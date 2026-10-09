@@ -38,9 +38,18 @@ That pull request drops the records table of staging email. Its note names the d
 
 <Shot step="wave-waiting" view="pull" alt="The destroy pull request in Forgejo. The plan note lists the records table of staging email under destroys and replacements, shows wave 4 with one root and approval not requested. Below it the apply-wave jobs show as skipped on the pull request" optional />
 
+The example runs `approval: sealed`, so its approvals need a key. Your own repo defaults to `ledger`, with no key:
+
+| `approval` | Where | An approval counts when |
+|---|---|---|
+| `sealed` | the example, whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists its wave gates | it is sealed by a key listed in `.chant/allowed_signers` on the default branch as it was before the merge being applied |
+| `ledger` | your own repo, by default | it approves the wave's digest; no key needed |
+
+[Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows both, and `pr-review`.
+
 <Steps>
 
-1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key and commits it to `.chant/allowed_signers` on main, the file that says who may approve.
+1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. The first terminal merge also generates a key for the example's sealed mode and commits it to `.chant/allowed_signers` on main, the file that says who may approve.
 
    <Captured step="wave-waiting" cmd="just example merge destroy" optional />
 
@@ -61,14 +70,5 @@ That pull request drops the records table of staging email. Its note names the d
 5. Run the wave's job again, and wave 4 applies. A plan that changes afterwards is not covered, as the next page shows.
 
 </Steps>
-
-Which approvals count depends on `approval`:
-
-| `approval` | Where | An approval counts when |
-|---|---|---|
-| `sealed` | the example, whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists its wave gates | it is sealed by a key listed in `.chant/allowed_signers` on the default branch as it was before the merge being applied |
-| `ledger` | your own repo, by default | it approves the wave's digest; no key needed |
-
-[Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows both, and `pr-review`.
 
 To make every wave wait, set `gate: always` in `terragucci.yml`.

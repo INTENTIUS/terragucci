@@ -11,13 +11,22 @@
  * its forge tokens, as the binary does. Its output is kept beside the plan
  * as `roots/<root>/cost.json`. An estimate that fails is named in the report
  * and the note, and never fails the plan.
+ *
+ * `tf-apply` estimates each wave's plans the same way. The policy reads each
+ * root's figures and its wave's (`input.cost`). With `cost.approve_above` in
+ * the config at base, a wave whose monthly change is over that amount waits
+ * for an approval whatever the gate, and the amount, the currency and the
+ * wave's change join the wave's set digest (costMember), so an approval of
+ * the plans at one cost does not apply them at another.
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { binaryEnv } from "../binary-env";
-import type { CostSettings } from "../config";
-import type { ReportCost, ReportRootCost } from "./schema";
+import { resolveProject, resolveRepo, type CostSettings } from "../config";
+import { configAtBase, type PolicyCost, type TrustedOptions } from "./policy";
+import type { ReportCost, ReportRootCost, ReportWaveCost } from "./schema";
 
 /** Infracost over the root's plan JSON. The job installs Infracost and maps the key secret to INFRACOST_API_KEY. */
 export const INFRACOST_COMMAND = 'infracost breakdown --path "$TG_PLAN_JSON" --format json --log-level error';
@@ -158,4 +167,113 @@ export function writeCostFiles(dir: string, outputs: Map<string, string>): void 
 export function signed(n: number): string {
   const v = round(n);
   return `${v > 0 ? "+" : v < 0 ? "-" : ""}${Math.abs(v).toFixed(2)}`;
+}
+
+/** `cost.approve_above`, when the setting has one. */
+export function approveAbove(setting: CostSettings | undefined): number | undefined {
+  return setting && setting !== true && typeof setting.approve_above === "number" ? setting.approve_above : undefined;
+}
+
+/** The estimator a run uses and the amount over which a wave waits, read at base. */
+export interface CostRule {
+  /** The `cost` setting the run estimates with: its own, else the one at base. Undefined: no estimate. */
+  setting?: CostSettings;
+  /** `cost.approve_above` in the config at base (or, with no base, in the config read). */
+  approveAbove?: number;
+  /** Where `approveAbove` was read, for the log. */
+  source?: string;
+  /** A line for the log: the checkout's amount differs from the one that counts. */
+  note?: string;
+  /** The config at base could not be read while the run's own config sets an amount, so whether a wave waits cannot be decided. */
+  error?: string;
+}
+
+/**
+ * The cost rule of a run. Without a base, the run's own `cost`. With one,
+ * `cost.approve_above` is the base's: a change cannot raise or drop the
+ * amount its own apply is judged by. The estimator is the run's own setting,
+ * else the base's, so a change that drops `cost` is still priced. A base
+ * whose config cannot be read is an error only when the run's own config
+ * sets an amount.
+ */
+export async function costRule(repo: string, own: CostSettings | undefined, base: string | undefined, options: TrustedOptions = {}): Promise<CostRule> {
+  if (!base) return { ...(own ? { setting: own } : {}), ...(approveAbove(own) !== undefined ? { approveAbove: approveAbove(own), source: "the config here" } : {}) };
+  const read = await configAtBase(repo, base, options);
+  if ("error" in read) {
+    if (approveAbove(own) !== undefined) return { ...(own ? { setting: own } : {}), error: `cost.approve_above is read from the config at ${base}, and it could not be read (${read.error})` };
+    return own ? { setting: own } : {};
+  }
+  let atBase: CostSettings | undefined;
+  try {
+    atBase = read.config.projects ? (options.project ? resolveProject(read.config, options.project).cost : undefined) : resolveRepo(read.config).cost;
+  } catch (e) {
+    if (approveAbove(own) !== undefined) return { ...(own ? { setting: own } : {}), error: `cost.approve_above is read from the config at ${base}, and it could not be read (${(e as Error).message})` };
+    return own ? { setting: own } : {};
+  }
+  const amount = approveAbove(atBase);
+  const mine = approveAbove(own);
+  const setting = own ?? atBase;
+  return {
+    ...(setting ? { setting } : {}),
+    ...(amount !== undefined ? { approveAbove: amount, source: `the config at ${base}` } : {}),
+    ...(mine !== amount ? { note: `cost: approve_above is ${mine ?? "unset"} here and ${amount ?? "unset"} at ${base}; the amount at ${base} counts` } : {}),
+  };
+}
+
+/**
+ * A wave's monthly cost: the sums over its roots estimated, the roots that
+ * could not be, and with an amount whether the change is over it. A change
+ * that cannot be known (a root of the wave has no estimate) counts as over.
+ */
+export function waveCost(cost: ReportCost, roots: readonly string[], amount: number | undefined): ReportWaveCost {
+  const mine = cost.roots.filter((r) => roots.includes(r.root));
+  const estimated = mine.filter((r) => r.monthly_delta !== null);
+  const unestimated = mine.filter((r) => r.monthly_delta === null).map((r) => r.root).sort();
+  const sum = (k: "monthly_delta" | "monthly_total" | "past_monthly_total"): number | null =>
+    estimated.length > 0 ? round(estimated.reduce((n, r) => n + (r[k] ?? 0), 0)) : null;
+  const delta = sum("monthly_delta");
+  return {
+    currency: cost.currency,
+    monthly_delta: delta,
+    monthly_total: sum("monthly_total"),
+    past_monthly_total: sum("past_monthly_total"),
+    ...(unestimated.length > 0 ? { unestimated } : {}),
+    ...(amount !== undefined ? { approve_above: amount, over: unestimated.length > 0 || delta === null || delta > amount } : {}),
+  };
+}
+
+/** The member a wave's set digest takes for its cost when `cost.approve_above` is set: not a root, so no root can be named it. */
+export const COST_MEMBER = "(monthly cost)";
+
+/**
+ * The wave's cost as a member of its set digest: the amount, the currency,
+ * the change and the roots not estimated. Undefined without an amount, so a
+ * repo that sets none keeps the digests it had.
+ */
+export function costMember(w: ReportWaveCost | undefined): { member: string; planDigest: string } | undefined {
+  if (!w || w.approve_above === undefined) return undefined;
+  return {
+    member: COST_MEMBER,
+    planDigest: computePlanDigest("terragucci-wave-cost", { approve_above: w.approve_above, currency: w.currency, monthly_delta: w.monthly_delta, unestimated: w.unestimated ?? [] }),
+  };
+}
+
+/** Why a wave waits for its cost, for the log and the outcome: the change, the amount and where it was read. */
+export function costReason(w: ReportWaveCost, source?: string): string {
+  const where = source ? ` in ${source}` : "";
+  if (w.unestimated?.length) return `the monthly cost of ${w.unestimated.join(", ")} could not be estimated, and cost.approve_above is ${w.approve_above!.toFixed(2)} ${w.currency}${where}`;
+  if (w.monthly_delta === null) return `the wave's monthly cost could not be estimated, and cost.approve_above is ${w.approve_above!.toFixed(2)} ${w.currency}${where}`;
+  return `the monthly cost changes by ${signed(w.monthly_delta)} ${w.currency}, over cost.approve_above ${w.approve_above!.toFixed(2)} ${w.currency}${where}`;
+}
+
+/** What the policy reads as `input.cost` for one root: its figures, its wave's, and the amount. */
+export function policyCost(cost: ReportCost, root: string, wave: { number: number; cost: ReportWaveCost } | undefined, amount: number | undefined): PolicyCost {
+  const r = cost.roots.find((x) => x.root === root);
+  return {
+    estimator: cost.estimator,
+    currency: cost.currency,
+    root: { monthly_delta: r?.monthly_delta ?? null, monthly_total: r?.monthly_total ?? null, past_monthly_total: r?.past_monthly_total ?? null },
+    ...(wave ? { wave: { number: wave.number, monthly_delta: wave.cost.monthly_delta, monthly_total: wave.cost.monthly_total, past_monthly_total: wave.cost.past_monthly_total } } : {}),
+    approve_above: amount ?? null,
+  };
 }
