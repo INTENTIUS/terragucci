@@ -59,6 +59,37 @@ RUNNER_CAPACITY="${TERRAGUCCI_RUNNER_CAPACITY:-8}"
 log() { echo "[bootstrap] $*" >&2; }
 die() { log "FAIL: $*"; exit 1; }
 
+ensure_image() { # ref: pull once, retrying; an ECR Public library image falls back to Docker Hub's
+  local ref="$1" i hub
+  docker image inspect "$ref" >/dev/null 2>&1 && return 0
+  for i in 1 2 3 4 5; do
+    log "pulling $ref (attempt $i)…"
+    docker pull -q "$ref" >&2 && return 0
+    sleep $((i * 5))
+  done
+  case "$ref" in
+    public.ecr.aws/docker/library/*) hub="docker.io/library/${ref##*/library/}" ;;
+    *) die "could not pull $ref" ;;
+  esac
+  log "ECR Public refused $ref; pulling $hub instead"
+  for i in 1 2 3; do
+    docker pull -q "$hub" >&2 && docker tag "$hub" "$ref" && return 0
+    sleep $((i * 5))
+  done
+  die "could not pull $ref or $hub"
+}
+ensure_job_image() { ensure_image "$JOB_IMAGE"; }
+
+# Every ECR Public image the compose file names, pulled once before any
+# profile starts: hosted CI runners share an IP, and ECR Public's anonymous
+# limit answers parallel pulls with "toomanyrequests: Rate exceeded".
+ensure_stack_images() {
+  local ref
+  for ref in $(sed -n 's/^ *image: *\(public\.ecr\.aws\/[^ ]*\).*/\1/p' "$HERE/docker-compose.yml" | sort -u); do
+    ensure_image "$ref"
+  done
+}
+
 command -v docker >/dev/null 2>&1 || die "docker is not installed"
 docker info >/dev/null 2>&1 || die "the docker daemon is not reachable"
 
@@ -91,6 +122,7 @@ case "$PROFILE" in
   aws|forgejo|github|gitlab|fountain) ;;
   observability)
     log "starting the observability profile…"
+    ensure_stack_images
     "${COMPOSE[@]}" --profile observability up -d >&2
     wait_http "http://localhost:${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}/" "the collector" 30
     wait_http "http://localhost:${TERRAGUCCI_PROMETHEUS_PORT:-9190}/-/ready" "Prometheus" 30
@@ -146,6 +178,7 @@ if [ "$PROFILE" = fountain ]; then
   fi
 
   log "starting floci, fountain and its database…"
+  ensure_stack_images
   "${COMPOSE[@]}" --profile fountain up -d floci fountain-postgres fountain >&2
   wait_http "$FLOCI_URL/" "floci" 60
   wait_http "$FOUNTAIN_URL/health" "fountain" 90
@@ -175,6 +208,7 @@ if [ "$PROFILE" = fountain ]; then
   fi
 
   log "starting the fountain runner…"
+  ensure_stack_images
   TERRAGUCCI_FOUNTAIN_API_KEY="$KEY" "${COMPOSE[@]}" --profile fountain up -d fountain-runner >&2
   for i in $(seq 1 60); do
     curl -fsS -H "Authorization: Bearer $KEY" "$FOUNTAIN_URL/api/runners" 2>/dev/null \
@@ -194,6 +228,7 @@ fi
 
 started=$(date +%s)
 log "starting the $PROFILE profile…"
+ensure_stack_images
 "${COMPOSE[@]}" --profile "$PROFILE" up -d >&2
 wait_http "$FLOCI_URL/" "floci" 60
 
@@ -296,22 +331,6 @@ api() { curl -fsS -H "Authorization: token $TOKEN" "$@"; }
 # Retry with backoff; if ECR Public keeps refusing, take the same official
 # image from Docker Hub (which CI reaches through its registry mirror) and tag
 # it under JOB_IMAGE, the name the runner's labels ask for.
-ensure_job_image() {
-  docker image inspect "$JOB_IMAGE" >/dev/null 2>&1 && return 0
-  local i
-  for i in 1 2 3 4 5; do
-    log "pulling the job image $JOB_IMAGE (attempt $i)…"
-    docker pull -q "$JOB_IMAGE" >&2 && return 0
-    sleep $((i * 5))
-  done
-  local hub="docker.io/library/${JOB_IMAGE##*/library/}"
-  log "ECR Public refused $JOB_IMAGE; pulling $hub instead"
-  for i in 1 2 3; do
-    docker pull -q "$hub" >&2 && docker tag "$hub" "$JOB_IMAGE" && return 0
-    sleep $((i * 5))
-  done
-  die "could not pull the job image $JOB_IMAGE or $hub"
-}
 ensure_job_image
 
 # Runner registration on Forgejo 16 / forgejo-runner 13. `forgejo-runner
