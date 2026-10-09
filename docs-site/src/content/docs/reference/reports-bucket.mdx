@@ -17,9 +17,11 @@ With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`,
 | `<prefix>/index.json`, `index.html` | every upload | every project's runs, newest first |
 | `<prefix>/<project>/index.json`, `index.html` | every upload | one project's runs, newest first |
 | `<prefix>/<project>/inventory.json` | a `tf-apply` wave's upload | the resources each root holds, from its newest applied wave |
+| `<prefix>/<project>/changes.json` | a `tf-apply` wave's upload | what each applied wave did to each resource, newest first |
 | `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-<n>]/` | every upload | one run's report directory, below |
 | `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
 | `<prefix>/estate.json`, `estate.html` | [`terragucci estate`](/terragucci/guides/see-every-project/) | every project's latest plan, drift check and apply waves |
+| `<prefix>/history.json`, `history.html` | [`terragucci estate`](/terragucci/guides/see-every-project/#change-history) | every resource address with each apply that changed it |
 | `<prefix>/audit.jsonl`, `audit.html`, `audit.json` | [`terragucci audit`](/terragucci/reference/audit-trail/) | the audit trail, its page and its summary |
 | `<prefix>/views/` | nothing | kept for a viewer's own files |
 
@@ -51,6 +53,8 @@ Each JSON object a program reads names its schema in its `schema` field, and the
 | `estate.json` | `terragucci.estate/v1` | `dist/estate.schema.json` |
 | each line of `audit.jsonl` | `terragucci.audit/v1` | `dist/audit.schema.json` |
 | `inventory.json` | `terragucci.inventory/v1` | `dist/inventory.schema.json` |
+| `changes.json` | `terragucci.changes/v1` | `dist/changes.schema.json` |
+| `history.json` | `terragucci.history/v1` | `dist/history.schema.json` |
 
 Within `v1` a release only adds fields, and an existing field keeps its meaning. A reader checks `schema` and ignores fields it does not know. The schemas leave objects open, so a validator accepts a field a later release added.
 
@@ -59,7 +63,7 @@ npm pack @intentius/terragucci
 tar -xzf intentius-terragucci-*.tgz package/dist/estate.schema.json
 ```
 
-[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json` and `inventory.json`, and [The audit trail](/terragucci/reference/audit-trail/#what-each-entry-holds) the fields of an audit entry.
+[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json` and `history.json`, and [The audit trail](/terragucci/reference/audit-trail/#what-each-entry-holds) the fields of an audit entry.
 
 ## The views prefix
 
@@ -73,6 +77,7 @@ Whatever serves the bucket serves `views/` too. A presigned link opens one objec
 |---|---|
 | every project's runs and the estate | `GetObject` on `<prefix>/*index.json` and `<prefix>/estate.json` |
 | every project's resources | `GetObject` on `<prefix>/*inventory.json` |
+| every resource's history | `GetObject` on `<prefix>/history.json`, or on `<prefix>/*changes.json` for the rows without approvers |
 | a run's report | `GetObject` on `<prefix>/*/report.json` |
 | the audit trail | `GetObject` on `<prefix>/audit.jsonl` |
 

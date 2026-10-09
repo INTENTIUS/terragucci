@@ -11,6 +11,7 @@ import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/chang
 import type { Gate } from "../config";
 import { changesSomething, destroysSomething } from "./changing";
 import { changeKind, foldChange } from "./highlight";
+import { planAppliedChanges } from "./history";
 import { planResources } from "./inventory";
 import { isObject } from "./redact";
 import {
@@ -247,7 +248,7 @@ export function buildReport(input: BuildInput): Report {
       fold: why.length > 0 ? "open" : "folded",
       why,
       ...(src.policy ? { policy: src.policy } : {}),
-      ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan) } : {}),
+      ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: planAppliedChanges(src.plan) } : {}),
     };
   });
 

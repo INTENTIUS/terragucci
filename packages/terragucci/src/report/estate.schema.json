@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/terragucci/schemas/estate/v1/estate.schema.json",
   "title": "terragucci.estate/v1",
-  "description": "estate.json at the top of a reports prefix, which terragucci estate builds from every project's index.json and inventory.json. Within v1 fields are only added, and an existing field never changes meaning.",
+  "description": "estate.json at the top of a reports prefix, which terragucci estate builds from every project's index.json, inventory.json and changes.json. Within v1 fields are only added, and an existing field never changes meaning.",
   "type": "object",
   "required": ["schema", "generated", "totals", "projects", "recent"],
   "properties": {
@@ -31,6 +31,16 @@
       "properties": {
         "page": { "type": "string" },
         "entries": { "type": "integer" },
+        "generated": { "type": "string" }
+      }
+    },
+    "history": {
+      "type": "object",
+      "description": "The resource history beside the page (history.json and history.html), when an apply changed a resource.",
+      "required": ["page", "resources", "generated"],
+      "properties": {
+        "page": { "type": "string" },
+        "resources": { "type": "integer", "description": "Addresses with at least one apply." },
         "generated": { "type": "string" }
       }
     }
@@ -144,7 +154,8 @@
       "properties": {
         "address": { "type": "string" },
         "type": { "type": "string" },
-        "provider": { "type": "string" }
+        "provider": { "type": "string" },
+        "history": { "type": "string", "description": "Its section of history.html, when an apply changed it." }
       }
     }
   }
