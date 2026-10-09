@@ -36,20 +36,25 @@
  * migration that applied is never run again.
  *
  * State contents never leave the job: the record holds version ids and
- * digests. The first version moves states between `s3` backends that take a
- * lock file and `local` backends, and refuses Terragrunt units and roots with
- * a `cloud` block.
+ * digests. It moves states between `s3` backends that take a lock file and
+ * `local` backends, and refuses roots with a `cloud` block.
+ *
+ * A Terragrunt unit takes part as a root does: Terragrunt prepares it once
+ * (unitPlace), and the migration runs the binary in the directory Terragrunt
+ * runs it in, with the environment Terragrunt gives it, so a unit's state
+ * moves to or from another unit's or a plain root's.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { hostname, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
-import { binaryEnv } from "./binary-env";
+import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, findConfig, type Approval } from "./config";
 import type { S3Fetch, S3Target } from "./report/s3";
@@ -504,6 +509,8 @@ export interface MigrateOptions {
   binary: string;
   env?: NodeJS.ProcessEnv;
   exec?: BinaryExec;
+  /** How a Terragrunt unit is prepared: the `terragrunt` executable and its runner. Default `TERRAGUCCI_TERRAGRUNT`, then `terragrunt` on the path. */
+  terragrunt?: { path?: string; exec?: TerragruntExec };
   fetch?: S3Fetch;
   /** Where new states and proof plans are kept; removed by the caller. */
   work: string;
@@ -514,7 +521,8 @@ export interface MigrateOptions {
 export function refusal(repo: string, root: string): string | undefined {
   const dir = join(repo, root);
   if (!existsSync(dir)) return `${root} is not a directory in the repo`;
-  if (existsSync(join(dir, "terragrunt.hcl"))) return `${root} is a Terragrunt unit, and migrations move the state of Terraform and OpenTofu roots only`;
+  // A Terragrunt unit's code and backend are what Terragrunt makes of its terragrunt.hcl: placeOf prepares it.
+  if (existsSync(join(dir, "terragrunt.hcl"))) return undefined;
   const tf = readdirSync(dir).filter((f) => f.endsWith(".tf") && f !== OVERRIDE_FILE);
   if (tf.length === 0) return `${root} holds no .tf files`;
   for (const f of tf) {
@@ -529,6 +537,51 @@ function backendRefusal(root: string, o: StateObject): string | undefined {
   if ("unsupported" in o) return `${root}: ${o.unsupported.replace("reads state versions from", "migrates state in")}`;
   if (o.backend === "s3" && !(o as { lockfile: boolean }).lockfile) return `${root}: its s3 backend takes no lock file (use_lockfile = true), so a migration could not hold its lock`;
   return undefined;
+}
+
+/** Where a root's binary runs: its directory and environment. A plain root runs where it is, with the job's environment. */
+export interface Place {
+  dir: string;
+  env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Where a Terragrunt unit's binary runs, as Terragrunt prepares it: `terragrunt
+ * run -- init` in the unit, with `TG_TF_PATH` a wrapper that records the
+ * directory and the environment Terragrunt runs the binary in (its working
+ * directory, in Terragrunt's cache when the unit names a source, with
+ * backend.tf and provider.tf generated, and its inputs as `TF_VAR_`
+ * variables) and then runs the binary. Every later call of the migration runs
+ * the binary there, with that environment, as for a plain root.
+ */
+export async function unitPlace(repo: string, unit: string, binary: string, env: NodeJS.ProcessEnv, work: string, tg: MigrateOptions["terragrunt"] = {}): Promise<Place> {
+  const capture = mkdtempSync(join(work, "unit-"));
+  const file = join(capture, "place.json");
+  const wrapper = join(capture, basename(binary) || "tofu");
+  const q = (x: string): string => `'${x.replace(/'/g, `'\\''`)}'`;
+  const record = `require("fs").writeFileSync(process.argv[1], JSON.stringify({ dir: process.cwd(), env: process.env }))`;
+  writeFileSync(wrapper, `#!/bin/sh\n${q(process.execPath)} -e ${q(record)} ${q(file)}\nexec ${q(binary)} "$@"\n`);
+  chmodSync(wrapper, 0o755);
+  const terragrunt = tg.path ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
+  const run = await (tg.exec ?? terragruntExec)(terragrunt, ["run", "--non-interactive", "--no-color", "--working-dir", unit, "--", "init", "-input=false", "-no-color"], {
+    cwd: repo,
+    env: { ...(env as Record<string, string>), TG_TF_PATH: wrapper, TG_NON_INTERACTIVE: "true" },
+  });
+  if (run.code !== 0) throw new ConfigError(`terragrunt could not prepare ${unit} (init failed): ${firstLine(run.stderr || run.stdout)}`);
+  if (!existsSync(file)) throw new ConfigError(`terragrunt prepared ${unit} without running ${binary}, so where it runs is not known`);
+  const got = JSON.parse(readFileSync(file, "utf-8")) as { dir: string; env: Record<string, string> };
+  // The binary's own variables from Terragrunt: the unit's inputs, and any credentials an iam_role gave it.
+  const added = Object.fromEntries(Object.entries(got.env).filter(([k, v]) => env[k] !== v && k !== "TG_TF_PATH" && k !== "PWD" && k !== "OLDPWD" && k !== "SHLVL" && k !== "_"));
+  return { dir: got.dir, env: { ...env, ...added } };
+}
+
+/** Each root's place: a unit's as Terragrunt prepares it, a plain root's where it is. */
+async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv): Promise<Map<string, Place>> {
+  const out = new Map<string, Place>();
+  for (const root of roots) {
+    out.set(root, existsSync(join(repo, root, "terragrunt.hcl")) ? await unitPlace(repo, root, options.binary, env, options.work, options.terragrunt) : { dir: join(repo, root), env });
+  }
+  return out;
 }
 
 /** A root's state as `state pull` gives it, or null when it has none. */
@@ -602,6 +655,8 @@ interface Source {
 /** What planning leaves for the apply: the record, and where each root's new state is. */
 export interface PlannedMigration {
   record: MigrationRecord;
+  /** Where each root's binary runs (a Terragrunt unit's working directory). */
+  places: Map<string, Place>;
   /** By root: the new state's file in the job's work dir, the backend it writes to, and, for a backend move, where the state is now. */
   files: Map<string, { path: string; object: StateObject; state: StateFile; beforeCount: number; source?: Source }>;
 }
@@ -629,18 +684,19 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   const problems = roots.map((r) => refusal(repo, r)).filter((x): x is string => x !== undefined);
   if (problems.length > 0) throw new ConfigError(`migration ${m.name} cannot run:\n  ${problems.join("\n  ")}`);
   mkdirSync(options.work, { recursive: true });
+  const places = await placesOf(repo, roots, options, env);
   const before = new Map<string, StateFile | null>();
   const objects = new Map<string, StateObject>();
   const versions = new Map<string, string | undefined>();
   for (const root of roots) {
-    const dir = join(repo, root);
-    await initRoot(exec, options.binary, root, dir, env);
-    const o = stateObject(dir, env);
+    const { dir, env: renv } = places.get(root)!;
+    await initRoot(exec, options.binary, root, dir, renv);
+    const o = stateObject(dir, renv);
     const why = backendRefusal(root, o);
     if (why) throw new ConfigError(`migration ${m.name} cannot run: ${why}`);
     objects.set(root, o);
     versions.set(root, await versionOf(o, options.fetch));
-    before.set(root, await pullState(exec, options.binary, root, dir, env));
+    before.set(root, await pullState(exec, options.binary, root, dir, renv));
   }
   const after = new Map<string, StateFile>();
   const sources = new Map<string, Source & { version?: string; state: StateFile }>();
@@ -649,15 +705,15 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     for (const [root, s] of moveResources(m.name, m.moves, before)) after.set(root, s);
   } else if (m.kind === "backends") {
     for (const [i, b] of m.backends.entries()) {
-      const dir = join(repo, b.root);
-      const object = stateObject(dir, env, { type: b.from.backend, config: b.from.config });
+      const { dir, env: renv } = places.get(b.root)!;
+      const object = stateObject(dir, renv, { type: b.from.backend, config: b.from.config });
       const why = backendRefusal(b.root, object);
       if (why) throw new ConfigError(`migration ${m.name} cannot run: the backend it moves from: ${why}`);
       if (locationOf(object) === locationOf(objects.get(b.root)!)) throw new ConfigError(`migration ${m.name}: ${b.root}'s code names the backend it moves from, ${locationOf(object)}; change the backend block in the same change`);
       if (before.get(b.root)) throw new ConfigError(`migration ${m.name}: the backend ${b.root}'s code names, ${locationOf(objects.get(b.root)!)}, already holds a state, so a move would overwrite it`);
       const block = backendBlock(b.from.backend, b.from.config);
       const data = join(options.work, `source-${i}`);
-      const state = await withBackend(exec, options.binary, b.root, dir, block, data, env, `the backend it moves from`, (benv) => pullState(exec, options.binary, b.root, dir, benv));
+      const state = await withBackend(exec, options.binary, b.root, dir, block, data, renv, `the backend it moves from`, (benv) => pullState(exec, options.binary, b.root, dir, benv));
       if (!state) throw new ConfigError(`migration ${m.name}: ${locationOf(object)} holds no state of ${b.root} to move`);
       sources.set(b.root, { object, block, data, version: await versionOf(object, options.fetch), state });
       after.set(b.root, state);
@@ -695,7 +751,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
     const src = sources.get(root);
     files.set(root, { path, object: objects.get(root)!, state, beforeCount: before.get(root)?.resources.length ?? 0, ...(src ? { source: { object: src.object, block: src.block, data: src.data } } : {}) });
-    const proof = await proofPlan(exec, options.binary, repo, root, path, options.work, i, env);
+    const proof = await proofPlan(exec, options.binary, places.get(root)!, root, path, options.work, i);
     log(`${root}: ${proof.changes.length === 0 ? "no changes against its new state" : `${proof.changes.length} change${proof.changes.length === 1 ? "" : "s"} against its new state: ${proof.changes.join(", ")}`}`);
     const o = objects.get(root)!;
     const b = before.get(root) ?? null;
@@ -724,7 +780,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     digest: migrationDigest(m, out),
     status: out.some((r) => r.proof.changes.length > 0) ? "proof-failed" : "planned",
   };
-  return { record, files };
+  return { record, files, places };
 }
 
 const locationOf = (o: StateObject): string | undefined => ("bucket" in o ? `s3://${(o as { bucket: string }).bucket}/${(o as { key: string }).key}` : "path" in o ? (o as { path: string }).path : undefined);
@@ -734,8 +790,8 @@ const locationOf = (o: StateObject): string | undefined => ("bucket" in o ? `s3:
  * to that local file, in a data dir of the job's own, so the root's
  * `.terraform` and its real state are never touched.
  */
-async function proofPlan(exec: BinaryExec, binary: string, repo: string, root: string, statePath: string, work: string, i: number, env: NodeJS.ProcessEnv): Promise<{ changes: string[]; summary: string }> {
-  const dir = join(repo, root);
+async function proofPlan(exec: BinaryExec, binary: string, place: Place, root: string, statePath: string, work: string, i: number): Promise<{ changes: string[]; summary: string }> {
+  const { dir, env } = place;
   const block = backendBlock("local", { path: resolve(statePath) });
   return withBackend(exec, binary, root, dir, block, join(work, `data-${i}`), env, "its new state", (penv) => planChanges(exec, binary, dir, penv, work, `${root.replace(/[^\w.-]/g, "_")}-proof`, true));
 }
@@ -788,14 +844,14 @@ async function movedSince(repo: string, plan: PlannedMigration, options: Migrate
   const moved: string[] = [];
   for (const r of plan.record.roots) {
     const f = plan.files.get(r.root)!;
-    const dir = join(repo, r.root);
+    const { dir, env: renv } = plan.places.get(r.root) ?? { dir: join(repo, r.root), env };
     const v = await versionOf(f.object, options.fetch);
-    const s = await pullState(exec, options.binary, r.root, dir, env);
+    const s = await pullState(exec, options.binary, r.root, dir, renv);
     let same = (v ?? undefined) === r.before.version_id && (s ? stateDigest(s) : null) === r.before.digest;
     if (same && f.source && r.source) {
       const src = f.source;
       const sv = await versionOf(src.object, options.fetch);
-      const ss = await withBackend(exec, options.binary, r.root, dir, src.block, src.data, env, "the backend it moves from", (benv) => pullState(exec, options.binary, r.root, dir, benv));
+      const ss = await withBackend(exec, options.binary, r.root, dir, src.block, src.data, renv, "the backend it moves from", (benv) => pullState(exec, options.binary, r.root, dir, benv));
       same = (sv ?? undefined) === r.source.version_id && (ss ? stateDigest(ss) : null) === r.source.digest;
     }
     if (!same) moved.push(r.root);
@@ -825,14 +881,16 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
     for (const r of order) {
       const f = plan.files.get(r.root)!;
       const lockArgs = f.object.backend === "s3" ? ["-lock=false"] : [];
-      const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], join(repo, r.root), env);
+      const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env };
+      const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], at.dir, at.env);
       if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
       log(`${r.root}: wrote its new state`);
     }
     const roots: MigrationRoot[] = [];
     for (const [i, r] of record.roots.entries()) {
       const f = plan.files.get(r.root)!;
-      const verify = await planChanges(exec, options.binary, join(repo, r.root), env, options.work, `${i}-verify`, f.object.backend !== "s3");
+      const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env };
+      const verify = await planChanges(exec, options.binary, at.dir, at.env, options.work, `${i}-verify`, f.object.backend !== "s3");
       const v = await versionOf(f.object, options.fetch);
       roots.push({ ...r, after: { ...r.after, ...(v ? { version_id: v } : {}) }, verify });
       log(`${r.root}: ${verify.changes.length === 0 ? "no changes against its backend" : `${verify.changes.length} changes against its backend: ${verify.changes.join(", ")}`}`);
@@ -981,6 +1039,8 @@ export interface RunMigrationsOptions {
   config?: string;
   exec?: BinaryExec;
   fetch?: S3Fetch;
+  /** How a Terragrunt unit is prepared (MigrateOptions.terragrunt). */
+  terragrunt?: MigrateOptions["terragrunt"];
   /** Read only: prove each pending migration and print its digest, as a pull request's plan job does. */
   planOnly?: boolean;
   log?: (line: string) => void;
@@ -1083,7 +1143,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   log(`${label}: ${describeChange(m)}`);
   let plan: PlannedMigration;
   try {
-    plan = await planMigration(repo, m, { binary: options.binary, env, work, log, ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}) });
+    plan = await planMigration(repo, m, { binary: options.binary, env, work, log, ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
   } catch (e) {
     log(`${label}: ${(e as Error).message}`);
     log(`${label}: nothing was written`);
@@ -1154,7 +1214,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   appendLifecycle(repo, MIGRATE_APPLIED, [JSON.stringify(applied)], {}, `Applied under approval: ${MIGRATE_OP} ${m.name}`);
   let result: MigrationRecord;
   try {
-    result = await applyMigration(repo, plan, { binary: options.binary, env, work, log, now, ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}) });
+    result = await applyMigration(repo, plan, { binary: options.binary, env, work, log, now, ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
   } catch (e) {
     log(`${label}: ${(e as Error).message}`);
     return { code: EXIT.failed, record: { ...record, status: "failed", error: (e as Error).message } };
