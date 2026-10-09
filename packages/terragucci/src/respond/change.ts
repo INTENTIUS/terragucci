@@ -24,6 +24,8 @@ export interface Proposal {
   run?: (dir: string) => string[];
   /** Files `run` writes, named for a dry run. */
   expect?: string[];
+  /** The branch the pull request goes into, and the commit starts from. Default the default branch. */
+  base?: string;
 }
 
 export interface Proposed {
@@ -78,7 +80,7 @@ export function worktree(repo: string, ref: string): { dir: string; done: () => 
   };
 }
 
-/** Open one pull request per proposal, each on its own branch from the default branch. */
+/** Open one pull request per proposal, each on its own branch from the default branch, or from the proposal's base. */
 export async function propose(repo: string, settings: ResolvedSettings, proposals: Proposal[], options: ChangeOptions): Promise<Proposed[]> {
   if (options.mode === "dry-run") {
     return proposals.map((p) => ({ branch: p.branch, title: p.title, files: [...p.files.keys(), ...(p.expect ?? [])].sort(), state: "would-open" }));
@@ -87,10 +89,11 @@ export async function propose(repo: string, settings: ResolvedSettings, proposal
   const target = forgeOf(repo, settings, env);
   if (!target.token) throw new ConfigError(`${settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge]} is not set; it holds the forge token`);
   const fetch = options.fetch ?? (globalThis.fetch as unknown as Fetch);
-  const base = await defaultBranch(fetch, target);
-  git(repo, ["fetch", "-q", "origin", base]);
+  let main: string | undefined;
   const out: Proposed[] = [];
   for (const p of proposals) {
+    const base = p.base ?? (main ??= await defaultBranch(fetch, target));
+    git(repo, ["fetch", "-q", "origin", base]);
     const tree = worktree(repo, "FETCH_HEAD");
     try {
       for (const [file, content] of p.files) {

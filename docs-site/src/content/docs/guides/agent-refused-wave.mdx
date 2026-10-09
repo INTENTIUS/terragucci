@@ -4,10 +4,10 @@ description: Give an agent the diff between an approved plan and the current one
 claims: []
 prompt: |
   Read https://intentius.io/terragucci/guides/agent-refused-wave/.
-  Add the explain-refusal job for wave <k> where the guide's tab for this forge
-  puts it (its own workflow file on GitHub, .gitlab-ci.yml on GitLab, the
-  pipeline file on Forgejo, where the next init drops it), with no permission
-  beyond what that tab gives, and open a pull request.
+  Add the explain-refusal job for wave <k> to the own-jobs file the guide's tab
+  for this forge names, set own_jobs in terragucci.yml to that file, run
+  `npx terragucci init`, give the job no permission beyond what that tab gives,
+  and open a pull request.
   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -40,7 +40,12 @@ One comment saying what changed between the approved plan and the plan that was 
 
    The envelope holds each root whose plan digest moved, with what moved inside it.
 
-2. Add the job where `init` leaves it alone. `init` rewrites the pipeline file it wrote, so a job added there goes at the next `init`.
+2. Add the job to a file of your own jobs, and name the file in `terragucci.yml`. `init` rewrites the pipeline file it wrote, and writes every job the file holds after its own, as the file has it, each time it runs. `reconcile` does the same in each project of a control repo.
+
+   ```yaml
+   # terragucci.yml
+   own_jobs: ci/own-jobs.yml
+   ```
 
    | What | Value |
    |---|---|
@@ -52,49 +57,40 @@ One comment saying what changed between the approved plan and the plan that was 
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
-       A workflow of its own, `.github/workflows/terragucci-explain.yml`, which `init` never writes. It runs after each run of the `terragucci` workflow fails, and reads that run's artifact.
+       `ci/own-jobs.yml`. The job runs in the `terragucci` workflow after the wave's job, and reads that run's artifact.
 
        ```yaml
-       name: terragucci-explain
-       on:
-         workflow_run:
-           workflows: [terragucci]
-           types: [completed]
-       jobs:
-         explain-refusal:
-           if: github.event.workflow_run.conclusion == 'failure'
-           runs-on: ubuntu-latest
-           permissions:
-             actions: read
-             contents: read
-             pull-requests: write
-             issues: write
-           steps:
-             - uses: actions/checkout@v4
-             - uses: actions/download-artifact@v4
-               with:
-                 name: terragucci-report-apply-wave-2
-                 path: reports
-                 run-id: ${{ github.event.workflow_run.id }}
-                 github-token: ${{ github.token }}
-             - run: >
-                 test -d reports/approved || exit 0;
-                 npx -y @intentius/terragucci respond wave-refused
-                 --approved reports/approved --current reports/current --wave 2
-                 --json > refusal.json
-             - if: hashFiles('refusal.json') != ''
-               uses: anthropics/claude-code-action@v1
-               with:
-                 anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-                 github_token: ${{ secrets.AGENT_FORGE_TOKEN }}
-                 prompt: |
-                   Read refusal.json. Summarize which roots changed since the approval and why
-                   the plan moved, in five lines or fewer. Do not run chant approve,
-                   terragucci or any apply command.
+       explain-refusal:
+         needs: apply-wave-2
+         if: failure()
+         runs-on: ubuntu-latest
+         permissions:
+           contents: read
+           pull-requests: write
+           issues: write
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/download-artifact@v4
+             continue-on-error: true
+             with: { name: terragucci-report-apply-wave-2, path: reports }
+           - run: >
+               test -d reports/approved || exit 0;
+               npx -y @intentius/terragucci respond wave-refused
+               --approved reports/approved --current reports/current --wave 2
+               --json > refusal.json
+           - if: hashFiles('refusal.json') != ''
+             uses: anthropics/claude-code-action@v1
+             with:
+               anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+               github_token: ${{ secrets.AGENT_FORGE_TOKEN }}
+               prompt: |
+                 Read refusal.json. Summarize which roots changed since the approval and why
+                 the plan moved, in five lines or fewer. Do not run chant approve,
+                 terragucci or any apply command.
        ```
      </TabItem>
      <TabItem label="GitLab">
-       Add the job to your own `.gitlab-ci.yml`, which includes the generated `.gitlab/terragucci.yml` and which `init` never edits. It runs after the wave's job, and the artifact unpacks at `terragucci-report/`. Its rule is the apply jobs' own, so a branch's pipeline, which has no `apply-wave-2`, does not need it. Give it `ANTHROPIC_API_KEY` as a masked variable. The job posts nothing: read the summary in its log.
+       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. It runs after the wave's job, and the artifact unpacks at `terragucci-report/`. Its rule is the apply jobs' own, so a branch's pipeline, which has no `apply-wave-2`, does not need it. Give it `ANTHROPIC_API_KEY` as a masked variable. The job posts nothing: read the summary in its log.
 
        ```yaml
        explain-refusal:
@@ -117,7 +113,7 @@ One comment saying what changed between the approved plan and the plan that was 
        ```
      </TabItem>
      <TabItem label="Forgejo">
-       Forgejo's runner takes `actions/download-artifact@v3`, which reads only its own run's artifacts, so the job sits in `.forgejo/workflows/terragucci.yml` beside the wave's job. The next `npx terragucci init` rewrites that file and drops the job: add it again after each `init`. `anthropics/claude-code-action` is a GitHub app, so run the CLI in the job and read the summary in its log. The key is a repository secret; the job needs no write token.
+       `ci/own-jobs.yml`. Forgejo's runner takes `actions/download-artifact@v3`, which reads only its own run's artifacts, so the job runs in the `terragucci` workflow beside the wave's job. `anthropics/claude-code-action` is a GitHub app, so run the CLI in the job and read the summary in its log. The key is a repository secret; the job needs no write token.
 
        ```yaml
        explain-refusal:
@@ -130,10 +126,12 @@ One comment saying what changed between the approved plan and the plan that was 
            - uses: actions/download-artifact@v3
              with: { name: terragucci-report-apply-wave-2, path: reports }
            - run: >
+               test -d reports/approved || exit 0;
                npx -y @intentius/terragucci respond wave-refused
                --approved reports/approved --current reports/current --wave 2
                --json > refusal.json
            - run: >
+               test -f refusal.json || exit 0;
                npx -y @anthropic-ai/claude-code@2.1.290 -p
                "Read refusal.json. Summarize which roots changed since the approval and why
                the plan moved, in five lines or fewer. Do not run chant approve,
@@ -143,6 +141,8 @@ One comment saying what changed between the approved plan and the plan that was 
        ```
      </TabItem>
    </Tabs>
+
+   Then run `npx terragucci init` and commit the pipeline with the file. A job name `init` already gives one of its own jobs is refused.
 
 3. Read the summary, then decide. Choose between approving the new plan and reverting the change. The choice and the approval ([`terragucci approve`](/terragucci/reference/cli/#approve)) are yours.
 

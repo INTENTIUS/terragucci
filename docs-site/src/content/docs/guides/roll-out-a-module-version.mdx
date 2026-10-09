@@ -39,6 +39,8 @@ Every root that pins the module moved to the new version through one pull reques
 
    Name the module by path or by source without the pin; with no version, the newest published is used. The dry run changes nothing. When pins disagree, `--from` picks which moves.
 
+   A module that [`modules.registry`](/terragucci/guides/publish-modules/#serve-a-module-registry) publishes is named by its path too: `modules/network` also names the calls whose `source` is its registry address, such as `modules.example.com/acme/network/generic`, and their `version` moves. With no version, the newest the registry lists counts as well.
+
 2. Fix any pin it refuses. The preview reports each pin it cannot move and a tip:
 
    | The pin | Tip |

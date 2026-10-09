@@ -23,14 +23,16 @@
  *              comment and nothing else: no review, no approval, no status.
  *
  * The review ends with a `risk:` line (low, medium or high), which the note
- * carries in its marker. A `tf-apply` wave then gives the policy the risk of
- * the review of the merged pull request's head as `input.review`.
+ * carries in its marker for people to read. A `tf-apply` wave gives the
+ * policy the risk of the merged pull request's head as `input.review`, read
+ * from the review job's artifact of a run of that head, never from a note.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { apiOf, BRANCH, SHA } from "./comment";
 import { TOKEN_USERS } from "./comment-apply";
+import { unzipEntry } from "./install";
 import { ConfigError, type ProjectSettings } from "./config";
 import type { Fetch } from "./forge";
 import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
@@ -313,7 +315,7 @@ export function parseReviewMarker(body: unknown): { head: string; risk: Risk | "
 /** The note's body. The review is the model's text: it is shown, never trusted, and no marker of it survives. */
 export function reviewNoteBody(o: { head: string; review: string; rc: string; instructions: string }): string {
   const ok = o.rc === "0";
-  const risk = ok ? riskOf(o.review) : "unknown";
+  const risk = verdictOf(o);
   const text = cut(o.review.replace(/<!--/g, "&lt;!--").trim(), MAX_REVIEW, "review");
   const [from, changed] = o.instructions.trim().split(/\s+/);
   const lines = [
@@ -371,20 +373,65 @@ export async function postReview(o: PostReviewOptions): Promise<{ posted: boolea
   return { posted: true, risk, reason: `posted the review of ${head.slice(0, 8)} on pull request ${pr}: risk ${risk}` };
 }
 
+/** The artifact the review job keeps the review in, and a wave reads the verdict from. */
+export const REVIEW_ARTIFACT = "terragucci-review";
+
+/** The verdict of a review job's output: the review's risk, or unknown when the command failed. */
+export function verdictOf(o: { review: string; rc: string }): Risk | "unknown" {
+  return o.rc.trim() === "0" ? riskOf(o.review) : "unknown";
+}
+
+/** An artifact's zip by its API path, or undefined when the forge has none. */
+export type ArtifactFiles = (path: string) => Promise<Buffer | undefined>;
+
+/** A fetch that reads bytes, as the artifact's zip comes. */
+export type FetchBytes = (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; status: number; arrayBuffer(): Promise<ArrayBuffer> }>;
+
+/** Artifact zips through the forge's API with the job's token. GitHub answers with a redirect to storage, which fetch follows without the token. */
+export function artifactBytes(env: NodeJS.ProcessEnv, doFetch: FetchBytes = fetch): ArtifactFiles {
+  const { api, token } = apiOf(env);
+  return async (path) => {
+    const r = await doFetch(`${api}/${path}`, { headers: { authorization: `token ${token}` } });
+    if (r.status === 404 || r.status === 410) return undefined;
+    if (!r.ok) throw new Error(`GET ${path} answered ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+}
+
 /**
- * The review a wave's policy reads: the newest note of the pull request's head
- * posted by the pipeline's own token (TOKEN_USERS). A note anyone else posted
- * counts for nothing.
+ * The review a wave's policy reads: the verdict in the `terragucci-review`
+ * artifact of the newest `pull_request` run of the pull request's head. The
+ * forge binds the artifact to that run and the run to the head, so only the
+ * review job of a run of that head can have written it. A note on the pull
+ * request counts for nothing: any run of the repo holds a token that can post
+ * one, the run of another branch's change included.
  */
-export async function reviewOfPull(f: ForgeCalls, pr: ReviewedPull): Promise<PolicyReview> {
-  const comments = await f.get(`repos/${f.repo}/issues/${pr.number}/comments?per_page=100&limit=50`);
-  let found: { head: string; risk: Risk | "unknown" } | undefined;
-  for (const c of Array.isArray(comments) ? comments : []) {
-    if (!TOKEN_USERS.has(c?.user?.login)) continue;
-    const m = parseReviewMarker(c?.body);
-    if (m && m.head === pr.head) found = m;
+export async function reviewOfPull(f: ForgeCalls, pr: ReviewedPull, bytes: ArtifactFiles): Promise<PolicyReview & { run?: number }> {
+  const none = noReview(pr);
+  const listed = await f.get(`repos/${f.repo}/actions/runs?event=pull_request&head_sha=${pr.head}&per_page=100&limit=50`);
+  // GitHub names the commit head_sha, Forgejo commit_sha. The filter is checked here as well: a forge that ignored it would list other heads' runs.
+  const runs = (Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [])
+    .filter((r: any) => Number.isInteger(r?.id) && r?.event === "pull_request" && (r?.head_sha ?? r?.commit_sha) === pr.head)
+    .sort((a: any, b: any) => b.id - a.id);
+  for (const run of runs) {
+    const got = await f.get(`repos/${f.repo}/actions/runs/${run.id}/artifacts?name=${REVIEW_ARTIFACT}&per_page=100&limit=50`);
+    const artifacts = (Array.isArray(got) ? got : Array.isArray(got?.artifacts) ? got.artifacts : [])
+      .filter((a: any) => a?.name === REVIEW_ARTIFACT && a?.expired !== true && Number.isInteger(a?.id) && (a?.run_id ?? a?.workflow_run?.id ?? run.id) === run.id)
+      .sort((a: any, b: any) => b.id - a.id);
+    const artifact = artifacts[0];
+    if (!artifact) continue;
+    const zip = await bytes(`repos/${f.repo}/actions/artifacts/${artifact.id}/zip`);
+    if (!zip) continue;
+    const file = (name: string): string => {
+      try {
+        return unzipEntry(zip, name).toString("utf-8");
+      } catch {
+        return "";
+      }
+    };
+    return { found: true, risk: verdictOf({ review: file(REVIEW_FILE), rc: file("rc") }), pull_request: pr.number, head: pr.head, run: run.id };
   }
-  return { found: found !== undefined, risk: found?.risk ?? "unknown", pull_request: pr.number, head: pr.head };
+  return none;
 }
 
 /** `input.review` when no pull request or no review could be read. */

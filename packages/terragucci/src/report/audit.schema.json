@@ -8,7 +8,7 @@
   "properties": {
     "schema": { "const": "terragucci.audit/v1" },
     "id": { "type": "string", "description": "sha256: over where the entry came from; the same records give the same id." },
-    "kind": { "enum": ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration"] },
+    "kind": { "enum": ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock"] },
     "project": { "type": "string", "description": "<host>/<path> of the repo." },
     "at": { "type": "string", "description": "When it happened, ISO 8601." },
     "who": { "type": ["string", "null"], "description": "The approver, the overrider, whoever removed the line, or for an apply the approver it applied under. Null when nobody did." },

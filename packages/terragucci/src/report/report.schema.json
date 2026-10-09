@@ -309,7 +309,7 @@
           "preview": {
             "type": "object",
             "required": ["pull_request", "units"],
-            "description": "A tf-apply wave of Terragrunt units: its plans against the preview of them the merged pull request's plan note showed (minor 22).",
+            "description": "A tf-apply wave of Terragrunt units: its plans against the preview of them the merged pull request's plan note showed (minor 25).",
             "properties": {
               "pull_request": { "type": "integer" },
               "units": {
@@ -370,6 +370,28 @@
         "warnings": { "type": "integer" },
         "overridden": { "type": "array", "items": { "type": "string" }, "description": "The denied roots an override stands for (minor 10)." },
         "overriders": { "type": "array", "items": { "type": "string" }, "description": "Who may override a denial, from policy.override at base (minor 10)." }
+      }
+    },
+    "blast": {
+      "description": "A tf-plan run's blast radius (minor 22): the roots whose plan changes a resource or an output, and every root of the repo that reads their state through terraform_remote_state, followed through, nearest first. Absent when no root's plan changes anything, on a Terragrunt repo, and on other stages.",
+      "type": "object",
+      "required": ["roots", "downstream"],
+      "properties": {
+        "roots": { "type": "array", "items": { "type": "string" } },
+        "downstream": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "reads", "depth", "planned"],
+            "properties": {
+              "root": { "type": "string" },
+              "reads": { "type": "array", "items": { "type": "string" }, "description": "The roots in the radius whose state it reads." },
+              "depth": { "type": "integer", "minimum": 1, "description": "1 when it reads a changed root's state itself, 2 when it reads such a reader's, and so on." },
+              "wave": { "type": "integer", "description": "The apply wave it is in." },
+              "planned": { "type": "boolean", "description": "Whether this run planned it." }
+            }
+          }
+        }
       }
     },
     "cost": {
