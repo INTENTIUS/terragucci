@@ -10,7 +10,7 @@
  * links to its root's full plan and to the CI job that produced it.
  */
 import { groupAnchor, rootAnchor } from "./build";
-import { actionWord, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRootTimings } from "./schema";
+import { actionWord, binaryText, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRootTimings } from "./schema";
 import { duration } from "./spans";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
@@ -144,7 +144,7 @@ function rootBlock(r: ReportRoot, wave: number | undefined): string {
   const actions: string[] = [...new Set(r.changes.map((c) => (c.importing !== undefined && c.action === "no-op" ? "import" : c.action)))];
   if (r.status === "failed") actions.push("refused");
   const why = r.why.map((w) => `<span class="why">${esc(w)}</span>`).join(" ");
-  let body = `<div class="meta">${planLinks(r)} ${r.group ? `<a href="#${esc(groupAnchor(r.group))}">group ${esc(r.group)}</a>` : ""} ${r.plan_digest ? `<code class="digest">${esc(r.plan_digest)}</code>` : ""}</div>`;
+  let body = `<div class="meta">${planLinks(r)} ${r.binary ? `<span class="binary">${esc(binaryText(r.binary))}</span> ` : ""}${r.group ? `<a href="#${esc(groupAnchor(r.group))}">group ${esc(r.group)}</a>` : ""} ${r.plan_digest ? `<code class="digest">${esc(r.plan_digest)}</code>` : ""}</div>`;
   if (r.error) body += `<pre class="error">${esc(r.error)}</pre>`;
   const o = r.policy?.override;
   if (o) body += `<p class="notice">Policy override: ${o.rules.map((x) => `<code>${esc(x)}</code>`).join(", ")} overridden by ${esc(o.by)} at ${esc(o.at)}${o.sealed ? ", sealed" : ""}, for plan <code>${esc(o.plan_digest)}</code>: ${esc(o.reason)}</p>`;

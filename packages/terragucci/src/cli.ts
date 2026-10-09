@@ -14,6 +14,8 @@
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
+  terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
+ *   terragucci binary <root> [--binary <b>] [--config <file>]   (print the binary a root runs, installing the version it pins; run by the generated pipeline)
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
@@ -62,6 +64,7 @@ import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { assertLinux, install, type Tool } from "./install";
+import { describeBinary, RootBinaries } from "./pins";
 import { plan } from "./plan";
 import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
@@ -95,6 +98,7 @@ const USAGE = `usage:
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
+  terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
@@ -315,6 +319,18 @@ export async function main(argv: string[]): Promise<number> {
       case "auth-provider": {
         // Terragrunt runs this in each unit's directory and reads the credentials it prints.
         console.log(JSON.stringify(authProviderOutput(cwd, process.env)));
+        return 0;
+      }
+      case "binary": {
+        // tf-check's per-root step, when roots pin their own version: the binary the root runs, installed when the job's is not it.
+        const root = args[0];
+        if (!root) throw new ConfigError("usage: terragucci binary <root> [--binary <b>] [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const binaries = new RootBinaries(cwd, str(flags, "binary") ?? settings.binary ?? "tofu", settings.version);
+        const b = await binaries.resolve(root);
+        console.error(`${root}: ${describeBinary(b)}`);
+        console.log(b.path);
         return 0;
       }
       case "install": {

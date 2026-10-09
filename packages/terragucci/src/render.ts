@@ -119,6 +119,8 @@ export interface PipelineInput {
   image: string;
   /** Set when the repo pins a version the image does not carry: the job installs it. */
   install?: { binary: Binary; version: string };
+  /** Some roots pin their own version: the check job runs each root with the binary `terragucci binary` names for it. */
+  rootPins?: boolean;
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
@@ -326,7 +328,19 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false): string {
+  // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
+  const loop = rootPins
+    ? [
+        `  bin="$(terragucci binary "$dir" --binary ${binary})" || { failed=1; continue; }`,
+        '  "$bin" -chdir="$dir" init -backend=false -input=false -no-color >/dev/null',
+        '  terragucci check-root "$dir" --binary "$bin" || failed=1',
+      ]
+    : [
+        `  ${binary} -chdir="$dir" init -backend=false -input=false -no-color >/dev/null`,
+        // validate's diagnostics and, for choudoufu, live-check's refusals go to the log and the check report; a root that fails does not stop the next.
+        `  terragucci check-root "$dir" --binary ${binary} || failed=1`,
+      ];
   return [
     "set -eu",
     ...(synth
@@ -338,9 +352,7 @@ export function checkScript(binary: Binary, roots: string[], synth?: string): st
       : [`${binary} fmt -check -recursive -diff .`]),
     "failed=0",
     `for dir in ${roots.map(sh).join(" ")}; do`,
-    `  ${binary} -chdir="$dir" init -backend=false -input=false -no-color >/dev/null`,
-    // validate's diagnostics and, for choudoufu, live-check's refusals go to the log and the check report; a root that fails does not stop the next.
-    `  terragucci check-root "$dir" --binary ${binary} || failed=1`,
+    ...loop,
     "done",
     // With `policy:` set, the policy's own tests; no `policy:` key prints nothing.
     "terragucci check-policy || failed=1",
@@ -1588,7 +1600,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const audience = oidc?.audience ?? AUDIENCE;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs get the estimator's key as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
   const costEnv: Record<string, string> = input.cost ? { INFRACOST_API_KEY: forge === "gitlab" ? `$${input.cost.keySecret}` : `\${{ secrets.${input.cost.keySecret} }}` } : {};

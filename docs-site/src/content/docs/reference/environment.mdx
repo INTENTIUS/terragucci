@@ -179,7 +179,7 @@ See [Traces and metrics](/terragucci/reference/observability/#turning-it-on).
 |---|---|---|
 | `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone; a schedule without it runs drift |
 | `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
-| `TOFU_INSTALL_DIR` |  | where `terragucci install` puts the binary; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
+| `TOFU_INSTALL_DIR` |  | where `terragucci install` and the stages put the binary, one directory per tool and version, so a runner that keeps it reuses each version; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
 | `RUNNER_TEMP` |  | set by GitHub and Forgejo runners |
 | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` |  | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
 | `TG_LOCK_STALE` |  | seconds after which a Forgejo apply takes over a lock whose holder stopped renewing; 7200 by default |

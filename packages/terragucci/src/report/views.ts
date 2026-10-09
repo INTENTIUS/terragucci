@@ -12,7 +12,7 @@ import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
 import { signed } from "./cost";
-import { actionWord, type Report, type ReportCost, type ReportNamed } from "./schema";
+import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed } from "./schema";
 import { duration } from "./spans";
 import { TACO_NOTE_URL } from "./taco";
 
@@ -217,6 +217,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   if (report.roots.length === 0 && run.stage === "tf-plan") head.push("This change reaches no root, so nothing was planned.", "");
   for (const n of options.notices ?? []) head.push(`> ${n}`, "");
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");
+  const binaries = binariesLine(report);
+  if (binaries) head.push(binaries, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
   if (report.cost) head.push(costLine(report.cost), "");
   // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
@@ -375,6 +377,33 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     else cut.lines++;
   }
   return top + blocks.map((b) => b.text).join("") + notice() + foot;
+}
+
+/**
+ * When a root pinned its own version: the binary each root ran, pinned roots
+ * by name with where each pinned it, the rest counted, the pinned binaries
+ * first. Nothing when no root pinned, since every root then ran the job's
+ * binary.
+ */
+export function binariesLine(report: Report): string | undefined {
+  if (!report.roots.some((r) => r.binary?.pin)) return undefined;
+  const byBinary = new Map<string, { pinned: string[]; others: number }>();
+  for (const r of report.roots) {
+    if (!r.binary) continue;
+    const key = binaryText({ name: r.binary.name, ...(r.binary.version ? { version: r.binary.version } : {}) });
+    const g = byBinary.get(key) ?? { pinned: [], others: 0 };
+    byBinary.set(key, g);
+    if (r.binary.pin) g.pinned.push(`${code(r.path)} (${r.binary.pin})`);
+    else g.others++;
+  }
+  // The binaries roots pinned first, then the job's.
+  const parts = [...byBinary].sort(([, a], [, b]) => Number(a.pinned.length === 0) - Number(b.pinned.length === 0)).map(([bin, g]) => {
+    const named = g.pinned.slice(0, 10);
+    const rest = g.pinned.length - named.length + g.others;
+    const who = [...named, ...(rest > 0 ? [named.length > 0 ? `${plural(rest, "other root")}` : plural(rest, "root")] : [])];
+    return `${bin} for ${who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who[who.length - 1]}` : who[0]}`;
+  });
+  return `Binaries: ${parts.join("; ")}.`;
 }
 
 interface NoteBlock {
