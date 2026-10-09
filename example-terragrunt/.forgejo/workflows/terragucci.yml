@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - name: Format check and validate, every unit
         run: |
-          [ -n "${TG_NO_FORGE_TOKEN:-}" ] || exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 sh -e "$0"
+          if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
           set -eu
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           tofu fmt -check -recursive -diff .
@@ -138,7 +138,7 @@ jobs:
       - name: Plan the units the change reaches and write the plan report
         shell: bash
         run: |
-          [ -n "${TG_NO_FORGE_TOKEN:-}" ] || exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"
+          if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
           set +e -uo pipefail
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
@@ -294,7 +294,7 @@ jobs:
           TG_ROOT: '${{ steps.decide.outputs.root }}'
           TG_BASE: origin/${{ steps.decide.outputs.base }}
         run: |
-          [ -n "${TG_NO_FORGE_TOKEN:-}" ] || exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"
+          if [ -z "${TG_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u TG_TOKEN -u TG_MERGE_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u ACTIONS_RUNTIME_TOKEN TG_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset TG_TOKEN TG_MERGE_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN
           set +e -uo pipefail
           if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
