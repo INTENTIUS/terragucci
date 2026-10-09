@@ -19,7 +19,7 @@ moves:
 | Key | Holds |
 |---|---|
 | `moves[]` | one entry per pair of roots; at least one |
-| `moves[].from`, `moves[].to` | root directories, relative to the repo; they differ |
+| `moves[].from`, `moves[].to` | root directories, relative to the repo; they differ. A root holds `.tf` files, or `*.tf.json` files such as a CDK Terrain stack's `cdktf.out/stacks/<stack>/cdk.tf.json` |
 | `moves[].addresses[]` | what moves, to the same address in `to` |
 
 | An address | Moves |

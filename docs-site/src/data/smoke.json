@@ -1499,6 +1499,13 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "cdktn-migrate",
+      "says": "a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: tf-plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their lock files",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
       "claim": "cdktn-refused",
       "says": "with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request",
       "needs": null,

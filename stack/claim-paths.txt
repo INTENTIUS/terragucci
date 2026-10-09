@@ -41,7 +41,7 @@ packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions
 packages/terragucci/src/audit.ts          audit* migrate-split
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert
-packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never
+packages/terragucci/src/migrate.ts        migrate-split cdktn-migrate migrate-resume migrate-backend migrate-revert migrate-resume-never
 packages/terragucci/src/generate.ts       generate reconcile
 packages/terragucci/src/generate-config.ts generate reconcile
 packages/terragucci/src/notify.ts         notify-chat notify-webhook chat-*
