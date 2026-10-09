@@ -10397,7 +10397,7 @@ claim_dora() {
     log "dora: $dora"
     jq -e '.deployments == 3 and .lead == 2 and .gated and .change_failure == {applies: 4, failed: 1, drifted: 1, rate: 0.5} and .restore.restored == 2 and .restore.apply_restored == 1 and .restore.drift_restored == 1 and .restore.open == 0' <<<"$dora" >/dev/null \
       || { log "the metrics are not three deployments, two lead times one of them gated, a failed and a drifted apply of four, and two restores"; rc=1; }
-    jq -e '.estate.deployments == 3 and .estate.change_failure.rate == 0.5 and (.estate.trend | length == .weeks) and (([.estate.trend[].deployments] | add) == 3)' "$work/dora.json" >/dev/null \
+    jq -e '.estate.deployments == 3 and .estate.change_failure.rate == 0.5 and (.weeks as $w | .estate.trend | length == $w) and (([.estate.trend[].deployments] | add) == 3)' "$work/dora.json" >/dev/null \
       || { log "the estate's metrics or this week's row do not match the project's"; rc=1; }
     grep -q '<table id="dora">' <<<"$page" && grep -q 'Change failure rate' <<<"$page" || { log "estate.html has no Delivery section"; rc=1; }
   fi

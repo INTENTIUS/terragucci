@@ -667,7 +667,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "fe17f52"
     },
     {
       "claim": "drift-overdue",
@@ -948,7 +948,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "23c08f1"
+      "commit": "fe17f52"
     },
     {
       "claim": "comment-refused",
@@ -1228,7 +1228,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "fe17f52"
     },
     {
       "claim": "audit-override",
@@ -1260,7 +1260,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "fe17f52"
     },
     {
       "claim": "resource-history",
@@ -1268,15 +1268,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "fe17f52"
     },
     {
       "claim": "dora",
       "says": "terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "23c08f1"
+      "commit": "fe17f52"
     },
     {
       "claim": "notify-chat",
