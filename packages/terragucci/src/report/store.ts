@@ -59,7 +59,7 @@ export function runPath(report: Report): string {
   const at = new Date(report.run.finished);
   const yyyy = String(at.getUTCFullYear());
   const mm = String(at.getUTCMonth() + 1).padStart(2, "0");
-  const stage = report.run.wave !== undefined ? `${report.run.stage}-wave-${report.run.wave}` : report.run.stage;
+  const stage = report.run.wave !== undefined ? `${report.run.stage}-wave-${report.run.wave}${report.run.share !== undefined ? `-share-${report.run.share}` : ""}` : report.run.stage;
   return `${yyyy}/${mm}/${report.run.commit}/${stage}`;
 }
 
@@ -140,6 +140,8 @@ export interface IndexEntry {
   commit: string;
   stage: string;
   wave?: number;
+  /** The share of a `tf-apply` wave split across jobs. */
+  share?: number;
   finished: string;
   /** The run's directory, relative to the index. */
   path: string;
@@ -159,6 +161,14 @@ export interface IndexEntry {
   applied?: string;
   /** Roots the policy denied that a recorded override let through. Absent when none. */
   overridden?: number;
+  /** A tf-plan row: each wave's set digest and review digest, the digests an apply of the same plans binds. Absent when no wave has one. */
+  wave_digests?: string[];
+  /** A tf-drift row: the roots that drifted, the first INDEX_DESTROYS of them. Absent when none drifted. */
+  drifted_roots?: string[];
+  /** A tf-drift row that found drift: when the project's open drift was first found, by this run or an earlier one. */
+  drift_since?: string;
+  /** A tf-drift row that found none after a row that found some: when that drift was first found, and its roots. Kept here because a later check of the same commit replaces the row that found it. */
+  drift_cleared?: { since: string; roots: string[] };
   /** Destroys and replacements, as `root: address`: the first INDEX_DESTROYS of them. */
   destroys: string[];
   /** How many there are, when there are more than the row lists. */
@@ -192,11 +202,14 @@ export function indexEntry(report: Report, path: string): IndexEntry {
   const wave = report.run.stage === "tf-apply" ? report.waves[0] : undefined;
   const approval = wave && wave.approval !== "not-requested" ? wave.approval : undefined;
   const overridden = report.roots.filter((r) => r.policy?.override).length;
+  const digests = report.run.stage === "tf-plan" ? [...new Set(report.waves.flatMap((w) => [w.set_digest, w.review_digest]).filter((d): d is string => !!d))] : [];
+  const drifted = report.run.stage === "tf-drift" ? report.roots.filter((r) => r.status === "planned" && r.changes.length > 0).map((r) => r.path).sort() : [];
   return {
     project: report.run.project,
     commit: report.run.commit,
     stage: report.run.stage,
     ...(report.run.wave !== undefined ? { wave: report.run.wave } : {}),
+    ...(report.run.share !== undefined ? { share: report.run.share } : {}),
     finished: report.run.finished,
     path,
     roots: report.roots.length,
@@ -209,6 +222,8 @@ export function indexEntry(report: Report, path: string): IndexEntry {
     ...(approval === "waiting" ? { waiting_since: wave!.waiting_since ?? report.run.finished } : {}),
     ...(approval && approval !== "waiting" && failed === 0 ? { applied: report.run.finished } : {}),
     ...(overridden > 0 ? { overridden } : {}),
+    ...(digests.length > 0 ? { wave_digests: digests } : {}),
+    ...(drifted.length > 0 ? { drifted_roots: drifted.slice(0, INDEX_DESTROYS) } : {}),
     destroys: destroys.slice(0, INDEX_DESTROYS),
     ...(destroys.length > INDEX_DESTROYS ? { destroys_total: destroys.length } : {}),
     ...(report.run.commit_url ? { commit_url: report.run.commit_url } : {}),
@@ -219,8 +234,8 @@ export function indexEntry(report: Report, path: string): IndexEntry {
   };
 }
 
-/** What makes a row the latest of its kind: its project, stage and wave. */
-const rowKind = (r: IndexEntry): string => `${r.project}\n${r.stage}\n${r.wave ?? ""}`;
+/** What makes a row the latest of its kind: its project, stage, wave and share. */
+const rowKind = (r: IndexEntry): string => `${r.project}\n${r.stage}\n${r.wave ?? ""}\n${r.share ?? ""}`;
 
 /**
  * The first `rows` of a newest-first list, and after them the newest row of
@@ -241,6 +256,22 @@ export function capIndex(reports: IndexEntry[], rows = INDEX_ROWS): IndexEntry[]
 }
 
 /** The index with `entry` added (or as it is, without one). A row at the same path is replaced, so a rerun does not list twice. Newest first, capped by capIndex. */
+/**
+ * A tf-drift row with its project's open drift carried over from the row
+ * before it (that of the same commit too, which this row replaces): a row
+ * that finds drift keeps when it was first found, and a row that finds none
+ * after one that found some names when that drift was first found.
+ */
+export function withDriftSince(reports: IndexEntry[], entry: IndexEntry): IndexEntry {
+  const before = reports
+    .filter((r) => r.project === entry.project && r.stage === "tf-drift" && r.finished <= entry.finished && !(r.path === entry.path && r.finished === entry.finished))
+    .sort((a, b) => (a.finished < b.finished ? 1 : -1))[0];
+  const open = before && (before.changed ?? 0) > 0 ? { since: before.drift_since ?? before.finished, roots: before.drifted_roots ?? [] } : undefined;
+  const { drift_since: _s, drift_cleared: _c, ...row } = entry;
+  if ((entry.changed ?? 0) > 0) return { ...row, drift_since: open?.since ?? entry.finished };
+  return open ? { ...row, drift_cleared: open } : row;
+}
+
 export function addToIndex(existing: string | undefined, entry?: IndexEntry): ReportIndex {
   let reports: IndexEntry[] = [];
   if (existing) {
@@ -251,7 +282,7 @@ export function addToIndex(existing: string | undefined, entry?: IndexEntry): Re
       // An unreadable index is rebuilt from this run on.
     }
   }
-  if (entry) reports = [...reports.filter((r) => r.path !== entry.path), entry];
+  if (entry) reports = [...reports.filter((r) => r.path !== entry.path), entry.stage === "tf-drift" ? withDriftSince(reports, entry) : entry];
   reports.sort((a, b) => (a.finished < b.finished ? 1 : a.finished > b.finished ? -1 : a.path < b.path ? -1 : 1));
   return { schema: INDEX_SCHEMA, reports: capIndex(reports) };
 }

@@ -19,12 +19,18 @@ The plan job writes the report for every pull request and merge request. Its not
 <Tabs syncKey="forge">
   <TabItem label="GitHub">
     Kept as the `terragucci-report` artifact, and the note names the run.
+
+    <Shot step="github" view="note" alt="The plan note on a GitHub pull request: one group, its waves table with the set digest, and the change to the jobs queue" />
   </TabItem>
   <TabItem label="GitLab">
     Kept with the job's artifacts and linked from the note as the HTML report. The merge-request widget reads `gitlab-terraform.json`.
+
+    <Shot step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, a reminder that drift checks are overdue, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" />
   </TabItem>
   <TabItem label="Forgejo">
     The same as GitHub.
+
+    <Shot step="first-pr" view="pull" alt="A pull request in Forgejo with its check passing and its plan note for the one root" />
   </TabItem>
 </Tabs>
 

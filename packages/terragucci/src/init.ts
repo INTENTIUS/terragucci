@@ -246,6 +246,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.comments ? { comments: settings.comments } : {}),
     ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
+    ...(settings.waves?.jobs && settings.waves.jobs > 1 ? { waveJobs: settings.waves.jobs } : {}),
     gate: settings.gate,
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
     ...(options.settings?.approval ? { approval: options.settings.approval } : {}),
