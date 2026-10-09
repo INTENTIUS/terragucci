@@ -134,9 +134,7 @@ for (const file of files) {
 }
 // A page title and a heading are short noun phrases: "Prerequisites", not "Before you start"; "Report storage", not
 // "Where reports are kept". A heading that opens with a question word or ends with "?" fails.
-// reference/scale is held out while its rewrite is in flight; drop it from the set when that lands.
-const HEADING_EXEMPT = new Set([DOCS + "reference/scale.mdx"]);
-for (const problem of headingProblems(files.filter((f) => !HEADING_EXEMPT.has(f)))) {
+for (const problem of headingProblems(files)) {
   failed = true;
   console.log(`FAIL heading  ${problem}`);
 }
