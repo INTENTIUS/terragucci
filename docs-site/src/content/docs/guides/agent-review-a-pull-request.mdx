@@ -139,6 +139,10 @@ deny contains msg if {
 
 A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
 
+## MCP or `--json`
+
+The review command gets everything in its prompt and runs with no tools, so it needs neither. An agent at your desk that follows up on a review reads the pull request's plan reports through [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/) (`index`, then `report`), and checks a config it changes with `terragucci config check --json`.
+
 ## Next
 
 - [The threat model](/terragucci/reference/threat-model/#what-the-generated-jobs-reach) lists the review jobs with the rest.

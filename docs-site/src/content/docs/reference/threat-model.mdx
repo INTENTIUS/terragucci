@@ -24,6 +24,8 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone |
 | On GitLab, anyone allowed to run a pipeline on the default branch | start `mr-apply` with any variables | `mr-apply` reads the merge request, the note and the head from GitLab, and refuses a head the merge request does not have |
 | The review command, with `review.agent` | read a change and write a note about it | no forge token and no cloud role in its step; the note approves nothing ([The review](#the-review)) |
+| The drift agent's command, with `agent.drift` | edit files after the drift job opens the drift issue | no forge token and no cloud role in its step; its change comes back as a pull request, refused when it touches a guarded path, that plans and applies like any other |
+| An agent connected to `terragucci mcp` | read the estate, reports, state versions, audit trail and DORA figures | the server's tools only read, and it holds the reports bucket's read credentials from its own environment, never from the agent |
 | A fork's author | nothing | forks get no plan job and never apply |
 | The [chat relay](#the-chat-relay), in your cloud | under `ledger` and `pr-review`, record an approval of a waiting digest in the name of a chat user the signers file lists | Slack's or Teams' signature on each request, the signers file on the default branch, the digest waiting, and an approve-only token |
 
@@ -58,6 +60,8 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else `github.token`; `contents: write`, pull requests | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the job's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
+| `drift-agent` | after `drift` opens the drift issue, with `agent.drift` | the default branch, with no credentials in the checkout; the drift report as data in a prompt | `github.token`, `contents: read`, kept from the agent's step | none |
+| `drift-agent-push` | after `drift-agent` | a patch, never run | the `agent.token_env` secret | none |
 | `review` | after `plan`, with `review.agent` | the change's diff, title and description as data in a prompt; the command and the instructions from the default branch | `github.token`, `contents: read`, kept from the command's step | none |
 | `review-note` | after `review` | none of the change's; the review read as data | `github.token`, `pull-requests: write` | none |
 
@@ -122,6 +126,8 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else the run's own | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the run's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
+| `drift-agent` | after `drift` opens the drift issue, with `agent.drift` | the default branch, with no credentials in the checkout; the drift report as data in a prompt | the run's own, kept from the agent's step | none |
+| `drift-agent-push` | after `drift-agent` | a patch, never run | the `agent.token_env` secret | none |
 | `review` | after `plan`, with `review.agent` | the change's diff, title and description as data in a prompt; the command and the instructions from the default branch | the run's own, kept from the command's step | none |
 | `review-note` | after `review` | none of the change's; the review read as data | the run's own | none |
 
