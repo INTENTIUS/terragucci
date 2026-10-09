@@ -56,6 +56,7 @@ For that plan, terragucci points the root's references to the block at a local h
 
 | Case | It plans on |
 |---|---|
+| an upstream that has never applied | nothing yet: the root waits for it, and the report and note name it as waiting |
 | a block with `count` or `for_each` | the applied state |
 | a plan on the planned outputs that fails, such as a `for_each` over a value known only after apply | the applied state |
 | a root in JSON syntax, or a block in a child module | the applied state; neither orders the waves either |

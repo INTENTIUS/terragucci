@@ -778,9 +778,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const lines: string[] = [];
     const dir = join(repo, root);
     const { links, reads } = linksFor(root);
-    const linkedUp = new Set(links.map((l) => l.upstream));
-    // A root that reads the state of a root nothing has applied cannot plan, unless it plans on that root's plan: hold it back.
-    const waitsFor = [...(readsOf.get(root) ?? [])].filter((up) => upstreamState.get(up) === true && !linkedUp.has(up)).sort();
+    // A root that reads the state of a root nothing has applied cannot plan: its terraform_remote_state block reads that
+    // state even when its references point at the upstream's plan. Hold it back. An upstream that has applied and has a
+    // change pending is the linked path: the root plans on that upstream's planned outputs.
+    const waitsFor = [...(readsOf.get(root) ?? [])].filter((up) => upstreamState.get(up) === true).sort();
     if (waitsFor.length > 0) {
       lines.push(`${root}: held back, ${waitsFor.join(", ")} has no state yet`);
       return { root, lines, deferred: { unit: root, after: waitsFor, why: `reads the state of ${waitsFor.join(", ")}, which nothing has applied yet, so it cannot plan until then`, previewed: false } };
