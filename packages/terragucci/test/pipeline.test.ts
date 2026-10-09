@@ -2322,3 +2322,18 @@ describe("no forge token where the change's code runs", () => {
     if (proc) expect(proc).not.toMatch(/x[1-4]/);
   });
 });
+
+describe("the resume and rollout workflows run merged code only", () => {
+  it.each(["github", "forgejo"] as const)("%s: each starts on its schedule or by hand, never on a pull request or a comment, from the default branch", (forge) => {
+    const r = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gate: "always", resume: 15, rollouts: "*/15 * * * *" });
+    expect(r.extra).toHaveLength(2);
+    for (const f of r.extra!) {
+      const doc = body(f.content);
+      expect(Object.keys(doc.on).sort(), f.path).toEqual(["schedule", "workflow_dispatch"]);
+      for (const job of Object.values(doc.jobs) as { steps: { with?: Record<string, unknown> }[] }[]) {
+        // The checkout is the scheduled run's: the default branch, never a pull request's ref.
+        for (const s of job.steps) expect(String(s.with?.ref ?? ""), f.path).not.toContain("refs/pull");
+      }
+    }
+  });
+});

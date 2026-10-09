@@ -47,6 +47,8 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | `confirm` | a push, with `apply.when: pull-request` | merged code | contents read, statuses write | plan role |
 | `drift` | the `drift` schedule | the default branch | `contents: write`, issues | plan role |
 | `tips` | a push to the default branch | merged code | `contents: write`, pull requests | none |
+| `resume` | the resume schedule, with `apply.resume` | merged code: the default branch's commit | `github.token`, `contents: write` | apply role |
+| `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else `github.token`; `contents: write`, pull requests | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the job's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
 
@@ -63,6 +65,8 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `apply-wave-<k>` | a push to the default branch | merged code | `GITLAB_TOKEN` | apply role |
 | `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
 | `tips` | a push to the default branch | merged code | `GITLAB_TOKEN` | none |
+| `resume` | the schedule with `TERRAGUCCI_SCHEDULE=resume`, with `apply.resume` | none; it retries the default branch's waiting apply job through the API | `GITLAB_TOKEN` | none |
+| `rollout` | the schedule with `TERRAGUCCI_SCHEDULE=rollouts`, with `rollouts:` | the default branch; it edits pins and opens merge requests, and runs none of their code | `GITLAB_TOKEN` | none |
 | `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked; with `gitlab.token: protected`, the plan job's note and status read as data | `GITLAB_TOKEN`, to reply, post plan notes, and start or retry pipelines; with `apply.when: pull-request` also the merge token | none |
 | `mr-apply` | a default-branch pipeline `comments` starts, with `apply.when: pull-request` | the default branch's pipeline file, then the open change's head | `GITLAB_TOKEN` | apply role |
 | `pr-merge` | after `mr-apply`, with `apply.merge: auto` | none of the change's, and none of `mr-apply`'s artifacts | the merge token | none |
@@ -98,6 +102,8 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `confirm` | a push, with `apply.when: pull-request` | merged code | the run's own | plan role |
 | `drift` | the `drift` schedule | the default branch | the run's own | plan role |
 | `tips` | a push to the default branch | merged code | the run's own | none |
+| `resume` | the resume schedule, with `apply.resume` | merged code: the default branch's commit | the run's own | apply role |
+| `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else the run's own | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the run's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
 
@@ -163,7 +169,7 @@ terragucci starts the binary, Terragrunt and the policy engine without forge tok
 | GitLab's `check` job | no variable once its script starts; the runner's job token stays in the checkout's remote |
 | GitLab's `plan` job | yes: `GITLAB_TOKEN`, `api` scope, and the job token in the checkout's remote; with `gitlab.token: protected`, only the job token |
 | `apply-comment` and `mr-apply` with `apply.when: pull-request` | yes: the job's token, in the job's environment and the checkout, which the stage pushes the locks and the gate's records with |
-| The jobs that run merged code: the apply waves, `confirm`, `drift`, `tips` | yes: the job's token; the code there was reviewed and merged |
+| The jobs that run merged code: the apply waves, `confirm`, `drift`, `tips`, `resume`, `rollout` | yes: the job's token; the code there was reviewed and merged, and `rollout` runs none of the pull requests it opens |
 | A change that edits its own pipeline file | whatever that pipeline asks for |
 
 Each of these is a writer's own code in a job the forge gives a token to. Branch protection is what keeps that token from reaching the default branch.
