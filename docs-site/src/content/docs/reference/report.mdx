@@ -186,7 +186,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 | Value | In the report |
 |---|---|
-| sensitive value, default of a sensitive variable | `(sensitive, redacted by terragucci)` |
+| sensitive value, default of a sensitive variable | `(sensitive, redacted by terragucci)`, in `plan.json` and the report alike, wherever the value appears, including an attribute the plan does not mark, such as the `output` of a `terraform_data` whose `input` is sensitive |
 | the same value in `plan.txt` and the note | `(sensitive value)`, as the binary prints it, wherever the value appears, including an attribute the plan does not mark |
 | policy denial or warning | redacted before it reaches the report, note or log; the [policy](/terragucci/reference/policy/) itself reads the unredacted plan |
 | write-only attribute | its version (`*_wo_version`), labelled as such; the value is never in the plan |

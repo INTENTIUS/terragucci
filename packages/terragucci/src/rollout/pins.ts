@@ -12,6 +12,9 @@
  * source's path, so `modules/network` names
  * `oci://registry.example.com/acme/modules/network?tag=1.3.0` and
  * `git::https://example.com/acme/infra.git//modules/network?ref=modules/network/v1.3.0`.
+ * A module `modules.registry` publishes is also named by its registry
+ * address, `modules.example.com/acme/network/generic`, whose pin is the
+ * call's `version`.
  * The version keeps the shape of the pin it replaces: a ref of
  * `modules/network/v1.3.0` moves to `modules/network/v1.4.0`.
  */
@@ -65,7 +68,7 @@ export function pinFiles(repo: string, root: string): string[] {
 }
 
 /** Every call in a root that names the module. */
-export async function moduleCalls(repo: string, root: string, wanted: string, parser: Hcl2Json): Promise<ModuleCall[]> {
+export async function moduleCalls(repo: string, root: string, wanted: string, parser: Hcl2Json, aliases: string[] = []): Promise<ModuleCall[]> {
   const out: ModuleCall[] = [];
   for (const file of pinFiles(repo, root)) {
     const text = readFileSync(join(repo, file), "utf-8");
@@ -81,7 +84,7 @@ export async function moduleCalls(repo: string, root: string, wanted: string, pa
     for (const [call, body] of bodies) {
       if (typeof body.source !== "string") continue;
       const pin = readModulePin(body.source, typeof body.version === "string" ? body.version : undefined);
-      if (!namesModule(pin.module, wanted)) continue;
+      if (!namesModule(pin.module, wanted) && !aliases.includes(pin.module.toLowerCase())) continue;
       out.push({ file, call, pin, version: pin.pin === null ? null : pinVersion(pin.pin) });
     }
   }
