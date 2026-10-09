@@ -48,6 +48,20 @@ export const gitlab = new Job({
     installJust(),
     new Step({ name: "Install", run: "npm ci" }),
     dockerMirror(),
+    // The daemon's mirror is not enough for GitLab: a run fell back to Docker
+    // Hub with the mirror set and met its pull limit. Pull the profile's
+    // Docker Hub images from the mirror by name and tag them, so compose finds
+    // them present and pulls nothing from Docker Hub.
+    new Step({
+      name: "Pull the gitlab profile's Docker Hub images from the mirror",
+      run: [
+        `for img in $(docker compose -f stack/docker-compose.yml --profile gitlab config --images); do`,
+        `  host="\${img%%/*}"`,
+        `  if [ "$host" = "$img" ]; then ref="library/$img"; else ref="$img"; case "$host" in *.*|*:*|localhost) continue ;; esac; fi`,
+        `  { docker pull -q "mirror.gcr.io/$ref" && docker tag "mirror.gcr.io/$ref" "$img"; } || echo "the mirror has no $img; compose pulls it"`,
+        `done`,
+      ].join("\n"),
+    }),
     new Step({ name: "Start the gitlab profile", run: "just stack-up gitlab" }),
     new Step({ name: "Run the gitlab claims", run: "just validate-forge gitlab" }),
     new Step({ name: "Stop the stack", if: "always()", run: "just stack-down" }),
