@@ -1,0 +1,169 @@
+---
+// The scale bench's runs as stacked bars of wall time, one bar per estate size, split by phase.
+// Drawn at build time from scale.json. The SVG has no viewBox: x positions are percentages of
+// its width, so the bars stretch to the column while the text stays at its real size on a phone.
+import record from '../data/scale.json';
+
+type Run = (typeof record.runs)[number];
+const runs = [...(record.runs as Run[])].sort((a, b) => a.estate.resources - b.estate.resources);
+
+const phases = [
+	{ key: 'reconcile', label: 'Reconcile' },
+	{ key: 'create', label: 'Create' },
+	{ key: 'plan', label: 'Plan' },
+	{ key: 'change', label: 'Change' },
+] as const;
+
+const n = (v: number) => v.toLocaleString('en-US');
+const min = (s: number) => Math.round(s / 60);
+const sum = (r: Run) => phases.reduce((t, p) => t + r.wall_seconds[p.key], 0);
+
+const maxSeconds = Math.max(...runs.map(sum), 1);
+const pct = (s: number) => (s / maxSeconds) * 100;
+const ticks = [];
+for (let m = 0; m * 60 <= maxSeconds; m += 30) ticks.push(m);
+
+const row = 50;
+const top = 4;
+const barY = 22;
+const barH = 16;
+const plotH = top + runs.length * row;
+const height = plotH + 22;
+
+const bars = runs.map((r, i) => {
+	let x = 0;
+	const segs = phases.map((p) => {
+		const s = r.wall_seconds[p.key];
+		const seg = { key: p.key, label: p.label, x: pct(x), w: pct(s), s };
+		x += s;
+		return seg;
+	});
+	return { r, y: top + i * row, segs, total: r.wall_seconds.total };
+});
+
+const largest = runs[runs.length - 1];
+const smallest = runs[0];
+const phaseText = (r: Run) =>
+	`${min(r.wall_seconds.reconcile)} minutes to reconcile, ${min(r.wall_seconds.create)} to create, ${min(r.wall_seconds.plan)} to plan the change and ${min(r.wall_seconds.change)} to apply it`;
+---
+{largest && (
+	<figure class="tg-scale-chart not-content">
+		<ul class="legend" aria-hidden="true">
+			{phases.map((p) => (
+				<li><span class={`swatch ${p.key}`} />{p.label}</li>
+			))}
+		</ul>
+		<svg width="100%" height={height} role="img" aria-labelledby="tg-scale-title tg-scale-desc">
+			<title id="tg-scale-title">Wall time of each scale run, by phase</title>
+			<desc id="tg-scale-desc">
+				{runs.map((r) => `${n(r.estate.resources)} resources in ${n(r.estate.roots)} roots: ${min(r.wall_seconds.total)} minutes, ${phaseText(r)}.`).join(' ')}
+			</desc>
+			{ticks.map((m) => (
+				<g class="tick">
+					<line x1={`${pct(m * 60)}%`} x2={`${pct(m * 60)}%`} y1="0" y2={plotH} />
+					<text
+						x={`${pct(m * 60)}%`}
+						y={plotH + 16}
+						text-anchor={m === 0 ? 'start' : pct(m * 60) > 95 ? 'end' : 'middle'}
+					>{m === 0 ? '0 min' : m}</text>
+				</g>
+			))}
+			{bars.map((b) => (
+				<g>
+					<text class="label" x="0" y={b.y + 14}>
+						{n(b.r.estate.resources)} resources, {n(b.r.estate.roots)} roots
+						<tspan class="total" dx="8">{min(b.total)} min</tspan>
+					</text>
+					{b.segs.map((s) => (
+						<rect class={`seg ${s.key}`} x={`${s.x}%`} y={b.y + barY} width={`${s.w}%`} height={barH}>
+							<title>{s.label}: {min(s.s)} min ({s.s} s)</title>
+						</rect>
+					))}
+				</g>
+			))}
+		</svg>
+		<figcaption>
+			The largest run, {n(largest.estate.resources)} resources in {n(largest.estate.roots)} roots across {largest.estate.repos} repos, took {min(largest.wall_seconds.total)} minutes end to end: {phaseText(largest)}.
+			{runs.length > 1 && <> The smallest, {n(smallest.estate.resources)} resources, took {min(smallest.wall_seconds.total)}.</>}
+		</figcaption>
+	</figure>
+)}
+
+<style>
+	.tg-scale-chart {
+		/* Phase colours, validated as a set for colour-blind separation against each theme's page. */
+		--tg-phase-reconcile: #3987e5;
+		--tg-phase-create: #d95926;
+		--tg-phase-plan: #199e70;
+		--tg-phase-change: #c98500;
+		margin: 1.5rem 0;
+	}
+	:global(:root[data-theme='light']) .tg-scale-chart {
+		--tg-phase-reconcile: #2a78d6;
+		--tg-phase-create: #eb6834;
+		--tg-phase-plan: #1baf7a;
+		--tg-phase-change: #eda100;
+	}
+	.legend {
+		list-style: none;
+		margin: 0 0 0.75rem;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem 1.25rem;
+		font-size: 0.85rem;
+		color: var(--sl-color-gray-2);
+	}
+	.legend li {
+		margin: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.swatch {
+		width: 0.8rem;
+		height: 0.8rem;
+		border-radius: 2px;
+	}
+	svg {
+		display: block;
+		overflow: visible;
+		font-family: var(--sl-font);
+	}
+	.tick line {
+		stroke: var(--sl-color-gray-5);
+		stroke-width: 1;
+	}
+	.tick text {
+		font-size: 12px;
+		fill: var(--sl-color-gray-3);
+		font-variant-numeric: tabular-nums;
+	}
+	.label {
+		/* A halo of the page colour keeps the gridlines out of the text. */
+		paint-order: stroke;
+		stroke: var(--sl-color-bg);
+		stroke-width: 5px;
+		stroke-linejoin: round;
+		font-size: 13px;
+		fill: var(--sl-color-gray-2);
+		font-variant-numeric: tabular-nums;
+	}
+	.total {
+		font-weight: 600;
+		fill: var(--sl-color-white);
+	}
+	.seg {
+		stroke: var(--sl-color-bg);
+		stroke-width: 1.5;
+	}
+	.reconcile { fill: var(--tg-phase-reconcile); background: var(--tg-phase-reconcile); }
+	.create { fill: var(--tg-phase-create); background: var(--tg-phase-create); }
+	.plan { fill: var(--tg-phase-plan); background: var(--tg-phase-plan); }
+	.change { fill: var(--tg-phase-change); background: var(--tg-phase-change); }
+	figcaption {
+		margin-top: 0.75rem;
+		font-size: 0.9rem;
+		color: var(--sl-color-gray-2);
+	}
+</style>
