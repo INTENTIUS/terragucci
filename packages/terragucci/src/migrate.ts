@@ -82,6 +82,24 @@ export interface Move {
   addresses: string[];
 }
 
+/** A root's state moving to the backend its code now names, from the backend it was in. */
+export interface BackendMove {
+  root: string;
+  /** The backend the state is in now: its type and its configuration, as a backend block gives them. */
+  from: { backend: string; config: Record<string, unknown> };
+}
+
+/** A root's state put back to a version a migration recorded (a revert, which `terragucci migrate revert` writes). */
+export interface Restore {
+  root: string;
+  /** Where the state is, as the migration recorded it. */
+  location: string;
+  /** The version to put back; null when the root had no state before the migration, so it gets an empty one. */
+  version_id: string | null;
+  /** The version the migration left: a state that moved past it is refused. */
+  from_version_id: string | null;
+}
+
 export interface Migration {
   /** The file's name without `.yml`: the gate's name. */
   name: string;
@@ -89,7 +107,13 @@ export interface Migration {
   file: string;
   /** sha256 of its text. */
   digest: string;
+  /** Which kind of migration the file holds: one kind per file. */
+  kind: "moves" | "backends" | "revert";
   moves: Move[];
+  backends: BackendMove[];
+  restores: Restore[];
+  /** The migration a revert puts back. */
+  revert?: string;
 }
 
 const sha = (text: string | Buffer): string => `sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -111,7 +135,25 @@ export function parseMigration(file: string, text: string): Migration {
     throw new ConfigError(`${file}: ${(e as Error).message}`);
   }
   const doc = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  for (const k of Object.keys(doc)) if (k !== "moves") problems.push(`${k} is not a key of a migration; it has moves`);
+  for (const k of Object.keys(doc)) if (!["moves", "backends", "revert", "restores"].includes(k)) problems.push(`${k} is not a key of a migration; it has moves, backends, or revert and restores`);
+  const kinds = [doc.moves !== undefined && "moves", doc.backends !== undefined && "backends", (doc.revert !== undefined || doc.restores !== undefined) && "revert"].filter(Boolean) as Migration["kind"][];
+  if (kinds.length > 1) problems.push(`a migration holds one kind of change, and this one has ${kinds.join(" and ")}; write a file for each`);
+  const kind: Migration["kind"] = kinds[0] ?? "moves";
+  const rootOf = (at: string, k: string, v: unknown): string | undefined => {
+    if (typeof v !== "string" || !v.trim()) {
+      problems.push(`${at}.${k} must name a root directory`);
+      return undefined;
+    }
+    const r = v.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+    if (r.startsWith("/") || r.split("/").includes("..")) problems.push(`${at}.${k} must be a directory in the repo, not ${v}`);
+    return r;
+  };
+  if (kind === "backends") return { name, file, digest: sha(text), kind, moves: [], backends: parseBackends(doc.backends, problems, rootOf, file), restores: [] };
+  if (kind === "revert") {
+    const restores = parseRestores(doc, problems, rootOf);
+    if (problems.length > 0) throw new ConfigError(`${file}:\n  ${problems.join("\n  ")}`);
+    return { name, file, digest: sha(text), kind, moves: [], backends: [], restores, revert: String(doc.revert) };
+  }
   const moves: Move[] = [];
   if (!Array.isArray(doc.moves) || doc.moves.length === 0) problems.push("moves is missing or empty");
   for (const [i, m] of (Array.isArray(doc.moves) ? doc.moves : []).entries()) {
@@ -139,7 +181,60 @@ export function parseMigration(file: string, text: string): Migration {
     if (from && to) moves.push({ from, to, addresses: addresses.filter((a): a is string => typeof a === "string") });
   }
   if (problems.length > 0) throw new ConfigError(`${file}:\n  ${problems.join("\n  ")}`);
-  return { name, file, digest: sha(text), moves };
+  return { name, file, digest: sha(text), kind, moves, backends: [], restores: [] };
+}
+
+/** The backends that take a migration's writes: S3 with a lock file, and a local file. */
+const BACKENDS = ["s3", "local"];
+
+function parseBackends(raw: unknown, problems: string[], rootOf: (at: string, k: string, v: unknown) => string | undefined, file: string): BackendMove[] {
+  const out: BackendMove[] = [];
+  if (!Array.isArray(raw) || raw.length === 0) problems.push("backends is missing or empty");
+  const seen = new Set<string>();
+  for (const [i, b] of (Array.isArray(raw) ? raw : []).entries()) {
+    const at = `backends[${i}]`;
+    const o = b && typeof b === "object" ? (b as Record<string, unknown>) : {};
+    for (const k of Object.keys(o)) if (!["root", "from"].includes(k)) problems.push(`${at}.${k} is not a key of a backend move; it has root and from`);
+    const root = rootOf(at, "root", o.root);
+    if (root && seen.has(root)) problems.push(`${at}: ${root} moves twice`);
+    if (root) seen.add(root);
+    const from = o.from && typeof o.from === "object" ? (o.from as Record<string, unknown>) : undefined;
+    if (!from) {
+      problems.push(`${at}.from must give the backend the state is in now: backend and config`);
+      continue;
+    }
+    for (const k of Object.keys(from)) if (!["backend", "config"].includes(k)) problems.push(`${at}.from.${k} is not a key; from has backend and config`);
+    if (typeof from.backend !== "string" || !BACKENDS.includes(from.backend)) problems.push(`${at}.from.backend must be ${BACKENDS.join(" or ")}`);
+    const config = from.config && typeof from.config === "object" && !Array.isArray(from.config) ? (from.config as Record<string, unknown>) : {};
+    if (from.backend === "s3" && (typeof config.bucket !== "string" || typeof config.key !== "string")) problems.push(`${at}.from.config must name the bucket and key of the state`);
+    if (root && typeof from.backend === "string") out.push({ root, from: { backend: from.backend, config } });
+  }
+  if (problems.length > 0) throw new ConfigError(`${file}:\n  ${problems.join("\n  ")}`);
+  return out;
+}
+
+function parseRestores(doc: Record<string, unknown>, problems: string[], rootOf: (at: string, k: string, v: unknown) => string | undefined): Restore[] {
+  if (typeof doc.revert !== "string" || !NAME.test(doc.revert)) problems.push("revert must name the migration it puts back");
+  const out: Restore[] = [];
+  if (!Array.isArray(doc.restores) || doc.restores.length === 0) problems.push("restores is missing or empty");
+  for (const [i, r] of (Array.isArray(doc.restores) ? doc.restores : []).entries()) {
+    const at = `restores[${i}]`;
+    const o = r && typeof r === "object" ? (r as Record<string, unknown>) : {};
+    for (const k of Object.keys(o)) if (!["root", "location", "version_id", "from_version_id"].includes(k)) problems.push(`${at}.${k} is not a key of a restore`);
+    const root = rootOf(at, "root", o.root);
+    const id = (k: string): string | null => {
+      const v = o[k];
+      if (v === null || v === undefined) return null;
+      if (typeof v !== "string" || !v) problems.push(`${at}.${k} must be a version id or null`);
+      return typeof v === "string" ? v : null;
+    };
+    if (typeof o.location !== "string" || !o.location) problems.push(`${at}.location must say where the state is`);
+    const version_id = id("version_id");
+    const from_version_id = id("from_version_id");
+    if (from_version_id === null) problems.push(`${at}.from_version_id is missing: the version the migration left, which the revert checks the state is still at`);
+    if (root && typeof o.location === "string") out.push({ root, location: o.location, version_id, from_version_id });
+  }
+  return out;
 }
 
 /** The repo's migration files, by name. */
@@ -257,6 +352,10 @@ export interface MigrationRoot {
   proof: { changes: string[]; summary: string };
   /** After the write, the plan against the real backend. */
   verify?: { changes: string[]; summary: string };
+  /** A backend move: where the state was read from, its version id and its digest. That state is left where it was. */
+  source?: { backend: string; location?: string; version_id?: string; digest: string };
+  /** A revert: the version put back, null for a root the reverted migration found with no state. */
+  restore?: { version_id: string | null };
 }
 
 export interface MigrationRecord {
@@ -264,7 +363,13 @@ export interface MigrationRecord {
   name: string;
   file: string;
   file_digest: string;
+  /** moves, backends or revert. */
+  change: Migration["kind"];
   moves: Move[];
+  /** A backend move's roots, and where each state was. */
+  backends?: { root: string; from: string }[];
+  /** The migration a revert puts back. */
+  revert?: string;
   roots: MigrationRoot[];
   /** What an approval binds: the file, each root's version and digest before, and each new state's digest. */
   digest: string;
@@ -283,13 +388,22 @@ export function migrationDigest(m: Migration, roots: MigrationRoot[]): string {
   return computePlanDigest("terragucci-migration", {
     name: m.name,
     file: m.digest,
-    roots: roots.map((r) => ({ root: r.root, location: r.location ?? null, before: { version_id: r.before.version_id ?? null, digest: r.before.digest }, after: r.after.digest })).sort((a, b) => (a.root < b.root ? -1 : 1)),
+    roots: roots
+      .map((r) => ({
+        root: r.root,
+        location: r.location ?? null,
+        before: { version_id: r.before.version_id ?? null, digest: r.before.digest },
+        after: r.after.digest,
+        ...(r.source ? { source: { location: r.source.location ?? null, version_id: r.source.version_id ?? null, digest: r.source.digest } } : {}),
+        ...(r.restore ? { restore: r.restore.version_id } : {}),
+      }))
+      .sort((a, b) => (a.root < b.root ? -1 : 1)),
   });
 }
 
 /** What the gate's members hold: each root and its state before, so a refusal names the roots that moved. */
 export const beforeMembers = (roots: MigrationRoot[]): { member: string; planDigest: string }[] =>
-  roots.map((r) => ({ member: r.root, planDigest: `${r.before.version_id ?? "-"} ${r.before.digest ?? "none"}` })).sort((a, b) => (a.member < b.member ? -1 : 1));
+  roots.map((r) => ({ member: r.root, planDigest: `${r.before.version_id ?? "-"} ${r.before.digest ?? "none"}${r.source ? ` from ${r.source.version_id ?? "-"} ${r.source.digest}` : ""}` })).sort((a, b) => (a.member < b.member ? -1 : 1));
 
 // ── running the binary ───────────────────────────────────────────────────
 
@@ -346,13 +460,6 @@ async function planChanges(exec: BinaryExec, binary: string, dir: string, env: N
 
 // ── planning ─────────────────────────────────────────────────────────────
 
-/** What planning leaves for the apply: the record, and where each root's new state is. */
-export interface PlannedMigration {
-  record: MigrationRecord;
-  /** By root: the new state's file in the job's work dir, and the backend it writes to. */
-  files: Map<string, { path: string; object: StateObject; state: StateFile }>;
-}
-
 export interface MigrateOptions {
   binary: string;
   env?: NodeJS.ProcessEnv;
@@ -407,25 +514,81 @@ async function versionOf(o: StateObject, fetchFn?: S3Fetch): Promise<string | un
   return head.versionId;
 }
 
-/** Initialise a root against its real backend. */
+/** Initialise a root against the backend its code names. `-reconfigure`: a data dir another backend left is not migrated from. */
 async function initRoot(exec: BinaryExec, binary: string, root: string, dir: string, env: NodeJS.ProcessEnv): Promise<void> {
-  const init = await exec(binary, ["init", "-input=false", "-no-color"], dir, env);
+  const init = await exec(binary, ["init", "-input=false", "-no-color", "-reconfigure"], dir, env);
   if (init.code !== 0) throw new ConfigError(`init in ${root} failed: ${firstLine(init.out)}`);
 }
 
+/** An HCL value from the JSON of a backend's configuration. */
+function hcl(v: unknown): string {
+  if (v && typeof v === "object" && !Array.isArray(v)) return `{ ${Object.entries(v).filter(([, x]) => x !== null && x !== undefined).map(([k, x]) => `${k} = ${hcl(x)}`).join(", ")} }`;
+  if (Array.isArray(v)) return `[${v.map(hcl).join(", ")}]`;
+  return JSON.stringify(v);
+}
+
+/** A terraform block whose backend is `type` with `config`, for an override file. */
+export function backendBlock(type: string, config: Record<string, unknown>): string {
+  const body = Object.entries(config).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `    ${k} = ${hcl(v)}\n`).join("");
+  return `terraform {\n  backend ${JSON.stringify(type)} {\n${body}  }\n}\n`;
+}
+
 /**
- * Plan a migration: read every affected root's state and version, build the
+ * Run `fn` with the root's backend switched to `block` by the override file,
+ * in the data dir `data`, initialised there first; the override file is
+ * removed whatever happens, so the root's own files and `.terraform` are left
+ * as they were.
+ */
+async function withBackend<T>(exec: BinaryExec, binary: string, root: string, dir: string, block: string, data: string, env: NodeJS.ProcessEnv, what: string, fn: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
+  const override = join(dir, OVERRIDE_FILE);
+  const benv = { ...env, TF_DATA_DIR: data };
+  writeFileSync(override, block);
+  try {
+    const init = await exec(binary, ["init", "-input=false", "-no-color", "-reconfigure"], dir, benv);
+    if (init.code !== 0) throw new ConfigError(`init of ${root} against ${what} failed: ${firstLine(init.out)}`);
+    return await fn(benv);
+  } finally {
+    rmSync(override, { force: true });
+  }
+}
+
+/** Where a backend move's state is now: its object, read through the root with the old backend. */
+interface Source {
+  object: StateObject;
+  block: string;
+  data: string;
+}
+
+/** What planning leaves for the apply: the record, and where each root's new state is. */
+export interface PlannedMigration {
+  record: MigrationRecord;
+  /** By root: the new state's file in the job's work dir, the backend it writes to, and, for a backend move, where the state is now. */
+  files: Map<string, { path: string; object: StateObject; state: StateFile; beforeCount: number; source?: Source }>;
+}
+
+/** The empty state a root with none gets, or that a revert puts back where a migration found none. */
+const emptyState = (lineage: string, serial: number, terraformVersion = "1.0.0"): StateFile => ({ version: 4, terraform_version: terraformVersion, serial, lineage, outputs: {}, resources: [], check_results: null });
+
+/**
+ * Plan a migration: read every affected state and its version, build the
  * new states in `work`, and plan each root against its new state. The record
  * says `proof-failed` when a root would change; a root that cannot be read
- * or a move that does not fit throws ConfigError.
+ * or a change that does not fit throws ConfigError.
+ *
+ *   moves     each root's state gains or loses the resources moved
+ *   backends  the root's state, read from the backend named in the file, is
+ *             the new state of the backend its code names, which holds none
+ *   revert    each root's state is the version the reverted migration found,
+ *             read from the bucket by its version id, or an empty one
  */
 export async function planMigration(repo: string, m: Migration, options: MigrateOptions): Promise<PlannedMigration> {
   const exec = options.exec ?? runBinary;
   const env = options.env ?? process.env;
   const log = options.log ?? (() => {});
-  const roots = [...new Set(m.moves.flatMap((x) => [x.from, x.to]))].sort();
+  const roots = [...new Set(m.kind === "backends" ? m.backends.map((b) => b.root) : m.kind === "revert" ? m.restores.map((r) => r.root) : m.moves.flatMap((x) => [x.from, x.to]))].sort();
   const problems = roots.map((r) => refusal(repo, r)).filter((x): x is string => x !== undefined);
   if (problems.length > 0) throw new ConfigError(`migration ${m.name} cannot run:\n  ${problems.join("\n  ")}`);
+  mkdirSync(options.work, { recursive: true });
   const before = new Map<string, StateFile | null>();
   const objects = new Map<string, StateObject>();
   const versions = new Map<string, string | undefined>();
@@ -439,16 +602,59 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     versions.set(root, await versionOf(o, options.fetch));
     before.set(root, await pullState(exec, options.binary, root, dir, env));
   }
-  const after = moveResources(m.name, m.moves, before);
-  mkdirSync(options.work, { recursive: true });
-  const files = new Map<string, { path: string; object: StateObject; state: StateFile }>();
+  const after = new Map<string, StateFile>();
+  const sources = new Map<string, Source & { version?: string; state: StateFile }>();
+  const restored = new Map<string, string | null>();
+  if (m.kind === "moves") {
+    for (const [root, s] of moveResources(m.name, m.moves, before)) after.set(root, s);
+  } else if (m.kind === "backends") {
+    for (const [i, b] of m.backends.entries()) {
+      const dir = join(repo, b.root);
+      const object = stateObject(dir, env, { type: b.from.backend, config: b.from.config });
+      const why = backendRefusal(b.root, object);
+      if (why) throw new ConfigError(`migration ${m.name} cannot run: the backend it moves from: ${why}`);
+      if (locationOf(object) === locationOf(objects.get(b.root)!)) throw new ConfigError(`migration ${m.name}: ${b.root}'s code names the backend it moves from, ${locationOf(object)}; change the backend block in the same change`);
+      if (before.get(b.root)) throw new ConfigError(`migration ${m.name}: the backend ${b.root}'s code names, ${locationOf(objects.get(b.root)!)}, already holds a state, so a move would overwrite it`);
+      const block = backendBlock(b.from.backend, b.from.config);
+      const data = join(options.work, `source-${i}`);
+      const state = await withBackend(exec, options.binary, b.root, dir, block, data, env, `the backend it moves from`, (benv) => pullState(exec, options.binary, b.root, dir, benv));
+      if (!state) throw new ConfigError(`migration ${m.name}: ${locationOf(object)} holds no state of ${b.root} to move`);
+      sources.set(b.root, { object, block, data, version: await versionOf(object, options.fetch), state });
+      after.set(b.root, state);
+    }
+  } else {
+    for (const r of m.restores) {
+      const o = objects.get(r.root)!;
+      if (locationOf(o) !== r.location) throw new ConfigError(`migration ${m.name}: ${r.root}'s state is at ${locationOf(o)}, and the revert restores ${r.location}`);
+      const now = before.get(r.root) ?? null;
+      if (versions.get(r.root) !== r.from_version_id) {
+        throw new ConfigError(`migration ${m.name}: ${r.root}'s state is at version ${versions.get(r.root) ?? "none"}, and ${m.revert} left ${r.from_version_id}; it moved since, so putting the older version back would undo that change too`);
+      }
+      const lineage = now?.lineage || derivedLineage(m.name, r.root);
+      const serial = (now?.serial ?? 0) + 1;
+      let state: StateFile;
+      if (r.version_id === null) {
+        state = emptyState(lineage, serial, now?.terraform_version);
+      } else {
+        if (o.backend !== "s3" || !("target" in o)) throw new ConfigError(`migration ${m.name}: ${r.root}'s backend keeps no versions to put back`);
+        const text = await stateClient(o as Extract<StateObject, { target: S3Target }>, options.fetch).readVersion((o as { key: string }).key, r.version_id);
+        if (text === undefined) throw new ConfigError(`migration ${m.name}: ${r.location} has no version ${r.version_id}; a lifecycle rule may have expired it`);
+        const old = JSON.parse(text) as StateFile;
+        state = { ...old, resources: Array.isArray(old.resources) ? old.resources : [], lineage, serial };
+      }
+      restored.set(r.root, r.version_id);
+      after.set(r.root, state);
+    }
+  }
+  const files: PlannedMigration["files"] = new Map();
   const out: MigrationRoot[] = [];
   for (const [i, root] of roots.entries()) {
     const state = after.get(root);
     if (!state) continue;
     const path = join(options.work, `${i}.tfstate`);
     writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
-    files.set(root, { path, object: objects.get(root)!, state });
+    const src = sources.get(root);
+    files.set(root, { path, object: objects.get(root)!, state, beforeCount: before.get(root)?.resources.length ?? 0, ...(src ? { source: { object: src.object, block: src.block, data: src.data } } : {}) });
     const proof = await proofPlan(exec, options.binary, repo, root, path, options.work, i, env);
     log(`${root}: ${proof.changes.length === 0 ? "no changes against its new state" : `${proof.changes.length} change${proof.changes.length === 1 ? "" : "s"} against its new state: ${proof.changes.join(", ")}`}`);
     const o = objects.get(root)!;
@@ -460,6 +666,8 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
       ...(locationOf(o) ? { location: locationOf(o) } : {}),
       before: { ...(v ? { version_id: v } : {}), digest: b ? stateDigest(b) : null },
       after: { digest: stateDigest(state) },
+      ...(src ? { source: { backend: src.object.backend, ...(locationOf(src.object) ? { location: locationOf(src.object) } : {}), ...(src.version ? { version_id: src.version } : {}), digest: stateDigest(src.state) } } : {}),
+      ...(restored.has(root) ? { restore: { version_id: restored.get(root)! } } : {}),
       proof,
     });
   }
@@ -468,7 +676,10 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     name: m.name,
     file: m.file,
     file_digest: m.digest,
+    change: m.kind,
     moves: m.moves,
+    ...(m.kind === "backends" ? { backends: m.backends.map((b) => ({ root: b.root, from: locationOf(sources.get(b.root)!.object) ?? b.from.backend })) } : {}),
+    ...(m.revert ? { revert: m.revert } : {}),
     roots: out,
     digest: migrationDigest(m, out),
     status: out.some((r) => r.proof.changes.length > 0) ? "proof-failed" : "planned",
@@ -481,22 +692,12 @@ const locationOf = (o: StateObject): string | undefined => ("bucket" in o ? `s3:
 /**
  * Plan a root against a state file: an override file switches its backend
  * to that local file, in a data dir of the job's own, so the root's
- * `.terraform` and its real state are never touched. The override file is
- * removed whatever happens.
+ * `.terraform` and its real state are never touched.
  */
 async function proofPlan(exec: BinaryExec, binary: string, repo: string, root: string, statePath: string, work: string, i: number, env: NodeJS.ProcessEnv): Promise<{ changes: string[]; summary: string }> {
   const dir = join(repo, root);
-  const override = join(dir, OVERRIDE_FILE);
-  const data = join(work, `data-${i}`);
-  const penv = { ...env, TF_DATA_DIR: data };
-  writeFileSync(override, `terraform {\n  backend "local" {\n    path = ${JSON.stringify(resolve(statePath))}\n  }\n}\n`);
-  try {
-    const init = await exec(binary, ["init", "-input=false", "-no-color", "-reconfigure"], dir, penv);
-    if (init.code !== 0) throw new ConfigError(`init of ${root} against its new state failed: ${firstLine(init.out)}`);
-    return await planChanges(exec, binary, dir, penv, work, `${root.replace(/[^\w.-]/g, "_")}-proof`, true);
-  } finally {
-    rmSync(override, { force: true });
-  }
+  const block = backendBlock("local", { path: resolve(statePath) });
+  return withBackend(exec, binary, root, dir, block, join(work, `data-${i}`), env, "its new state", (penv) => planChanges(exec, binary, dir, penv, work, `${root.replace(/[^\w.-]/g, "_")}-proof`, true));
 }
 
 // ── applying ─────────────────────────────────────────────────────────────
@@ -514,17 +715,22 @@ interface HeldLock {
   release: () => Promise<void>;
 }
 
-/** Take each S3 state's lock file. Releases what it took and throws when one is held. */
+/** Take the lock file of each S3 state a migration writes or moves from. Releases what it took and throws when one is held. */
 async function takeLocks(files: PlannedMigration["files"], now: string, fetchFn?: S3Fetch): Promise<HeldLock[]> {
   const held: HeldLock[] = [];
-  for (const [root, f] of files) {
-    if (f.object.backend !== "s3" || !("target" in f.object)) continue;
-    const o = f.object as Extract<StateObject, { target: S3Target }>;
+  const objects = [...files].flatMap(([root, f]) => [{ root, object: f.object }, ...(f.source ? [{ root, object: f.source.object }] : [])]);
+  for (const { root, object } of objects) {
+    if (object.backend !== "s3" || !("target" in object)) continue;
+    const o = object as Extract<StateObject, { target: S3Target }>;
     const client = stateClient(o, fetchFn);
     const key = lockKey(o.key);
-    const got = await client.putIfAbsent(key, lockInfo(`${o.bucket}/${o.key}`, now), "application/json").catch((e: unknown) => {
+    let got: boolean;
+    try {
+      got = await client.putIfAbsent(key, lockInfo(`${o.bucket}/${o.key}`, now), "application/json");
+    } catch (e) {
+      for (const h of held) await h.release().catch(() => {});
       throw new ConfigError(`${root}: the lock s3://${o.bucket}/${key} could not be taken: ${(e as Error).message}`);
-    });
+    }
     if (!got) {
       for (const h of held) await h.release().catch(() => {});
       const info = await client.get(key).catch(() => undefined);
@@ -535,27 +741,36 @@ async function takeLocks(files: PlannedMigration["files"], now: string, fetchFn?
   return held;
 }
 
-/** The roots whose state moved since the plan: another version id or another digest. */
+/** The roots whose state, or whose state at the backend it moves from, moved since the plan: another version id or another digest. */
 async function movedSince(repo: string, plan: PlannedMigration, options: MigrateOptions): Promise<string[]> {
   const exec = options.exec ?? runBinary;
   const env = options.env ?? process.env;
   const moved: string[] = [];
   for (const r of plan.record.roots) {
     const f = plan.files.get(r.root)!;
+    const dir = join(repo, r.root);
     const v = await versionOf(f.object, options.fetch);
-    const s = await pullState(exec, options.binary, r.root, join(repo, r.root), env);
-    if ((v ?? undefined) !== r.before.version_id || (s ? stateDigest(s) : null) !== r.before.digest) moved.push(r.root);
+    const s = await pullState(exec, options.binary, r.root, dir, env);
+    let same = (v ?? undefined) === r.before.version_id && (s ? stateDigest(s) : null) === r.before.digest;
+    if (same && f.source && r.source) {
+      const src = f.source;
+      const sv = await versionOf(src.object, options.fetch);
+      const ss = await withBackend(exec, options.binary, r.root, dir, src.block, src.data, env, "the backend it moves from", (benv) => pullState(exec, options.binary, r.root, dir, benv));
+      same = (sv ?? undefined) === r.source.version_id && (ss ? stateDigest(ss) : null) === r.source.digest;
+    }
+    if (!same) moved.push(r.root);
   }
   return moved;
 }
 
 /**
- * Write a planned migration's states. Under each S3 state's lock: refuse
- * when a state moved since the plan; push the new states, the roots that
- * gain resources first, so a write that stops half way leaves a resource in
- * two states rather than in none; plan every root against its real backend
- * and require no change; read each new version id. The locks are released
- * whatever happens.
+ * Write a planned migration's states. Under each S3 state's lock (and that
+ * of each state a backend move reads from): refuse when a state moved since
+ * the plan; push the new states, the roots that gain resources first, so a
+ * write that stops half way leaves a resource in two states rather than in
+ * none; plan every root against its real backend and require no change; read
+ * each new version id. A backend move leaves the state it read where it was.
+ * The locks are released whatever happens.
  */
 export async function applyMigration(repo: string, plan: PlannedMigration, options: MigrateOptions & { now: string }): Promise<MigrationRecord> {
   const exec = options.exec ?? runBinary;
@@ -566,8 +781,7 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
   try {
     const moved = await movedSince(repo, plan, options);
     if (moved.length > 0) return { ...record, status: "refused", moved };
-    const gaining = new Set(record.moves.map((m) => m.to));
-    const order = [...record.roots].sort((a, b) => Number(gaining.has(b.root)) - Number(gaining.has(a.root)) || (a.root < b.root ? -1 : 1));
+    const order = [...record.roots].sort((a, b) => gained(plan, b.root) - gained(plan, a.root) || (a.root < b.root ? -1 : 1));
     for (const r of order) {
       const f = plan.files.get(r.root)!;
       const lockArgs = f.object.backend === "s3" ? ["-lock=false"] : [];
@@ -588,6 +802,84 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
   } finally {
     for (const l of locks) await l.release().catch((e: unknown) => log(`${l.root}: the lock could not be released: ${(e as Error).message}`));
   }
+}
+
+/** How many resources a root's new state gains over its state before: the roots that gain are written first. */
+function gained(plan: PlannedMigration, root: string): number {
+  const f = plan.files.get(root)!;
+  return f.state.resources.length - f.beforeCount;
+}
+
+/** What a migration does, in one line. */
+export function describeChange(m: Migration): string {
+  if (m.kind === "backends") return `moving the state of ${m.backends.map((b) => `${b.root} from its ${b.from.backend} backend${typeof b.from.config.bucket === "string" ? ` s3://${b.from.config.bucket}/${String(b.from.config.key)}` : ""}`).join("; ")} to the backend its code names`;
+  if (m.kind === "revert") return `putting back the states ${m.revert} wrote: ${m.restores.map((r) => `${r.root} to ${r.version_id ?? "no state"}`).join(", ")}`;
+  return `moving ${m.moves.map((x) => `${x.addresses.join(", ")} from ${x.from} to ${x.to}`).join("; ")}`;
+}
+
+// ── the reverse ──────────────────────────────────────────────────────────
+
+/** The file name a revert of `name` takes. */
+export const revertName = (name: string): string => `${name}-revert`;
+
+/**
+ * The revert of a migration that applied, from its line in
+ * `_gates/tf-migrate/done.jsonl`: each root back to the version the
+ * migration recorded before it wrote, and refused when a state moved past
+ * the version it recorded after. A backend move is put back with a backend
+ * move the other way, and a root whose bucket kept no version cannot be put
+ * back: both throw.
+ */
+export function revertMigration(name: string, done: string): { name: string; text: string } {
+  let line: Record<string, unknown> | undefined;
+  for (const l of done.split("\n").map((x) => x.trim()).filter(Boolean)) {
+    try {
+      const r = JSON.parse(l) as Record<string, unknown>;
+      if (r.kind === "migration" && r.gate === name && r.result === "applied") line = r;
+    } catch {
+      continue;
+    }
+  }
+  if (!line) throw new ConfigError(`chant/lifecycle records no applied migration ${name} in ${MIGRATE_DONE}`);
+  if (line.change === "backends") throw new ConfigError(`${name} moved states to new backends; put it back with a backend move the other way, which reads each state where it is now`);
+  if (line.change === "revert") throw new ConfigError(`${name} is a revert; apply the migration it put back again with a new migration file`);
+  const roots = Array.isArray(line.roots) ? (line.roots as Record<string, unknown>[]) : [];
+  const problems: string[] = [];
+  const restores = roots.map((r) => {
+    const root = String(r.root);
+    if (typeof r.location !== "string" || !r.location.startsWith("s3://")) problems.push(`${root}: its backend keeps no versions, so there is no earlier state to put back`);
+    if (r.before === null && r.before_digest !== null) problems.push(`${root}: its bucket kept no version before ${name} wrote, so there is no earlier state to put back`);
+    if (typeof r.after !== "string") problems.push(`${root}: ${name} recorded no version after its write, so a later change could not be told apart`);
+    return { root, location: String(r.location), version_id: typeof r.before === "string" ? r.before : null, from_version_id: typeof r.after === "string" ? r.after : null };
+  });
+  if (problems.length > 0) throw new ConfigError(`${name} cannot be put back:\n  ${problems.join("\n  ")}`);
+  const q = (v: string | null): string => (v === null ? "null" : JSON.stringify(v));
+  const text = [
+    `# Puts back the states migration ${name} wrote, to the versions it recorded before it wrote them.`,
+    `# Written by terragucci migrate revert ${name}. Revert the code of ${name} in the same change, so each root plans with no change.`,
+    `revert: ${name}`,
+    "restores:",
+    ...restores.flatMap((r) => [`  - root: ${r.root}`, `    location: ${r.location}`, `    version_id: ${q(r.version_id)}`, `    from_version_id: ${q(r.from_version_id)}`]),
+    "",
+  ].join("\n");
+  return { name: revertName(name), text };
+}
+
+/**
+ * `terragucci migrate revert <name>`: write `migrations/<name>-revert.yml`
+ * from the migration's record on chant/lifecycle as origin holds it. It
+ * writes the file and nothing else; the change that carries it is planned,
+ * approved and applied like any migration.
+ */
+export function writeRevert(repo: string, name: string): string {
+  readLedger(repo, MIGRATE_LEDGER);
+  const show = spawnSync("git", ["show", `refs/remotes/origin/chant/lifecycle:${MIGRATE_DONE}`], { cwd: repo, encoding: "utf-8" });
+  const { name: file, text } = revertMigration(name, show.status === 0 ? show.stdout : "");
+  const path = join(repo, MIGRATIONS_DIR, `${file}.yml`);
+  if (existsSync(path)) throw new ConfigError(`${MIGRATIONS_DIR}/${file}.yml is there already`);
+  mkdirSync(join(repo, MIGRATIONS_DIR), { recursive: true });
+  writeFileSync(path, text);
+  return `${MIGRATIONS_DIR}/${file}.yml`;
 }
 
 // ── the gate ─────────────────────────────────────────────────────────────
@@ -621,7 +913,17 @@ export function doneLine(record: MigrationRecord, approvedBy: string, now: strin
     file_digest: record.file_digest,
     result: record.status,
     approvedBy,
-    roots: record.roots.map((r) => ({ root: r.root, location: r.location, before: r.before.version_id ?? null, after: r.after.version_id ?? null, before_digest: r.before.digest, after_digest: r.after.digest })),
+    change: record.change,
+    ...(record.revert ? { revert: record.revert } : {}),
+    roots: record.roots.map((r) => ({
+      root: r.root,
+      location: r.location,
+      before: r.before.version_id ?? null,
+      after: r.after.version_id ?? null,
+      before_digest: r.before.digest,
+      after_digest: r.after.digest,
+      ...(r.source ? { source: r.source.location, source_version: r.source.version_id ?? null } : {}),
+    })),
     ...(record.error ? { error: record.error } : {}),
     ...(runId ? { runId } : {}),
     ...(commit ? { commit } : {}),
@@ -732,14 +1034,14 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
 async function runOne(repo: string, m: Migration, ledger: GateLedger, options: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void }, work: string): Promise<{ code: number; record: MigrationRecord; command?: string }> {
   const { log, env } = options;
   const label = `migration ${m.name}`;
-  log(`${label}: moving ${m.moves.map((x) => `${x.addresses.join(", ")} from ${x.from} to ${x.to}`).join("; ")}`);
+  log(`${label}: ${describeChange(m)}`);
   let plan: PlannedMigration;
   try {
     plan = await planMigration(repo, m, { binary: options.binary, env, work, log, ...(options.exec ? { exec: options.exec } : {}), ...(options.fetch ? { fetch: options.fetch } : {}) });
   } catch (e) {
     log(`${label}: ${(e as Error).message}`);
     log(`${label}: nothing was written`);
-    return { code: EXIT.failed, record: { schema: MIGRATION_SCHEMA, name: m.name, file: m.file, file_digest: m.digest, moves: m.moves, roots: [], digest: "", status: "failed", error: (e as Error).message } };
+    return { code: EXIT.failed, record: { schema: MIGRATION_SCHEMA, name: m.name, file: m.file, file_digest: m.digest, change: m.kind, moves: m.moves, roots: [], digest: "", status: "failed", error: (e as Error).message } };
   }
   const record = plan.record;
   for (const r of record.roots) log(`${r.root}: state ${r.location ?? r.backend}${r.before.version_id ? ` version ${r.before.version_id}` : ""}, ${r.before.digest ? `digest ${r.before.digest}` : "no state yet"}`);
