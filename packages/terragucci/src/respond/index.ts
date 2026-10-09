@@ -28,6 +28,7 @@ import { tipProposals } from "./tips";
 import { versionBumps } from "./version-bump";
 import type { DecideFetch } from "../decide";
 import { describeTriage, triage } from "./triage";
+import { continueExit, continueRollouts, describeContinue } from "../rollout";
 
 export const EVENTS = Object.keys(RESPONSES) as RespondEvent[];
 
@@ -85,6 +86,8 @@ export interface RespondResult {
   text: string;
   data?: unknown;
   proposals?: Proposed[];
+  /** The command's exit code when it is not 0. */
+  exit?: number;
 }
 
 function readReport(path: string): Report {
@@ -156,7 +159,8 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     }
     config = read.config;
   } else if (path) config = await loadConfig(resolve(path));
-  const settings = o.project ? resolveProject(config, o.project) : resolveRepo(config);
+  // A control repo continues its rollouts from its own checkout, under its defaults' respond keys.
+  const settings = o.project ? resolveProject(config, o.project) : ev === "rollout" && config.projects ? resolveRepo(config.defaults ?? {}) : resolveRepo(config);
   const response = responseTo(settings, ev);
   if (response === "off") return { event: ev, response, skipped: `respond.${ev} is off`, text: `respond.${ev} is off` };
   const mode = o.mode ?? "dry-run";
@@ -230,7 +234,11 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
       }
     }
     r = { text: c.text + copied, data: c.record };
-  } else throw new ConfigError("respond rollout runs terragucci rollout; pass its arguments");
+  } else {
+    // rollout with no module named: continue every rollout in flight. `respond rollout <module> [<version>]` runs `terragucci rollout` itself (cli.ts).
+    const c = await continueRollouts(repo, { mode, config: o.config, env, ...(o.fetch ? { fetch: o.fetch } : {}) });
+    r = { text: describeContinue(c), data: c, ...(continueExit(c) ? { exit: continueExit(c) } : {}) };
+  }
 
   return { event: ev, response, ...r };
 }

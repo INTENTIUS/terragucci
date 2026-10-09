@@ -25,6 +25,35 @@ describe("init", () => {
     await expect(init(gh, { binary: "tofu", dryRun: true })).rejects.toThrow(/comments is for GitLab/);
   });
 
+  it("rollouts writes the rollout workflow beside the pipeline, respond.rollout: off leaves it out, and init removes the one it wrote", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'rollouts: "*/15 * * * *"\n' });
+    const before = await init(dir, { binary: "tofu", dryRun: true });
+    let r = await init(dir, { binary: "tofu" });
+    const path = join(dir, ".github/workflows/terragucci-rollout.yml");
+    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toContainEqual([".github/workflows/terragucci-rollout.yml", "created"]);
+    expect(readFileSync(path, "utf-8")).toContain("terragucci respond rollout --mode apply");
+    // The pipeline is the one a repo without rollouts gets.
+    const plain = await init(write(withRemote("https://github.com/acme/infra.git"), {}), { binary: "tofu", dryRun: true });
+    expect(before.files[0]!.content).toBe(plain.files[0]!.content);
+
+    write(dir, { "terragucci.yml": 'rollouts: "*/15 * * * *"\nrespond:\n  rollout: "off"\n' });
+    r = await init(dir, { binary: "tofu", dryRun: true });
+    expect(r.files.find((f) => f.path === path)?.status).toBe("removed");
+    expect(r.notes).toContain("rollouts is set and respond.rollout is off, so no rollout job is written");
+    r = await init(dir, { binary: "tofu" });
+    expect(existsSync(path)).toBe(false);
+    r = await init(dir, { binary: "tofu" });
+    expect(r.files.some((f) => f.path === path)).toBe(false);
+  });
+
+  it("rollouts refuses to overwrite a rollout workflow it did not write, and on GitLab names the schedule to add", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'rollouts: "*/15 * * * *"\n', ".github/workflows/terragucci-rollout.yml": "name: mine\n" });
+    await expect(init(dir, { binary: "tofu", dryRun: true })).rejects.toThrow(/terragucci-rollout.yml exists and terragucci did not write it/);
+    const gl = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": 'rollouts: "*/15 * * * *"\n' });
+    const r = await init(gl, { binary: "tofu", dryRun: true });
+    expect(r.notes.join("\n")).toMatch(/rollouts is set: add a pipeline schedule with the cron \*\/15 \* \* \* \* and the variable TERRAGUCCI_SCHEDULE set to rollouts/);
+  });
+
   it("gitlab.token: protected says how to protect the variable, writes the plan job with no token, and needs comments", async () => {
     const dir = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "comments: \"*/5 * * * *\"\ngitlab:\n  token: protected\n" });
     const r = await init(dir, { binary: "tofu", dryRun: true });

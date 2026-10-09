@@ -1720,6 +1720,59 @@ describe("two concurrent pushes to main on forgejo", () => {
   });
 });
 
+describe("the rollout job", () => {
+  const input = { binary: "tofu" as const, version: "1.13.1", image: "img:1", layers, env: {} };
+
+  it.each(FORGES)("%s: no rollout job, and the same pipeline, unless rollouts names a schedule", (forge) => {
+    const r = renderPipeline({ forge, ...input });
+    expect(r.extra).toBeUndefined();
+    expect(r.content).not.toContain("respond rollout");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: a workflow of its own runs respond rollout on the schedule or by hand, and the pipeline does not change", (forge) => {
+    const r = renderPipeline({ forge, ...input, rollouts: "*/15 * * * *" });
+    expect(r.content).toBe(renderPipeline({ forge, ...input }).content);
+    const rollout = r.extra!.find((f) => f.path === `.${forge}/workflows/terragucci-rollout.yml`)!;
+    expect(r.extra!.length).toBe(1);
+    const doc = body(rollout.content);
+    expect(doc.on).toEqual({ schedule: [{ cron: "*/15 * * * *" }], workflow_dispatch: {} });
+    expect(Object.keys(doc.jobs)).toEqual(["rollout"]);
+    expect(doc.jobs.rollout.env.TG_TOKEN).toBe("${{ github.token }}");
+    const run = doc.jobs.rollout.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    expect(run).toContain(`export ${forge === "github" ? "GITHUB_TOKEN" : "FORGEJO_TOKEN"}="$TG_TOKEN"`);
+    expect(run).toContain("terragucci respond rollout --mode apply");
+    expect(run).not.toContain("|| true");
+  });
+
+  it("github: with token_env the job opens the wave and pushes its branch with that secret, so the wave's pull request is planned", () => {
+    const doc = body(renderPipeline({ forge: "github", ...input, rollouts: "*/15 * * * *", tokenEnv: "ROLLOUT_TOKEN" }).extra![0]!.content);
+    expect(doc.jobs.rollout.env.TG_TOKEN).toBe("${{ secrets.ROLLOUT_TOKEN }}");
+    expect(doc.jobs.rollout.steps[0].with).toEqual({ "fetch-depth": 0, token: "${{ secrets.ROLLOUT_TOKEN }}" });
+    expect(doc.jobs.rollout.permissions).toEqual({ contents: "write", "pull-requests": "write", statuses: "read", checks: "read" });
+    expect(doc.jobs.rollout.steps.map((s: any) => s.run).join("\n")).toContain('export ROLLOUT_TOKEN="$TG_TOKEN"');
+  });
+
+  it("gitlab: the rollouts schedule runs the rollout job, and drift leaves that schedule's pipelines alone", () => {
+    const doc = body(renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *" }).content);
+    expect(doc.rollout.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "rollouts"' }]);
+    expect(doc.rollout.script.join("\n")).toContain("terragucci respond rollout --mode apply");
+    expect(doc.rollout.variables.GIT_DEPTH).toBe("0");
+    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
+  });
+
+  it("gitlab: with apply.resume too, drift leaves both the resume and the rollouts schedules alone", () => {
+    const doc = body(renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *", resume: 10 }).content);
+    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+  });
+
+  it("github: with apply.resume too, the rollout workflow sits beside the resume workflow", () => {
+    const r = renderPipeline({ forge: "github", ...input, rollouts: "*/15 * * * *", resume: 10 });
+    expect(r.extra!.map((f) => f.path)).toContain(".github/workflows/terragucci-rollout.yml");
+    expect(r.extra!.length).toBe(2);
+  });
+});
+
 describe("the drift stage", () => {
   const withDrift = (forge: ForgeName, oidc?: typeof OIDC): string =>
     renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, drift: "0 6 * * *" }).content;

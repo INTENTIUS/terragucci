@@ -107,6 +107,7 @@ const USAGE = `usage:
   terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
+  terragucci respond rollout [--mode dry-run|apply]   continue every rollout in flight
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
 
@@ -331,7 +332,11 @@ export async function main(argv: string[]): Promise<number> {
       case "respond": {
         const event = args[0] ?? "";
         const path = str(flags, "config") ?? findConfig(cwd);
-        if (event === "rollout" && responseTo(resolveRepo(path ? await loadConfig(resolve(path)) : {}), "rollout") !== "off") return main(["rollout", ...argv.slice(argv.indexOf("rollout") + 1)]);
+        // With a module named, the response is that rollout's next step; with none, respond() continues every rollout in flight.
+        if (event === "rollout" && (args.length > 1 || flags.provider !== undefined)) {
+          const config = path ? await loadConfig(resolve(path)) : {};
+          if (responseTo(config.projects ? resolveRepo(config.defaults ?? {}) : resolveRepo(config), "rollout") !== "off") return main(["rollout", ...argv.slice(argv.indexOf("rollout") + 1)]);
+        }
         const s = (k: string) => str(flags, k);
         const log = s("log");
         const result = await respond(event, cwd, {
@@ -342,9 +347,9 @@ export async function main(argv: string[]): Promise<number> {
           ...(s("platform") ? { platforms: s("platform")!.split(",") } : {}),
           imports: argv.flatMap((a, i) => (a === "--import" ? [argv[i + 1] ?? ""] : a.startsWith("--import=") ? [a.slice(9)] : [])).map(parseImport),
         });
-        if (json) return emit(envelope("respond", 0, result));
+        if (json) return emit(envelope("respond", result.exit ?? 0, result));
         console.log(result.text);
-        return 0;
+        return result.exit ?? 0;
       }
       case "comment": {
         const layers = str(flags, "layers");

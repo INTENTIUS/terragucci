@@ -30,13 +30,13 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { terragruntDependencies } from "@intentius/chant-lexicon-terraform/pin";
-import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "../config";
+import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type ForgeName, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, detectForge, findRoots, hostOfRemote, rootDependencies } from "../detect";
 import { DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "../forge";
 import type { Fetch as RegistryFetch } from "../publish/oci";
 import { IDENTITY, where, withToken } from "../reconcile";
 import { newestPublished, ociRepoFor } from "./discover";
-import { appliedState, fetchForge, type RolloutForge } from "./forge";
+import { appliedState, fetchForge, type ListedPullRequest, type RolloutForge } from "./forge";
 import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locker } from "./lock";
 import { loadHclParser } from "./parser";
 import { moduleCalls, movePins, pinVersion, shapePin, type ModuleCall } from "./pins";
@@ -172,7 +172,15 @@ export function targetOfRemote(remote: string): { origin: string; path: string; 
   return other ? { origin: `https://${host.replace(/:\d+$/, "")}`, path: other[1]!.replace(/^\d+\//, ""), host } : undefined;
 }
 
-async function singleProject(repo: string, settings: ResolvedSettings, options: RolloutOptions): Promise<Project> {
+interface Target {
+  key: string;
+  forge: RolloutForge;
+  forgeName?: ForgeName;
+  token: string;
+}
+
+/** This repository's forge, from terragucci.yml's forge and url or the origin remote. */
+function singleTarget(repo: string, settings: ResolvedSettings, options: Pick<RolloutOptions, "env" | "forge" | "fetch" | "mode">): Target {
   const env = options.env ?? process.env;
   let remote: string;
   try {
@@ -190,7 +198,27 @@ async function singleProject(repo: string, settings: ResolvedSettings, options: 
   else if (target) forge = fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target);
   else throw new ConfigError("cannot tell which forge this repository's origin is on; set forge (and url) in terragucci.yml");
   if (options.mode === "apply" && !options.forge && !token) throw new ConfigError(`${settings.token_env ?? DEFAULT_TOKEN_ENV[forgeName!]} is not set; it holds the forge token`);
+  return { key, forge, forgeName, token };
+}
 
+/** A control repo's project's forge. */
+function controlTarget(config: TerragucciConfig, key: string, options: Pick<RolloutOptions, "env" | "forge" | "fetch" | "mode">): Target & { settings: ResolvedSettings; cloneUrl: string } {
+  const env = options.env ?? process.env;
+  const settings = resolveProject(config, key);
+  const pk = parseProjectKey(key);
+  const forgeName = settings.forge ?? forgeFromHost(pk.host);
+  if (!forgeName) throw new ConfigError(`cannot tell which forge ${pk.host} is; set forge for this project`);
+  const tokenEnv = settings.token_env ?? DEFAULT_TOKEN_ENV[forgeName];
+  const token = env[tokenEnv] ?? "";
+  if (options.mode === "apply" && !options.forge && !token) throw new ConfigError(`${tokenEnv} is not set; it holds the token for ${pk.host}`);
+  const { cloneUrl, origin } = where(key, settings.url);
+  const target: ForgeTarget = { forge: forgeName, origin, path: pk.path, token };
+  const forge = options.forge ? options.forge({ key, target }) : fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target);
+  return { key, forge, forgeName, token, settings, cloneUrl };
+}
+
+async function singleProject(repo: string, settings: ResolvedSettings, options: RolloutOptions): Promise<Project> {
+  const { key, forge } = singleTarget(repo, settings, options);
   git(repo, ["fetch", "-q", "origin"]);
   const base = await forge.defaultBranch();
   const dir = mkdtempSync(join(tmpdir(), "terragucci-rollout-"));
@@ -213,17 +241,7 @@ async function singleProject(repo: string, settings: ResolvedSettings, options: 
 }
 
 async function controlProject(config: TerragucciConfig, key: string, options: RolloutOptions): Promise<Project> {
-  const env = options.env ?? process.env;
-  const settings = resolveProject(config, key);
-  const pk = parseProjectKey(key);
-  const forgeName = settings.forge ?? forgeFromHost(pk.host);
-  if (!forgeName) throw new ConfigError(`cannot tell which forge ${pk.host} is; set forge for this project`);
-  const tokenEnv = settings.token_env ?? DEFAULT_TOKEN_ENV[forgeName];
-  const token = env[tokenEnv] ?? "";
-  if (options.mode === "apply" && !options.forge && !token) throw new ConfigError(`${tokenEnv} is not set; it holds the token for ${pk.host}`);
-  const { cloneUrl, origin } = where(key, settings.url);
-  const target: ForgeTarget = { forge: forgeName, origin, path: pk.path, token };
-  const forge = options.forge ? options.forge({ key, target }) : fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target);
+  const { settings, forge, token, cloneUrl } = controlTarget(config, key, options);
   const base = await forge.defaultBranch();
   const work = mkdtempSync(join(tmpdir(), "terragucci-rollout-"));
   const dir = join(work, "repo");
@@ -330,13 +348,28 @@ export function waveBranch(name: string, to: string, wave: number): string {
   return `terragucci/rollout/${slug(name)}-${slug(to)}/wave-${wave}`;
 }
 
-function markerRoots(body: string): string[] | undefined {
+/** What a wave's pull request body records about its rollout. `waves` is missing from a body written before it was recorded. */
+interface Marker {
+  kind?: RolloutKind;
+  name?: string;
+  from?: string;
+  to?: string;
+  wave?: number;
+  waves?: number;
+  roots?: string[];
+}
+
+function readMarker(body: string): Marker | undefined {
   const m = new RegExp(`<!-- ${MARKER} (\\{.*?\\}) -->`).exec(body);
   try {
-    return m ? (JSON.parse(m[1]!) as { roots?: string[] }).roots : undefined;
+    return m ? (JSON.parse(m[1]!) as Marker) : undefined;
   } catch {
     return undefined;
   }
+}
+
+function markerRoots(body: string): string[] | undefined {
+  return readMarker(body)?.roots;
 }
 
 export async function rollout(cwd: string, options: RolloutOptions): Promise<RolloutResult> {
@@ -364,6 +397,113 @@ export async function rollout(cwd: string, options: RolloutOptions): Promise<Rol
   } finally {
     for (const p of projects) p.cleanup();
   }
+}
+
+// ── continuing every rollout in flight ───────────────────────────────────────
+
+const BRANCH_PREFIX = "terragucci/rollout/";
+
+export interface InFlight {
+  kind: RolloutKind;
+  name: string;
+  from?: string;
+  to: string;
+  /** The newest wave with a pull request. */
+  wave: number;
+  /** How many waves the rollout had when that wave opened, when its pull request says. */
+  waves?: number;
+  /**
+   * `ran`: the newest wave merged, so the rollout ran, and `result` says what it
+   * did. `waiting`: a pull request of the newest wave is open. `stopped`: one
+   * closed without merging. `done`: the last wave merged. `failed`: the run
+   * threw, and `reason` says why.
+   */
+  action: "ran" | "waiting" | "stopped" | "done" | "failed";
+  reason?: string;
+  pullRequests: string[];
+  result?: RolloutResult;
+}
+
+export interface ContinueResult {
+  mode: "dry-run" | "apply";
+  rollouts: InFlight[];
+}
+
+/** 1 when a rollout's run failed, else 0: a rollout waiting or stopped is nothing to do. */
+export function continueExit(result: ContinueResult): number {
+  return result.rollouts.some((r) => r.action === "failed") ? 1 : 0;
+}
+
+/**
+ * Every rollout in flight, found from its pull requests' branches and the
+ * marker each body carries, taken one step further: a rollout whose newest
+ * wave merged runs again, which opens the next wave once that wave applied.
+ * A rollout with a wave open or closed, or with its last wave merged, does not
+ * run. So a run on a schedule continues each rollout within one interval of
+ * its wave applying, and opens nothing a person would not.
+ */
+export async function continueRollouts(cwd: string, options: Omit<RolloutOptions, "kind" | "name" | "to" | "from"> = {}): Promise<ContinueResult> {
+  const mode = options.mode ?? "dry-run";
+  let repo: string;
+  try {
+    repo = git(cwd, ["rev-parse", "--show-toplevel"]).trim();
+  } catch {
+    throw new ConfigError("terragucci respond rollout runs in a git repository");
+  }
+  const configPath = options.config ?? findConfig(repo);
+  const config = configPath ? await loadConfig(configPath) : {};
+  const targets = config.projects ? Object.keys(config.projects).map((key) => controlTarget(config, key, { ...options, mode })) : [singleTarget(repo, resolveRepo(config), { ...options, mode })];
+
+  type Seen = { marker: Required<Pick<Marker, "kind" | "name" | "to" | "wave">> & Marker; state: ListedPullRequest["state"]; url: string };
+  const groups = new Map<string, Seen[]>();
+  for (const t of targets) {
+    const branches = new Set<string>();
+    for (const pr of await t.forge.listPullRequests(BRANCH_PREFIX)) {
+      // The list is newest update first: the first pull request from a branch is the one a rollout reads.
+      if (branches.has(pr.branch)) continue;
+      branches.add(pr.branch);
+      const m = readMarker(pr.body);
+      if (!m || (m.kind !== "module" && m.kind !== "provider") || !m.name || !m.to || !Number.isInteger(m.wave)) continue;
+      const of = /, wave \d+ of (\d+)$/.exec(pr.title);
+      const marker = { ...m, ...(m.waves === undefined && of ? { waves: Number(of[1]) } : {}) } as Seen["marker"];
+      const id = JSON.stringify([m.kind, m.name, m.to]);
+      groups.set(id, [...(groups.get(id) ?? []), { marker, state: pr.state, url: pr.url }]);
+    }
+  }
+
+  const rollouts: InFlight[] = [];
+  for (const seen of groups.values()) {
+    const wave = Math.max(...seen.map((s) => s.marker.wave));
+    const newest = seen.filter((s) => s.marker.wave === wave);
+    const m = newest[0]!.marker;
+    const waves = newest.map((s) => s.marker.waves).find((n) => n !== undefined);
+    const base: InFlight = { kind: m.kind, name: m.name, ...(m.from !== undefined ? { from: m.from } : {}), to: m.to, wave, ...(waves !== undefined ? { waves } : {}), action: "ran", pullRequests: newest.map((s) => s.url) };
+    const open = newest.filter((s) => s.state === "open");
+    const closed = newest.filter((s) => s.state === "closed");
+    if (open.length > 0) rollouts.push({ ...base, action: "waiting", reason: `wave ${wave} is open: ${open.map((s) => s.url).join(", ")}` });
+    else if (closed.length > 0) rollouts.push({ ...base, action: "stopped", reason: `wave ${wave} was closed without merging: ${closed.map((s) => s.url).join(", ")}` });
+    else if (waves !== undefined && wave >= waves) rollouts.push({ ...base, action: "done", reason: `wave ${wave} of ${waves}, the last, merged` });
+    else {
+      try {
+        const result = await rollout(repo, { ...options, mode, kind: m.kind, name: m.name, to: m.to, ...(m.from !== undefined ? { from: m.from } : {}) });
+        rollouts.push({ ...base, result });
+      } catch (e) {
+        rollouts.push({ ...base, action: "failed", reason: (e as Error).message });
+      }
+    }
+  }
+  return { mode, rollouts };
+}
+
+export function describeContinue(result: ContinueResult): string {
+  if (result.rollouts.length === 0) return "no rollout in flight";
+  return result.rollouts
+    .map((r) => {
+      if (r.result) return describeRollout(r.result);
+      const what = r.kind === "module" ? r.name : `provider ${r.name}`;
+      return `${what} ${r.from ?? "?"} -> ${r.to}: ${r.action} (${r.reason})`;
+    })
+    .join("\n");
 }
 
 async function walk(repo: string, config: TerragucciConfig, projects: Project[], options: RolloutOptions & { mode: "dry-run" | "apply" }): Promise<RolloutResult> {
@@ -552,7 +692,7 @@ async function openPart(
   const title = `terragucci rollout: ${what}, wave ${wave.wave} of ${total}`;
   const others = result.roots.filter((r) => r.project === part.project && (r.state === "refused" || r.state === "elsewhere"));
   const body = [
-    `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, roots: moving })} -->`,
+    `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, waves: total, roots: moving })} -->`,
     `Wave ${wave.wave} of ${total}${wave.canary ? " (canaries)" : ""}: ${what}.`,
     "",
     `This pull request moves ${options.kind === "module" ? "the pin" : `\`${LOCK_FILE}\``} for these roots and changes no other file:`,

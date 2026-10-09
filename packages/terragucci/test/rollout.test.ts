@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { describeRollout, rollout, rolloutArgs, rolloutExit, waveBranch, type RolloutOptions } from "../src/rollout";
+import { continueExit, continueRollouts, describeContinue, describeRollout, rollout, rolloutArgs, rolloutExit, waveBranch, type RolloutOptions } from "../src/rollout";
 import { appliedState, fetchForge, type CommitCheck, type RolloutForge, type WavePullRequest } from "../src/rollout/forge";
 import { moveConstraint, readLock } from "../src/rollout/lock";
 import { namesModule, shapePin } from "../src/rollout/pins";
@@ -49,6 +49,9 @@ class MemoryForge implements RolloutForge {
   }
   async commitChecks(sha: string) {
     return this.checks.get(sha) ?? [];
+  }
+  async listPullRequests(prefix: string) {
+    return [...this.prs].filter(([branch]) => branch.startsWith(prefix)).reverse().map(([branch, pr]) => ({ branch, url: pr.url, title: pr.title, state: pr.state, body: pr.body }));
   }
   /** Merge a wave's branch into main, as a person would; the apply check is pending until `apply`. */
   merge(branch: string): string {
@@ -189,6 +192,64 @@ describe("rollout of a module pin in one repo", () => {
   });
 });
 
+describe("continuing every rollout in flight", () => {
+  it("finds a rollout by its pull requests and opens its next wave only once the last merged and applied", async () => {
+    const { repo, bare } = checkout(pinnedRepo());
+    const forge = new MemoryForge(bare);
+    const b = (n: number) => waveBranch("modules/network", "1.4.0", n);
+    const go = () => continueRollouts(repo, { mode: "apply", forge: () => forge });
+
+    let c = await go();
+    expect([c.rollouts, describeContinue(c), continueExit(c)]).toEqual([[], "no rollout in flight", 0]);
+    // A pull request from a rollout branch without the marker is not a rollout's.
+    forge.prs.set("terragucci/rollout/stray", { url: "https://forge/p/pull/9", state: "merged", body: "by hand", title: "stray" });
+
+    await rollout(repo, { kind: "module", name: "modules/network", to: "1.4.0", mode: "apply", forge: () => forge });
+    expect(forge.prs.get(b(1))!.body).toContain('"wave":1,"waves":3');
+    c = await go();
+    expect(c.rollouts.map((r) => [r.name, r.from, r.to, r.wave, r.waves, r.action])).toEqual([["modules/network", "1.3.0", "1.4.0", 1, 3, "waiting"]]);
+
+    // Merged, apply pending: the rollout runs and waits; nothing opens.
+    forge.merge(b(1));
+    c = await go();
+    expect([c.rollouts[0]!.action, c.rollouts[0]!.result?.status]).toEqual(["ran", "waiting"]);
+    expect(forge.prs.has(b(2))).toBe(false);
+
+    forge.apply(b(1));
+    c = await go();
+    expect([c.rollouts[0]!.action, c.rollouts[0]!.result?.status, continueExit(c)]).toEqual(["ran", "opened", 0]);
+    expect(changedFiles(bare, b(2))).toEqual(["envs/prod/net/main.tf"]);
+    expect(describeContinue(c)).toContain("modules/network 1.3.0 -> 1.4.0: opened");
+
+    // Open again: nothing runs. A dry run of the same opens nothing either.
+    c = await go();
+    expect([c.rollouts[0]!.wave, c.rollouts[0]!.action]).toEqual([2, "waiting"]);
+    forge.merge(b(2));
+    forge.apply(b(2));
+    c = await continueRollouts(repo, { forge: () => forge });
+    expect([c.mode, c.rollouts[0]!.result?.status]).toEqual(["dry-run", "would-open"]);
+    expect(forge.prs.has(b(3))).toBe(false);
+
+    await go();
+    forge.merge(b(3));
+    forge.apply(b(3));
+    c = await go();
+    expect([c.rollouts[0]!.action, c.rollouts[0]!.reason]).toEqual(["done", "wave 3 of 3, the last, merged"]);
+  }, 30_000);
+
+  it("reads the wave count from the title when the body predates it, and leaves a closed wave stopped", async () => {
+    const { repo, bare } = checkout(pinnedRepo());
+    const forge = new MemoryForge(bare);
+    await rollout(repo, { kind: "module", name: "modules/network", to: "1.4.0", mode: "apply", forge: () => forge });
+    const b1 = waveBranch("modules/network", "1.4.0", 1);
+    const pr = forge.prs.get(b1)!;
+    forge.prs.set(b1, { ...pr, state: "closed", body: pr.body.replace(',"waves":3', "") });
+    const c = await continueRollouts(repo, { mode: "apply", forge: () => forge });
+    expect([c.rollouts[0]!.waves, c.rollouts[0]!.action, c.rollouts[0]!.reason]).toEqual([3, "stopped", "wave 1 was closed without merging: https://forge/p/pull/1"]);
+    expect(forge.prs.size).toBe(1);
+  });
+});
+
 describe("rollout from a control repo", () => {
   it("opens one pull request per project per wave: canaries in both, then project order", async () => {
     const one = bareFrom(pinnedRepo({ "terragucci.yml": "" }));
@@ -234,6 +295,10 @@ describe("rollout from a control repo", () => {
     r = await rollout(control, opts);
     expect([r.status, r.waves[1]!.parts[0]!.state]).toEqual(["opened", "opened"]);
     expect(describeRollout(r)).toContain("example.com/acme/one: pull request opened");
+
+    // From the control repo, a continue reads every project's pull requests: wave 2 is open, so nothing runs.
+    const c = await continueRollouts(control, { mode: "apply", forge: ({ key }) => forges[key as keyof typeof forges] });
+    expect(c.rollouts.map((x) => [x.wave, x.waves, x.action, x.pullRequests])).toEqual([[2, 4, "waiting", ["https://forge/one/pull/2"]]]);
   });
 });
 
@@ -351,6 +416,24 @@ describe("the forge", () => {
     };
     expect(await forge(true).findPullRequest("w1")).toBeNull();
     await expect(forge(false).findPullRequest("w1")).rejects.toThrow(/answered 404/);
+  });
+
+  it("lists the pull requests from a prefix's branches, newest update first, on GitHub and GitLab", async () => {
+    const answers: Record<string, unknown> = {
+      "https://api.github.com/repos/acme/infra/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1": [
+        { html_url: "g/2", title: "t2", state: "closed", merged_at: "2026-01-01T00:00:00Z", body: "b2", head: { ref: "terragucci/rollout/x-1.4.0/wave-1" } },
+        { html_url: "g/1", title: "t1", state: "open", body: null, head: { ref: "feature" } },
+      ],
+      "https://gitlab.example.com/api/v4/projects/acme%2Finfra/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&page=1": [
+        { web_url: "l/1", title: "t", state: "opened", description: "d", source_branch: "terragucci/rollout/x-1.4.0/wave-2" },
+        { web_url: "l/0", title: "t", state: "closed", description: "d", source_branch: "terragucci/rollout/x-1.4.0/wave-1" },
+      ],
+    };
+    const fetch: Fetch = async (url) => ({ ok: true, status: 200, json: async () => answers[url], text: async () => "" });
+    const gh = fetchForge(fetch, { forge: "github", origin: "https://github.com", path: "acme/infra", token: "" });
+    expect(await gh.listPullRequests("terragucci/rollout/")).toEqual([{ branch: "terragucci/rollout/x-1.4.0/wave-1", url: "g/2", title: "t2", state: "merged", body: "b2" }]);
+    const gl = fetchForge(fetch, { forge: "gitlab", origin: "https://gitlab.example.com", path: "acme/infra", token: "" });
+    expect((await gl.listPullRequests("terragucci/rollout/")).map((p) => [p.url, p.state])).toEqual([["l/1", "open"], ["l/0", "closed"]]);
   });
 
   it("reads one apply job per wave, and the terragucci/apply status over them", () => {

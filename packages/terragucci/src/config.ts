@@ -191,6 +191,7 @@ export const RESPONSES = {
   tips: ["pull-request", "off"],
   fmt: ["commit", "off"],
   publish: ["notes", "off"],
+  /** next-wave: with `rollouts:` set, init writes a job that runs `respond rollout` on that schedule, so a merged and applied wave's next one opens within one interval. off leaves the job out. */
   rollout: ["next-wave", "off"],
   "version-bump": ["off", "suggest"],
   /** terragucci#30: a typed decision flags a pull request whose description leaves out what its plan destroys or replaces. Needs `decide:`. */
@@ -313,6 +314,14 @@ export interface ProjectSettings {
    * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
    */
   comments?: string | false;
+  /**
+   * A cron schedule, or false: init writes a job that runs `terragucci respond
+   * rollout --mode apply` on it, which opens the next wave of every rollout in
+   * flight once the last one merged and applied. A single repo's key: a
+   * control repo's rollout spans its projects, so it is continued from the
+   * control repo. `respond.rollout: off` leaves the job out.
+   */
+  rollouts?: string | false;
   /** GitLab only: how the project keeps its forge token; see TOKEN_PROTECTIONS. */
   gitlab?: { token?: GitLabToken };
   runtime?: Runtime;
@@ -427,7 +436,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost", "rollouts",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -504,6 +513,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.comments must be a cron schedule or false`);
   }
   if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${COMMENTS_GITLAB_ONLY}`);
+  if (s.rollouts !== undefined && s.rollouts !== false && !(typeof s.rollouts === "string" && s.rollouts.trim() !== "")) {
+    problems.push(`${where}.rollouts must be a cron schedule or false`);
+  }
   if (s.gitlab !== undefined) {
     if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
     else {
@@ -656,6 +668,9 @@ export interface ModulesSettings {
   /** Publishers in other repos whose releases `require` checks. */
   trusted?: TrustedModuleSource[];
 }
+
+/** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
+export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
 
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
 export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
@@ -964,6 +979,7 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
           problems.push(`${where}: ${(e as Error).message}`);
         }
         checkSettings(s ?? {}, `projects["${key}"]`, problems);
+        if (isObject(s) && s.rollouts) problems.push(`projects["${key}"].rollouts: ${ROLLOUTS_SINGLE_REPO}`);
       }
     }
     if (Object.keys(rest).length) {
@@ -973,6 +989,7 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
     checkSettings(rest, "config", problems);
   }
   if (defaults !== undefined) checkSettings(defaults, "defaults", problems);
+  if (isObject(defaults) && defaults.rollouts) problems.push(`defaults.rollouts: ${ROLLOUTS_SINGLE_REPO}`);
   if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
   if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
   // JSON's view: an undefined property is the same as an absent one.

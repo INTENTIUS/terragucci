@@ -168,7 +168,7 @@ terragucci rollout modules/network 1.4.0 --mode apply
 terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
-No version means the newest published tag; `--from` picks between disagreeing pins. Each run takes one step; `--mode apply` opens pull requests with `token_env` and never applies, merges or writes a default branch.
+No version means the newest published tag; `--from` picks between disagreeing pins. Each run takes one step; `--mode apply` opens pull requests with `token_env` and never applies, merges or writes a default branch. With [`rollouts`](/terragucci/reference/config/) set, a scheduled job takes the next step for you.
 
 | Exit code | Meaning |
 |---|---|
