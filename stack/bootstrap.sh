@@ -49,7 +49,7 @@ REPO="validate"
 
 # The image every job runs in, under both labels a workflow may ask for. The
 # chant forgejo dialect maps ubuntu-latest to docker.
-JOB_IMAGE="node:22-bookworm"
+JOB_IMAGE="public.ecr.aws/docker/library/node:22-bookworm"
 
 # Jobs the Forgejo runner runs at once. The smoke runner runs several claims
 # together; apply-serial's BREAK run holds the runner alone, so its applies are
