@@ -339,7 +339,7 @@ terragrunt:
 | `version` | the version `terragrunt_version_constraint` pins exactly, or terragucci's | the Terragrunt release the jobs run |
 | `exclude` | none | unit globs to leave out; `catalog/**` and `.terragrunt-cache` are always left out |
 | `parallelism` | 3 for GitLab-managed state, else 16 | how many units one `run --all` runs at once; each unit running starts its own providers, about 800 MB each with the AWS provider, so 16 need about 13 GB: set 4 on a 7 GB runner |
-| `dependents` | `follow` | `follow`, or `plan` to preview them, provisional and undigested |
+| `dependents` | `follow` | `follow`, or `plan` to preview them on the planned outputs of the units they read, provisional and undigested |
 | `credentials` | none | AWS roles by unit glob; see [Credentials](/terragucci/reference/pipeline/#terragrunt) |
 
 Terragrunt 1.1 or later is required; see [Use Terragrunt](/terragucci/guides/use-terragrunt/).

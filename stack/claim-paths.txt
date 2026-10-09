@@ -26,7 +26,7 @@ packages/terragucci/src/render-review.ts  review-*
 packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split chat-approve* review-policy linked-states unlock-state estate-graph apply-branches state-roles state-export state-edges tg-preview-gate tg-layers
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* tg-require-attested check-diagnostics tg-check tg-mock-lint description-check generate
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-* linked-* estate-graph state-roles state-edges
@@ -34,7 +34,9 @@ packages/terragucci/src/config.ts         config-ts role-refused zero-config tg-
 packages/terragucci/src/synth.ts          cdktn-*
 packages/terragucci/src/steps.ts          steps-*
 packages/terragucci/src/linked.ts         linked-*
-packages/terragucci/src/planned-outputs.ts linked-*
+packages/terragucci/src/planned-outputs.ts linked-* tg-preview* tg-refuse
+packages/terragucci/src/tg-preview.ts      tg-preview* tg-refuse tg-dependents tg-affected tg-spans
+packages/terragucci/src/tg-preview-gate.ts tg-preview-gate tg-layers tg-gate-* tg-mock-trap
 packages/terragucci/src/binary-env.ts     pinned-install tf-terraform tg-terraform zero-config tg-zero-config cdf-* token-scrub plan-token-free check
 packages/terragucci/src/pins.ts           root-pins pinned-install tf-terraform check zero-config note-* report
 packages/terragucci/src/install.ts        root-pins pinned-install tf-terraform tg-terraform cdf-* cost-*
@@ -104,7 +106,7 @@ packages/terragucci/src/report/cost.ts   cost-*
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert tg-require-attested linked-* plan-no-lock sensitive-redacted provider-cache-once tip-moved state-roles state-export state-edges drift-agent mcp-last-apply
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert tg-require-attested linked-* plan-no-lock sensitive-redacted provider-cache-once tip-moved state-roles state-export state-edges drift-agent mcp-last-apply tg-preview* tg-refuse tg-dependents tg-affected
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue cdktn-tips cdktn-refused tip-moved
@@ -133,6 +135,7 @@ stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/linked-states              linked-*
+stack/fixtures/tg-preview                 tg-preview*
 stack/fixtures/unlock-state               unlock-state
 stack/fixtures/cost-policy                cost-gate cost-policy
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat notify-webhook chat-* cost-estimate
