@@ -117,6 +117,20 @@ describe("reviewWave", () => {
     expect(await reviewWave({ env, fetch, forge: "forgejo", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ kind: "approved", by: ["alice"] });
   });
 
+  it("names the review page when an approving review of the head would still approve the wave", async () => {
+    const site = { ...env, GITHUB_SERVER_URL: "https://github.com" };
+    let f = forge(base([], [note("jcs1-sha256:aa")]));
+    expect(await reviewWave({ env: site, fetch: f.fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ kind: "none", review: { pr: 7, url: "https://github.com/acme/infra/pull/7/files" } });
+    f = forge(base([{ user: { login: "bob" }, state: "CHANGES_REQUESTED", commit_id: HEAD }], [note("jcs1-sha256:aa")]));
+    expect(await reviewWave({ env: site, fetch: f.fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ review: { pr: 7 } });
+    // Forgejo's pull request pages are under pulls/.
+    f = forge({ [`GET repos/acme/infra/commits/${MERGE}/pull`]: pull, "GET repos/acme/infra/pulls/7/reviews": [], "GET repos/acme/infra/issues/7/comments": [note("jcs1-sha256:aa")] });
+    expect(await reviewWave({ env: { ...site, GITHUB_SERVER_URL: "https://code.test" }, fetch: f.fetch, forge: "forgejo", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ review: { url: "https://code.test/acme/infra/pulls/7/files" } });
+    // The note has no digest for the wave: its review never saw these plans, so no review approves it.
+    f = forge(base([], [note("jcs1-sha256:aa", "c".repeat(40))]));
+    expect(await reviewWave({ env: site, fetch: f.fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).not.toHaveProperty("review");
+  });
+
   it("a direct push, with no pull request, leaves the wave to chant approve", async () => {
     const { fetch } = forge({ [`GET repos/acme/infra/commits/${MERGE}/pulls`]: [] });
     expect(await reviewWave({ env, fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ kind: "none", why: expect.stringMatching(/no merged pull request/) });
@@ -176,6 +190,14 @@ describe("pr-review on GitLab", () => {
       const { fetch } = forge(routes(notes));
       expect((await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).kind).toBe("none");
     }
+  });
+
+  it("links the merge request to approve only while it is open: GitLab takes no approval of a merged one", async () => {
+    const site = { ...glEnv, CI_PROJECT_URL: "https://gitlab.test/acme/infra" };
+    let f = forge(routes([]));
+    expect(await reviewWave({ env: site, fetch: f.fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).not.toHaveProperty("review");
+    f = forge({ ...routes([]), "GET projects/9/merge_requests/3": { ...mr, state: "opened" } });
+    expect(await reviewWave({ env: { ...site, TG_PR: "3" }, fetch: f.fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ kind: "none", review: { pr: 3, url: "https://gitlab.test/acme/infra/-/merge_requests/3" } });
   });
 
   it("an approval by the user the job's token acts as never counts, and the wave says so", async () => {

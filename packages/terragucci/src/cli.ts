@@ -19,8 +19,10 @@
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
-  terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]
- *   terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a waiting wave's digest with chant approve)
+  terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
+  terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
+ *   terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
+ *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
@@ -32,7 +34,7 @@
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
- *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
+ *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *
  * `--json` on init, reconcile, plan, stage, rollout and config check prints one envelope
  * (see envelope.ts) instead of text.
@@ -41,7 +43,8 @@
  * config error; 3 waiting on an approval; 4 a wave's plans changed after
  * its approval, so it applied nothing.
  */
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
@@ -63,7 +66,8 @@ import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
-import { applyWave } from "./apply";
+import { applyWave, readLedger } from "./apply";
+import { resumeStep } from "./resume";
 import { checkPolicyTests, checkRoot, emitCheck, policyBase } from "./check";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput } from "./terragrunt";
@@ -72,7 +76,7 @@ import { parseLayers, runStage } from "./report/stage";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
-import { notify, NOTIFY_EVENTS, waveNotice, type NotifyEvent } from "./notify";
+import { notify, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
 import { parseImport } from "./respond/drift";
 
 const USAGE = `usage:
@@ -99,8 +103,8 @@ const USAGE = `usage:
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
-  terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--report <dir>]
-  terragucci approve [wave-<k>] [--sign [<key>]] [--actor <name>] [--dry-run]
+  terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
+  terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
 
@@ -446,7 +450,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "approve": {
         const sign = flags.sign === true ? true : str(flags, "sign");
-        const done = await approve(cwd, { ...(args[0] ? { wave: args[0] } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
+        const plan = flags.plan === true ? "" : str(flags, "plan");
+        const done = await approve(cwd, { ...(flags["no-resume"] === true ? { resume: false } : {}), ...(args[0] ? { wave: args[0] } : {}), ...(plan !== undefined ? { plan } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
       }
       case "override": {
@@ -457,6 +462,20 @@ export async function main(argv: string[]): Promise<number> {
         const done = await overrideDenial(cwd, { root: args[0] ?? "", rules, reason: str(flags, "reason") ?? "", ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
       }
+      case "resume": {
+        const forge = str(flags, "forge") ?? (process.env.GITLAB_CI === "true" ? "gitlab" : process.env.GITEA_ACTIONS === "true" || process.env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
+        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("resume's --forge is github, forgejo or gitlab");
+        const out = str(flags, "out");
+        const sha = process.env.TG_SHA || spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).stdout.trim();
+        const step = await resumeStep({ ledger: readLedger(cwd), forge, sha, env: process.env });
+        if (out) writeFileSync(resolve(cwd, out), step.kind === "apply" ? `TG_SHA=${step.sha}\nTG_PR=${step.pr ?? ""}\n` : "");
+        if (step.kind === "none") console.log(`terragucci resume: nothing to resume: ${step.why}`);
+        else {
+          for (const w of step.waves) console.log(`terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
+          console.log(step.kind === "apply" ? `terragucci resume: applying the waves again at ${step.sha.slice(0, 8)}; each gate decides` : `terragucci resume: retried ${step.job} of pipeline ${step.pipeline}${step.url ? ` (${step.url})` : ""}; the waves after it follow`);
+        }
+        return 0;
+      }
       case "notify": {
         const event = args[0] as NotifyEvent;
         if (!(NOTIFY_EVENTS as readonly string[]).includes(event)) throw new ConfigError(`terragucci notify takes one of ${NOTIFY_EVENTS.join(", ")}`);
@@ -464,8 +483,10 @@ export async function main(argv: string[]): Promise<number> {
         if (!Number.isInteger(wave) || wave < 1) throw new ConfigError("terragucci notify needs --wave <n>");
         const file = str(flags, "outcome");
         const outcome = file && existsSync(resolve(cwd, file)) ? readFileSync(resolve(cwd, file), "utf-8") : undefined;
+        const jsonFile = str(flags, "outcome-json");
+        const result = jsonFile ? readOutcome(resolve(cwd, jsonFile)) : undefined;
         const report = str(flags, "report");
-        for (const line of await notify(waveNotice(event, wave, { ...(outcome ? { outcome } : {}), reportDir: resolve(cwd, report ?? "terragucci-report") }))) console.log(`terragucci notify: ${line}`);
+        for (const line of await notify(waveNotice(event, wave, { ...(outcome ? { outcome } : {}), ...(result ? { result } : {}), reportDir: resolve(cwd, report ?? "terragucci-report") }))) console.log(`terragucci notify: ${line}`);
         return 0;
       }
       case "approval-status": {
