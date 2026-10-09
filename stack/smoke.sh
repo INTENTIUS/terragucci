@@ -250,6 +250,7 @@ tg-pr-apply|with apply.when: pull-request in a Terragrunt repo, a comment on an 
 tg-pr-apply-lock|in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named|
 plan-lock|with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock|
 plan-lock-release|with locks: plan the merge of a pull request releases the lock its first plan took|
+plan-lock-fmt|with locks: plan a pull request whose push the fmt job formats, with a push that starts no run, has its lock answered on the formatted head|
 policy-override|a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest|
 policy-override-moved|an override of an earlier plan digest counts for nothing: once the root plans another digest the wave applies nothing and exits 4|
 policy-override-unlisted|an override by someone policy.override at base does not list counts for nothing: the wave applies nothing and names why|
@@ -15189,6 +15190,57 @@ claim_tg_pr_plan() {
   return $rc
 }
 
+claim_plan_lock_fmt() {
+  # A repo with locks: plan. Pull request A changes canary/one and holds it.
+  # Then an unformatted main.tf is pushed to its branch: the check fails, and
+  # the fmt job commits the formatting with the job's token, a push that
+  # starts no run, so no pr-lock run sees the formatted head. The fmt job then
+  # answers the lock itself: terragucci/lock on the formatted head is success,
+  # holding canary/one (and the roots its main.tf reaches), and A holds
+  # canary/one at that head.
+  # BREAK: the fmt job's lock step is cut from the pushed pipeline, so the
+  # formatted head is never answered.
+  log() { echo "[smoke plan-lock-fmt] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/plan-lock-fmt" wf head_a head_u head_f="" pr_a got i rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  plan_lock_repo plan-lock-fmt || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q "Lock the roots the pull request's new head reaches" "$wf" || { log "init wrote no lock step in the fmt job"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    perl -0pi -e "s/\n      - name: Lock the roots the pull request's new head reaches\n.*?\n(?=  \S|      - )/\n/s" "$wf"
+    ! grep -q "new head reaches" "$wf" || { log "the BREAK did not cut the lock step"; drop_work "$work"; return 1; }
+  fi
+  wait_run "$repo" "$(push_tree "$work/tree" "$repo" main "plan-lock-fmt: first")" || { drop_work "$work"; return 1; }
+  echo a > "$work/tree/canary/one/rev.txt"
+  head_a="$(push_tree "$work/tree" "$repo" change-a "plan-lock-fmt: a")" || { drop_work "$work"; return 1; }
+  pr_a="$(pr_open "$repo" change-a "plan-lock-fmt: a")" || { drop_work "$work"; return 1; }
+  got="$(wait_lock_status "$repo" "$head_a" success)"
+  log "A ($pr_a) at ${head_a:0:8}: terragucci/lock ${got:-none}"
+  [ "$got" = "success holds canary/one" ] || { log "A does not hold canary/one"; drop_work "$work"; return 1; }
+  perl -pi -e 's/^  input = trimspace/  input    =    trimspace/' "$work/tree/canary/one/main.tf"
+  head_u="$(push_tree "$work/tree" "$repo" change-a "plan-lock-fmt: unformatted")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$head_u" push || { drop_work "$work"; return 1; }
+  for i in $(seq 1 20); do
+    head_f="$(remote_head "$repo" change-a)"
+    [ -n "$head_f" ] && [ "$head_f" != "$head_u" ] && break
+    sleep 3
+  done
+  if [ -z "$head_f" ] || [ "$head_f" = "$head_u" ]; then
+    log "the fmt job pushed no formatting onto change-a"; drop_work "$work"; return 1
+  fi
+  log "the fmt job formatted change-a: ${head_u:0:8} -> ${head_f:0:8}; runs on the formatted head: $(api "$URL/api/v1/repos/$repo/actions/runs?head_sha=$head_f" | jq '.workflow_runs | length')"
+  got="$(TIMEOUT=180 wait_lock_status "$repo" "$head_f" success)"
+  log "A at the formatted head: terragucci/lock ${got:-none}; lock: $(lock_file "$repo" | jq -c '.locks["canary/one"] | {pr, head}' 2>/dev/null)"
+  # A change to canary/one's main.tf also reaches the fleet roots, so the answer may hold more than canary/one.
+  case "$got" in "success holds canary/one"*) ;; *) log "the formatted head of A has no lock answer"; rc=1 ;; esac
+  [ "$(lock_file "$repo" | jq -r '.locks["canary/one"].head // empty' 2>/dev/null)" = "$head_f" ] || { log "the lock on canary/one is not at the formatted head"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the fmt job's formatting commit got terragucci/lock success and A holds canary/one at it"
+  return $rc
+}
+
 claim_runner_nudge() {
   # Forgejo 16 moves no task version when a run ends with no task reporting
   # (forgejo#14576), so a run queued behind it in a concurrency group waits
@@ -15525,6 +15577,7 @@ tip-moved            self! weight=150
 mcp-last-apply       weight=120
 drift-agent          runner self! weight=250
 runner-nudge         stack! self! weight=200
+plan-lock-fmt        runner self! weight=200
 tg-pr-plan           tg self! after=tg-waves weight=300
 '
 

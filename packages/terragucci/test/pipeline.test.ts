@@ -21,6 +21,19 @@ const render = (forge: ForgeName, oidc?: typeof OIDC): string =>
 
 const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
 
+describe("the fmt job under locks: plan", () => {
+  it.each(["github", "forgejo"] as const)("%s: after its formatting commit, which starts no run, it answers the pull request's lock", (forge) => {
+    const fmt = (locksPlan: boolean) => body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ...(locksPlan ? { locksPlan } : {}) } as never).content).jobs.fmt;
+    const on = fmt(true);
+    expect(on.steps.at(-1).run).toContain("terragucci pr-lock --layers");
+    // Forgejo's dialect drops permissions: its job token has them all.
+    if (forge === "github") expect(on.permissions).toEqual({ contents: "write", statuses: "write", "pull-requests": "write" });
+    const off = fmt(false);
+    expect(JSON.stringify(off)).not.toContain("pr-lock");
+    if (forge === "github") expect(off.permissions).toEqual({ contents: "write" });
+  });
+});
+
 describe("Forgejo's limit on skipped needs", () => {
   // Forgejo 16 skips the jobs below a skipped job one level of needs at a time while it creates the run, and
   // creates no run past five levels: five waves and the tips job below check left a pull request with no plan.

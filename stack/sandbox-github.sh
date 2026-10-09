@@ -480,6 +480,7 @@ AGENT_SECRET=SANDBOX_AGENT_TOKEN
 PROVE_CLAIMS='github.com|affected|a pull request that changes one root plans that root alone, and its plan note covers it alone
 github.com|comment-plan|/terragucci plan on a pull request re-plans it in a run of its own, and the re-plan edits the plan note
 github.com|pr-lock|with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder
+github.com|pr-lock-fmt|with locks: plan a pull request whose check job formats it, with a push that starts no workflow, still has its lock answered on the formatted head
 github.com|policy|a pull request that replaces a table fails terragucci/plan under the Rego policy on main, and its plan note names the denial
 github.com|oidc|the plan job holds a GitHub-signed OIDC token for this repo and run, for the plan role, and the apply job on main one for the apply role; with no cloud account the token is checked, not traded with STS
 github.com|gate-wait|a merged destroy stops its wave with the approve command, and after a sealed chant approve the re-run applies it
@@ -892,9 +893,7 @@ prove_merge() {
     verdict comment-plan fail "no one-root pull request to comment on"
   fi
 
-  # pr-lock: one-root holds dev orders; orders-note reaches it too. (The
-  # check job of unformatted pushes its format with the job's token, which
-  # starts no pr-lock run, so that pull request may never be answered.)
+  # pr-lock: one-root holds dev orders; orders-note reaches it too.
   if [ -n "$a" ]; then
     held="$(wait_status "$head_a" terragucci/lock success)"
     if step change orders-note; then
@@ -912,6 +911,34 @@ prove_merge() {
     fi
   else
     verdict pr-lock fail "no one-root pull request to hold the lock"
+  fi
+
+  # pr-lock-fmt: unformatted reaches dev orders, which one-root holds. Its
+  # fmt job pushes the formatting with the job's token, which starts no
+  # workflow, so no pr-lock run sees the formatted head: the fmt job answers
+  # its lock itself, refused with one-root named as the holder.
+  if [ -n "$a" ] && step change unformatted; then
+    local u u0 uf="" i
+    u="$(pr_for unformatted open)"
+    u0="$(head_of "$u")"
+    for i in $(seq 1 30); do
+      uf="$(head_of "$u")"
+      [ "$uf" != "$u0" ] && break
+      sleep 10
+    done
+    if [ "$uf" = "$u0" ]; then
+      verdict pr-lock-fmt fail "pull request $u: no formatting commit on its head ${u0:0:8} in five minutes"
+    else
+      got="$(wait_status "$uf" terragucci/lock failure)"
+      if [ "${got%% *}" = failure ] && grep -qF "pull request $a" <<<"$got"; then
+        verdict pr-lock-fmt pass "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: $got"
+      else
+        verdict pr-lock-fmt fail "pull request $u: formatted ${u0:0:8} -> ${uf:0:8}; terragucci/lock on it: ${got:-none}"
+      fi
+    fi
+    gh pr close "$u" -R "$REPO" >/dev/null 2>&1 || true
+  else
+    verdict pr-lock-fmt fail "change unformatted failed, or no one-root pull request holds dev orders"
   fi
 
   # comment-agent: on the orders-note pull request, the stand-in agent's
