@@ -41,7 +41,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "68fd6a8"
     },
     {
       "claim": "highlight",
@@ -65,7 +65,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "4b0ca65"
+      "commit": "68fd6a8"
     },
     {
       "claim": "sealed",
@@ -221,7 +221,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "68fd6a8"
     },
     {
       "claim": "tg-check",
@@ -509,7 +509,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "68fd6a8"
     },
     {
       "claim": "policy-delete-key",
@@ -710,7 +710,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "68fd6a8"
     },
     {
       "claim": "pr-review-moved",
@@ -1392,7 +1392,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "df3c5bf"
+      "commit": "68fd6a8"
     },
     {
       "claim": "steps-before-plan",
