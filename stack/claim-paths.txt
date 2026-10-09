@@ -43,7 +43,7 @@ packages/terragucci/src/pins.ts           root-pins tg-root-pins pinned-install 
 packages/terragucci/src/install.ts        root-pins tg-root-pins tg-choudoufu pinned-install tf-terraform tg-terraform cdf-* cost-*
 packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
 packages/terragucci/src/override.ts       policy-override* estate-override
-packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate-control audit-control
+packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate-control audit-control provider-project
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions state-edges mcp-last-apply ephemeral-*
 packages/terragucci/src/audit.ts          audit* migrate-split unlock-state state-export ephemeral-*
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert unlock-state state-roles state-export
@@ -149,3 +149,6 @@ stack/fixtures/provider-cache             provider-cache-once
 stack/break-bundle.mjs                    plan-no-lock sensitive-redacted provider-cache-once mcp-last-apply
 scripts/cli-bundle.mjs                    plan-no-lock sensitive-redacted provider-cache-once mcp-last-apply
 example-terragrunt/                       tg-*
+
+# The Terraform and OpenTofu provider for a control repo.
+terraform-provider-terragucci/            provider-project

@@ -126,6 +126,7 @@ export default defineConfig({
 							label: 'Set it up your way',
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
+								{ label: 'Manage the control repo with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
 								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
