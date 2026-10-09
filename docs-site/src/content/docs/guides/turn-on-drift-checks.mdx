@@ -13,11 +13,11 @@ prompt: |
 import Shot from '../../../components/Shot.astro';
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A scheduled `tf-drift` run that plans every root and one issue reporting the drift, grouped like a pull-request plan.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -75,7 +75,7 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 5. Read the issue.
 
-   Each project has at most one open issue, `terragucci: drift found`, updated on each run. The job never applies. A root that cannot be refreshed fails it; drift alone does not.
+   Each project has at most one open issue, `terragucci: drift found`, updated on each run. A root that cannot be refreshed fails the job; drift alone does not.
 
    | Event | The issue |
    |---|---|
@@ -112,9 +112,9 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
    The next drift run that finds every root clean closes the issue.
 
-   Drift the pull request cannot write, such as a value set through a variable or a module, can go to a coding agent instead: with [`agent.drift`](/terragucci/guides/agent-fix-drift/), the drift job's issue starts an agent whose change comes back as a pull request.
+   Drift the pull request cannot write, such as a value set through a variable or a module, can go to a coding agent: with [`agent.drift`](/terragucci/guides/agent-fix-drift/), the drift issue starts an agent that returns its change as a pull request.
 
-   Nothing in the drift job applies or merges. The approval of the wave and the report of each run stay as the [audit trail](/terragucci/reference/audit-trail/).
+   Nothing in the drift job applies or merges. Each wave's approval and each run's report stay in the [audit trail](/terragucci/reference/audit-trail/).
 
    With `respond.drift: attribute`, the issue also says who changed each attribute, read from the audit log ([Drift attribution](/terragucci/reference/responses/#drift-attribution)):
 
@@ -122,7 +122,7 @@ A scheduled `tf-drift` run that plans every root and one issue reporting the dri
 
 7. Watch for an overdue note.
 
-   If the schedule stops, the next pull request's plan note says the drift checks are overdue and why ([Overdue drift checks](/terragucci/reference/stages/#overdue-drift-checks)).
+   When the schedule stops, the next pull request's plan note says why the drift checks are overdue ([Overdue drift checks](/terragucci/reference/stages/#overdue-drift-checks)).
 
 </Steps>
 

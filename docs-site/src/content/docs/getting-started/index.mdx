@@ -22,13 +22,13 @@ CI does this: everything runs as jobs in your CI and lands in your git and your 
 
 | You get | Where it is shown |
 |---|---|
-| No server to host | [What runs where](/terragucci/concepts/how-it-works/#what-runs-where) |
+| No server to host | [What runs where](/terragucci/concepts/how-it-works/#components) |
 | GitHub, GitLab or Forgejo | [Per forge](/terragucci/guides/add-to-a-repo/#per-forge) |
 | Object storage on AWS, GCP or Azure, for state and reports | [Credentials](/terragucci/reference/pipeline/#credentials), [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 | Tracing and metrics | [Send traces and metrics](/terragucci/guides/send-traces-and-metrics/) |
-| Rich lifecycles | [How terragucci works](/terragucci/concepts/how-it-works/) |
-| Gated waves | [How waves and approvals work](/terragucci/concepts/waves-and-approvals/) |
-| Aggregated plan output | [Why plans are grouped](/terragucci/concepts/why-plans-are-grouped/) |
+| Rich lifecycles | [Architecture](/terragucci/concepts/how-it-works/) |
+| Gated waves | [Waves and approvals](/terragucci/concepts/waves-and-approvals/) |
+| Aggregated plan output | [Plan grouping](/terragucci/concepts/why-plans-are-grouped/) |
 | Module publishing and pinned rollouts | [Publish your modules](/terragucci/guides/publish-modules/), [roll out a version](/terragucci/guides/roll-out-a-module-version/) |
 
 <CardGrid>
@@ -38,11 +38,11 @@ CI does this: everything runs as jobs in your CI and lands in your git and your 
 <LinkCard title="Switching from Atlantis or OpenTaco" description="Their commands and settings, and the terragucci equivalent of each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
 </CardGrid>
 
-## What you end up with
+## Result
 
 A pull request with one plan note that groups the roots a change reaches and names every destroy.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -81,7 +81,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
    | [binary](/terragucci/guides/use-a-binary/) | `tofu` or `terraform` and its version; Terragrunt runs it underneath | `--binary` |
    | forge | the `origin` remote | `--forge` |
 
-   With a `terragucci.yml`, `npx terragucci config check` reads it first and names the mode approvals run under. A key it does not know is named, with the keys it accepts. On the example:
+   With a `terragucci.yml`, run `npx terragucci config check` first: it names the approval mode, and any key it does not know along with the keys it accepts. On the example:
 
    <Captured step="config" />
 
@@ -124,7 +124,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
    </TabItem>
    </Tabs>
 
-   With the defaults there is no `terragucci.yml` to write; [terragucci.yml keys](/terragucci/reference/config/) lists every key for when you need one.
+   The defaults need no `terragucci.yml`; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
 
 4. Give the pipeline a token.
 
@@ -191,11 +191,11 @@ A pull request with one plan note that groups the roots a change reaches and nam
    </TabItem>
    </Tabs>
 
-   [The plan report](/terragucci/reference/report/) shows what each part holds.
+   [The plan report](/terragucci/reference/report/) explains each part.
 
 </Steps>
 
-## Before your first approval
+## First approval
 
 With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a person only when its plan destroys or replaces something. You approve it from your machine with [chant](/terragucci/concepts/glossary/#chant), the tool terragucci's stages are written in.
 

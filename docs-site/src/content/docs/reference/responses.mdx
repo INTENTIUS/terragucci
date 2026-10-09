@@ -10,7 +10,7 @@ prompt: |
 
 import Shot from '../../../components/Shot.astro';
 
-Every event has a default response that needs no model. No response runs a coding agent, and approving, applying and merging stay with people.
+Every event has a default response that needs no model. No response runs a coding agent; people approve, apply and merge.
 
 | Event | Response (default) | Other choices |
 |---|---|---|
@@ -51,7 +51,7 @@ respond:
 
 ## Running a response
 
-Each response is a command. A dry run is the default, and `--mode apply` opens the pull request or pushes the commit.
+Each response is a command that dry-runs by default; `--mode apply` opens the pull request or pushes the commit.
 
 ```bash
 terragucci respond plan --report terragucci-report
@@ -90,7 +90,7 @@ An approval binds a wave's set digest, so a wave whose root plan changed after a
 
 ### Apply failed
 
-The triage table knows these classes of provider error:
+Triage knows these provider error classes:
 
 | Class | Matches | Likely fix |
 |---|---|---|
@@ -101,11 +101,11 @@ The triage table knows these classes of provider error:
 | dependency | `DependencyViolation`, `DeleteConflict`, `BucketNotEmpty` | remove what depends on it first |
 | state lock | `Error acquiring the state lock` | wait; a person runs `force-unlock` if no run holds it |
 
-The table holds AWS provider errors and Terraform's state lock message. Another provider's error is listed as unknown.
+The table covers AWS provider errors and Terraform's state lock message; any other provider's error is listed as unknown.
 
 ## Drift
 
-A refresh-only plan finds the drift, and the pull request writes the live value where the root's own resource block holds a literal. Merging it accepts the change made outside Terraform, so read it first.
+A refresh-only plan finds the drift, and the pull request writes the live value where the root's own resource block holds a literal. Merging it accepts the outside change, so read it first.
 
 Other changes are only reported:
 
@@ -119,7 +119,7 @@ Other changes are only reported:
 
 In a Terragrunt repo a unit's resources are in the module its `terraform.source` names, and what differs between units is their `inputs`. Where the module sets the drifted attribute to `var.<name>` and the unit's own `terragrunt.hcl` sets `<name>` to a literal in `inputs`, the pull request writes the live value there, so only that unit changes. A literal in the module is reported, since every unit calling the module shares it, and so is a module from outside the repo. The drift job plans again only the units its report shows drifted. `--import` names a root's files, so it is refused in a Terragrunt repo.
 
-With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#what-edits-the-stacks) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
+With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
 
 For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14.1 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
 
@@ -176,8 +176,6 @@ terragucci respond description --report terragucci-report --title "retag email" 
 
 ### Tips, fmt and release notes
 
-Each tip is its own pull request.
-
 | Tip | The pull request |
 |---|---|
 | a provider taken by a range | pins it in `required_providers` at the version the lock file holds, so the next plan changes nothing |
@@ -187,11 +185,11 @@ Each tip is its own pull request.
 
 With `--report`, `tips` reads the plans of a `stage tf-plan` report and proposes only the `moved` blocks; run it in a checkout of the branch that renamed the resources, after its plan. The generated tips job runs without it, after the applies, from the default branch.
 
-With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#what-edits-the-stacks) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
+With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
 
 <Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
 
-`fmt` runs on request and pushes one commit to the pull request's branch. It refuses the default branch. In a Terragrunt repo it runs `terragrunt hcl fmt` beside the binary's `fmt`, and the commit is `style: terragrunt hcl fmt` when only `.hcl` files moved. In the generated pipeline the `fmt` job runs it after a failed check, so the check job holds no token that pushes.
+`fmt` runs on request and pushes one commit to the pull request's branch, and refuses the default branch. In a Terragrunt repo it runs `terragrunt hcl fmt` beside the binary's `fmt`, and the commit is `style: terragrunt hcl fmt` when only `.hcl` files moved. In the generated pipeline the `fmt` job runs it after a failed check, so the check job holds no token that pushes.
 
 <Shot step="responses" view="fmt" alt="The style: tofu fmt commit on a pull request's branch in Forgejo, realigning the locals in app/locals.tf" optional />
 
@@ -210,6 +208,6 @@ The bump comes from the [version bump rules](/terragucci/reference/stages/#versi
 
 <Shot step="publish" view="release" alt="The release pull request the version-bump job opened on Forgejo, Release modules/queue 0.1.1: it proposes a patch bump, says no commit since 0.1.0 carries a conventional type and the decision service did not answer, explains that merging writes the module's version file for the next tf-publish run, and lists the commit since the last release" />
 
-## Where it runs
+## Runtime
 
 Responses run in CI with no model. To hand a result to your own agent, run the command with `--json` in a job whose token can only comment, as in [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/). The agent never holds an apply role or a gate's signing key.

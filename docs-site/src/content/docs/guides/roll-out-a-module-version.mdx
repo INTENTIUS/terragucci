@@ -12,11 +12,11 @@ prompt: |
 import Shot from '../../../components/Shot.astro';
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 Every root that pins the module moved to the new version through one pull request per wave.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -39,9 +39,9 @@ Every root that pins the module moved to the new version through one pull reques
 
    Name the module by path or by source without the pin; with no version, the newest published is used. The dry run changes nothing. When pins disagree, `--from` picks which moves.
 
-   A module that [`modules.registry`](/terragucci/guides/publish-modules/#serve-a-module-registry) publishes is named by its path too: `modules/network` also names the calls whose `source` is its registry address, such as `modules.example.com/acme/network/generic`, and their `version` moves. With no version, the newest the registry lists counts as well.
+   For a module that [`modules.registry`](/terragucci/guides/publish-modules/#serve-a-module-registry) publishes, `modules/network` also names the calls whose `source` is its registry address, such as `modules.example.com/acme/network/generic`, and their `version` moves; with no version, the newest the registry lists counts too.
 
-2. Fix any pin it refuses. The preview reports each pin it cannot move and a tip:
+2. Fix any pin it refuses. The preview lists each pin it cannot move, with a tip:
 
    | The pin | Tip |
    |---|---|
@@ -62,7 +62,7 @@ Every root that pins the module moved to the new version through one pull reques
 
    <Shot step="pin" view="pull" alt="The rollout's wave 1 pull request on the local Forgejo, opened for the four dev service roots" optional />
 
-4. Merge it and let it apply. Review and merge it; the apply stage runs on the merge commit.
+4. Review and merge it. The apply stage runs on the merge commit.
 
    <Shot step="pin" view="files" alt="The pull request's files: each dev service main.tf moves its ref from modules/service/v1.0.0 to v1.1.0" optional />
 
@@ -89,7 +89,7 @@ Every root that pins the module moved to the new version through one pull reques
    npx terragucci rollout modules/network 1.4.0 --mode apply
    ```
 
-   Either way, the next wave opens after the last wave merged and applied (`apply/<path>` per directory, else `terragucci/apply`). A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
+   Either way, a wave opens only after the last one merged and applied (`apply/<path>` per directory, else `terragucci/apply`). A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
 
    | Exit code | Meaning |
    |---|---|

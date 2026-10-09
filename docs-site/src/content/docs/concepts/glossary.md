@@ -3,7 +3,7 @@ title: Glossary
 description: The words terragucci, chant and the example use, and the ones that mean something different in Terraform and HCP Terraform.
 ---
 
-Each docs page links a word here the first time it uses it, unless the page explains the word itself.
+A page links a word here on first use, unless the page explains it.
 
 ## Your code
 
@@ -31,7 +31,7 @@ A batch `tf-apply` applies behind one approval, gated as `wave-1`, `wave-2`: can
 
 ### canary
 
-The roots named in `waves.canary`. They apply first, in wave 1, so a bad change reaches a few roots before the rest.
+The roots named in `waves.canary`, applied first in wave 1 so a bad change reaches a few roots before the rest.
 
 ### plan digest
 
@@ -65,7 +65,7 @@ The gates in `chant.workspace.json` (`init` lists all under `approval: sealed`) 
 
 ### .chant/allowed_signers
 
-The signers file: one ssh public key per approver, in ssh-keygen's allowed_signers format. It is read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
+The signers file: one ssh public key per approver, in ssh-keygen's allowed_signers format, read from the commit before the one applied. [Set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file).
 
 ### pr-review
 

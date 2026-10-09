@@ -25,11 +25,11 @@ Someone deletes a queue in the console.
 
 <Steps>
 
-1. Delete the queue. This scenario does the same through the API.
+1. The scenario deletes it through the API.
 
    <Captured step="drift" optional />
 
-2. Run the `drift` job by hand from the Actions tab, or wait for six in the morning. It plans every root with `-refresh-only`, which compares state with what exists in [floci](/terragucci/concepts/glossary/#floci) and ignores the code. The report lists the deleted queue under deletes, in `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
+2. Run the `drift` job by hand from the Actions tab, or wait for six in the morning. Its `-refresh-only` plan of every root compares state with what exists in [floci](/terragucci/concepts/glossary/#floci) and never reads the code, so a change waiting on main is not drift. The report lists the deleted queue under deletes, in `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
 
    :::note
    floci does not keep tags, so tags show as drifted on every root. On AWS they would not. Look for the entry marked deleted outside Terraform.
@@ -40,7 +40,5 @@ Someone deletes a queue in the console.
    <Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
 
 </Steps>
-
-A change waiting on main is not drift: a refresh-only plan never reads the code.
 
 Applying the code recreates the queue, which `just example reset` does. On AWS the next drift run closes the issue; on floci the tag entries keep it open.

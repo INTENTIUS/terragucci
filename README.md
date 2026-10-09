@@ -8,7 +8,7 @@ CI does this: each job runs in your forge's CI and lands in your git and your bu
 
 | You get | How |
 |---|---|
-| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#what-runs-where) | Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket. |
+| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#components) | Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket. |
 | [Built for many roots](https://intentius.io/terragucci/concepts/why-plans-are-grouped/) | One grouped note for 200 plans. Canary roots apply first, then the rest in [waves](https://intentius.io/terragucci/concepts/waves-and-approvals/). An approval covers exactly the plans it was shown, and a plan that changed after it is refused. |
 | [A trace of every run](https://intentius.io/terragucci/guides/send-traces-and-metrics/) | One OpenTelemetry trace per stage run, with a span per root and the binary's own spans inside it (lock waits and slow provider calls with choudoufu). Metrics and dashboards come with it. |
 
@@ -19,18 +19,18 @@ Works with:
 - Binaries: [Terraform, OpenTofu](https://intentius.io/terragucci/guides/use-a-binary/), [Terragrunt](https://intentius.io/terragucci/guides/use-terragrunt/) and [choudoufu](https://intentius.io/terragucci/guides/use-a-binary/#choudoufu)
 - Also: [drift checks](https://intentius.io/terragucci/guides/turn-on-drift-checks/), [module publishing](https://intentius.io/terragucci/guides/publish-modules/) and [pinned rollouts](https://intentius.io/terragucci/guides/roll-out-a-module-version/)
 
-[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the opt-in agent features run a model: the agent comment, the drift agent, the review and the refused-wave summary. Every pipeline feature on the site is proven on a local Forgejo by a recorded claim that fails when broken, and the per-forge claims list what is also proven on GitHub and GitLab ([validation](https://intentius.io/terragucci/reference/validation/)).
+[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the four opt-in agent features (agent comment, drift agent, review and refused-wave summary) run a model. Every pipeline feature on the site is proven on a local Forgejo by a recorded claim that fails when broken, and the per-forge claims list what is also proven on GitHub and GitLab ([validation](https://intentius.io/terragucci/reference/validation/)).
 
 ```bash
 npm i -D @intentius/terragucci
 npx terragucci init
 ```
 
-The site is [intentius.io/terragucci](https://intentius.io/terragucci/), and [How terragucci works](https://intentius.io/terragucci/concepts/how-it-works/) follows one change through its whole lifecycle.
+The site is [intentius.io/terragucci](https://intentius.io/terragucci/); [Architecture](https://intentius.io/terragucci/concepts/how-it-works/) follows one change through its lifecycle.
 
 ## For agents
 
-Setting terragucci up with a coding agent? Paste this prompt into it.
+To set terragucci up with a coding agent, paste it this prompt.
 
 ```text
 Set up terragucci in this repository.
@@ -44,7 +44,7 @@ Never apply, approve (a pull request review, `terragucci approve`, `chant approv
 
 ## Working on this repo
 
-[CONTRIBUTING.md](CONTRIBUTING.md) is the guide for contributors.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licence
 

@@ -49,7 +49,7 @@ Each timed phase starts at its first push or merge and ends when its last run do
 - Each root commits `.terraform.lock.hcl`. Without lock files, `init` downloads the provider again each time: on the 301-resource estate a run took 24 minutes without them and 8 with them.
 - The emulator answers at once. A cloud account adds API latency and throttling, and IAM's default quota of 1,000 roles is below the 1,496 this estate declares.
 
-## How the estate is built
+## Estate setup
 
 The bench's own scripts build the estate. [choudoufu](/terragucci/concepts/glossary/#choudoufu)'s `terralith-gen` writes a terralith at a chosen scale: one root module of AWS resources. A script then carves it into roots and spreads them over repos.
 

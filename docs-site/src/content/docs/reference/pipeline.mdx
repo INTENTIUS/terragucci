@@ -34,7 +34,7 @@ An approval is a commit on `chant/lifecycle`, and a push there starts nothing: t
 | [`terragucci approve`](/terragucci/reference/cli/#approve) | right after it records the approval, with your token | GitHub: re-runs the failed jobs of the run that waited (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth login`). GitLab: retries that pipeline's job of the wave (`GITLAB_TOKEN`). Forgejo, whose API has no re-run: comments `/terragucci apply` on the merged pull request that made the commit (`FORGEJO_TOKEN`). Without a token it says so and the approval still stands. |
 | the resume job, with `apply.resume: <minutes>`, whatever `gate` says | within that many minutes | `terragucci resume` reads the ledger. When a waiting wave's digest, or that of a [state migration](/terragucci/reference/migration-files/) wave 1 waits on, has an approval no apply has used, GitHub's and Forgejo's job runs the waves from wave 1 at the default branch's commit, as a comment's apply does, and GitLab's retries the newest push pipeline's first apply job that did not succeed. With nothing to resume it stops before any credential. |
 
-Neither approves anything: the wave's gate decides again against the plans it makes now.
+Neither approves anything; the wave's gate decides again against the plans it makes now.
 
 | Forge | The resume job |
 |---|---|
@@ -42,9 +42,7 @@ Neither approves anything: the wave's gate decides again against the plans it ma
 | Forgejo | `.forgejo/workflows/terragucci-resume.yml`, the same |
 | GitLab | the `resume` job in the pipeline, for a pipeline schedule you create with the variable `TERRAGUCCI_SCHEDULE=resume`, every `apply.resume` minutes |
 
-On GitHub and Forgejo the schedule is the cron `*/<apply.resume>`, so `60` runs hourly and a value that does not divide 60 also runs on the hour.
-
-Each run costs a short job even when nothing waits.
+On GitHub and Forgejo the schedule is the cron `*/<apply.resume>`, so `60` runs hourly and a value that does not divide 60 also runs on the hour. Each run costs a short job even when nothing waits.
 
 ## Apply from a comment
 
@@ -54,7 +52,7 @@ The comment approves nothing; a gated wave still needs its approval record, seal
 
 <Shot step="statuses" view="reply" alt="A merged pull request's conversation in Forgejo: the reply that wave 1 waits for an approval of its set digest with the chant approve --sign command, the refusal of a commenter with no write access, and, once the wave is sealed, the reply linking the run that applied it" optional />
 
-## When a comment runs nothing
+## Ignored comments
 
 Every comment command is checked before any credential is used. A failed check stops the job, and the reply starting `terragucci:` names it. On GitLab, with [`comments:`](/terragucci/guides/re-plan-from-a-comment/) set, the `comments` job runs the checks in the GitLab column on each merge request note.
 
@@ -94,11 +92,11 @@ With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-mer
 
 | Job | Runs on | Does |
 |---|---|---|
-| `apply-comment` | `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` on an open pull request | checks the [open-PR column](#when-a-comment-runs-nothing), locks the roots the change reaches, and applies the head wave by wave with the apply role while no other apply runs; for `lock`, checks the `lock` column and takes the locks with no credential and no apply; for `unlock`, releases its locks |
+| `apply-comment` | `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` on an open pull request | checks the [open-PR column](#ignored-comments), locks the roots the change reaches, and applies the head wave by wave with the apply role while no other apply runs; for `lock`, checks the `lock` column and takes the locks with no credential and no apply; for `unlock`, releases its locks |
 | `pr-merge` | with `apply.merge: auto`, after `apply-comment` applied every wave | merges while the head is still the applied commit and approved by a reviewer other than its author, then releases the locks |
 | `confirm` | each push to the default branch | plans every root (every unit, after the Terragrunt caches and plan roles) and applies nothing; its `terragucci/apply` status fails naming roots that plan a change |
 
-On GitLab a merge request's pipeline is built from its own `.gitlab-ci.yml`, so the apply runs in a pipeline of the default branch that the [`comments`](/terragucci/guides/re-plan-from-a-comment/) job starts. `init` writes these jobs there:
+On GitLab a merge request's pipeline is built from its own `.gitlab-ci.yml`, so the apply runs in a default-branch pipeline that the [`comments`](/terragucci/guides/re-plan-from-a-comment/) job starts, with these jobs:
 
 | Job | Runs on | Does |
 |---|---|---|
@@ -117,7 +115,7 @@ Each wave reads its approval mode, gate rule, signers file and config from the d
 | `apply.merge: auto` with `apply.merge_token_env` | `pr-merge`, the only job given that token; it runs no pull request code |
 | `apply.merge: auto` with no merge token | `pr-merge` with the job's own token: Forgejo refuses it; on GitHub the merge starts no workflow, so the next push confirms it; GitLab needs the token |
 
-In a Terragrunt repo, `apply-comment` (on GitLab, `mr-apply`) runs the waves of units with `--terragrunt`, as the apply jobs do, and the locks are on units: [Locks](/terragucci/guides/apply-before-merge/#locks) says which. Locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A lock whose pull request merged or closed counts as released.
+In a Terragrunt repo, `apply-comment` (on GitLab, `mr-apply`) runs the waves of units with `--terragrunt`, as the apply jobs do. Its locks are on units; [Locks](/terragucci/guides/apply-before-merge/#locks) says which. Locks live in `_locks/tf-apply.json` on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. A lock whose pull request merged or closed counts as released.
 
 ## Plan locks
 
@@ -133,9 +131,9 @@ With [`locks: plan`](/terragucci/reference/config/#plan-locks), `init` adds one 
 
 It reads the change as data from git: the diff, and in a Terragrunt repo each unit's `terragrunt.hcl`. A fork's pull request takes no lock. Under `apply.when: merge` the lock gates nothing by itself: require `terragucci/lock` in branch protection to hold the merge.
 
-### What the pull request's code can reach
+### Pull request code access
 
-This table covers the pull request's own code as the applying job runs it: providers, modules and external data sources.
+The pull request's own code (providers, modules, external data sources) runs in the applying job and reaches:
 
 | Thing | Reachable | Note |
 |---|---|---|
@@ -199,7 +197,7 @@ oidc:
 | The job sets | `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Trust | an IAM OIDC provider for the issuer; each role allows `sts:AssumeRoleWithWebIdentity` on `aud` and `sub`: the pull-request and default branch subjects for plan, the default branch's alone for apply |
 
-Each environment can have its own pair of roles, chosen by the root's path:
+Each environment can have its own pair of roles, by root glob:
 
 ```yaml
 oidc:
@@ -289,7 +287,7 @@ env:
   TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
 ```
 
-GitLab expands the references in each job. This names one state, `infra`, for a root with an empty `backend "http" {}` block. With several roots, give each root's `backend "http"` block its own `address`, `lock_address` and `unlock_address`, and keep the credentials in `env:`.
+GitLab expands the references in each job. This names one state, `infra`, for a root with an empty `backend "http" {}` block; with several roots, give each root's `backend "http"` block its own `address`, `lock_address` and `unlock_address`, and keep the credentials in `env:`.
 
 ### The agent comment
 
@@ -297,14 +295,14 @@ With `agent.comment` set on GitHub or Forgejo, `/terragucci agent <ask>` on a pu
 
 | Job | Token | Does |
 |---|---|---|
-| `agent` | the job's own, read and comment; the agent's step runs without it | checks the [`agent` column](#when-a-comment-runs-nothing), checks out the head without credentials, runs the agent command with the prompt on stdin and the model's key in that step alone, and keeps the change as a patch |
+| `agent` | the job's own, read and comment; the agent's step runs without it | checks the [`agent` column](#ignored-comments), checks out the head without credentials, runs the agent command with the prompt on stdin and the model's key in that step alone, and keeps the change as a patch |
 | `agent-push` | the secret `agent.token_env` names | in a fresh container, applies the patch to the same head; refuses a patch touching a [guarded path](#paths-an-agent-cannot-change), otherwise pushes it to the head branch without force; replies with the commit or the reason |
 
 The push starts the pull request's plan job, which plans the change with its read-only role. The `replan` job leaves `/terragucci agent` comments to these jobs.
 
 #### Paths an agent cannot change
 
-`agent-push` refuses a patch that touches any of these, matched without regard to case, and the reply names the paths.
+`agent-push` refuses a patch that touches any of these, matched case-insensitively, and names the paths in its reply.
 
 | Path | Where | Kind |
 |---|---|---|
@@ -338,7 +336,7 @@ With `review.agent` set on GitHub or Forgejo, `init` writes a second workflow, `
 | GitHub | `workflow_run`, when the pipeline's `pull_request` run of a pull request from the repo completes, passed or failed | the run that started it has finished |
 | Forgejo | `pull_request_target` of a pull request from the repo (opened, reopened, synchronize); Forgejo has no `workflow_run` | the `review` job waits up to 30 minutes for the `plan` job of the pipeline's run of the head, then reviews without its report |
 
-It has two jobs. Neither gets a cloud role.
+Its two jobs get no cloud role.
 
 | Job | Token | Does |
 |---|---|---|
@@ -349,7 +347,7 @@ The note's first line is a marker with the head and the risk, for people to read
 
 ### Terragrunt
 
-In a Terragrunt repo, each environment can have its own pair of roles, chosen by the unit's path:
+In a Terragrunt repo, each environment's roles go by unit glob:
 
 ```yaml
 terragrunt:
@@ -368,7 +366,7 @@ terragucci's auth provider command hands each unit the role of the first glob it
 
 ## Terragrunt jobs
 
-In a Terragrunt repo the same three jobs run Terragrunt:
+In a Terragrunt repo the same jobs run Terragrunt:
 
 | Job | Runs |
 |---|---|

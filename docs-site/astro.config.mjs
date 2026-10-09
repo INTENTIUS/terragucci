@@ -83,7 +83,7 @@ export default defineConfig({
 				{
 					label: 'Getting started',
 					items: [
-						{ label: 'How terragucci works', slug: 'concepts/how-it-works' },
+						{ label: 'Architecture', slug: 'concepts/how-it-works' },
 						{ label: 'Get your first plan note', slug: 'getting-started' },
 					],
 				},
@@ -170,14 +170,14 @@ export default defineConfig({
 						{ label: 'Threat model', slug: 'reference/threat-model' },
 						{ label: 'Responses to pipeline events', slug: 'reference/responses' },
 						{ label: 'Traces and metrics', slug: 'reference/observability' },
-						{ label: 'Where it runs', slug: 'reference/runtimes' },
+						{ label: 'Runtimes', slug: 'reference/runtimes' },
 					],
 				},
 				{
 					label: 'Concepts',
 					items: [
-						{ label: 'How waves and approvals work', slug: 'concepts/waves-and-approvals' },
-						{ label: 'Why plans are grouped', slug: 'concepts/why-plans-are-grouped' },
+						{ label: 'Waves and approvals', slug: 'concepts/waves-and-approvals' },
+						{ label: 'Plan grouping', slug: 'concepts/why-plans-are-grouped' },
 						{ label: 'Approvals as records in your repo', slug: 'concepts/approvals-as-records' },
 						{ label: 'Locking per resource', slug: 'concepts/locking-per-resource' },
 						{ label: 'Glossary', slug: 'concepts/glossary' },
