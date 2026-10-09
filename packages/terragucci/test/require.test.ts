@@ -42,7 +42,7 @@ async function published(pair: Pair) {
 function handTag(repo: string, version: string, force = false): void {
   write(repo, { "modules/service/out.tf": `output "v" { value = "${version}" }\n` });
   commit(repo, `fix: ${version} by hand`);
-  git(repo, "tag", ...(force ? ["-f"] : []), "-a", `modules/service/v${version}`, "-m", "by hand");
+  git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "tag", ...(force ? ["-f"] : []), "-a", `modules/service/v${version}`, "-m", "by hand");
   git(repo, "push", "-q", ...(force ? ["-f"] : []), "origin", `refs/tags/modules/service/v${version}`);
 }
 

@@ -157,12 +157,12 @@ describe("publish with modules.attest", () => {
     await publish(repo, cfg, { signer: testSigner(pair.privateKey), parser: await parser() });
     write(repo, { "modules/service/out.tf": 'output "x" { value = 1 }\n' });
     commit(repo, "fix: x");
-    git(repo, "tag", "-a", "modules/service/v0.1.1", "-m", "by hand");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "modules/service/v0.1.1", "-m", "by hand");
     git(repo, "push", "-q", "origin", "refs/tags/modules/service/v0.1.1");
     const [byHand] = await verifyPublished(repo, cfg, "modules/service", "0.1.1");
     expect(byHand.verified).toBeUndefined();
     expect(byHand.refused).toMatch(/is not in the release ledger .* none has these bytes/);
-    git(repo, "tag", "-f", "-a", "modules/service/v0.1.0", "-m", "moved", "HEAD");
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-f", "-a", "modules/service/v0.1.0", "-m", "moved", "HEAD");
     git(repo, "push", "-q", "-f", "origin", "refs/tags/modules/service/v0.1.0");
     const [moved] = await verifyPublished(repo, cfg, "modules/service", "0.1.0");
     expect(moved.refused).toMatch(/is not in the release ledger/);
