@@ -92,12 +92,30 @@
       "commit": "df3c5bf"
     },
     {
+      "claim": "rollout",
+      "says": "a module version rolls out one merge request per wave, each changing only its roots and opened only after the last wave merged and applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
       "claim": "publish",
       "says": "changed modules are published at a new version",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "commit": "df3c5bf"
+    },
+    {
+      "claim": "publish",
+      "says": "the publish job pushes a git tag for each changed module on a merge to main, none when no module changed, and the next version for a changed module",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
     },
     {
       "claim": "publish-attest",
@@ -508,6 +526,15 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "df3c5bf"
+    },
+    {
+      "claim": "report-oidc",
+      "says": "with no static keys, the plan job assumes reports.role with its OIDC token from id_tokens, writes report.json to the bucket, and the index lists the run",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
     },
     {
       "claim": "tg-gate-wait",
@@ -1199,6 +1226,15 @@
       "commit": "df3c5bf"
     },
     {
+      "claim": "note-footer",
+      "says": "the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
+    },
+    {
       "claim": "cdf-shared-bucket",
       "says": "with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change",
       "needs": null,
@@ -1327,13 +1363,67 @@
       "commit": "df3c5bf"
     },
     {
-      "claim": "note-footer",
-      "says": "the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG",
+      "claim": "mr-widget",
+      "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
       "forge": "gitlab",
-      "commit": "e8d2cfb"
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "managed-state-parallelism",
+      "says": "roots on GitLab-managed state apply at most 3 at once, and the apply job says so",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "report-keys",
+      "says": "with the bucket keys in CI/CD variables, which the pipeline maps nowhere, the plan job writes report.json to the bucket and the index lists the run",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "drift-issue",
+      "says": "the drift schedule opens one drift issue naming the root and attribute that drifted, updates the same issue when more drifts, and closes it when a run finds none",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "estate-job",
+      "says": "the estate job of the see-every-project page, pasted into .gitlab-ci.yml and run by a pipeline schedule with only its OIDC token, writes estate.html listing the project to the bucket and prints a presigned link",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "explain-refusal",
+      "says": "after a wave is refused, the explain-refusal job of the agent-refused-wave page runs wave-refused on the wave reports and a stand-in agent prints a summary naming the root whose plan moved, and a branch pipeline still runs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "reconcile-mixed",
+      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
     }
   ]
 }
