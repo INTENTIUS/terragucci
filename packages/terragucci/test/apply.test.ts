@@ -271,6 +271,19 @@ describe("a wave behind its gate", () => {
     expect(report()).not.toContain(secret);
   });
 
+  it("the wave's report names the state version a root's backend holds once it applied, and the log prints it", async () => {
+    const { work, bin } = setup();
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+    // The root was initialised with a local backend whose file is under state/.
+    mkdirSync(join(work, "a", ".terraform"), { recursive: true });
+    writeFileSync(join(work, "a", ".terraform", "terraform.tfstate"), JSON.stringify({ version: 3, backend: { type: "local", config: { path: "state/a.tfstate" } } }));
+    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {} })).toBe(0);
+    const root = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8")).roots[0];
+    expect(root.state).toEqual({ backend: "local", location: "state/a.tfstate", versioning: "off", note: "a local backend keeps only the latest state" });
+    expect(lines).toContain("a: state state/a.tfstate, versions off (a local backend keeps only the latest state)");
+  });
+
   it("ends the ledger with a newline, so a line another writer appends stays its own record", async () => {
     const { work, origin, bin } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});

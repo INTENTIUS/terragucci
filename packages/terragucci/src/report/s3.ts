@@ -249,4 +249,20 @@ export class S3Client implements ObjectStore {
   async get(key: string): Promise<string | undefined> {
     return (await this.read(key)).body;
   }
+
+  /**
+   * The object's metadata and never its body: whether it exists, its ETag,
+   * and its version id when the bucket keeps versions. S3 sends no version id
+   * for a bucket whose versioning was never on, and `null` for an object
+   * written while it was suspended; both read as no version.
+   */
+  async head(key: string): Promise<{ exists: boolean; etag?: string; versionId?: string }> {
+    const { url, headers } = signRequest(await this.signer(), "HEAD", key, "");
+    const res = await this.fetchFn(url, { method: "HEAD", headers });
+    if (res.status === 404) return { exists: false };
+    if (!res.ok) throw new StoreError(`HEAD s3://${this.target.bucket}/${key}: ${res.status}`);
+    const etag = res.headers?.get("etag") ?? undefined;
+    const version = res.headers?.get("x-amz-version-id") ?? undefined;
+    return { exists: true, ...(etag ? { etag } : {}), ...(version && version !== "null" ? { versionId: version } : {}) };
+  }
 }

@@ -117,7 +117,35 @@
         "drifted": { "type": "integer", "description": "Roots that drifted in the latest drift check." },
         "failed": { "type": "integer", "description": "Roots that failed in the latest plan, drift check and apply waves." },
         "overridden": { "type": "integer", "description": "Roots the newest commit's apply waves applied under a policy override. Absent when none." },
-        "inventory": { "$ref": "#/$defs/inventory", "description": "The resources its roots hold, from its inventory.json. Absent until an apply records them." }
+        "inventory": { "$ref": "#/$defs/inventory", "description": "The resources its roots hold, from its inventory.json. Absent until an apply records them." },
+        "states": { "type": "array", "description": "Each root's state versions, from its states.json. Absent until an apply records them.", "items": { "$ref": "#/$defs/stateRoot" } }
+      }
+    },
+    "stateRoot": {
+      "type": "object",
+      "description": "One root's state: where it is, whether its backend keeps versions, and the version ids its applies left, newest first. Never the state's contents.",
+      "required": ["root", "backend", "versioning", "checked", "versions"],
+      "properties": {
+        "root": { "type": "string" },
+        "backend": { "type": "string" },
+        "location": { "type": "string" },
+        "versioning": { "enum": ["on", "off", "unknown"] },
+        "note": { "type": "string" },
+        "checked": { "type": "string", "description": "When the newest apply that recorded the root finished." },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["version_id", "commit", "finished"],
+            "properties": {
+              "version_id": { "type": "string" },
+              "commit": { "type": "string" },
+              "finished": { "type": "string" },
+              "wave": { "type": "integer" },
+              "report": { "type": "string", "description": "The wave's report.html, when the page can link it." }
+            }
+          }
+        }
       }
     },
     "inventory": {

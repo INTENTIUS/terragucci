@@ -84,7 +84,7 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 | `--link-hours` | how long the link lives; default 24, at most 168 |
 | `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read and write (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), in place of `reports` in a repo's config |
 
-It reads each project's `index.json`, `inventory.json` and `changes.json`, then writes `estate.html` and `estate.json` at the top of the prefix, and `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` when the audit trail is there. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. When `audit.json` is beside the page, the page links the audit trail. Exit code 1 when a project's index could not be read; the page names it.
+It reads each project's `index.json`, `inventory.json`, `changes.json` and `states.json`, then writes `estate.html` and `estate.json` at the top of the prefix, and `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` when the audit trail is there. In a control repo the projects are its `projects:`, each read from its own `reports`, and the page goes to `defaults.reports`. In a repo of its own the projects are the ones the top `index.json` lists. When `audit.json` is beside the page, the page links the audit trail. Exit code 1 when a project's index could not be read; the page names it.
 
 ## audit
 

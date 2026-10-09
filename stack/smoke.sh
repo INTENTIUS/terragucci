@@ -303,6 +303,7 @@ audit-refused|a wave whose plans changed after approval is in the audit record a
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
 inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
 resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
+state-versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
@@ -10215,6 +10216,97 @@ claim_inventory() {
   return $rc
 }
 
+# ── state versions ────────────────────────────────────────────────────────
+# One root, app, a terraform_data whose state is app.tfstate in a bucket of
+# its own on floci (s3 backend, use_lockfile), in a repo whose reports go to
+# the reports bucket under a fresh prefix.
+state_versions_repo() { # work, prefix, state bucket, input -> $1/wave and $1/origin.git
+  local work="$1" prefix="$2" bucket="$3"
+  mkdir -p "$work/wave/app"
+  state_versions_root "$work" "$bucket" "$4"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+}
+
+state_versions_root() { # work, state bucket, input
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "app" {\n  input = "%s"\n}\n' "$2" "$3" > "$1/wave/app/main.tf"
+}
+
+claim_state_versions() {
+  # state_versions_repo's root applies in tf-apply wave 1, then again with a
+  # new input. Each wave's log names the state's version, and its upload adds
+  # it to the project's states.json. terragucci estate then lists app's two
+  # versions, newest first: each a version id floci holds for app.tfstate,
+  # the newest the object's current one. No input value or the state's
+  # lineage reaches states.json or the page.
+  # BREAK: the state bucket's versioning is never turned on, so the page says
+  # versions are off for app and lists no version.
+  log() { echo "[smoke state-versions] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="states-$STAMP" bucket="tgsv-$STAMP" n project states page html ids held current lineage
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket?versioning" -H 'content-type: application/xml' \
+      --data-binary '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>' \
+      || { log "could not turn on versioning for $bucket"; return 1; }
+  fi
+  state_versions_repo "$work" "$prefix" "$bucket" "sv-$STAMP-1"
+  for n in 1 2; do
+    [ $rc = 0 ] || break
+    if [ $n = 2 ]; then
+      state_versions_root "$work" "$bucket" "sv-$STAMP-2"
+      git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "app input 2"
+    fi
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "apply $n exited $AUDIT_CODE, not 0"; rc=1; }
+    grep -q "^app: state s3://$bucket/app.tfstate" "$work/run.log" || { log "apply $n printed no state line for app"; rc=1; }
+  done
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    states="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$project/states.json")" || { log "no states.json at $REPORT_BUCKET/$prefix/$project"; rc=1; }
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '.projects[].states[]? | {root, backend, location, versioning, note, versions: [.versions[] | {version_id, wave, finished}]}' <<<"$page" >&2
+    if [ -n "${BREAK:-}" ]; then
+      grep -q '<code>app</code>: s3 <code>s3://'"$bucket"'/app.tfstate</code>, <span class="warn">versions are off</span>' <<<"$html" \
+        && log "the page says versions are off for app" || log "the page does not say versions are off for app"
+    fi
+    ids="$(jq -r '[.projects[].states[]? | select(.root == "app") | .versions[].version_id] | join(" ")' <<<"$page")"
+    [ "$(jq -r '[.projects[].states[]? | select(.root == "app") | .versioning] | join(",")' <<<"$page")" = "on" ] || { log "the page does not say app's bucket keeps versions"; rc=1; }
+    [ "$(wc -w <<<"$ids" | tr -d ' ')" = 2 ] || { log "the page lists app's versions as [$ids], not two"; rc=1; }
+    jq -e '[.projects[].states[]? | select(.root == "app") | .versions | (map(.finished) == (map(.finished) | sort | reverse))] == [true]' <<<"$page" >/dev/null || { log "app's versions are not newest first"; rc=1; }
+    [ "$(jq -r '[.roots[] | select(.root == "app") | .versions[].version_id] | join(" ")' <<<"$states")" = "$ids" ] || { log "states.json and the page disagree on app's versions"; rc=1; }
+    held="$(curl -fsS "$FLOCI/$bucket?versions&prefix=app.tfstate" | grep -o '<VersionId>[^<]*</VersionId>' | sed 's/<[^>]*>//g' | tr '\n' ' ')"
+    for n in $ids; do
+      case " $held " in *" $n "*) ;; *) log "version $n is not one floci holds for app.tfstate ($held)"; rc=1 ;; esac
+      grep -q "<code>$n</code>" <<<"$html" || { log "estate.html does not list version $n"; rc=1; }
+    done
+    current="$(curl -fsS -o /dev/null -D - "$FLOCI/$bucket/app.tfstate" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-amz-version-id" { print $2 }')"
+    [ "${ids%% *}" = "$current" ] || { log "the newest version listed is ${ids%% *}, and app.tfstate's current version is $current"; rc=1; }
+    lineage="$(curl -fsS "$FLOCI/$bucket/app.tfstate" | jq -r '.lineage // empty')"
+    if grep -q "sv-$STAMP-" <<<"$states$page$html"; then log "an input value from the state reached states.json or the page"; rc=1; fi
+    if [ -n "$lineage" ] && grep -q "$lineage" <<<"$states$page$html"; then log "the state's lineage reached states.json or the page"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the estate page lists app's two state versions, newest first, each one the bucket holds, and no state content"
+  return $rc
+}
+
 claim_resource_history() {
   # The audit repo (one root, app, holding terraform_data.app) with --gate
   # always and reports in the bucket. Three commits each set a new input; each
@@ -10756,6 +10848,7 @@ audit-refused        weight=150
 audit-control        weight=150
 inventory            weight=150
 resource-history     weight=200
+state-versions       weight=150
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150

@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 15;
+export const REPORT_MINOR = 16;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -264,6 +264,29 @@ export interface ReportRoot {
    * changed, by name (minor 15). Never a value.
    */
   applied_changes?: ReportAppliedChange[];
+  /**
+   * On a `tf-apply` wave, a root that applied or had nothing to apply: the
+   * state version its backend holds afterwards (minor 16). The version id
+   * and where the state is, never its contents.
+   */
+  state?: ReportStateVersion;
+}
+
+/**
+ * The state a root's backend holds after an apply (minor 16): read from the
+ * object's metadata, never from its body.
+ */
+export interface ReportStateVersion {
+  /** The backend the root initialised: `s3`, `local`, `gcs` and so on. */
+  backend: string;
+  /** Where the state is: `s3://<bucket>/<key>`, or the local file's path in the root. */
+  location?: string;
+  /** The backend's id for this version of the state: an S3 version id. Absent when the backend keeps no versions or none could be read. */
+  version_id?: string;
+  /** `on`: the backend keeps each version; `off`: it keeps only the latest; `unknown`: terragucci could not tell. */
+  versioning: "on" | "off" | "unknown";
+  /** Why the version could not be read, or what `off` means for this backend. */
+  note?: string;
 }
 
 /** What one apply did to one resource (minor 15). */

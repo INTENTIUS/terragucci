@@ -667,7 +667,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "0416c76"
     },
     {
       "claim": "drift-overdue",
@@ -948,7 +948,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "0416c76"
     },
     {
       "claim": "comment-refused",
@@ -1228,7 +1228,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "0416c76"
     },
     {
       "claim": "audit-override",
@@ -1260,7 +1260,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "0416c76"
     },
     {
       "claim": "resource-history",
@@ -1268,7 +1268,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "0416c76"
+    },
+    {
+      "claim": "state-versions",
+      "says": "a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0416c76"
     },
     {
       "claim": "notify-chat",
