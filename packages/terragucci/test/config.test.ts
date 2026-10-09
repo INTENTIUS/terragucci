@@ -77,6 +77,7 @@ describe("validation", () => {
     [{ projects: { "github.com/acme": {} } }, /must be <host>\/<owner>\/<name>/],
     [{ binary: "tofu", projects: { "github.com/a/b": {} } }, /keeps shared settings under defaults; move binary there/],
     [{ defaults: { binary: "tofu" } }, /defaults only makes sense with projects/],
+    [{ defaults: { url: "https://git.example.com/acme/infra" }, projects: { "github.com/a/b": {} } }, /defaults\.url would clone one repo for every project; set url on each project/],
     [{ policy: true }, /config\.policy must be a map/],
     [{ policy: { engine: "sentinel" } }, /config\.policy\.engine is "sentinel"; use one of conftest, opa/],
     [{ policy: { path: "../elsewhere" } }, /config\.policy\.path must be a directory inside the repo/],

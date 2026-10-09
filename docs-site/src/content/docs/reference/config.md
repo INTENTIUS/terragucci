@@ -41,7 +41,9 @@ drift: "17 4 * * *"
 
 ## A file for many repos
 
-In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). A project's jobs read `policy` and `reports` from the project's own `terragucci.yml`, so `reconcile` writes those keys there.
+In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
+
+A project's jobs read these keys from the project's own `terragucci.yml`, so `reconcile` writes each one the control repo sets away from its default there: `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt` and `token_env`. The other keys reach the project in the pipeline `reconcile` writes: `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `dashboards` and `notify` (with `notify.webhook`).
 
 ```yaml
 defaults:
