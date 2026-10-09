@@ -242,6 +242,102 @@
         "report_json_bytes_max": 1170312,
         "report_html_bytes_max": 1535789
       }
+    },
+    {
+      "finished_at": "2026-10-09T03:14:24Z",
+      "release": "0.4.1+9cc0eca",
+      "substrate": "floci",
+      "forge": "forgejo",
+      "host": {
+        "os": "darwin",
+        "arch": "arm64",
+        "runner_capacity": 3,
+        "parallelism": 4
+      },
+      "estate": {
+        "terralith_scale": 50,
+        "resources": 3705,
+        "roots": 501,
+        "repos": 5,
+        "roots_per_repo": 100,
+        "choudoufu_ref": "1c8ede26372fcb0b653084574d1b326f1c58d935"
+      },
+      "passed": true,
+      "runner_restarts": 0,
+      "failures": [],
+      "wall_seconds": {
+        "reconcile": 617,
+        "create": 814,
+        "plan": 429,
+        "change": 638,
+        "total": 2498
+      },
+      "runner_minutes": {
+        "reconcile": 12.9,
+        "create": 32.8,
+        "plan": 17.9,
+        "change": 29.9,
+        "total": 93.5
+      },
+      "longest_job": {
+        "reconcile": {
+          "seconds": 155,
+          "job": "check",
+          "repo": "identity-02"
+        },
+        "create": {
+          "seconds": 269,
+          "job": "apply-wave-2",
+          "repo": "platform"
+        },
+        "plan": {
+          "seconds": 166,
+          "job": "check",
+          "repo": "platform"
+        },
+        "change": {
+          "seconds": 240,
+          "job": "apply-wave-1",
+          "repo": "identity-01"
+        }
+      },
+      "note": {
+        "bytes_max": 397792,
+        "bytes_total": 1230772,
+        "by_repo": [
+          {
+            "repo": "platform",
+            "bytes": 129854,
+            "roots": 101
+          },
+          {
+            "repo": "identity-00",
+            "bytes": 234352,
+            "roots": 100
+          },
+          {
+            "repo": "identity-01",
+            "bytes": 234418,
+            "roots": 100
+          },
+          {
+            "repo": "identity-02",
+            "bytes": 234356,
+            "roots": 100
+          },
+          {
+            "repo": "identity-03",
+            "bytes": 397792,
+            "roots": 100
+          }
+        ]
+      },
+      "reports": {
+        "objects": 2159,
+        "bytes_total": 96394450,
+        "report_json_bytes_max": 2255820,
+        "report_html_bytes_max": 2926128
+      }
     }
   ]
 }
