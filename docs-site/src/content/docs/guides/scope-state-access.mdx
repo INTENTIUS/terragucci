@@ -12,7 +12,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 Each root plans and applies with the roles of its environment. A dev root's init, plan, apply and steps run as the dev roles, which your IAM policies let read and write dev's state keys and nothing else.
 
@@ -22,7 +22,7 @@ Each root plans and applies with the roles of its environment. A dev root's init
 | the plan and apply jobs | `TERRAGUCCI_ROOT_ROLES`, the stage's roles by glob; each root's binary gets its role as `AWS_ROLE_ARN` |
 | the [threat model](/terragucci/reference/threat-model/#state-access-per-environment) | what a role per environment stops, and what it does not |
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -81,7 +81,7 @@ Each root plans and applies with the roles of its environment. A dev root's init
 
 </Steps>
 
-## What it does not stop
+## Limits
 
 One job's token can be exchanged for every role whose trust names the job's subject. Code in a root that reads the token file can assume another environment's role itself. The roles keep each root's own runs to its environment's state, and keep a backend pointed at the wrong key from reading it; they do not separate two environments' code planned in one job. The [threat model](/terragucci/reference/threat-model/#state-access-per-environment) has the full table.
 

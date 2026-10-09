@@ -10,7 +10,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A Cross-state edges section on the [estate page](/terragucci/guides/see-every-project/). It lists each root that reads another root's state, by the producer it reads. Beside each edge are the consumer's last plan and the producer's last apply that changed it, and a status.
 
@@ -22,7 +22,7 @@ A Cross-state edges section on the [estate page](/terragucci/guides/see-every-pr
 
 A consumer goes stale when a change reaches the producer and not the consumer: its wave applies the producer, and nothing plans the consumer again.
 
-## Where the edges come from
+## Edge sources
 
 | A root reads another through | terragucci reads |
 |---|---|

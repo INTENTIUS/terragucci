@@ -34,7 +34,7 @@ The plan job writes the report for every pull request and merge request. Its not
   </TabItem>
 </Tabs>
 
-With [a served bucket](#where-reports-are-kept) the copy there is linked instead.
+With [a served bucket](#report-storage) the copy there is linked instead.
 
 To run the stage yourself, from the repo:
 
@@ -46,7 +46,7 @@ npx terragucci stage tf-plan
 |---|---|
 | no base | every root |
 | a pull request, `--base <ref>` or `TG_BASE` | the roots the change reaches: its directory, local modules, var files, or state read from a changed root; none, and the note says so |
-| with [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#which-stacks-a-pull-request-plans) | the command runs on the base too: roots whose synthesized files or local modules differ, new and removed ones, and the roots that read their state; the note counts the unchanged ones |
+| with [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#planned-stacks) | the command runs on the base too: roots whose synthesized files or local modules differ, new and removed ones, and the roots that read their state; the note counts the unchanged ones |
 | with `synth`, when the base cannot be synthesized | every root, and the note says why |
 
 It writes to `terragucci-report/`.
@@ -64,7 +64,7 @@ It writes to `terragucci-report/`.
 
 [CLI commands](/terragucci/reference/cli/#plan-and-stage) lists the flags. The stage exits 1 when a root refuses to plan, and still writes the report. A `tf-drift` run writes the same files plus `issue.md`, the body of the drift issue, and `issue.json`, what it did to the issue (`opened`, `updated`, `closed`, `left-open` or `none`) with its number and address; see [Drift](/terragucci/reference/stages/#drift).
 
-## What a reviewer sees
+## Reviewer view
 
 | View | Where | What it shows |
 |---|---|---|
@@ -114,7 +114,7 @@ The pipeline's first line and the line an apply adds to a stale note come off th
 
 A `Cut:` line names what went and links the full report.
 
-### Where the note links
+### Note links
 
 | The run | The note links |
 |---|---|
@@ -126,7 +126,7 @@ A `Cut:` line names what went and links the full report.
 
 Presigned links live 7 days at most. An S3 link signed with a role's session stops when the session ends.
 
-## What the report opens and folds
+## Open and folded sections
 
 The report opens on what a reviewer looks for and folds the rest away.
 
@@ -168,7 +168,7 @@ The plan link opens the root's plan as the binary printed it:
 
 The header names the commit and the job, and the pull request when there is one. With `telemetry.trace_url` set, the trace id opens the trace; see [Traces and metrics](/terragucci/reference/observability/#from-a-trace-to-its-report). Destroys, replacements and refusals, then outlier roots, are never folded. The HTML report is one file that makes no network calls.
 
-## What a script reads
+## Script access
 
 `report.json` sits beside every `report.html`, which also carries it inline:
 
@@ -195,7 +195,7 @@ Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/
 
 Digests are taken before redaction, so an approval binds the plan as planned.
 
-## Where reports are kept
+## Report storage
 
 By default a report is a CI artifact of the plan job, kept as long as your forge keeps artifacts. To keep them longer, name a bucket in `terragucci.yml`, then run `npx terragucci init` again.
 
@@ -235,7 +235,7 @@ reports:
   role: arn:aws:iam::123456789012:role/terragucci-reports
 ```
 
-`url` is the address that serves the bucket to a browser; terragucci never derives it from the bucket name. With it the note links the bucket's `report.html` and `report.json` records it as `run.report_url`. Without it the note links the bucket's copy presigned; see [Where the note links](#where-the-note-links).
+`url` is the address that serves the bucket to a browser; terragucci never derives it from the bucket name. With it the note links the bucket's `report.html` and `report.json` records it as `run.report_url`. Without it the note links the bucket's copy presigned; see [Where the note links](#note-links).
 
 A run's report and plans land under one path holding the full commit SHA, so links are relative and work in the bucket:
 

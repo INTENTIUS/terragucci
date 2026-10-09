@@ -78,8 +78,8 @@ With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu
 | A live check in `tf-check` on every push, before the apply waves, with no cloud credentials | [Check](/terragucci/reference/stages/#check) |
 | No state file: one record per resource in an S3 backend you own, each write conditional, so there is no lock table or database to run | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
 | How long a wave waited for a state lock, and how many tries it took | [State lock waits](/terragucci/reference/observability/#state-lock-waits) |
-| Which provider calls were slow, and the resource each was for | [What the report lists](/terragucci/reference/observability/#what-the-report-lists) |
-| Timings summed by resource type, so a large estate's report stays readable | [What the report lists](/terragucci/reference/observability/#what-the-report-lists) |
+| Which provider calls were slow, and the resource each was for | [What the report lists](/terragucci/reference/observability/#report-contents) |
+| Timings summed by resource type, so a large estate's report stays readable | [What the report lists](/terragucci/reference/observability/#report-contents) |
 | Two applies that change different resources of one estate at once, with no estate-wide lock; two that change the same resource leave one winner, named | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
 | A role scoped to one estate by an IAM condition on the `tofu-estate` tag, refused on another estate's resources | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
 

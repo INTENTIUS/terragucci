@@ -11,7 +11,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 A resource that moves from one root's state to another's through the same gate as an apply, with no destroy and no create. `moved`, `import` and `removed` blocks work inside one root. A migration file covers the move they cannot make: from one root to another.
 
@@ -26,7 +26,7 @@ The migration's digest covers the file, each root's state version and digest bef
 
 State contents stay in your backend and the job's temporary directory. The record holds version ids and digests.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -126,7 +126,7 @@ This writes `migrations/split-queues-revert.yml` from the record of `split-queue
 
 A revert needs S3 bucket versioning on: a root with no version recorded before, or a local backend, has nothing to put back. A backend move is put back with a backend move the other way.
 
-## What is recorded
+## Records
 
 | Where | What it holds |
 |---|---|
@@ -136,7 +136,7 @@ A revert needs S3 bucket versioning on: a root with no version recorded before, 
 
 A migration that applied never runs again. Its file can stay in the repo; changing it after it applied fails wave 1, so write a new file for a new move.
 
-## When it stops
+## Stop conditions
 
 | Wave 1 says | Exit | What to do |
 |---|---|---|

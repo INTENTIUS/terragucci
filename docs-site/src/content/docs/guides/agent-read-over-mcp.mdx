@@ -12,7 +12,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 `terragucci mcp` is a Model Context Protocol server on stdio. It serves what terragucci already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and the repo, and nothing else: every tool reads. It runs no model of its own.
 
-## What you end up with
+## Result
 
 An agent that answers "when did `envs/prod/app` last apply, and what did it change?" from the bucket:
 
@@ -29,7 +29,7 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
 }
 ```
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -87,7 +87,7 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
 
 </Steps>
 
-## What the server refuses
+## Refusals
 
 | A call | The answer |
 |---|---|

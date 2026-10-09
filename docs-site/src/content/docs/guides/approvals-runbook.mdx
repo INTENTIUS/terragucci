@@ -12,7 +12,7 @@ prompt: |
 import Shot from '../../../components/Shot.astro';
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 The commands an approver and an on-call engineer use, in one place. [Approve a waiting wave](/terragucci/guides/approve-a-wave/) walks through a first sign-off.
 
@@ -46,7 +46,7 @@ Under `approval: sealed` only. Once per repo, in a reviewed pull request to the 
    github:alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
    ```
 
-2. Set `approval: sealed` and run `terragucci init`. It lists each wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson); then an approval counts only when its seal verifies against the signers file at base ([why](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from)).
+2. Set `approval: sealed` and run `terragucci init`. It lists each wave's gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson); then an approval counts only when its seal verifies against the signers file at base ([why](/terragucci/guides/approve-a-wave/#rule-commit)).
 
 3. Only people go in the file. An agent's or CI job's key does not.
 
@@ -154,7 +154,7 @@ A line past its `expires` time was recorded more than 48 hours ago; the wave's n
 
 ## Revoke an approval before its wave runs
 
-Every approver can push to `chant/lifecycle`. Remove the approval's line in a normal commit; it works with force pushes blocked ([branch protection](/terragucci/guides/approve-a-wave/#who-can-push-to-chantlifecycle)).
+Every approver can push to `chant/lifecycle`. Remove the approval's line in a normal commit; it works with force pushes blocked ([branch protection](/terragucci/guides/approve-a-wave/#push-access-to-chantlifecycle)).
 
 <Steps>
 
@@ -185,7 +185,7 @@ A revert does not revive the old approval: the refused run recorded a newer pend
 
 <Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, and the roots whose plans moved" optional />
 
-## What expires and what stops counting
+## Expiry
 
 | Record | Expires | Stops counting when |
 |---|---|---|
@@ -197,4 +197,4 @@ A revert does not revive the old approval: the refused run recorded a newer pend
 
 - [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
 - [Gate policy](/terragucci/reference/stages/#gate-policy)
-- [Threat model](/terragucci/reference/threat-model/#what-each-approval-mode-stops): what each approval mode stops
+- [Threat model](/terragucci/reference/threat-model/#approval-modes): what each approval mode stops

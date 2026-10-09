@@ -13,7 +13,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 The pipeline runs as jobs in your CI, so its trust is your forge's. This page names who is trusted with what, and what each guard covers.
 
-## Who is trusted
+## Trust
 
 | Who | Trusted to | Kept in check by |
 |---|---|---|
@@ -29,7 +29,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | A fork's author | nothing | forks get no plan job and never apply |
 | The [chat relay](#the-chat-relay), in your cloud | under `ledger` and `pr-review`, record an approval of a waiting digest in the name of a chat user the signers file lists | Slack's or Teams' signature on each request, the signers file on the default branch, the digest waiting, and an approve-only token |
 
-## What the generated jobs reach
+## Job access
 
 "Change" means code from a branch or a pull request that has not merged. A pull request or merge request from a branch of the repo runs the pipeline file as the change has it, so its author can edit any job that runs on it.
 
@@ -161,7 +161,7 @@ With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) (or `terragrunt
 | the record in `_gates/tf-state-export/done.jsonl`, written before the file | an export the audit trail does not name | a requester name chosen by the person running it: under `ledger` it is git's `user.name` or `--actor` |
 | no job artifact, no bucket copy | the state reaching everyone with read access to the repo, or the bucket's readers | the requester's own copy once written |
 
-## What each approval mode stops
+## Approval modes
 
 The gate policy decides when a wave waits: `always`, `on-destroy` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent.
 
@@ -174,9 +174,9 @@ The gate policy decides when a wave waits: `always`, `on-destroy` (the default) 
 
 A wave about to apply under an approval marks it used in `_gates/tf-apply/applied.jsonl` on `chant/lifecycle`. A used approval of other plans makes the wave wait (exit 3) where it would refuse (exit 4); it approves nothing, so a forged line there releases no wave.
 
-With sealing on and no signers file at base, no approval counts. A reviewed change that sets `approval: ledger`, or with no key empties `identity.gates`, turns sealing off for the merges after it. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from).
+With sealing on and no signers file at base, no approval counts. A reviewed change that sets `approval: ledger`, or with no key empties `identity.gates`, turns sealing off for the merges after it. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#rule-commit).
 
-## What a policy override allows
+## Policy overrides
 
 An override lets `tf-apply` apply one root's plan that the policy denies. It never edits the policy, and `tf-plan` still fails the root. Who may write one is `policy.override` in the config at base; with no key there, no override counts. [Overriding a denial](/terragucci/reference/policy/#overriding-a-denial) has the steps.
 
@@ -201,7 +201,7 @@ With `apply.when: pull-request`, the open change's head runs with the apply role
 | Waves, gate, signers, policy, config and `steps` come from the default branch | a change loosening its own gate, or adding a step that runs with the apply role |
 | No other open pull request holds a lock on its roots | two changes applying the same root |
 
-After the checks, the change's providers, modules and external data sources run with the apply role and the job's `contents: write` token. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) lists it. Review those before approving the head.
+After the checks, the change's providers, modules and external data sources run with the apply role and the job's `contents: write` token. [What the pull request's code can reach](/terragucci/reference/pipeline/#pull-request-code-access) lists it. Review those before approving the head.
 
 ## The chat relay
 
@@ -223,7 +223,7 @@ After the checks, the change's providers, modules and external data sources run 
 | A Teams reply replayed while the same digest still waits | Teams signs the body with no timestamp; the replay approves only that digest, in the same person's name |
 | A Slack retry within five minutes | the second click finds the wave approved and records nothing |
 
-The relay's token pushes `chant/lifecycle` like any approver's, so it is one more writer the [approval modes](#what-each-approval-mode-stops) account for.
+The relay's token pushes `chant/lifecycle` like any approver's, so it is one more writer the [approval modes](#approval-modes) account for.
 
 ## Steps
 
@@ -238,7 +238,7 @@ The relay's token pushes `chant/lifecycle` like any approver's, so it is one mor
 
 When the base's file cannot be read, the stage runs no step if the checkout names none, and fails if it names some, rather than run the change's. An edit to `steps` therefore takes effect for the changes after it merges.
 
-What this does not stop: a step runs whatever its command runs at the time, so a step that calls a script in the repo runs the change's copy of that script. Keep what a step runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without steps. An `on_failure: approve` step holds a wave at the same gate as the gate policy, so the [approval mode](#what-each-approval-mode-stops) decides who can release it.
+What this does not stop: a step runs whatever its command runs at the time, so a step that calls a script in the repo runs the change's copy of that script. Keep what a step runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without steps. An `on_failure: approve` step holds a wave at the same gate as the gate policy, so the [approval mode](#approval-modes) decides who can release it.
 
 ## The review
 
@@ -254,15 +254,15 @@ The review command reads text the change's author wrote: the title, the descript
 | `input.review` is read from the `terragucci-review-<head>` artifact only when the forge says a run of the default branch's review workflow kept it: on GitHub a `workflow_run` run of `terragucci-review.yml`; on Forgejo a `pull_request_target` run of it whose event names the default branch as base and the merged pull request and head. The artifact must also say it reviewed that pull request and head against the default branch | an artifact of the same name kept by any other run, the pull request's own pipeline or its edited copy of the review workflow included; a review of the head against another base |
 | no note is read for `input.review` | a note, posted by any user or by any run's token (another branch's run included), setting the risk a policy reads |
 
-What this does not stop: a hidden instruction can still steer what the note says, such as risk `low` for a risky change. The note informs reviewers and is never an approval. A policy on `input.review.risk` holds back what the model flags; it cannot vouch for what the model misses. The plan note and policy results in the prompt come from the plan job of the pull request's own run, which the pull request can edit to show a plan it does not make, as for every job in [What the generated jobs reach](#what-the-generated-jobs-reach). The diff in the prompt is taken by the review job itself from git, so such an edit is in what the model reads and in the merged head's diff, where reviewers see it. On Forgejo the review waits up to 30 minutes for that plan, then reviews without it. A note posted with the pipeline's token, from that run or any other, changes what people read on the pull request and nothing the policy reads.
+What this does not stop: a hidden instruction can still steer what the note says, such as risk `low` for a risky change. The note informs reviewers and is never an approval. A policy on `input.review.risk` holds back what the model flags; it cannot vouch for what the model misses. The plan note and policy results in the prompt come from the plan job of the pull request's own run, which the pull request can edit to show a plan it does not make, as for every job in [What the generated jobs reach](#job-access). The diff in the prompt is taken by the review job itself from git, so such an edit is in what the model reads and in the merged head's diff, where reviewers see it. On Forgejo the review waits up to 30 minutes for that plan, then reviews without it. A note posted with the pipeline's token, from that run or any other, changes what people read on the pull request and nothing the policy reads.
 
 The verdict is what the review job keeps: the review command's output, and the pull request, head and base the step before it wrote. A review command that runs tools could rewrite them in the job; the default command runs no tools.
 
 Forgejo runs a `pull_request_target` workflow from the pull request's base, not always the default branch. A writer who opens a pull request against a branch whose review workflow they edited gets a run of that copy, and its artifact is passed over, since the run's event names another base. Forgejo has no `workflow_run`.
 
-On Forgejo a `pull_request_target` run's token can write, and the runner gives it to every step of the `review` job but the command's. A command that runs tools and leaves a process behind could read it in the step that keeps the review, as in [Where the token scrub ends](#where-the-token-scrub-ends). The default command runs no tools.
+On Forgejo a `pull_request_target` run's token can write, and the runner gives it to every step of the `review` job but the command's. A command that runs tools and leaves a process behind could read it in the step that keeps the review, as in [Where the token scrub ends](#token-scrub-limits). The default command runs no tools.
 
-## Where the token scrub ends
+## Token scrub limits
 
 terragucci starts the binary, Terragrunt and the policy engine without forge tokens, by name and by value ([the list](/terragucci/reference/environment/#forge-tokens)). On GitHub and Forgejo the jobs that run a pull request's code also keep the token away from the steps that run it ([which steps](/terragucci/reference/environment/#jobs-that-run-a-pull-requests-code)). Elsewhere a change's code can still reach one.
 

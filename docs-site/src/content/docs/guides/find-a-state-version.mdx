@@ -11,7 +11,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 After each `tf-apply` wave, the version id of each root's state, next to the run that wrote it. When a state goes wrong you know which version to restore, and which commit and wave wrote the one after it.
 
@@ -25,7 +25,7 @@ After each `tf-apply` wave, the version id of each root's state, next to the run
 
 terragucci reads the state object's metadata with an S3 `HEAD` request. It never reads, copies or stores a state's contents.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|

@@ -11,7 +11,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 Your commands run inside the job that plans, applies or checks drift, around each root's own `init`, `plan` and `apply`. terragucci runs them itself, so they need no job of their own and work the same on GitHub, GitLab and Forgejo. The plan note and the report list every step that ran:
 
@@ -24,7 +24,7 @@ Your commands run inside the job that plans, applies or checks drift, around eac
 | envs/app | after-plan  | verify | asks for an approval, exit 1   |
 ```
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -67,7 +67,7 @@ Your commands run inside the job that plans, applies or checks drift, around eac
 
 </Steps>
 
-## When each step runs
+## Step timing
 
 | Job | Runs the steps of |
 |---|---|
@@ -103,7 +103,7 @@ A wave of units plans with one `run --all` and applies with another, so each mom
 
 `after: init` is refused: Terragrunt inits each unit inside the `run --all plan`, so no command can run between a unit's init and its plan. Use `before: plan`. On an apply wave a step that fails fails the wave, and nothing in it applies; one after the apply fails the job though the units applied. A provisional preview of dependents runs no steps.
 
-## When a step fails
+## Step failures
 
 | `on_failure` | A non-zero exit |
 |---|---|

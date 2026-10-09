@@ -14,7 +14,7 @@ import Shot from '../../../components/Shot.astro';
 
 This is one of the four features that run a model; the others are [summarizing a refused wave](/terragucci/guides/agent-refused-wave/), [fixing drift](/terragucci/guides/agent-fix-drift/) and [reviewing a pull request](/terragucci/guides/agent-review-a-pull-request/). It is off unless `agent.comment` is set, and every other feature runs with no agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
 
-## What you end up with
+## Result
 
 A comment such as this one on a pull request:
 
@@ -24,7 +24,7 @@ A comment such as this one on a pull request:
 
 A coding agent makes the change and terragucci commits it to the pull request's head. The commit is planned like any other; nothing is applied or merged.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -96,11 +96,11 @@ A coding agent makes the change and terragucci commits it to the pull request's 
 
 </Steps>
 
-## What the agent can and cannot do
+## Agent permissions
 
 | Job | Does | Holds |
 |---|---|---|
-| `agent` | checks the [`agent` column of the refusal table](/terragucci/reference/pipeline/#when-a-comment-runs-nothing), checks out the head with no credentials kept, runs the agent, and keeps its changes as a patch | its own read-and-comment token, which the agent's step runs without; the model's key, in the agent's step alone |
+| `agent` | checks the [`agent` column of the refusal table](/terragucci/reference/pipeline/#ignored-comments), checks out the head with no credentials kept, runs the agent, and keeps its changes as a patch | its own read-and-comment token, which the agent's step runs without; the model's key, in the agent's step alone |
 | `agent-push` | applies the patch to the same head in a fresh container; refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), with a reply naming the paths; pushes any other as one commit without force | the agent's token |
 | the plan job | plans the pushed change with its read-only role | the plan role |
 

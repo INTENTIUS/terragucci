@@ -83,7 +83,7 @@ deny contains msg if {
 }
 ```
 
-### What Rego sees
+### Rego input
 
 `input` is the unredacted `show -json` of one root. Before a denial or warning reaches the report, note or log, every sensitive value in it, short ones such as `1` included, becomes `(sensitive, redacted by terragucci)`.
 
@@ -145,7 +145,7 @@ deny contains msg if {
 }
 ```
 
-### Which rules count
+### Counted rules
 
 | Rule | Effect |
 |---|---|
@@ -168,7 +168,7 @@ The job's log and `roots[].policy.rules` in the report list them.
 
 If no Rego file outside the tests declares the namespace and has a `deny`, `violation` or `warn` rule, every planned root is refused and the message lists the packages found.
 
-## What a denial does
+## Denials
 
 <Shot step="policy" view="pull" alt="The plan note on a pull request whose policy denies dev orders' change: envs/dev/orders refused to plan, with conftest's denial naming its jobs queue as keeping messages longer than four days" optional />
 
@@ -205,7 +205,7 @@ policy:
 
 </Steps>
 
-### What an override binds
+### Override binding
 
 | Part | Effect |
 |---|---|
@@ -214,7 +214,7 @@ policy:
 | the rule ids | `--rule` names exactly the rules that denied the plan; a rule added or gone needs a new override |
 | a reason | required; kept on the ledger line and shown in the report |
 
-### Which overrides count
+### Valid overrides
 
 | Case | Counts |
 |---|---|
@@ -225,9 +225,9 @@ policy:
 | no `override` at base | nothing counts, and no denial is recorded |
 | a root the policy could not check (no engine, Rego that does not compile) | never overridden |
 
-Base is the applied commit's first parent, or the pull request's base with `apply.when: pull-request`, as for [approvals](/terragucci/guides/approve-a-wave/#which-commit-the-rule-is-read-from). Under `approval: ledger` the line names its approver without proving who wrote it; `approval: sealed` proves it ([threat model](/terragucci/reference/threat-model/#what-a-policy-override-allows)).
+Base is the applied commit's first parent, or the pull request's base with `apply.when: pull-request`, as for [approvals](/terragucci/guides/approve-a-wave/#rule-commit). Under `approval: ledger` the line names its approver without proving who wrote it; `approval: sealed` proves it ([threat model](/terragucci/reference/threat-model/#policy-overrides)).
 
-### Where it shows
+### Override records
 
 | Place | Shows |
 |---|---|

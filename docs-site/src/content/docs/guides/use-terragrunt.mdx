@@ -13,11 +13,11 @@ prompt: |
 import { Steps } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-## What you end up with
+## Result
 
 A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the units a pull request reaches, and applies a wave at a time behind the same gate as plain roots.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -65,13 +65,13 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 
 </Steps>
 
-## What is different in a Terragrunt repo
+## Differences
 
 | What | How |
 |---|---|
 | Which units a change reaches | Terragrunt's own change detection, plus files a module reads with `file()`, modules called from inside modules, and stack templates |
 | Units that depend on a changed unit | a later wave than the unit they read from |
-| `mock_outputs` | a unit whose plan would read mock values waits for its upstream to apply, so no approval covers a made-up value. In a pull request it plans on its upstream's planned outputs instead, when they are known ([below](#what-a-pull-request-shows-of-later-layers)) |
+| `mock_outputs` | a unit whose plan would read mock values waits for its upstream to apply, so no approval covers a made-up value. In a pull request it plans on its upstream's planned outputs instead, when they are known ([below](#later-layers)) |
 | Each wave | one dependency layer, canary layers first, in its own apply job. One `terragrunt run --all` saves the plans and a second applies them. The last job also runs any layer added since `init` |
 | The gate | as for plain roots, one gate per wave; the set digest covers the units whose plan changes a resource or an output |
 | Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
@@ -91,7 +91,7 @@ A wave of units the gate holds waits as a wave of roots does, naming its units, 
 
 <Shot step="tg" view="waiting" alt="A Terragrunt repo's apply-wave-2 job in Forgejo, after wave 1 was approved: it plans live/fleet/three and live/fleet/two, one change each, waits for an approval of the set digest over the two units under approval: ledger, prints the chant approve tf-apply wave-2 command, and exits with code 3" />
 
-## How a change applies, layer by layer
+## Layer-by-layer apply
 
 terragucci applies a change one dependency layer at a time, and every layer applies only the plans a person approved.
 
@@ -110,7 +110,7 @@ terragucci applies a change one dependency layer at a time, and every layer appl
 | a plan made at apply time | the saved plans the approval names, applied as they were |
 | a downstream unit planned against values its upstream has not produced yet | planned against the state its upstream left; a plan that would read `mock_outputs` fails its wave |
 
-## What a pull request shows of later layers
+## Later layers
 
 A pull request's plan plans the units of every layer the change reaches. A unit whose `dependency` block reads a unit planned in an earlier layer of the same plan is planned on the outputs that plan makes, not on the ones the upstream last applied. terragucci gives Terragrunt those values as the answer to the binary's `output -json` for the upstream, so Terragrunt evaluates the unit's `dependency` blocks, includes and inputs itself.
 

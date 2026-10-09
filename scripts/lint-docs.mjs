@@ -129,6 +129,14 @@ for (const file of files) {
     }
   }
 }
+// A heading is a short noun phrase: "Prerequisites", not "Before you start"; "Report storage", not
+// "Where reports are kept". A heading that opens with a question word or ends with "?" fails.
+// reference/scale is held out while its rewrite is in flight; drop it from the set when that lands.
+const HEADING_EXEMPT = new Set([DOCS + "reference/scale.mdx"]);
+for (const problem of headingProblems(files.filter((f) => !HEADING_EXEMPT.has(f)))) {
+  failed = true;
+  console.log(`FAIL heading  ${problem}`);
+}
 // A chant or fountain word on a page that neither defines nor links it.
 for (const problem of termProblems(files)) {
   failed = true;
@@ -140,3 +148,18 @@ for (const problem of promptProblems(files)) {
   console.log(`FAIL prompt  ${problem}`);
 }
 process.exit(failed ? 1 : 0);
+
+function headingProblems(paths) {
+  const out = [];
+  for (const file of paths) {
+    let fence = false;
+    readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+      if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+      const m = !fence && /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+      if (m && (/^(what|how|why|when|where|who)\b/i.test(m[1]) || m[1].endsWith("?"))) {
+        out.push(`${file}:${i + 1}: "${m[1]}"; name the section with a short noun phrase, not a question or a what/how/why/when/where/who clause`);
+      }
+    });
+  }
+  return out;
+}
