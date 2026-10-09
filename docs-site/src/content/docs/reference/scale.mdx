@@ -13,13 +13,14 @@ The scale bench runs the pipeline `terragucci reconcile` writes over one estate 
 
 | Column | What it counts |
 |---|---|
+| Reconcile | from `reconcile --mode apply` in the control repo to the end of the last pipeline pull request's run: one pull request per repo, each checked and planned |
 | Create | from merging the pipeline pull requests to the end of the last run: every root planned by its waves and applied from nothing |
 | Plan | from pushing a change that every root takes to the end of the last pull request run: every root planned, one plan note per repo |
 | Change | from merging those pull requests to the end of the last run: every root planned again and the change applied |
 | Runner minutes | the time of every job in every repo, the check jobs included, for the whole run |
 | Largest plan note | the largest note one pull request got, in bytes |
 | Largest report | the largest `report.json` one stage wrote to the reports bucket |
-| Run | the terragucci build, the day, the machine, how many jobs its runner ran at once and, where recorded, the machine's mean one-minute load over the run |
+| Run | the terragucci release, the day, the machine, how many jobs its runner ran at once and, where recorded, the machine's mean one-minute load over the run |
 
 A run passes only when every run of every phase succeeds and the state files then hold every resource the estate declares.
 

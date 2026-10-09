@@ -10,9 +10,9 @@ Every stage takes the root directories and the binary.
 
 | Stage | What it does | Forge permissions | Outputs |
 |---|---|---|---|
-| `tf-check` | format, `validate`, and with [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) a [live check](#check) that needs no cloud credentials; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository; with `respond.fmt: commit` (the default) outside a Terragrunt repo, push a `fmt` commit to the branch (`contents: write` and `TG_TOKEN` on GitHub and Forgejo, `TG_TOKEN` on GitLab) | pass or fail, the log, and the check report |
+| `tf-check` | format, `validate`, and with [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) a [live check](#check) that needs no cloud credentials; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository, with no forge token; when a branch's check fails, a separate `fmt` job pushes the formatting commit (`respond.fmt: commit`, the default, outside a Terragrunt repo; not with `gitlab.token: protected`) | pass or fail, the log, and the check report |
 | `tf-plan` | plans the affected roots in one run and posts the grouped summary; with [`policy`](/terragucci/reference/policy/) set, fails a denied root | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
-| `tf-apply` | applies one job per wave; a wave the [gate policy](#gate-policy) holds (under the default `on-destroy`, one that destroys or replaces) waits for an approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch | per wave, whether it waited and its approval command |
+| `tf-apply` | applies one job per wave; a wave the [gate policy](#gate-policy) holds (under the default `on-destroy`, one that destroys or replaces) waits for an approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch (read only under `gate: never`), post statuses and pull request comments; with `waves.jobs`, push the run's shared lock tag | per wave, whether it waited and its approval command |
 | `tf-drift` | plans every root `-refresh-only` on a schedule and groups what changed outside Terraform | read the repository, write issues | the plan report, and one drift issue |
 | `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
 | `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
@@ -87,11 +87,14 @@ Set `drift` in `terragucci.yml` to a cron schedule and the pipeline gets a `drif
 drift: "0 6 * * *"
 ```
 
-`terragucci stage tf-drift` plans each root with `-refresh-only`, so merged but unapplied code is not drift.
-
-Its [report](/terragucci/reference/report/) has the stage `tf-drift` and is kept as an artifact.
-
-Each project has at most one open drift issue, titled `terragucci: drift found`:
+| Drift job | What it does |
+|---|---|
+| Plans | each root with `-refresh-only`, so merged but unapplied code is not drift; a Terragrunt repo runs one refresh-only `terragrunt run --all` per wave |
+| Identity | with `oidc`, the plan job's read-only role; it never applies |
+| Fails | when a root cannot be refreshed; drift alone does not fail it |
+| Report | stage `tf-drift` ([the report](/terragucci/reference/report/)), kept as an artifact |
+| Issue | at most one open per project, titled `terragucci: drift found`, below |
+| By hand | `npx terragucci stage tf-drift`; with no forge token it writes the report and `issue.md` only, and `--forge` tells GitHub from Forgejo |
 
 | This run finds | The issue |
 |---|---|
@@ -100,20 +103,10 @@ Each project has at most one open drift issue, titled `terragucci: drift found`:
 | no drift in any root | closes, with a comment naming the commit |
 | no drift, but a root could not be planned | stays as it is, since that root is unknown |
 
-Terragrunt repos run one refresh-only `terragrunt run --all` per wave. A root that cannot be refreshed fails the job; drift does not. The job never applies.
-
 | Forge | Issue token | Schedule |
 |---|---|---|
 | GitHub, Forgejo | the job's own, `issues: write` | the workflow, plus `workflow_dispatch` |
 | GitLab | `token_env`, `api` scope | CI/CD > Schedules, by hand |
-
-With `oidc`, the job takes the plan job's read-only role.
-
-```bash
-npx terragucci stage tf-drift
-```
-
-With no forge token, it writes the report and `issue.md` only. `--forge` tells GitHub from Forgejo.
 
 ### Overdue drift checks
 

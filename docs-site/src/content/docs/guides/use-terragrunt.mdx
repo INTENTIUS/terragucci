@@ -73,8 +73,8 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 | Each wave | one dependency layer, canary layers first, in its own apply job. One `terragrunt run --all` saves the plans and a second applies them. The last job also runs any layer added since `init` |
 | The gate | as for plain roots, one gate per wave; the set digest covers the units whose plan changes a resource or an output |
 | Credentials | a plan role and an apply role chosen by the unit's path; a unit that sets its own `iam_role` keeps it |
-| `/terragucci apply` | on a merged pull request (GitHub, Forgejo) reruns its waves from the merge commit behind the same gate, with [these refusals](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request); it approves nothing |
-| When a change applies | after it merges, by default. With `apply.when: pull-request` (GitHub, Forgejo), `/terragucci apply` on the approved open pull request applies its waves of units from the head: [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) |
+| `/terragucci apply` | on a merged pull request (GitHub, Forgejo, and GitLab with `comments:` set) reruns its waves from the merge commit behind the same gate, with [these refusals](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request); it approves nothing |
+| When a change applies | after it merges, by default. With `apply.when: pull-request` (GitHub, Forgejo, and GitLab with `comments:` set), `/terragucci apply` on the approved open pull request applies its waves of units from the head: [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) |
 | Locks before merge | on units: a changed unit and the units whose `dependency` blocks name it; a change outside every unit's directory locks every unit ([Locks](/terragucci/guides/apply-before-merge/#locks)) |
 
 A wave of units the gate holds waits as a wave of roots does, naming its units, its set digest and the approve command:
