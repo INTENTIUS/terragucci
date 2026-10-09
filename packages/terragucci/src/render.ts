@@ -69,7 +69,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
@@ -242,9 +242,12 @@ export function fmtScript(binary: Binary, forge: ForgeName, tokenEnv?: string): 
   ].join("\n");
 }
 
-/** The tips response: one small pull request per tip, from the default branch after the apply. A response that fails never fails the job. */
-export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string): string {
-  return ["set -u", ...respondSetup(forge, tokenEnv), `terragucci respond tips --mode apply --binary ${binary} || true`].join("\n");
+/**
+ * The tips response: one small pull request per tip, from the default branch after the apply. A response that fails never
+ * fails the job. With `synth` the job writes the roots first, as the apply did, so the tips read the same stacks.
+ */
+export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string, synth?: string): string {
+  return ["set -u", ...(synth ? [synthScript(synth)] : []), ...respondSetup(forge, tokenEnv), `terragucci respond tips --mode apply --binary ${binary} || true`].join("\n");
 }
 
 /**
@@ -1493,6 +1496,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift")] : []),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
+    ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${SYNTH_DRIFT_PR_SHORT}"`] : []),
     // The drift pull request: a person reviews and merges it, or closes it.
     ...(pullRequest
       ? ["rc=$?", ...respondSetup(forge, pullRequest.tokenEnv), `if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary ${binary} || true; fi`, 'exit "$rc"']
@@ -1667,9 +1671,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   const writesLedger = gate !== "never" || input.cost?.approveAbove === true;
   const what = tg ? "unit" : "root";
-  // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
+  // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself. With synth the
+  // config refuses respond.drift: pull-request (SYNTH_DRIFT_PR); attribute names who changed each attribute in the
+  // drift issue, and the job says why no pull request follows.
   const fmtOn = !tg && responds(input.respond, "fmt");
-  const driftPr = !tg && responds(input.respond, "drift") ? { tokenEnv } : undefined;
+  if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${SYNTH_DRIFT_PR}`);
+  if (input.synth && rollouts) throw new RenderError(`rollouts: ${SYNTH_ROLLOUTS}, and leave rollouts unset`);
+  const driftPr = !tg && !input.synth && responds(input.respond, "drift") ? { tokenEnv } : undefined;
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
   const tipsOn = responds(input.respond, "tips");
   // An agent response writes its input file; the job keeps it as an artifact.
@@ -1823,7 +1831,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         variables: { ...gitlabEnv, GIT_DEPTH: "0" },
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-tips",
-        script: script(bash("TIPS", tipsScript(binary, forge, tokenEnv))),
+        script: script(bash("TIPS", tipsScript(binary, forge, tokenEnv, input.synth))),
       } as never) as never);
     }
     if (bumpOn) {
@@ -2258,7 +2266,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       steps: [
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
         ...(installStep ? [new Step({ name: installName, run: installStep })] : []),
-        new Step({ name: "Open a pull request for each tip", shell: "bash", run: tipsScript(binary, forge, tokenEnv) }),
+        new Step({ name: "Open a pull request for each tip", shell: "bash", run: tipsScript(binary, forge, tokenEnv, input.synth) }),
       ],
     } as never) as never);
   }

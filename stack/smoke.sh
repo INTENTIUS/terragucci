@@ -315,6 +315,9 @@ cost-gate|with cost.approve_above set, a wave whose monthly change is over the a
 cost-policy|with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
 cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
+cdktn-apply|with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is|
+cdktn-tips|with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out|
+cdktn-refused|with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request|
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
@@ -10120,6 +10123,170 @@ claim_cdktn_affected() {
   return $rc
 }
 
+# The cdktn fixture's tree in $work/tree for a claim: its terragucci.yml as
+# given, its stacks' state in floci under <prefix>/ when one is given (none
+# there yet), and its stacks synthesized on the host so init finds them.
+cdktn_tree() { # prefix (or ""), terragucci.yml
+  local prefix="$1" key
+  mkdir -p "$work/tree"
+  cp -R "$HERE/fixtures/cdktn/." "$work/tree/"
+  printf '%s' "$2" > "$work/tree/terragucci.yml"
+  if [ -n "$prefix" ]; then
+    PREFIX="$prefix" perl -pi -e 's#^const STATE = "";#const STATE = "$ENV{PREFIX}";#' "$work/tree/main.js"
+    curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+    for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$prefix/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+      curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+    done
+  fi
+  (cd "$work/tree" && npm ci --no-audit --no-fund >/dev/null 2>&1 && npx cdktn synth >/dev/null 2>&1) || { log "cdktn synth failed on the host"; return 1; }
+}
+
+# The lines of one job of a Forgejo workflow.
+cdktn_job() { # workflow, job
+  awk -v j="  $2:" '$0 == j { on = 1; next } /^  [a-z0-9-]+:$/ { on = 0 } on' "$1"
+}
+
+# The pipeline with the synth line taken out of the jobs whose name matches.
+cdktn_unsynth() { # workflow, job name pattern (awk)
+  awk -v pat="$2" '/^  [a-z0-9-]+:$/ { job = substr($1, 1, length($1) - 1) } !(job ~ pat && index($0, "( set -e; ")) { print }' "$1" > "$1.new" && mv "$1.new" "$1"
+}
+
+claim_cdktn_apply() {
+  # The CDK Terrain app of cdktn-synth with each stack's state in floci under
+  # cdktn-apply/, gate: always, and the dev stack as the canary wave. Each
+  # apply wave's job runs synth: on the push to main wave 1 waits at its gate
+  # with nothing applied; approved, the next push applies dev alone and wave
+  # 2 waits at its own gate; approved, the next push applies prod.
+  # BREAK: the apply-wave jobs run no synth, so their checkouts hold no
+  # stacks: no wave waits at its gate and nothing applies.
+  log() { echo "[smoke cdktn-apply] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cdktn-apply" wf sha job applied rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo cdktn-apply || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  cdktn_tree cdktn-apply "$(printf 'binary: tofu\nforge: forgejo\ngate: always\nwaves:\n  canary: ["cdktf.out/stacks/dev"]\nsynth: npm ci --no-audit --no-fund && npx cdktn synth\n')" || { drop_work "$work"; return 1; }
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  for job in apply-wave-1 apply-wave-2; do
+    cdktn_job "$wf" "$job" | grep -q 'npx cdktn synth' || { log "$job runs no synth step"; drop_work "$work"; return 1; }
+  done
+  [ -z "${BREAK:-}" ] || cdktn_unsynth "$wf" '^apply-wave-'
+  sha="$(push_tree "$work/tree" "$repo" main "cdktn-apply: two stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  applied="$(gated_applied cdktn-apply)"
+  log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+  [ -z "$applied" ] || { log "a stack applied before wave 1 was approved"; rc=1; }
+  run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-1" || { log "wave 1 did not wait at its gate with its approve command"; rc=1; }
+  [ $rc = 0 ] && { gated_approve cdktn-apply 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "cdktn-apply: after wave 1 was approved")"
+    wait_run "$repo" "$sha" || rc=1
+    applied="$(gated_applied cdktn-apply)"
+    log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "dev " ] || { log "dev did not apply alone"; rc=1; }
+    run_logs "$repo" "$RUN_ID" | grep -q "chant approve tf-apply wave-2" || { log "wave 2 did not wait at its own gate"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve cdktn-apply 2 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "cdktn-apply: after wave 2 was approved")"
+    wait_run "$repo" "$sha" || rc=1
+    applied="$(gated_applied cdktn-apply)"
+    log "after wave 2's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "dev prod " ] || { log "prod did not apply after its approval"; rc=1; }
+    curl -fsS "$FLOCI/shop-terraform-state/cdktn-apply/prod.tfstate" | jq -e '.outputs.size.value == 3' >/dev/null || { log "prod's state does not hold the size its stack sets"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "each apply wave synthesized the stacks: dev applied once wave 1 was approved, prod once wave 2 was"
+  return $rc
+}
+
+claim_cdktn_tips() {
+  # The CDK Terrain app of cdktn-synth with gate: never and no canary. The
+  # push to main applies both stacks, and the tips job runs synth before
+  # respond tips: it opens the canary tip's pull request, which changes
+  # terragucci.yml alone, opens no lock file tip, and says the provider pin
+  # and lock file tips are left out, since synth writes the stacks' files and
+  # git does not hold them.
+  # BREAK: the tips job runs no synth, so respond tips finds no stack and
+  # opens nothing.
+  log() { echo "[smoke cdktn-tips] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cdktn-tips" wf sha pr logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  fresh_repo cdktn-tips || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  cdktn_tree "" "$(printf 'binary: tofu\nforge: forgejo\ngate: never\nsynth: npm ci --no-audit --no-fund && npx cdktn synth\n')" || { drop_work "$work"; return 1; }
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  cdktn_job "$wf" tips | grep -q 'npx cdktn synth' || { log "the tips job runs no synth step"; drop_work "$work"; return 1; }
+  [ -z "${BREAK:-}" ] || cdktn_unsynth "$wf" '^tips$'
+  sha="$(push_tree "$work/tree" "$repo" main "cdktn-tips: two stacks")" || { drop_work "$work"; return 1; }
+  wait_run "$repo" "$sha" || rc=1
+  [ "$RUN_STATUS" = success ] || { log "the run ended '$RUN_STATUS'"; print_logs "$repo" "$RUN_ID" | tail -40 >&2; rc=1; }
+  logs="$(run_logs "$repo" "$RUN_ID")"
+  grep -E 'respond tips|left out with synth|terragucci/tip' <<<"$logs" >&2 || true
+  pr="$(open_pr "$repo" terragucci/tip/canary)"
+  if [ -z "$pr" ]; then
+    log "no pull request from terragucci/tip/canary"; rc=1
+  else
+    [ "$(pr_files "$repo" "$pr")" = terragucci.yml ] || { log "the canary tip changes $(pr_files "$repo" "$pr"), not terragucci.yml"; rc=1; }
+    api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.title' | grep -q 'Add a canary wave: cdktf.out/stacks/dev' || { log "the canary tip does not name cdktf.out/stacks/dev"; rc=1; }
+  fi
+  [ -z "$(open_pr "$repo" terragucci/tip/lock-files)" ] || { log "a lock file tip was opened for files synth writes"; rc=1; }
+  grep -q "left out with synth: the provider pin and lock file tips" <<<"$logs" || { log "the tips job does not say why the pin and lock file tips are left out"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "the tips job synthesized the stacks and opened the canary tip for cdktf.out/stacks/dev, changing terragucci.yml alone"
+  return $rc
+}
+
+claim_cdktn_refused() {
+  # The CDK Terrain app of cdktn-synth, synthesized on the host. init refuses
+  # synth with a drift schedule whose response is the drift pull request (the
+  # default), and synth with rollouts, each as a config error saying why:
+  # both would edit files synth writes and git does not hold. With
+  # respond.drift: attribute init writes a drift job that runs synth and
+  # tf-drift, runs no drift pull request, and says why.
+  # BREAK: synth is left out of terragucci.yml, so init accepts the drift
+  # pull request and rollouts.
+  log() { echo "[smoke cdktn-refused] $*" >&2; }
+  local work out wf cfg rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cfg="$(printf 'binary: tofu\nforge: forgejo\nsynth: npm ci --no-audit --no-fund && npx cdktn synth')"
+  [ -z "${BREAK:-}" ] || cfg="$(printf 'binary: tofu\nforge: forgejo')"
+  cdktn_tree "" "$cfg" || { drop_work "$work"; return 1; }
+  printf '%s\ndrift: "0 6 * * *"\n' "$cfg" > "$work/tree/terragucci.yml"
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" init 2>&1)"; then
+    log "init accepted synth with the drift pull request"; rc=1
+  else
+    grep 'respond.drift' <<<"$out" >&2 || true
+    grep -q "respond.drift: the drift pull request writes each live value into a root's own files, and with synth" <<<"$out" || { log "init did not say why the drift pull request is refused"; rc=1; }
+  fi
+  printf '%s\nrollouts: "*/15 * * * *"\n' "$cfg" > "$work/tree/terragucci.yml"
+  if out="$(cd "$work/tree" && "$TERRAGUCCI" init 2>&1)"; then
+    log "init accepted synth with rollouts"; rc=1
+  else
+    grep 'rollouts' <<<"$out" >&2 || true
+    grep -q "rollouts: a rollout moves a pin in each root's files or its lock file, and with synth" <<<"$out" || { log "init did not say why rollouts are refused"; rc=1; }
+  fi
+  printf '%s\ndrift: "0 6 * * *"\nrespond:\n  drift: attribute\n' "$cfg" > "$work/tree/terragucci.yml"
+  if (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null 2>&1); then
+    wf="$work/tree/.forgejo/workflows/terragucci.yml"
+    cdktn_job "$wf" drift > "$work/drift-job"
+    grep -q 'npx cdktn synth' "$work/drift-job" || { log "the drift job runs no synth"; rc=1; }
+    grep -q 'terragucci stage tf-drift' "$work/drift-job" || { log "the drift job runs no tf-drift"; rc=1; }
+    if grep -q 'terragucci respond drift' "$work/drift-job"; then log "the drift job runs the drift pull request"; rc=1; fi
+    grep -q 'terragucci: no drift pull request: synth writes the roots' "$work/drift-job" || { log "the drift job does not say why no pull request follows"; rc=1; }
+  else
+    log "init refused respond.drift: attribute with synth"; rc=1
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "init refused the drift pull request and rollouts with synth, each saying why, and with attribute the drift job synthesizes and runs no pull request"
+  return $rc
+}
+
 # ── the audit trail ───────────────────────────────────────────────────────
 # A repo with one root, app, a terraform_data with local state, whose
 # reports go to the bucket under a fresh prefix, and beside it origin.git,
@@ -11482,6 +11649,9 @@ cost-gate            runner self! weight=200
 cost-policy          weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
+cdktn-apply          runner self! weight=300
+cdktn-tips           runner self! weight=200
+cdktn-refused        weight=60
 wave-jobs            runner self! weight=250
 steps-before-plan    runner self! weight=200
 steps-stop           runner self! weight=150
