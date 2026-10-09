@@ -37,7 +37,14 @@
 #                                     one picture of a GitLab page, signed in as
 #                                     root with the color mode set to light or
 #                                     dark, banners and the sidebar hidden
+#   stack/example-gitlab.sh capture   reset, then the docs' GitLab views, each
+#                                     light and dark, as the tutorial step gitlab:
+#                                     docs-site/src/data/tutorial/gitlab.json and
+#                                     docs-site/src/assets/tutorial/gitlab-*.png
 #   stack/example-gitlab.sh down      remove the stack
+#
+# TGLAB=1 runs all of it on the GitLab lab (stack/gitlab/gitlab.sh, compose
+# project tglab) in place of the validation stack's gitlab profile.
 #
 # The project is public. GitLab's color mode is a setting of the signed-in
 # user, not the browser's prefers-color-scheme, so 'shot' signs in and sets it
@@ -55,7 +62,13 @@ fail() { log "FAIL: $*"; exit 1; }
 command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
   || { echo "SKIP: Docker is not available, so the example cannot run."; exit 0; }
 
-if [ "$CMD" = down ]; then exec "$HERE/down.sh"; fi
+LAB="${TGLAB:-}"
+if [ -n "$LAB" ]; then STATE_DIR="$HERE/gitlab/.state" FLOCI_CONTAINER=tglab-floci; else STATE_DIR="$HERE/.state" FLOCI_CONTAINER=terragucci-floci; fi
+
+if [ "$CMD" = down ]; then
+  [ -z "$LAB" ] || exec "$HERE/gitlab/gitlab.sh" down
+  exec "$HERE/down.sh"
+fi
 
 FRESH=""
 if [ "$CMD" = up ]; then
@@ -75,12 +88,19 @@ if [ "$CMD" = up ]; then
   fi
   log "starting GitLab, its runner and floci (ten minutes or more the first time under emulation)…"
   boot_log="$(mktemp)"
-  if ! "$HERE/bootstrap.sh" gitlab >"$boot_log" 2>&1; then
+  boot=("$HERE/bootstrap.sh" gitlab)
+  [ -z "$LAB" ] || boot=("$HERE/gitlab/gitlab.sh" up)
+  if ! "${boot[@]}" >"$boot_log" 2>&1; then
     cat "$boot_log" >&2; rm -f "$boot_log"; fail "the stack did not start"
   fi
   rm -f "$boot_log"
 fi
 
+if [ -n "$LAB" ]; then
+  [ -f "$STATE_DIR/gitlab.env" ] || fail "no GitLab lab; run 'just gitlab-lab up' first"
+  # shellcheck disable=SC1091
+  . "$STATE_DIR/gitlab.env"
+fi
 # shellcheck source=lib.sh
 LIB_FORGE=gitlab . "$HERE/lib.sh"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-example-gitlab.XXXXXX")"
@@ -91,7 +111,7 @@ trap 'rm -rf "$WORK"' EXIT
 REPO="$USER/example"
 PID="$(pid example)"
 P="$URL/api/v4/projects/$PID"
-READER_KEY="$HERE/.state/reader-gitlab"
+READER_KEY="$STATE_DIR/reader-gitlab"
 # GitLab builds links from its in-network address; show the one a browser opens.
 browser_url() { sed "s#^http://gitlab:8929#$URL#"; }
 uri() { printf %s "$1" | jq -sRr @uri; }
@@ -220,7 +240,7 @@ GITLAB_STYLE="${GITLAB_STYLE:-.page-with-super-sidebar { padding-left: 0 !import
 gitlab_session() { # light|dark
   # Color mode 1 is light and 2 dark; so are the syntax themes, which code
   # blocks follow.
-  local jar="$HERE/.state/gitlab-cookies" page csrf mode=1 code
+  local jar="$STATE_DIR/gitlab-cookies" page csrf mode=1 code
   [ "$1" = dark ] && mode=2
   code="$(curl -s -o "$WORK/prefs.html" -w '%{http_code}' -b "$jar" "$URL/-/profile/preferences" 2>/dev/null || true)"
   if [ "$code" != 200 ]; then
@@ -255,7 +275,7 @@ case "$CMD" in
     started=$(date +%s)
     if [ -n "$FRESH" ]; then
       log "wiping floci…"
-      docker restart terragucci-floci >/dev/null
+      docker restart "$FLOCI_CONTAINER" >/dev/null
       until curl -s -o /dev/null "$FLOCI/"; do sleep 1; done
     fi
     ensure_project
@@ -494,6 +514,83 @@ OUT
     node "$HERE/shot.mjs" --chrome "$CHROME" --url "$url" --out "$out" --scheme "$theme" \
       --cookie "$cookie" --hide "$GITLAB_HIDE" --style "$GITLAB_STYLE" "$@"
     log "wrote $out ($theme)"
+    ;;
+
+  capture)
+    # Each step runs as its own command, so what it prints is what a reader
+    # of the docs would see, and each view is shot right after its step.
+    ROOT="$(cd "$HERE/.." && pwd)"
+    DATA="$ROOT/docs-site/src/data/tutorial" SHOTS="$ROOT/docs-site/src/assets/tutorial"
+    started="$(date +%s)"
+    "$0" reset >&2 || fail "reset failed; run 'just example-gitlab up' first"
+    mkdir -p "$WORK/shots"
+    : > "$WORK/commands"
+    step() { # command words...
+      local out
+      out="$("$0" "$@")" || return 1
+      jq -n --arg cmd "just example-gitlab $*" --arg output "$(sed '/^$/d; s/^  //' <<<"$out")" '{cmd: $cmd, output: $output, exit: 0}' >> "$WORK/commands"
+    }
+    # A job's log, which a signed-out reader cannot open: its lines from the
+    # first that matches one regex to the first after it that matches another.
+    log_lines() { # command, job id, from regex, to regex, exit code
+      local out
+      out="$(trace "$2" | awk -v a="$3" -v b="$4" '!on && $0 ~ a { on = 1 } on { sub(/[ \t]+$/, ""); print } on && $0 ~ b { exit }')"
+      [ -n "$out" ] || fail "no lines from /$3/ in job $2"
+      jq -n --arg cmd "$1" --arg output "$out" --argjson exit "$5" '{cmd: $cmd, output: $output, exit: $exit}' >> "$WORK/commands"
+    }
+    take() { # view path [shot.mjs flags...]
+      local view="$1" path="$2" scheme
+      shift 2
+      for scheme in light dark; do "$0" shot "$path" "$WORK/shots/$view-$scheme.png" "$scheme" "$@" >&2 || fail "no $scheme picture of $view"; done
+    }
+    # The setting the add-to page asks a GitLab reader to turn on.
+    api -o /dev/null -X PUT "$P" --data-urlencode "only_allow_merge_if_pipeline_succeeds=true"
+    take required "/$REPO/-/settings/merge_requests" --scroll '.gl-form-checkbox, .form-check' --match 'Pipelines must succeed' --height 420
+
+    step change one-root || fail "change one-root failed"
+    iid="$(forge_open_pr example change/one-root)"
+    take note "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'Posted by' --fit 1
+
+    step change unformatted || fail "change unformatted failed"
+    # The check job's fix moves the branch, so its first push pipeline is the one that failed.
+    pipe="$(api "$P/pipelines?ref=change%2Funformatted&source=push&order_by=id&sort=asc" | jq -r '.[0].id // empty')"
+    job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name == "check") | .id' | head -1)"
+    [ -n "$job" ] || fail "no failed check job on change/unformatted"
+    take check "/$REPO/-/jobs/$job" --scroll '.js-line, .log-line' --match 'unformatted|owner' --height 860
+    log_lines "the check job of change/unformatted" "$job" '^envs/.*[.]tf$' 'Cleaning up|ERROR: Job failed' 1
+
+    step change destroy || fail "change destroy failed"
+    step merge destroy || fail "merge destroy failed"
+    pipe="$(last_failed main)"
+    job="$( [ -z "$pipe" ] || api "$P/pipelines/$pipe/jobs?scope[]=failed" | jq -r '.[] | select(.name | startswith("apply-wave-")) | .id' | head -1)"
+    [ -n "$job" ] || fail "no waiting wave on main after merge destroy"
+    take waiting "/$REPO/-/jobs/$job" --scroll '.js-line, .log-line' --match 'chant approve tf-apply' --height 860
+    log_lines "the waiting apply job on main" "$job" '^wave [0-9]+ of [0-9]+:' 'chant approve tf-apply' 3
+
+    # Drift comes last: the queue it deletes would be applied back by any later merge.
+    step change drift || fail "change drift failed"
+    issue="$(api "$P/issues?state=opened&order_by=created_at&sort=desc" | jq -r '.[0].iid // empty')"
+    [ -n "$issue" ] || fail "the drift run opened no issue"
+    take drift "/$REPO/-/issues/$issue" --height 860
+
+    hash="$(cd "$ROOT" && find example -type f ! -path '*/.terraform/*' | LC_ALL=C sort | while read -r f; do
+      printf '%s\0' "$f"; cat "$f"; done | shasum -a 256 | cut -c1-16)"
+    shots='{}'
+    for view in required note check waiting drift; do
+      for scheme in light dark; do
+        cp "$WORK/shots/$view-$scheme.png" "$SHOTS/gitlab-$view-$scheme.png"
+        h="$(shasum -a 256 "$SHOTS/gitlab-$view-$scheme.png" | cut -c1-16)"
+        shots="$(jq --arg k "$view-$scheme" --arg h "$h" '. + {($k): $h}' <<<"$shots")"
+      done
+    done
+    # GitLab's address depends on the stack it ran on; the docs show the path.
+    U="$URL" perl -pi -e 's#\Q$ENV{U}\E##g' "$WORK/commands"
+    jq -s --arg h "$hash" --argjson shots "$shots" '{step: "gitlab", source_hash: $h, commands: ., shots: $shots}' \
+      "$WORK/commands" > "$DATA/gitlab.json"
+    api -o /dev/null -X PUT "$P" --data-urlencode "only_allow_merge_if_pipeline_succeeds=false"
+    "$0" reset >&2
+    printf '\n  Wrote  docs-site/src/data/tutorial/gitlab.json and docs-site/src/assets/tutorial/gitlab-*.png\n  Took   %s minutes\n' \
+      "$(( ($(date +%s) - started + 59) / 60 ))"
     ;;
 
   *)

@@ -255,6 +255,16 @@ just example-gitlab shot /root/example/-/merge_requests/1 note-dark.png dark --s
 
 `shot` takes a GitLab path or URL, the PNG to write, `light` or `dark`, and any further `stack/shot.mjs` flags (`--height`, `--scroll`, `--match`, `--fit`). GitLab's color mode is a setting of the signed-in user and ignores the browser's `prefers-color-scheme`. So `shot` signs in as root (the session is kept in `stack/.state/gitlab-cookies`), sets the color mode and the syntax theme to light or dark through the preferences form, and hands the session to `shot.mjs --cookie`. Before the picture, `shot.mjs` waits for a GitLab page's spinners and skeletons to go.
 
+`just example-gitlab capture` takes the docs' GitLab views from a reset example, light and dark, and writes them as the tutorial step `gitlab` (`docs-site/src/data/tutorial/gitlab.json`, `docs-site/src/assets/tutorial/gitlab-<view>-<light|dark>.png`), the way `just sandbox capture` writes `github`. A page uses them as `<Shot step="gitlab" view="note" ... />`. `TGLAB=1` runs any of these commands on the GitLab lab instead of the gitlab profile.
+
+| View | Page | Shows |
+|---|---|---|
+| `required` | Settings, Merge requests | "Pipelines must succeed", turned on |
+| `note` | the one-root merge request | the plan note |
+| `check` | the failed check job of `change/unformatted`'s first push | the file `tofu fmt` names |
+| `waiting` | the waiting `apply-wave-N` job after `merge destroy` | the wave's `chant approve` command |
+| `drift` | the issue the drift schedule's run opened | staging orders' deleted queue |
+
 `GITLAB_HIDE` is the hide list, like the tutorial's `FORGEJO_HIDE`: the left sidebar and its toggle, broadcast messages and the instance's alert banners (the "add an SSH key" one), callouts and feature highlights. `GITLAB_STYLE` gives the content the sidebar's width. Both are defaults in `stack/example-gitlab.sh` and can be overridden from the environment. Gravatar is off on the stack, so avatars are GitLab's initials.
 
 ### The smoke claims on GitLab

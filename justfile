@@ -230,7 +230,7 @@ validation-record *forges:
 example *args="up":
     stack/example.sh {{args}}
 
-[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], logs, reset, shot <url> <out.png> [light|dark], down.")]
+[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], logs, reset, shot <url> <out.png> [light|dark], capture, down. TGLAB=1 runs it on the GitLab lab.")]
 example-gitlab *args="up":
     stack/example-gitlab.sh {{args}}
 
