@@ -537,19 +537,19 @@
     },
     {
       "claim": "review-agent",
-      "says": "with review.agent on, the review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing",
+      "says": "with review.agent on, the review workflow of the default branch runs on pull_request_target after the plan, and its review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "c49134dd"
     },
     {
       "claim": "review-policy",
-      "says": "a tf-apply wave gives the policy the risk the review job kept as its artifact in the run of the head of the merged pull request as input.review, a forged low-risk note posted with the pipeline token changes nothing, and a policy that denies risk high stops the wave",
+      "says": "a tf-apply wave gives the policy the risk the review workflow of the default branch kept as its artifact for the head of the merged pull request as input.review; the edited review job of the pull request itself keeping risk low and a forged low-risk note posted with the pipeline token change nothing, and a policy that denies risk high stops the wave",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "c49134dd"
     },
     {
       "claim": "wave-report",
@@ -1541,7 +1541,8 @@
       "says": "with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes",
       "needs": null,
       "verdict": "pass",
-      "break": "caught"
+      "break": "caught",
+      "commit": "c49134dd"
     },
     {
       "claim": "wave-jobs",
