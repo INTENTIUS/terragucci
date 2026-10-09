@@ -231,6 +231,20 @@
               "pull_request": { "type": "integer" },
               "url": { "type": "string" }
             }
+          },
+          "cost": {
+            "type": "object",
+            "description": "The wave's monthly cost, when cost is on (minor 17): the sums over its roots estimated, and with cost.approve_above at base whether the change is over it, so the wave waits for an approval whatever the gate.",
+            "required": ["currency", "monthly_delta", "monthly_total", "past_monthly_total"],
+            "properties": {
+              "currency": { "type": "string" },
+              "monthly_delta": { "type": ["number", "null"] },
+              "monthly_total": { "type": ["number", "null"] },
+              "past_monthly_total": { "type": ["number", "null"] },
+              "unestimated": { "type": "array", "items": { "type": "string" } },
+              "approve_above": { "type": "number" },
+              "over": { "type": "boolean" }
+            }
           }
         }
       }
@@ -280,7 +294,7 @@
       }
     },
     "cost": {
-      "description": "The cost estimate of a tf-plan run, when cost is on (minor 12): each root's monthly cost from the estimator, and the sums over the roots estimated.",
+      "description": "The cost estimate of a tf-plan run, or of a tf-apply wave's plans (minor 17), when cost is on (minor 12): each root's monthly cost from the estimator, and the sums over the roots estimated.",
       "type": "object",
       "required": ["estimator", "currency", "monthly_delta", "monthly_total", "past_monthly_total", "roots"],
       "properties": {

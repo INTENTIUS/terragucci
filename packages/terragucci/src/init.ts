@@ -242,7 +242,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(rollouts ? { rollouts } : {}),
     ...(settings.synth ? { synth: settings.synth } : {}),
     ...(settings.notify ? { notify: settings.notify } : {}),
-    ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command } } : {}),
+    ...(settings.cost ? { cost: { keySecret: (settings.cost !== true && settings.cost.key_secret) || COST_KEY_SECRET, install: settings.cost === true || !settings.cost.command, ...(settings.cost !== true && settings.cost.approve_above !== undefined ? { approveAbove: true } : {}) } } : {}),
     ...(settings.comments ? { comments: settings.comments } : {}),
     ...(settings.gitlab?.token ? { gitlabToken: settings.gitlab.token } : {}),
     ...(!tgInput && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),

@@ -308,6 +308,8 @@ dora|terragucci estate computes the four DORA metrics from the audit trail and t
 notify-chat|with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it|
 notify-webhook|with notify naming a generic webhook and its key, a wave that waits posts a terragucci.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command|
 cost-estimate|with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret|
+cost-gate|with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base|
+cost-policy|with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave|
 approval-used|once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses|
 cdktn-affected|with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged|
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|'
@@ -10727,6 +10729,105 @@ JS
   return $rc
 }
 
+claim_cost_gate() {
+  # Two roots, app and net, in one wave, with gate: never and cost naming a
+  # command, cost.mjs, that prices 10.00 a month for each resource a plan
+  # creates, with approve_above: 15. No Infracost key is needed. The push to
+  # main plans app and net, +20.00 a month, and wave 1 waits for an approval
+  # although the gate is never: its log names +20.00 USD, the amount 15.00 USD
+  # and the commit it was read at, and gives the approve command. A pull
+  # request that adds a resource to app gets a plan note that sets wave 1's
+  # change against the amount at base, over it, so the wave waits.
+  # BREAK: terragucci.yml has no approve_above, so the wave applies under
+  # gate: never and the note sets nothing against an amount.
+  log() { echo "[smoke cost-gate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/cost-gate" tree sha head pr note logs root rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tree="$work/tree"
+  fresh_repo cost-gate || { drop_work "$work"; return 1; }
+  api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
+  for root in app net; do
+    mkdir -p "$tree/$root"
+    printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "%s" {\n  input = 1\n}\n' "$root" > "$tree/$root/main.tf"
+  done
+  cp "$HERE/fixtures/cost-policy/cost.mjs" "$tree/cost.mjs"
+  printf 'binary: tofu\nforge: forgejo\ngate: never\ncost:\n  command: node cost.mjs\n' > "$tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] || printf '  approve_above: 15\n' >> "$tree/terragucci.yml"
+  (cd "$tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$tree" "$repo" main "cost-gate: two roots")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -E 'cost|waits|approve' <<<"$logs" | grep -v '^\s*$' | tail -12 >&2 || true
+    grep -qE "the monthly cost changes by \+20\.00 USD, over cost\.approve_above 15\.00 USD in the config at [0-9a-f]{40}, so it waits for an approval although gate is never" <<<"$logs" \
+      || { log "wave 1 did not wait for its cost, naming +20.00 USD and the amount 15.00 USD"; rc=1; }
+    grep -qE 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 gave no approve command"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    printf '\nresource "terraform_data" "more" {\n  input = 2\n}\n' >> "$tree/app/main.tf"
+    head="$(push_tree "$tree" "$repo" change "cost-gate: one more resource in app")" || rc=1
+    git -C "$tree" checkout -q main
+  fi
+  [ $rc = 0 ] && { pr="$(pr_open "$repo" change "cost-gate: one more resource in app")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments" | jq -r '[.[] | select(.body | startswith("<!-- terragucci:plan"))] | last | .body // empty')"
+    grep -E 'Monthly cost|approve_above|^\| [0-9]' <<<"$note" >&2 || true
+    grep -qF 'Against `cost.approve_above` at base, 15.00 USD a month: wave 1 +20.00 USD, over it: it waits for an approval whatever the gate.' <<<"$note" \
+      || { log "the plan note of pull request $pr does not set wave 1's +20.00 USD against the amount at base"; rc=1; }
+    grep -qE '^\| 1 \| [0-9]+ \| .* \| waits for an approval' <<<"$note" || { log "the note's wave table does not say wave 1 waits"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 1 waited under gate: never for its +20.00 USD over 15.00 USD, and the plan note set the change against the amount at base"
+  return $rc
+}
+
+claim_cost_policy() {
+  # stack/fixtures/cost-policy: one root, app, with two resources, gate:
+  # never, an HCP Terraform policy set (engine: opa, input: hcp) whose
+  # mandatory cost_limit policy denies a root whose
+  # input.run.cost_estimate.delta_monthly_cost is over 15 and a wave whose
+  # input.cost.wave.monthly_delta is, and cost naming cost.mjs, which prices
+  # 10.00 a month for each resource a plan creates. The wave exits 1 and
+  # applies nothing; the report denies app with both messages, +20.00.
+  # BREAK: terragucci.yml has no cost, so the policy reads no cost, denies
+  # nothing, and the wave applies.
+  log() { echo "[smoke cost-policy] $*" >&2; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" code=0 rc=0 r q
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  cp -R "$HERE/fixtures/cost-policy/." "$work/"
+  [ -n "${BREAK:-}" ] || printf 'cost:\n  command: node cost.mjs\n' >> "$work/terragucci.yml"
+  git -C "$work" init -q -b main
+  git -C "$work" add -A && git -C "$work" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke cost-policy"
+  run_copied --rm --network terragucci -v "$work:/repo" -w /repo \
+    -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache \
+    -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >&2 || code=$?
+  clean_mounted "$work" "$image"
+  r="$work/terragucci-report/report.json"
+  [ "$code" = 1 ] || { log "the wave exited $code, not 1: the cost policy did not deny it"; rc=1; }
+  if [ -f "$work/app/terraform.tfstate" ] && jq -e '.resources | length > 0' "$work/app/terraform.tfstate" >/dev/null 2>&1; then
+    log "app has state: the wave applied it"; rc=1
+  fi
+  if [ ! -f "$r" ]; then
+    log "the wave wrote no report"; rc=1
+  else
+    q='.roots[] | select(.path == "app")'
+    jq -e "$q | .policy.result == \"denied\" and (.policy.denials | any(test(\"^cost_limit: app adds 20.00 USD a month, over 15.00\"))) and (.policy.denials | any(test(\"^cost_limit: wave 1 adds 20 USD a month, over 15.00\")))" "$r" >/dev/null \
+      || { log "app is not denied on its cost and its wave's: $(jq -c "$q | .policy" "$r")"; rc=1; }
+    jq -e '.cost.roots[0] | .root == "app" and .monthly_delta == 20' "$r" >/dev/null || { log "the report has no estimate of app at +20.00: $(jq -c '.cost' "$r")"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the policy set read app's +20.00 from input.run.cost_estimate and the wave's from input.cost, and its mandatory policy denied the wave"
+  return $rc
+}
+
 claim_approval_used() {
   # Push the fixture; wave 1 waits. Approve it and push again: canary/one
   # applies, and the wave records on chant/lifecycle that it used the
@@ -11016,6 +11117,8 @@ dora                 weight=250
 notify-chat          runner self! weight=250
 notify-webhook       runner self! weight=150
 cost-estimate        runner self! weight=150
+cost-gate            runner self! weight=200
+cost-policy          weight=150
 approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
 wave-jobs            runner self! weight=250

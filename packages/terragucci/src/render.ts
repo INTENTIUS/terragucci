@@ -127,8 +127,8 @@ export interface PipelineInput {
   synth?: string;
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
   notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
-  /** `cost`: the secret holding the estimator's key, and whether the plan jobs install Infracost (no `cost.command`). */
-  cost?: { keySecret: string; install: boolean };
+  /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
+  cost?: { keySecret: string; install: boolean; approveAbove?: boolean };
   env: Record<string, string>;
   /** Cloud identities the jobs take over OIDC (AWS roles, GCP service accounts, Azure clients): plan reads, apply writes. */
   oidc?: OidcSettings;
@@ -714,6 +714,8 @@ export interface ApplyWaveInput {
   notify?: boolean;
   /** `policy:` is set: a denial is recorded on chant/lifecycle for an override, whatever the gate. */
   policy?: boolean;
+  /** `cost.approve_above` is set: a wave over it waits, and records its plan on chant/lifecycle, whatever the gate. */
+  costGate?: boolean;
   /** `waves.jobs`, on the job of a wave that splits across jobs: it decides the wave, and its share jobs apply. */
   shares?: number;
   /** With `shares`: the share this job applies, from 1. */
@@ -778,7 +780,7 @@ export function applyScript(
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
     // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
     // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
-    ...(forge === "gitlab" && (gate !== "never" || input.policy) ? [gitlabPushRemote] : []),
+    ...(forge === "gitlab" && (gate !== "never" || input.policy || input.costGate) ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -1590,7 +1592,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const audience = oidc?.audience ?? AUDIENCE;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth);
   const synth = input.synth ? { synth: input.synth } : {};
-  // cost: the plan jobs get the estimator's key as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
+  // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
+  // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
   const costEnv: Record<string, string> = input.cost ? { INFRACOST_API_KEY: forge === "gitlab" ? `$${input.cost.keySecret}` : `\${{ secrets.${input.cost.keySecret} }}` } : {};
   // GitLab gives every job the project's variables by name, so a key already named INFRACOST_API_KEY needs no mapping.
   const glCostEnv = input.cost && input.cost.keySecret !== "INFRACOST_API_KEY" ? costEnv : {};
@@ -1619,7 +1622,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const wave = i + 1;
     const n = sharesOf(i);
     const name = `apply-wave-${wave}`;
-    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}) };
+    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}) };
     applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(split ? { sharedLock: name } : {}) }), ...(n > 1 ? { decides: true } : {}) });
     before = [name];
     if (n > 1) {
@@ -1642,8 +1645,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const autoMerge = prApply && input.applyMerge === "auto";
   const lastApply = prApply ? "confirm" : applyJobs[applyJobs.length - 1].name;
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(split && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
-  // A wave that waits records its plan on the chant/lifecycle branch.
-  const writesLedger = gate !== "never";
+  // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
+  const writesLedger = gate !== "never" || input.cost?.approveAbove === true;
   const what = tg ? "unit" : "root";
   // The fmt commit and the drift pull request are for plain roots, where respond finds the roots itself.
   const fmtOn = !tg && responds(input.respond, "fmt");
@@ -1744,12 +1747,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         stage: "apply",
         image: jobImage,
         ...(job.needs.length > 0 ? { needs: job.needs } : {}),
-        variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv },
+        variables: { ...gitlabEnv, TG_BEFORE: "$CI_COMMIT_BEFORE_SHA", ...notifyEnv, ...glCostEnv },
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-apply",
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
-        script: script(bash("APPLY", job.body)),
+        script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", job.body))],
         // The wave's report stays with the job, like the plan's; the agent's input joins it when there is one.
         artifacts: { name: `${REPORT_DIR}-${job.name}`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
@@ -1771,12 +1774,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("mr-apply", new GitLabJob({
         stage: "apply",
         image: jobImage,
-        variables: { ...gitlabEnv, GIT_DEPTH: "0", ...notifyEnv },
+        variables: { ...gitlabEnv, GIT_DEPTH: "0", ...notifyEnv, ...glCostEnv },
         rules: [new Rule({ if: mrApplyRule })],
         resource_group: "terragucci-apply",
         ...idTokens,
         ...(tg ? forgeCache("gitlab") : {}),
-        script: script(bash("APPLY", gitlabApplyScript(binary, layers, oidc, prInput))),
+        script: [...(costInstall ? [costInstall] : []), ...script(bash("APPLY", gitlabApplyScript(binary, layers, oidc, prInput)))],
         artifacts: { name: `${REPORT_DIR}-mr-apply`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentApply ? [`${RESPOND_DIR}/`] : [])] },
       } as never) as never);
       if (autoMerge) {
@@ -2097,10 +2100,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...openid(needsToken),
     concurrency: applyConcurrency(forge),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
-    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv },
+    env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
     ...(autoMerge ? { outputs: { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } } : {}),
     steps: [
-      ...steps(new Step({ ...(autoMerge ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true),
+      ...steps(new Step({ ...(autoMerge ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
       new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
     ],
   } as never) as never);
@@ -2189,9 +2192,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TG_BRANCH: "${{ github.event.repository.default_branch }}",
         ...headersEnv,
         ...notifyEnv,
+        ...costEnv,
       },
       steps: [
-        ...steps(new Step({ name: job.step, shell: "bash", run: job.body }), true, false, undefined, false, job.share !== undefined ? new Step({ name: "Fetch the wave's decision", uses: download, with: { name: `${DECIDED_DIR}-${job.wave}`, path: DECIDED_DIR } } as never) : undefined),
+        ...steps(new Step({ name: job.step, shell: "bash", run: job.body }), true, false, undefined, true, job.share !== undefined ? new Step({ name: "Fetch the wave's decision", uses: download, with: { name: `${DECIDED_DIR}-${job.wave}`, path: DECIDED_DIR } } as never) : undefined),
         ...(job.decides ? [new Step({ name: "Hand the decision to the wave's shares", uses: upload, with: { name: `${DECIDED_DIR}-${job.wave}`, path: `${DECIDED_DIR}/`, "if-no-files-found": "error" } })] : []),
         new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-${job.name}`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ...(agentApply
@@ -2315,9 +2319,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
         ...openid(needsToken),
         concurrency: applyConcurrency(forge),
-        env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv },
+        env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
         steps: [
-          ...steps(new Step({ name: "Apply a waiting wave once its approval stands", shell: "bash", run: resumeScript(binary, layers, forge, oidc, prInput) } as never), true, true),
+          ...steps(new Step({ name: "Apply a waiting wave once its approval stands", shell: "bash", run: resumeScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
           new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-resume`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ],
       } as never) as never],

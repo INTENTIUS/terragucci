@@ -10,6 +10,7 @@ import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import type { Gate } from "../config";
 import { changesSomething, destroysSomething } from "./changing";
+import { costMember } from "./cost";
 import { changeKind, foldChange } from "./highlight";
 import { planAppliedChanges } from "./history";
 import { planResources } from "./inventory";
@@ -21,7 +22,7 @@ import {
   type ReportDeferred,
   type ReportPolicy,
   type ReportRootPolicy,
-  type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
+  type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost,
 } from "./schema";
 
 type Json = Record<string, unknown>;
@@ -63,6 +64,8 @@ export interface WaveInput {
   refused?: ReportWave["refused"];
   /** The pull request whose review would approve a waiting `tf-apply` wave. */
   review?: ReportWave["review"];
+  /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
+  cost?: ReportWaveCost;
 }
 
 export interface BuildInput {
@@ -285,26 +288,30 @@ export function buildReport(input: BuildInput): Report {
     // A provisional member is a preview: no wave's set digest covers it.
     const members = doc.members.filter((m) => w.roots.includes(m.member) && !m.provisional);
     const failed = members.some((m) => m.planDigest === null);
+    // With cost.approve_above the wave's cost is one more member of its digests, as the wave's gate takes it.
+    const cost = costMember(w.cost);
+    const extra = cost ? [cost] : [];
     let review: Pick<ReportWave, "review_digest" | "waits"> = {};
     if (input.gate) {
       const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
       const changing = members.filter((m) => changesSomething(plans.get(m.member)));
       const destroys = changing.some((m) => destroysSomething(plans.get(m.member)));
       review = {
-        review_digest: failed || changing.length === 0 ? null : changeSetDigest(changing),
-        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys)),
+        review_digest: failed || changing.length === 0 ? null : changeSetDigest([...changing, ...extra]),
+        waits: changing.length > 0 && (input.gate === "always" || (input.gate === "on-destroy" && destroys) || w.cost?.over === true),
       };
     }
     return {
       number: w.number,
       roots: w.roots,
-      set_digest: w.setDigest ?? (failed || members.length === 0 ? null : changeSetDigest(members)),
+      set_digest: w.setDigest ?? (failed || members.length === 0 ? null : changeSetDigest([...members, ...extra])),
       approval: w.approval ?? "not-requested",
       ...review,
       ...(w.gate ? { gate: w.gate } : {}),
       ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
       ...(w.refused ? { refused: w.refused } : {}),
       ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
+      ...(w.cost ? { cost: w.cost } : {}),
     };
   });
 

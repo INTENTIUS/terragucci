@@ -12,7 +12,7 @@ import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
 import { signed } from "./cost";
-import { actionWord, type Report, type ReportCost, type ReportNamed } from "./schema";
+import { actionWord, type Report, type ReportCost, type ReportNamed, type ReportWave } from "./schema";
 import { duration } from "./spans";
 import { TACO_NOTE_URL } from "./taco";
 
@@ -70,6 +70,22 @@ export function costLine(cost: ReportCost): string {
   return cost.monthly_delta === null
     ? `Monthly cost: no estimate from ${cost.estimator}${tail}.`
     : `Monthly cost: **${signed(cost.monthly_delta)} ${cost.currency}** over ${estimated} of ${cost.roots.length} ${cost.roots.length === 1 ? "root" : "roots"}, from ${cost.estimator}${tail}.`;
+}
+
+/**
+ * The note's line on `cost.approve_above`: each wave's monthly change against
+ * the amount the config at base sets, and which waves it holds. Undefined
+ * when no wave carries an amount.
+ */
+export function costGateLine(waves: readonly ReportWave[]): string | undefined {
+  const priced = waves.filter((w) => w.cost?.approve_above !== undefined);
+  if (priced.length === 0) return undefined;
+  const c = priced[0].cost!;
+  const each = priced.map((w) => {
+    const change = w.cost!.unestimated?.length ? `not estimated for ${w.cost!.unestimated.join(", ")}` : w.cost!.monthly_delta === null ? "not estimated" : `${signed(w.cost!.monthly_delta)} ${w.cost!.currency}`;
+    return `wave ${w.number} ${change}${w.cost!.over ? ", over it: it waits for an approval whatever the gate" : ", within it"}`;
+  });
+  return `Against \`cost.approve_above\` at base, ${c.approve_above!.toFixed(2)} ${c.currency} a month: ${each.join("; ")}.`;
 }
 
 /** Each root's monthly cost before and after its plan, and the change, with a total row. */
@@ -219,6 +235,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
   if (report.tips && report.tips.length > 0) head.push(`${plural(report.tips.length, "tip")} on how the roots are set up, in the ${artifacts || url === undefined ? "full report" : to("full report", "tips")}.`, "");
   if (report.redaction.values > 0) head.push(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`, "");
   if (report.cost) head.push(costLine(report.cost), "");
+  const gateLine = report.cost ? costGateLine(report.waves) : undefined;
+  if (gateLine) head.push(gateLine, "");
   // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
   const slow = report.timings?.resources.slice(0, 3) ?? [];
   if (slow.length > 0) {
