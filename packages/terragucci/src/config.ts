@@ -585,7 +585,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
 }
 
-const MODULES_KEYS = new Set(["path", "publish", "attest"]);
+const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted"]);
 
 function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
@@ -605,6 +605,35 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
     } else if (typeof m.attest !== "boolean") problems.push(`${where}.attest must be true or a map with key`);
     if (m.attest !== false && m.publish === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish too`);
   }
+  if (m.trusted !== undefined) {
+    if (!Array.isArray(m.trusted)) problems.push(`${where}.trusted must be a list of sources, each with source, key and ledger`);
+    else {
+      m.trusted.forEach((t, i) => {
+        const at = `${where}.trusted[${i}]`;
+        if (!isObject(t)) return void problems.push(`${at} must be a map with source, key and ledger`);
+        for (const k of Object.keys(t)) if (!["source", "key", "ledger"].includes(k)) problems.push(`${at}.${k} is not a setting; use source, key, ledger`);
+        if (typeof t.source !== "string" || !/^(oci:\/\/[^/]+\/.+|(git::)?(https?|ssh):\/\/.+)$/.test(t.source)) problems.push(`${at}.source must be an oci:// prefix or a git URL, as the roots' module sources begin`);
+        if (typeof t.key !== "string" || t.key === "") problems.push(`${at}.key must be the path of the publisher's cosign public key`);
+        if (typeof t.ledger !== "string" || !/^(https?|ssh|file):\/\/.+/.test(t.ledger)) problems.push(`${at}.ledger must be the URL of the git repository whose chant/lifecycle branch holds the release ledger`);
+      });
+    }
+  }
+  if (m.require !== undefined) {
+    if (m.require !== "attested") problems.push(`${where}.require is ${JSON.stringify(m.require)}; the one setting is attested`);
+    else if (!m.attest && !(Array.isArray(m.trusted) && m.trusted.length > 0)) {
+      problems.push(`${where}.require: attested checks the releases this repo attests and the sources ${where}.trusted lists; set ${where}.attest or ${where}.trusted`);
+    }
+  }
+}
+
+/** A publisher in another repo whose releases `modules.require: attested` checks. */
+export interface TrustedModuleSource {
+  /** How the roots' module sources begin: an `oci://` prefix, or the publisher's git URL with or without `git::`. */
+  source: string;
+  /** The publisher's cosign public key, a path in this repo. */
+  key: string;
+  /** The git repository whose `chant/lifecycle` branch holds the publisher's release ledger. */
+  ledger: string;
 }
 
 export interface ModulesSettings {
@@ -612,6 +641,10 @@ export interface ModulesSettings {
   publish?: string | string[];
   /** Sign each release, write its provenance and SBOM, and record it in the release ledger. `true` reads the key at cosign.pub. */
   attest?: boolean | { key?: string };
+  /** `attested`: tf-check and tf-plan refuse a root that pins a release of a checked source unless it verifies. */
+  require?: "attested";
+  /** Publishers in other repos whose releases `require` checks. */
+  trusted?: TrustedModuleSource[];
 }
 
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */

@@ -1,7 +1,7 @@
 ---
 title: Publish your modules
 description: Version the modules beside your roots automatically, as OCI artifacts or git tags, on every merge.
-claims: [publish, version-bump-job, publish-attest]
+claims: [publish, version-bump-job, publish-attest, require-attested, require-recorded]
 prompt: |
   Read https://intentius.io/terragucci/guides/publish-modules/.
   Add the `modules:` block, run `npx terragucci publish --dry-run`, show me what
@@ -163,6 +163,43 @@ Each version runs as a chant component that terragucci writes from this config, 
 The record is a line of `modules/releases.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which `chant components status modules` lists. Beside it, `modules/attest/<digest>/` holds the bundles and the SBOM. An OCI tag also gets the signature and both attestations attached to its manifest.
 
 The publish job pushes a git tag and its record in one atomic push, and pushes an OCI tag only after its record. A tag pushed by hand has no record that matches it, and neither does one moved after its release; `verify-release` refuses both. To go back to an earlier version, [roll out](/terragucci/guides/roll-out-a-module-version/) that version again.
+
+## Require attested releases
+
+With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root that pins a release that does not verify fails, and the check report and the plan note name the root, the module call, the version and why.
+
+```yaml
+modules:
+  publish: git-tags
+  attest: true
+  require: attested
+```
+
+Only checked sources are checked; a module from anywhere else, such as the public registry, is left alone:
+
+| Source | Checked when | Key | Ledger |
+|---|---|---|---|
+| This repo's own modules | `modules.attest` is on: the repo's git URL for `git-tags`, each `oci://` target | `modules.attest.key` | `chant/lifecycle` on `origin` |
+| A publisher in another repo | `modules.trusted` lists it | its `key` | its `ledger` |
+
+```yaml
+modules:
+  require: attested
+  trusted:
+    - source: git::https://git.example.com/platform/modules.git
+      key: keys/platform-modules.pub
+      ledger: https://git.example.com/platform/modules.git
+```
+
+To trust a publisher, commit their `cosign.pub` at the path `key` names. For each pin of a checked source:
+
+| Check | Refused when |
+|---|---|
+| The pin | it names no one release: a git `ref` that is not a tag, an `oci://` source with no tag or digest |
+| The record | the publisher's ledger has no record of the bytes the tag names now, from the tag's commit: a tag pushed by hand, moved, or never published |
+| The signature, provenance and SBOM | any of them is missing or does not verify against the key |
+
+`tf-plan` reads the setting and the keys at the base branch, as it reads [the policy](/terragucci/reference/policy/#the-base-branch-decides), so a pull request cannot turn the check off or trust a key of its own. `tf-check` reads them there when its checkout has the base, and from the checkout otherwise. The jobs fetch the tags and the ledger with their own git access; an `oci://` source is read with no login, or with `TERRAGUCCI_REGISTRY_USER` and `TERRAGUCCI_REGISTRY_PASSWORD` when the job has them.
 
 ## Next
 

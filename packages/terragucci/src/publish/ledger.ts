@@ -103,7 +103,7 @@ export function fetchLedger(repo: string, remote: string): Ledger | undefined {
   const heads = spawnSync("git", ["-C", repo, "ls-remote", "--heads", remote, LIFECYCLE], { encoding: "utf-8" });
   if (heads.status !== 0) throw new Error(`cannot read ${LIFECYCLE} from ${shown(remote)}: ${(heads.stderr || "").trim().split("\n")[0]}`);
   if (!heads.stdout.trim()) return undefined;
-  const f = spawnSync("git", ["-C", repo, "fetch", "-q", "--no-tags", remote, `+refs/heads/${LIFECYCLE}:${local}`], { encoding: "utf-8" });
+  const f = spawnSync("git", ["-C", repo, "fetch", "-q", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${LIFECYCLE}:${local}`], { encoding: "utf-8" });
   if (f.status !== 0) throw new Error(`cannot fetch ${LIFECYCLE} from ${shown(remote)}: ${(f.stderr || "").trim().split("\n")[0]}`);
   return {
     from: shown(remote),

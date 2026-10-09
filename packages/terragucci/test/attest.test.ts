@@ -1,48 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import { publish, verifyPublished } from "../src/publish";
 import { moduleTar, moduleTarAt, sha256 } from "../src/publish/archive";
-import { attestKey, componentName, releaseComponent, type Signer } from "../src/publish/attest";
+import { attestKey, componentName, releaseComponent } from "../src/publish/attest";
 import { fetchLedger, LEDGER_PATH, LIFECYCLE } from "../src/publish/ledger";
 import { moduleSbom } from "../src/publish/sbom";
-import { AttestationError, pae, publicKey, verifyAttestation, verifyRelease } from "../src/publish/verify";
+import { AttestationError, publicKey, verifyAttestation, verifyRelease } from "../src/publish/verify";
 import { git, tmp, write } from "./helpers";
-
-type Pair = { privateKey: KeyObject; pem: string };
-const keyPair = (): Pair => {
-  const { privateKey, publicKey: pub } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  return { privateKey, pem: pub.export({ type: "spki", format: "pem" }).toString() };
-};
-
-const TYPE_URI = { slsaprovenance1: "https://slsa.dev/provenance/v1", spdxjson: "https://spdx.dev/Document" } as const;
-
-/** Bundles shaped as cosign 2's `sign-blob --bundle` and `attest-blob --bundle` write them with a key and no tlog. */
-function testSigner(key: KeyObject): Signer & { calls: string[] } {
-  const calls: string[] = [];
-  return {
-    calls,
-    async signBlob(blob) {
-      calls.push("sign-blob");
-      return JSON.stringify({ base64Signature: sign("sha256", readFileSync(blob), key).toString("base64") });
-    },
-    async attestBlob(blob, predicate, type) {
-      calls.push(`attest-blob ${type}`);
-      const statement = {
-        _type: "https://in-toto.io/Statement/v0.1",
-        predicateType: TYPE_URI[type],
-        subject: [{ name: basename(blob), digest: { sha256: sha256(readFileSync(blob)).slice(7) } }],
-        predicate: JSON.parse(readFileSync(predicate, "utf-8")),
-      };
-      const payload = Buffer.from(JSON.stringify(statement));
-      const envelope = { payloadType: "application/vnd.in-toto+json", payload: payload.toString("base64"), signatures: [{ keyid: "", sig: sign("sha256", pae("application/vnd.in-toto+json", payload), key).toString("base64") }] };
-      return JSON.stringify({ base64Signature: Buffer.from(JSON.stringify(envelope)).toString("base64") });
-    },
-  };
-}
+import { keyPair, testSigner, type Pair } from "./signer";
 
 function commit(dir: string, message: string): void {
   git(dir, "add", "-A");

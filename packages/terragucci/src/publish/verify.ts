@@ -31,6 +31,12 @@ export interface ReleaseSubject {
   bytes: Buffer;
   /** The commit the tag was cut from, when the tag names one (a git tag). */
   commit?: string;
+  /**
+   * Match the ledger's component by its last path segment: an OCI source
+   * names the module `service`, which the publishing repo records as
+   * `modules/service`.
+   */
+  byName?: boolean;
 }
 
 export interface VerifiedRelease {
@@ -122,9 +128,10 @@ function sourceCommit(statement: Statement): string | undefined {
  */
 export function verifyRelease(subject: ReleaseSubject, ledger: Ledger, key: KeyObject): VerifiedRelease {
   const digest = sha256(subject.bytes);
-  const records = ledger.records.filter((r) => r.component === subject.module && r.digest === digest);
+  const ofModule = (component: string): boolean => (subject.byName ? component.split("/").pop() === subject.module : component === subject.module);
+  const records = ledger.records.filter((r) => ofModule(r.component) && r.digest === digest);
   if (records.length === 0) {
-    const others = ledger.records.filter((r) => r.component === subject.module).length;
+    const others = ledger.records.filter((r) => ofModule(r.component)).length;
     throw new AttestationError(
       others
         ? `${digest} is not in the release ledger (${ledger.from}): the ledger records ${others} release${others === 1 ? "" : "s"} of ${subject.module} and none has these bytes, so the tag was not written by an attested publish or was changed since`
