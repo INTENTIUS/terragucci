@@ -69,7 +69,7 @@ const forgejoSerializer = {
     return githubSerializer.serialize(applyForgejoDialect(entities as never, {}).entities as never);
   },
 };
-import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, WAVE_JOBS_NOT_TERRAGRUNT, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
+import { APPLY_REQUIRES, COMMENTS_GITLAB_ONLY, WAVE_JOBS_NOT_GITLAB, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NO_GITLAB_PLAN_LOCKS, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
@@ -165,7 +165,7 @@ export interface PipelineInput {
   gitlabToken?: GitLabToken;
   /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
   canary?: string[];
-  /** `waves.jobs`: the most jobs one wave's roots spread across. A wave of more roots than one gets a job that decides it and a share job per part (GitHub and Forgejo, plain roots). */
+  /** `waves.jobs`: the most jobs one wave's roots or units spread across. A wave of more than one gets a job that decides it and a share job per part (GitHub and Forgejo). */
   waveJobs?: number;
   /** When a wave waits for an approval. Default on-destroy. */
   gate?: Gate;
@@ -766,7 +766,8 @@ export function applyScript(
   // A wave split across jobs: its own job decides (first, as wave 1's always is), and its shares apply; the done job posts the last success.
   const share = input.shares !== undefined ? input.share : undefined;
   const first = input.wave === 1 && share === undefined;
-  const last = input.wave === count && input.shares === undefined;
+  // A Terragrunt pipeline whose last wave splits ends with a job past it, which runs any later wave with --rest.
+  const last = input.wave >= count && input.shares === undefined;
   const triage = responds(input.respond, "apply-failed");
   // A share refused for plans that moved since its wave decided has no approved report for respond to compare.
   const refused = responds(input.respond, "wave-refused") && share === undefined;
@@ -1574,7 +1575,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tg = input.terragrunt;
   // waves.jobs: a wave of more roots than one job spreads across share jobs, after a job of its own plans it and decides its gate.
   const waveJobs = input.waveJobs !== undefined && input.waveJobs > 1 ? input.waveJobs : undefined;
-  if (waveJobs && tg) throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_TERRAGRUNT}`);
   if (waveJobs && forge === "gitlab") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
   if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
@@ -1631,7 +1631,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
-  const cut = tg ? [] : applyWaves(layers, input.canary);
+  // A Terragrunt repo's layers are its waves already; the stage splits a wave's units across its share jobs as it cuts them.
+  const cut = tg ? layers : applyWaves(layers, input.canary);
   const sharesOf = (i: number): number => (waveJobs && cut[i] ? waveShares(cut[i], waveJobs).length : 1);
   // Once one wave splits, every apply job holds the run's shared lock, so the shares apply side by side and no other run applies meanwhile.
   const split = cut.some((_, i) => sharesOf(i) > 1);
@@ -1651,8 +1652,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       }
     }
   }
-  // The last wave's shares end side by side: one job after them all posts the success.
-  if (before.length > 1) applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true });
+  // The last wave's shares end side by side: one job after them all posts the success. In a Terragrunt repo that job
+  // also runs, with --rest, any wave Terragrunt's edges cut past the pipeline's, so it applies like a wave's job.
+  if (before.length > 1 && tg) {
+    const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), sharedLock: "apply-rest" };
+    applyJobs.push({ name: "apply-rest", wave: waveCount + 1, needs: before, step: "Apply any wave past the pipeline's, then say every wave applied", body: applyScript(binary, layers, forge, oidc, rest) });
+  } else if (before.length > 1) {
+    applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true });
+  }
   // Forgejo pushes a merge as the user who asked for it, and refuses a push to a branch from the job's own token.
   if (prApply && input.applyMerge === "auto" && forge === "forgejo" && !input.applyMergeTokenEnv) throw new RenderError("apply.merge: auto on Forgejo needs apply.merge_token_env: Forgejo refuses a merge made with the job's own token, so name the secret holding the token of a user who may push to the default branch");
   // GitLab: the comments job reads `/terragucci apply` and starts the mr-apply pipeline with the merge token.
