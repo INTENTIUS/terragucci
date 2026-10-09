@@ -1363,6 +1363,14 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "estate-graph",
+      "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a2553bf6"
+    },
+    {
       "claim": "resource-history",
       "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
       "needs": null,

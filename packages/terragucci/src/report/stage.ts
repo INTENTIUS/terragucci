@@ -50,7 +50,9 @@ import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
+import type { Report, ReportBlast, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
+import { blastRadius } from "./graph";
+import { changesSomething } from "./changing";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
 import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
@@ -971,7 +973,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
       };
     });
 
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}) });
+  // The blast radius: the roots whose plan changes something, and every root that reads their state, followed through.
+  const changing = inputs.filter((i) => i.plan !== undefined && !i.error && changesSomething(i.plan)).map((i) => i.path);
+  const blast = !drift && changing.length > 0 ? blastRadius(readsOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}) });
 }
 
 interface Planned {
@@ -997,6 +1002,8 @@ interface Planned {
   attributions?: Map<string, Attributed>;
   /** Lines for the note about how the roots were selected (`synth`: how many were unchanged). */
   notices?: string[];
+  /** tf-plan of plain roots: what the change reaches through the roots that read the changed roots' state. */
+  blast?: ReportBlast;
 }
 
 /**
@@ -1239,7 +1246,7 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [] }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast }: Planned,
 ): Promise<StageResult> {
   let inputs = planned;
   let policy: ReportPolicy | undefined;
@@ -1299,6 +1306,7 @@ async function finish(
     ...(deferred?.length ? { deferred } : {}),
     ...(policy ? { policy } : {}),
   });
+  if (blast) report.blast = blast;
   // Tips are advice: they read the repo and the finished report, and change neither.
   if (settings.tips) {
     const parser = await loadHclParser().catch(() => undefined);
