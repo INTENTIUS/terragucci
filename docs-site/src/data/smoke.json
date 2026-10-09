@@ -1331,6 +1331,14 @@
       "commit": "4107acc"
     },
     {
+      "claim": "migrate-resume",
+      "says": "with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1fc42e9"
+    },
+    {
       "claim": "dora",
       "says": "terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each",
       "needs": null,

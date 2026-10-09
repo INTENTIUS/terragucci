@@ -76,7 +76,7 @@ State contents stay in your backend and the job's temporary directory. The recor
 
 5. Approve it from a checkout. `terragucci approve` finds the migration, prints what it moves and runs the `chant approve` command for its digest, with `--sign` under `approval: sealed`. With a wave waiting too, name it: `terragucci approve split-queues`. A pull request review does not approve a migration, under any `approval:` mode.
 
-6. Wave 1 runs again by itself: `terragucci approve` starts it with your forge token, or the resume job does on its next run with `apply.resume` set ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). It writes the states and goes on to plan and apply the wave:
+6. Wave 1 runs again by itself: `terragucci approve` starts it with your forge token, or the resume job does on its next run with `apply.resume` set ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). Under `gate: never` the pipeline has no resume job, since no wave waits; there `terragucci approve` starts wave 1 itself, or you run it again. It writes the states and goes on to plan and apply the wave:
 
    ```text
    migration split-queues: approved by alice for this digest
