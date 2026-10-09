@@ -35,7 +35,7 @@ import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
 import { agentCommentInput } from "./agent-comment";
-import { reviewInput } from "./review-agent";
+import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { MARKER, RenderError, renderPipeline, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { migrationFiles } from "./migrate";
@@ -303,17 +303,19 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
   const rolloutRel = forgeChoice.value === "gitlab" ? undefined : ROLLOUT_PATHS[forgeChoice.value];
+  const reviewRel = forgeChoice.value === "gitlab" ? undefined : REVIEW_PATHS[forgeChoice.value];
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
-    // The rollout workflow, like the pipeline, overwrites only a file terragucci wrote.
-    if (f.path === rolloutRel && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    // The rollout and review workflows, like the pipeline, overwrite only a file terragucci wrote.
+    if ((f.path === rolloutRel || f.path === reviewRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
   }
-  // A rollout workflow an earlier init wrote goes when the config stops asking for it.
-  if (rolloutRel && !(pipeline.extra ?? []).some((f) => f.path === rolloutRel) && !options.settings) {
-    const rolloutPath = join(repo, rolloutRel);
-    if (existsSync(rolloutPath) && readFileSync(rolloutPath, "utf-8").startsWith(MARKER)) files.push({ path: rolloutPath, status: "removed", content: "" });
+  // A rollout or review workflow an earlier init wrote goes when the config stops asking for it.
+  for (const rel of [rolloutRel, reviewRel]) {
+    if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
+    const path = join(repo, rel);
+    if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });
   }
   // On GitLab the repo's own .gitlab-ci.yml includes the pipeline; its jobs stay.
   if (forgeChoice.value === "gitlab") {

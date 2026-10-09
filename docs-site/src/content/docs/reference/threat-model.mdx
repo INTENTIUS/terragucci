@@ -58,7 +58,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. This page na
 | `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else `github.token`; `contents: write`, pull requests | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the job's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
-| `review` | after `plan`, with `review.agent` | the change's diff, title and description as data in a prompt; the command and the instructions from the default branch | `github.token`, `contents: read`, kept from the command's step | none |
+| `review` | `workflow_run` after the pipeline's run of a pull request from the repo, with `review.agent`; the review workflow is the default branch's | the change's diff, title and description, and its run's plan report, as data in a prompt; the command and the instructions from the default branch | `github.token`: contents, actions and pull requests read, kept from the command's step | none |
 | `review-note` | after `review` | none of the change's; the review read as data | `github.token`, `pull-requests: write` | none |
 
 The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the default branch's ref for every job a comment, schedule or push to it starts.
@@ -122,7 +122,7 @@ The OIDC subject is `repo:<owner>/<repo>:pull_request` for `plan`, and the defau
 | `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else the run's own | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the run's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
-| `review` | after `plan`, with `review.agent` | the change's diff, title and description as data in a prompt; the command and the instructions from the default branch | the run's own, kept from the command's step | none |
+| `review` | `pull_request_target` of a pull request from the repo, with `review.agent`; the review workflow is the base branch's | the change's diff, title and description, and its run's plan report, as data in a prompt; the command and the instructions from the default branch | the run's own, which can write, kept from the command's step | none |
 | `review-note` | after `review` | none of the change's; the review read as data | the run's own | none |
 
 Forgejo sets the run token's scope itself; a job with a cloud role asks only for `id-token: write`, with `enable-openid-connect: true`. The OIDC subject is `...:pull_request` for `plan` and the default branch's ref for the rest.
@@ -217,15 +217,21 @@ The review command reads text the change's author wrote: the title, the descript
 
 | Guard | What it stops |
 |---|---|
-| the command's step holds the model's key and no forge token: the job's token is read-only and the step clears the runner's token variables | the model posting, pushing or approving anything itself |
+| the review jobs are a workflow of their own, which the forge runs from the default branch: GitHub on `workflow_run`, Forgejo on `pull_request_target`; the head is checked out without credentials and nothing in it runs | a pull request editing the review jobs it gets |
+| the command's step holds the model's key and no forge token: the step clears the runner's token variables, and on GitHub the job's token only reads | the model posting, pushing or approving anything itself |
 | neither review job has a cloud role | the model reaching the cloud through the pipeline |
 | the instructions are read from the default branch with `git show`, and the command runs in the default branch's files | a pull request rewriting what the model is told, or the script the command names |
 | `review-note` posts one issue comment, with every HTML comment in the review turned into text | a review that approves, or that carries a marker another job reads, such as the plan note's waves |
-| `input.review` is read from the `terragucci-review` artifact of a `pull_request` run of the merged head, never from a note | a note, posted by any user or by any run's token (another branch's run included), setting the risk a policy reads |
+| `input.review` is read from the `terragucci-review-<head>` artifact only when the forge says a run of the default branch's review workflow kept it: on GitHub a `workflow_run` run of `terragucci-review.yml`; on Forgejo a `pull_request_target` run of it whose event names the default branch as base and the merged pull request and head. The artifact must also say it reviewed that pull request and head against the default branch | an artifact of the same name kept by any other run, the pull request's own pipeline or its edited copy of the review workflow included; a review of the head against another base |
+| no note is read for `input.review` | a note, posted by any user or by any run's token (another branch's run included), setting the risk a policy reads |
 
-What this does not stop: a hidden instruction can still steer what the note says, such as risk `low` for a risky change. The note informs reviewers and is never an approval. A policy on `input.review.risk` holds back what the model flags; it cannot vouch for what the model misses. A pull request from the repo runs its own pipeline file, so a writer can edit the review jobs to keep a review of their choosing, as for every job in [What the generated jobs reach](#what-the-generated-jobs-reach). That edit is in the merged head's diff, where reviewers see it. A note posted with the pipeline's token, from that run or any other, changes what people read on the pull request and nothing the policy reads.
+What this does not stop: a hidden instruction can still steer what the note says, such as risk `low` for a risky change. The note informs reviewers and is never an approval. A policy on `input.review.risk` holds back what the model flags; it cannot vouch for what the model misses. The plan note and policy results in the prompt come from the plan job of the pull request's own run, which the pull request can edit to show a plan it does not make, as for every job in [What the generated jobs reach](#what-the-generated-jobs-reach). The diff in the prompt is taken by the review job itself from git, so such an edit is in what the model reads and in the merged head's diff, where reviewers see it. On Forgejo the review waits up to 30 minutes for that plan, then reviews without it. A note posted with the pipeline's token, from that run or any other, changes what people read on the pull request and nothing the policy reads.
 
-On Forgejo the runner gives the run's token to every step of the `review` job but the command's. A command that runs tools and leaves a process behind could read it in the step that keeps the review, as in [Where the token scrub ends](#where-the-token-scrub-ends). The default command runs no tools.
+The verdict is what the review job keeps: the review command's output, and the pull request, head and base the step before it wrote. A review command that runs tools could rewrite them in the job; the default command runs no tools.
+
+Forgejo runs a `pull_request_target` workflow from the pull request's base, not always the default branch. A writer who opens a pull request against a branch whose review workflow they edited gets a run of that copy, and its artifact is passed over, since the run's event names another base. Forgejo has no `workflow_run`.
+
+On Forgejo a `pull_request_target` run's token can write, and the runner gives it to every step of the `review` job but the command's. A command that runs tools and leaves a process behind could read it in the step that keeps the review, as in [Where the token scrub ends](#where-the-token-scrub-ends). The default command runs no tools.
 
 ## Where the token scrub ends
 

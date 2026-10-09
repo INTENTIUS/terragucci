@@ -1316,13 +1316,16 @@ async function priceWave(
 
 /**
  * What the wave's policy reads as `input.review`: the verdict the review job
- * kept as its artifact, in a run of the head of the pull request this commit
- * merged (or `TG_PR`'s, applied before merge). Notes on the pull request are
- * not read: any run's token can post one. GitLab has no review job, and a
+ * kept as its artifact, in a run of the default branch's review workflow that
+ * reviewed the head of the pull request this commit merged (or `TG_PR`'s,
+ * applied before merge). Notes on the pull request are not read: any run's
+ * token can post one. Nor is an artifact a run of the pull request's own
+ * pipeline kept, which the pull request can edit. GitLab has no review job, and a
  * commit no pull request made has no review: both read as not found.
  */
-async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string): Promise<PolicyReview> {
-  if (env.GITLAB_CI === "true") return noReview();
+async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string, forge: string | undefined): Promise<PolicyReview> {
+  if (env.GITLAB_CI === "true" || forge === "gitlab") return noReview();
+  const on: "github" | "forgejo" = forge === "forgejo" || forge === "github" ? forge : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
   const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   try {
     const f = forgeCalls(env, options.fetch);
@@ -1331,10 +1334,11 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
       console.log(`${label}: review: no pull request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
       return noReview();
     }
-    const { run, ...review } = await reviewOfPull(f, pr, artifactBytes(env, (options.fetch ?? fetch) as unknown as FetchBytes));
+    const { run, skipped, ...review } = await reviewOfPull(f, pr, artifactBytes(env, (options.fetch ?? fetch) as unknown as FetchBytes), on);
+    for (const s of skipped) console.log(`${label}: review: skipped the review artifact of ${s.run === null ? "an unnamed run" : `run ${s.run}`}, since ${s.why}`);
     console.log(review.found
-      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk} in run ${run}, which the policy reads as input.review`
-      : `${label}: review: no run of pull request ${pr.number}'s head ${pr.head.slice(0, 8)} kept a review, so input.review.found is false`);
+      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk} in run ${run} of the default branch's review workflow, which the policy reads as input.review`
+      : `${label}: review: no run of the default branch's review workflow kept a review of pull request ${pr.number}'s head ${pr.head.slice(0, 8)}, so input.review.found is false`);
     return review;
   } catch (e) {
     console.log(`${label}: review: could not read the pull request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
@@ -1367,7 +1371,7 @@ async function policyGate(
     // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
     const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
     // With review.agent on, the policy reads the review of the merged pull request's head as input.review.
-    const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label) : undefined;
+    const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label, settings.forge) : undefined;
     const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit, ...(review ? { review } : {}) });
     const denied = found.failed;
     w.policy = found.policy;
