@@ -1007,7 +1007,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "39b07c05"
+      "commit": "fc315e08"
     },
     {
       "claim": "root-pins",
