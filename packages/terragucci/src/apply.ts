@@ -585,6 +585,8 @@ interface WaveRun {
   line?: string;
   /** The roots whose apply failed. */
   failed?: string[];
+  /** The roots it applied, and those it had nothing to apply to: the report lists the resources each holds. */
+  applied?: Set<string>;
 }
 
 /**
@@ -610,7 +612,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy };
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
     }),
     waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}) }],
     redacted,
@@ -731,6 +733,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   await eachLimited(planned, limit.value, async (p, i) => {
     ok[i] = await applyRoot(repo, binary, p, w.observer);
   });
+  w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
   if (ok.includes(false)) {
     w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
     console.log(`${label}: an apply failed`);
@@ -1223,6 +1226,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   const changing = units.filter((p) => p.changes > 0 || p.outputs);
   if (changing.length === 0) {
     facts.nothing = true;
+    w.applied = new Set(units.map((p) => p.root));
     console.log(`${label}: no changes`);
     console.log(`${label} applied`);
     return EXIT.applied;
@@ -1239,6 +1243,9 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   const applied = await applyTerragruntWave({ ...run, units: changing.map((p) => p.root), workDir: planDir });
   console.log(applied.log.trim());
   const bad = applied.results.filter((r) => r.status !== "succeeded");
+  // A unit with no change had nothing to apply; a changing one applied when Terragrunt says it succeeded.
+  const succeeded = new Set(applied.results.filter((r) => r.status === "succeeded").map((r) => r.unit));
+  w.applied = new Set(units.filter((p) => !changing.includes(p) || (applied.code === 0 && succeeded.has(p.root))).map((p) => p.root));
   if (applied.code !== 0 || bad.length > 0) {
     for (const r of bad) console.log(`FAILED ${r.unit}: ${r.result}${r.error ? `: ${r.error}` : ""}`);
     w.failed = bad.map((r) => r.unit);

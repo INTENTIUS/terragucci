@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/terragucci/schemas/estate/v1/estate.schema.json",
   "title": "terragucci.estate/v1",
-  "description": "estate.json at the top of a reports prefix, which terragucci estate builds from every project's index.json alone. Within v1 fields are only added, and an existing field never changes meaning.",
+  "description": "estate.json at the top of a reports prefix, which terragucci estate builds from every project's index.json and inventory.json. Within v1 fields are only added, and an existing field never changes meaning.",
   "type": "object",
   "required": ["schema", "generated", "totals", "projects", "recent"],
   "properties": {
@@ -18,7 +18,8 @@
         "drifted_roots": { "type": "integer" },
         "failed_roots": { "type": "integer" },
         "unreadable": { "type": "integer", "description": "Projects whose index could not be read." },
-        "overridden_roots": { "type": "integer", "description": "Roots the newest apply waves applied under a policy override. Absent when none." }
+        "overridden_roots": { "type": "integer", "description": "Roots the newest apply waves applied under a policy override. Absent when none." },
+        "resources": { "type": "integer", "description": "Resources across every project's inventory. Absent when no project has one." }
       }
     },
     "projects": { "type": "array", "items": { "$ref": "#/$defs/project" } },
@@ -105,7 +106,45 @@
         "waiting": { "type": "array", "items": { "$ref": "#/$defs/waiting" } },
         "drifted": { "type": "integer", "description": "Roots that drifted in the latest drift check." },
         "failed": { "type": "integer", "description": "Roots that failed in the latest plan, drift check and apply waves." },
-        "overridden": { "type": "integer", "description": "Roots the newest commit's apply waves applied under a policy override. Absent when none." }
+        "overridden": { "type": "integer", "description": "Roots the newest commit's apply waves applied under a policy override. Absent when none." },
+        "inventory": { "$ref": "#/$defs/inventory", "description": "The resources its roots hold, from its inventory.json. Absent until an apply records them." }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "required": ["resources", "types", "roots"],
+      "properties": {
+        "resources": { "type": "integer" },
+        "types": {
+          "type": "array",
+          "description": "How many resources of each type, most first.",
+          "items": { "type": "object", "required": ["type", "count"], "properties": { "type": { "type": "string" }, "count": { "type": "integer" } } }
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "One root's resources, as its newest applied wave left them.",
+            "required": ["root", "commit", "finished", "resources"],
+            "properties": {
+              "root": { "type": "string" },
+              "commit": { "type": "string" },
+              "finished": { "type": "string" },
+              "wave": { "type": "integer" },
+              "report": { "type": "string", "description": "The wave's report.html, when the page can link it." },
+              "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" } }
+            }
+          }
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["address", "type", "provider"],
+      "properties": {
+        "address": { "type": "string" },
+        "type": { "type": "string" },
+        "provider": { "type": "string" }
       }
     }
   }

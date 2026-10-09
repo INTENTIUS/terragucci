@@ -6,6 +6,8 @@
  * `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-N]/`, and the
  * index at the project's path and at the top of the prefix gains a row.
  * Links inside a report are relative, so they resolve in both layouts.
+ * A `tf-apply` wave's upload also replaces the resource lists of the roots it
+ * applied in `<prefix>/<project>/inventory.json` (inventory.ts).
  * An index keeps INDEX_ROWS rows and the newest of each project, stage and
  * wave; `terragucci estate` (estate.ts) reads nothing else.
  *
@@ -20,6 +22,7 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { esc, renderHtml } from "./html";
+import { addToInventory, inventoryRoots } from "./inventory";
 import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
 import type { Report } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
@@ -293,6 +296,8 @@ export interface Uploaded {
   prefix: string;
   files: number;
   indexes: string[];
+  /** The project's inventory, when a tf-apply wave's roots applied. */
+  inventory?: string;
 }
 
 /** How many times an index is read and written again when another run wrote it in between. */
@@ -304,27 +309,37 @@ const backoff = (attempt: number): Promise<void> => new Promise((r) => setTimeou
 export type Wait = (attempt: number) => Promise<void>;
 
 /**
- * Add `entry` to the index at `key`. The write is conditional on the copy
- * read: If-Match its ETag, or If-None-Match `*` when there was none. When
- * another run wrote the index in between, the write is refused, and the
- * index is read and the row added again, up to INDEX_TRIES times. A store
- * that sends no ETag gets an unconditional write, the last one winning.
+ * Write the JSON object at `key` that `build` makes from the copy read. The
+ * write is conditional on that copy: If-Match its ETag, or If-None-Match `*`
+ * when there was none. When another run wrote the object in between, the
+ * write is refused, and the object is read and built again, up to
+ * INDEX_TRIES times. A store that sends no ETag gets an unconditional write,
+ * the last one winning.
  */
-export async function updateIndex(s3: ObjectStore, key: string, entry: IndexEntry, wait: Wait = backoff): Promise<{ index: ReportIndex; etag?: string }> {
+export async function updateJson<T>(s3: ObjectStore, key: string, build: (existing: string | undefined) => T, what: string, wait: Wait = backoff): Promise<{ value: T; etag?: string }> {
   for (let attempt = 1; ; attempt++) {
     const read = await s3.read(key);
-    const index = addToIndex(read.body, entry);
+    const value = build(read.body);
     const when = read.etag ? { ifMatch: read.etag } : read.body === undefined ? { ifNoneMatch: "*" as const } : undefined;
     try {
-      const put = await s3.put(key, JSON.stringify(index, null, 2) + "\n", TYPES.json, when);
-      return { index, ...(put.etag ? { etag: put.etag } : {}) };
+      const put = await s3.put(key, JSON.stringify(value, null, 2) + "\n", TYPES.json, when);
+      return { value, ...(put.etag ? { etag: put.etag } : {}) };
     } catch (e) {
       if (!(e instanceof StoreConflict)) throw e;
-      if (attempt >= INDEX_TRIES) throw new StoreError(`${key} changed under this run ${INDEX_TRIES} times in a row; its row was not added`);
+      if (attempt >= INDEX_TRIES) throw new StoreError(`${key} changed under this run ${INDEX_TRIES} times in a row; ${what} was not added`);
       await wait(attempt);
     }
   }
 }
+
+/** Add `entry` to the index at `key`, conditional on the copy read (updateJson). */
+export async function updateIndex(s3: ObjectStore, key: string, entry: IndexEntry, wait: Wait = backoff): Promise<{ index: ReportIndex; etag?: string }> {
+  const { value, etag } = await updateJson(s3, key, (body) => addToIndex(body, entry), "its row", wait);
+  return { index: value, ...(etag ? { etag } : {}) };
+}
+
+/** The key of a project's inventory: `<prefix>/<project>/inventory.json`. */
+export const inventoryKey = (project: string, prefix = ""): string => joinKey(prefix, project, "inventory.json");
 
 /**
  * Write index.html from the index this run wrote, then check index.json
@@ -368,7 +383,14 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
     await writeIndexHtml(s3, at, title, index, etag);
     indexes.push(key);
   }
-  return { prefix: key, files: files.length, indexes };
+  // A tf-apply wave's roots that applied replace their resource lists in the project's inventory.
+  const applied = inventoryRoots(report, run);
+  let inventory: string | undefined;
+  if (applied.length > 0) {
+    inventory = inventoryKey(project, top);
+    await updateJson(s3, inventory, (body) => addToInventory(body, applied), "its resources", wait);
+  }
+  return { prefix: key, files: files.length, indexes, ...(inventory ? { inventory } : {}) };
 }
 
 /**

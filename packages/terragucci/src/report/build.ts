@@ -11,6 +11,7 @@ import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/chang
 import type { Gate } from "../config";
 import { changesSomething, destroysSomething } from "./changing";
 import { changeKind, foldChange } from "./highlight";
+import { planResources } from "./inventory";
 import { isObject } from "./redact";
 import {
   REDACTED, REPORT_MINOR, REPORT_SCHEMA,
@@ -45,6 +46,8 @@ export interface RootInput {
    * changes stay in the report.
    */
   policy?: ReportRootPolicy;
+  /** A `tf-apply` wave applied the root, or it had nothing to apply: the report lists the resources its plan leaves. */
+  applied?: boolean;
 }
 
 export interface WaveInput {
@@ -244,6 +247,7 @@ export function buildReport(input: BuildInput): Report {
       fold: why.length > 0 ? "open" : "folded",
       why,
       ...(src.policy ? { policy: src.policy } : {}),
+      ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan) } : {}),
     };
   });
 
