@@ -30,6 +30,18 @@
 #                                     and show what the comments job answered: write
 #                                     /terragucci plan or /terragucci apply on a merge
 #                                     request first, signed in as root
+#   stack/example-gitlab.sh plan-comment [name]
+#                                     note /terragucci plan on the scenario's merge
+#                                     request (default one-root), play the comments
+#                                     schedule, and wait for the merge request
+#                                     pipeline it starts, whose plan job updates
+#                                     the plan note
+#   stack/example-gitlab.sh pr-apply  apply before merge as the docs set it up:
+#                                     main gets apply.when: pull-request with
+#                                     merge: auto and the merge token, a reviewer
+#                                     approves change/one-root, /terragucci apply is
+#                                     noted, and the comments schedule's pipeline
+#                                     on main applies and merges it ('reset' after)
 #   stack/example-gitlab.sh logs      the last failed pipeline's failing lines
 #   stack/example-gitlab.sh reset     close every merge request, put main back to
 #                                     the example as committed, and apply it again
@@ -106,7 +118,9 @@ if [ -n "$LAB" ]; then
   export TG_TOFU_IMAGE
 fi
 # shellcheck source=lib.sh
-LIB_FORGE=gitlab . "$HERE/lib.sh"
+# Set for the whole run, not the source alone: push_tree reads it when it pushes.
+LIB_FORGE=gitlab
+. "$HERE/lib.sh"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-example-gitlab.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 # glapi, pid, unprotect_all, forge_open_pr and forge_merge_pr.
@@ -472,6 +486,76 @@ OUT
     trace "$job" | grep '^terragucci comment:' | sed 's/^/  /' || true
     ;;
 
+  plan-comment)
+    name="${1:-one-root}"
+    iid="$(forge_open_pr example "change/$name")"
+    [ -n "$iid" ] || fail "no open merge request for change/$name; run 'just example-gitlab change $name' first"
+    before="$(api "$P/pipelines?source=merge_request_event&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+    api -o /dev/null -X POST "$P/merge_requests/$iid/notes" --data-urlencode "body=/terragucci plan" || fail "could not note /terragucci plan on !$iid"
+    log "noted /terragucci plan on !$iid"
+    "$0" comments >&2 || fail "the comments schedule failed"
+    id="$before"
+    for _ in $(seq 1 60); do
+      id="$(api "$P/pipelines?source=merge_request_event&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+      [ "$id" -gt "$before" ] && break
+      sleep 2
+    done
+    [ "$id" -gt "$before" ] || fail "the comments job started no merge request pipeline for !$iid"
+    wait_pipeline "$(api "$P/pipelines/$id" | jq -r .sha)" merge_request_event
+    printf '\n  Merge request  %s/%s/-/merge_requests/%s (the plan note is updated in place)\n  Re-plan        %s (%s)\n' "$URL" "$REPO" "$iid" "$PIPE_URL" "$PIPE_STATUS"
+    ;;
+
+  pr-apply)
+    # main applies merge requests before they merge, with the merge token in a
+    # variable that only the terragucci-merge environment's jobs read.
+    clone_main "$WORK/tree"
+    printf 'apply:\n  when: pull-request\n  merge: auto\n  merge_token_env: TERRAGUCCI_MERGE_TOKEN\n' >> "$WORK/tree/terragucci.yml"
+    (cd "$WORK/tree" && "$TERRAGUCCI" init >/dev/null 2>&1) || fail "terragucci init failed with apply.when: pull-request"
+    grep -q '^mr-apply:$' "$WORK/tree/.gitlab/terragucci.yml" || fail "the pipeline init wrote has no mr-apply job"
+    sha="$(gl_push "$WORK/tree" main "Apply merge requests before they merge")"
+    wait_pipeline "$sha" push
+    api -o /dev/null -X DELETE "$P/variables/TERRAGUCCI_MERGE_TOKEN?filter%5Benvironment_scope%5D=terragucci-merge" 2>/dev/null || true
+    api -o /dev/null -X POST "$P/variables" --data-urlencode "key=TERRAGUCCI_MERGE_TOKEN" --data-urlencode "value=$TOKEN" \
+      --data-urlencode "environment_scope=terragucci-merge" --data-urlencode "protected=false" --data-urlencode "masked=true" \
+      || fail "could not set TERRAGUCCI_MERGE_TOKEN"
+    # A reviewer other than the merge request's author approves its head.
+    uid="$(api "$URL/api/v4/users?username=reviewer" | jq -r '.[0].id // empty')"
+    if [ -z "$uid" ]; then
+      uid="$(api -X POST "$URL/api/v4/users" --data-urlencode "username=reviewer" --data-urlencode "name=Reviewer" \
+        --data-urlencode "email=reviewer@terragucci.local" --data-urlencode "password=Tg$(openssl rand -hex 16)!Zq" \
+        --data-urlencode "skip_confirmation=true" | jq -r '.id // empty')"
+    fi
+    [ -n "$uid" ] || fail "could not make the reviewer"
+    api -o /dev/null -X POST "$P/members" --data-urlencode "user_id=$uid" --data-urlencode "access_level=30" 2>/dev/null || true
+    rtok="$(api -X POST "$URL/api/v4/users/$uid/personal_access_tokens" --data-urlencode "name=reviewer-$RANDOM" --data-urlencode "scopes[]=api" \
+      --data-urlencode "expires_at=$(date -v+2d +%Y-%m-%d 2>/dev/null || date -d '+2 days' +%Y-%m-%d)" | jq -r '.token // empty')"
+    [ -n "$rtok" ] || fail "no token for the reviewer"
+    "$0" change one-root >&2 || fail "change one-root failed"
+    iid="$(forge_open_pr example change/one-root)"
+    [ -n "$iid" ] || fail "no merge request for change/one-root"
+    head="$(api "$P/merge_requests/$iid" | jq -r .sha)"
+    sleep 2
+    curl -fsS -o /dev/null -H "PRIVATE-TOKEN: $rtok" -X POST "$P/merge_requests/$iid/approve" || fail "the reviewer could not approve !$iid"
+    log "reviewer approved !$iid at ${head:0:8}"
+    before="$(api "$P/pipelines?source=api&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+    api -o /dev/null -X POST "$P/merge_requests/$iid/notes" --data-urlencode "body=/terragucci apply" || fail "could not note /terragucci apply on !$iid"
+    log "noted /terragucci apply on !$iid"
+    "$0" comments >&2 || fail "the comments schedule failed"
+    id="$before"
+    for _ in $(seq 1 60); do
+      id="$(api "$P/pipelines?source=api&order_by=id&sort=desc" | jq -r '.[0].id // 0')"
+      [ "$id" -gt "$before" ] && break
+      sleep 2
+    done
+    [ "$id" -gt "$before" ] || fail "the comments job started no pipeline on main for !$iid"
+    wait_pipeline "$(api "$P/pipelines/$id" | jq -r .sha)" api
+    state="$(api "$P/merge_requests/$iid" | jq -r .state)"
+    printf '\n  Merge request  %s/%s/-/merge_requests/%s (%s)\n  Apply          %s (%s)\n' "$URL" "$REPO" "$iid" "$state" "$PIPE_URL" "$PIPE_STATUS"
+    api "$P/merge_requests/$iid/notes?sort=asc&per_page=100" | jq -r '.[] | select(.body | startswith("terragucci:")) | .body' \
+      | sed -E 's/<!--.*-->//g; /^[[:space:]]*$/d; s/^/  /'
+    [ "$state" = merged ] || fail "!$iid was not merged after /terragucci apply"
+    ;;
+
   logs)
     pipe="$(last_failed)"
     [ -n "$pipe" ] || { log "no failed pipeline"; exit 0; }
@@ -554,6 +638,9 @@ OUT
     step change one-root || fail "change one-root failed"
     iid="$(forge_open_pr example change/one-root)"
     take note "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'Posted by' --fit 1
+    # The re-plan updates that note in place; the picture runs on to the note below it.
+    step plan-comment one-root || fail "plan-comment one-root failed"
+    take replan "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'Posted by' --height 1200
 
     step change unformatted || fail "change unformatted failed"
     # The check job's fix moves the branch, so its first push pipeline is the one that failed.
@@ -577,10 +664,17 @@ OUT
     [ -n "$issue" ] || fail "the drift run opened no issue"
     take drift "/$REPO/-/issues/$issue" --height 860
 
+    # Apply before merge changes main's pipeline, so it runs on a reset example.
+    "$0" reset >&2 || fail "reset failed"
+    step pr-apply || fail "pr-apply failed"
+    iid="$(api "$P/merge_requests?state=merged&source_branch=change%2Fone-root&order_by=updated_at" | jq -r '.[0].iid // empty')"
+    [ -n "$iid" ] || fail "no merged merge request from change/one-root"
+    take apply "/$REPO/-/merge_requests/$iid" --scroll 'li.note' --match 'applied wave' --height 420
+
     # The hash tutorial-check computes, as every capture records it.
     hash="$(cd "$ROOT" && node scripts/tutorial-check.mjs --hash)"
     shots='{}'
-    for view in required note check waiting drift; do
+    for view in required note replan check waiting drift apply; do
       for scheme in light dark; do
         cp "$WORK/shots/$view-$scheme.png" "$SHOTS/gitlab-$view-$scheme.png"
         h="$(shasum -a 256 "$SHOTS/gitlab-$view-$scheme.png" | cut -c1-16)"

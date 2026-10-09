@@ -4,12 +4,17 @@
   "commands": [
     {
       "cmd": "just example-gitlab change one-root",
-      "output": "Merge request  /root/example/-/merge_requests/1 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/257 (success)\nCheck          /root/example/-/pipelines/256 (success)",
+      "output": "Merge request  /root/example/-/merge_requests/3 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/15 (success)\nCheck          /root/example/-/pipelines/14 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab plan-comment one-root",
+      "output": "Merge request  /root/example/-/merge_requests/3 (the plan note is updated in place)\nRe-plan        /root/example/-/pipelines/17 (success)",
       "exit": 0
     },
     {
       "cmd": "just example-gitlab change unformatted",
-      "output": "Merge request  /root/example/-/merge_requests/2 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/259 (failed)\nCheck          /root/example/-/pipelines/258 (failed)",
+      "output": "Merge request  /root/example/-/merge_requests/4 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/19 (failed)\nCheck          /root/example/-/pipelines/18 (failed)",
       "exit": 0
     },
     {
@@ -19,12 +24,12 @@
     },
     {
       "cmd": "just example-gitlab change destroy",
-      "output": "Merge request  /root/example/-/merge_requests/3 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/264 (success)\nCheck          /root/example/-/pipelines/262 (success)",
+      "output": "Merge request  /root/example/-/merge_requests/5 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/23 (success)\nCheck          /root/example/-/pipelines/22 (success)",
       "exit": 0
     },
     {
       "cmd": "just example-gitlab merge destroy",
-      "output": "Merged    merge request !3 into main\nPipeline  /root/example/-/pipelines/266 (failed)\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "output": "Merged    merge request !5 into main\nPipeline  /root/example/-/pipelines/25 (failed)\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
       "exit": 0
     },
     {
@@ -34,20 +39,29 @@
     },
     {
       "cmd": "just example-gitlab change drift",
-      "output": "deleted shop-staging-orders-jobs from floci, outside Terraform\nDrift run  /root/example/-/pipelines/267 (success)\nIssue      /root/example/-/issues/1",
+      "output": "deleted shop-staging-orders-jobs from floci, outside Terraform\nDrift run  /root/example/-/pipelines/27 (success)\nIssue      /root/example/-/issues/1",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab pr-apply",
+      "output": "Merge request  /root/example/-/merge_requests/6 (merged)\nApply          /root/example/-/pipelines/34 (success)\nterragucci: started pipeline http://gitlab:8929/root/example/-/pipelines/34 on main to apply !6's head 082b4d03 for root; its job reads !6 again before it applies\nterragucci: applied wave 1, 2, 3, 4 of !6 at 082b4d03; pr-merge merges it next. http://gitlab:8929/root/example/-/jobs/106 \nterragucci: merged !6 at 082b4d03 and released its locks on envs/dev/orders. http://gitlab:8929/root/example/-/pipelines/34",
       "exit": 0
     }
   ],
   "shots": {
     "required-light": "2f66b6b5a4df4ef8",
     "required-dark": "3c3e915489af1fd6",
-    "note-light": "0549cef71f394f21",
-    "note-dark": "5b64b9c1f3abef48",
-    "check-light": "314e052c6a153f60",
-    "check-dark": "01a363e454c03f18",
-    "waiting-light": "44f975c46494d035",
-    "waiting-dark": "4a4402020f7174d9",
-    "drift-light": "37e5769d51b90868",
-    "drift-dark": "ed2e6d79d0bfef22"
+    "note-light": "663743029c3e3071",
+    "note-dark": "370f2f24d50351ff",
+    "replan-light": "ac8fe1de4f792045",
+    "replan-dark": "bdee5d5d840b086b",
+    "check-light": "42bd65898d244f07",
+    "check-dark": "23f1e434ca6457fa",
+    "waiting-light": "aa64a35ae34c9e4c",
+    "waiting-dark": "2ec0f6295963fa3e",
+    "drift-light": "ac75267c1fdaf245",
+    "drift-dark": "39e21da3e8e79fb1",
+    "apply-light": "6b9ce4a7bb05af12",
+    "apply-dark": "66923814ac0d89fb"
   }
 }
