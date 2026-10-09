@@ -1,5 +1,5 @@
 ---
-title: Choose Terraform, OpenTofu, Terragrunt or choudoufu
+title: Choose choudoufu, Terraform, OpenTofu or Terragrunt
 description: Pick the binary your roots run with, and see what each one gives the pipeline.
 claims: [check-diagnostics, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, tf-terraform, tg-terraform]
 prompt: |
@@ -14,15 +14,15 @@ import TabFromHash from '../../../components/TabFromHash.astro';
 
 ## What each binary gives the pipeline
 
-Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`.
+Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu, the OpenTofu fork from the team behind terragucci, adds the most: [nine features](#choudoufu) on top of OpenTofu's.
 
-| | Terraform | OpenTofu | Terragrunt | choudoufu |
+| | choudoufu | Terraform | OpenTofu | Terragrunt |
 |---|---|---|---|---|
-| State | your backend | your backend | each unit's backend | an S3 backend, one record per resource, and a tag on each resource |
-| What `tf-check` runs | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) |
-| What the report times | nothing (no traces) | each resource | each unit, from Terragrunt's run report | each resource; [slow provider calls](/terragucci/reference/observability/#what-the-report-lists), [summed timings](/terragucci/reference/observability/#what-the-report-lists) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend |
-| CI image | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 | `terragucci-choudoufu`, choudoufu 0.23.0 |
-| Version pin | `version`, or an exact `required_version` | `version`, or an exact `required_version` | `terragrunt.version`, or an exact `terragrunt_version_constraint` | `version` only |
+| State | no state file: one record per resource in an S3 backend, and a tag on each resource | your backend | your backend | each unit's backend |
+| What `tf-check` runs | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` |
+| What the report times | each resource; [slow provider calls](/terragucci/reference/observability/#what-the-report-lists), [summed timings](/terragucci/reference/observability/#what-the-report-lists) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend | per-resource timings: not reported (Terraform sends no traces) | each resource | each unit, from Terragrunt's run report |
+| CI image | `terragucci-choudoufu`, choudoufu 0.23.0 | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 |
+| Version pin | `version` only | `version`, or an exact `required_version` | `version`, or an exact `required_version` | `terragrunt.version`, or an exact `terragrunt_version_constraint` |
 
 A pin the image does not carry is installed in the job, checked against the release's SHA256SUMS. Images are pinned by digest.
 
@@ -31,6 +31,30 @@ A pin the image does not carry is installed in the job, checked against the rele
 <TabFromHash id="choudoufu" label="choudoufu" />
 
 <Tabs syncKey="binary">
+<TabItem label="choudoufu">
+
+```yaml
+binary: choudoufu
+```
+
+[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Nine things come with it:
+
+| You get | Where you see it |
+|---|---|
+| A live check in `tf-check` on every push, before the apply waves, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
+| No state file, and locks that settle at the API: one record per resource in an S3 backend, each write conditional, so there is no lock table or database to run | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
+| Each address finds its real resource: the apply writes a tag on each resource and the next plan reads it back | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
+| How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
+| Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
+| Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
+| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner and a write conflict naming it | [your applies](/terragucci/concepts/locking-per-resource/#locking-per-resource); the loser's re-plan shows the value that landed |
+| A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | [your cloud's IAM](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
+| One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-per-resource/#one-backend-for-all-your-estates) |
+
+`init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
+
+A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
+</TabItem>
 <TabItem label="Terraform">
 
 ```yaml
@@ -58,30 +82,7 @@ binary: tofu   # or terraform: the tool Terragrunt calls
 A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. Under Terragrunt, `binary` is `tofu` or `terraform`; `init` refuses `choudoufu`. Terraform is installed in the job. See [Use Terragrunt](/terragucci/guides/use-terragrunt/).
 
 </TabItem>
-<TabItem label="choudoufu">
 
-```yaml
-binary: choudoufu
-```
-
-[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Eight things come with it:
-
-| You get | Where you see it |
-|---|---|
-| A live check on every pull request, before any plan, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
-| Locks that settle at the API: one record per resource in an S3 backend, each write conditional, so there is no lock table or database to run | [Locking per resource](/terragucci/concepts/locking-per-resource/#locking-per-resource) |
-| Each address finds its real resource: the apply writes a tag on each resource and the next plan reads it back | [Live resource markers](/terragucci/concepts/locking-per-resource/#live-resource-markers) |
-| How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
-| Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#what-the-report-lists) |
-| Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#what-the-report-lists) |
-| Two applies that change different resources of one estate run at once, with no estate-wide lock; two that change the same resource leave one winner and a write conflict naming it | [your applies](/terragucci/concepts/locking-per-resource/#locking-per-resource); the loser's re-plan shows the value that landed |
-| A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | [your cloud's IAM](/terragucci/concepts/locking-per-resource/#live-resource-markers) (proven on EC2) |
-| One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-per-resource/#one-backend-for-all-your-estates) |
-
-`init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
-
-A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
-</TabItem>
 </Tabs>
 
 ## Steps
