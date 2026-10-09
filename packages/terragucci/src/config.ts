@@ -16,6 +16,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseYAML } from "@intentius/chant/yaml";
 import { parseReportsBucket, type BucketRef } from "./report/object-store";
+import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
 
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
 export const FORGES = ["github", "gitlab", "forgejo"] as const;
@@ -303,6 +304,8 @@ export interface ProjectSettings {
    * glob to release, the version each root it matches runs (tofu and terraform, plain roots only).
    */
   version?: string | Record<string, string>;
+  /** Each plain root's backend, provider and version files, which `terragucci generate` writes; see generate.ts. */
+  generate?: GenerateSettings;
   /** The forge, for a host terragucci cannot name. */
   forge?: ForgeName;
   /** Where the project lives, for a forge not on https or the default port. */
@@ -482,6 +485,7 @@ export const PROJECT_FILE_KEYS = [
   "modules",
   "terragrunt",
   "token_env",
+  "generate",
 ] as const satisfies ReadonlyArray<keyof ProjectSettings>;
 
 export class ConfigError extends Error {
@@ -513,7 +517,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "generate",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -578,6 +582,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
   checkVersion(s.version, s.binary, where, problems);
+  checkGenerate(s.generate, `${where}.generate`, problems, s.terragrunt);
   if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
     problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
   }
@@ -1275,5 +1280,6 @@ function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings 
   if (base.policy || settings.policy) out.policy = { ...base.policy, ...settings.policy };
   if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
   if (base.apply || settings.apply) out.apply = { ...base.apply, ...settings.apply };
+  if (base.generate || settings.generate) out.generate = combineGenerate(base.generate, settings.generate);
   return out;
 }

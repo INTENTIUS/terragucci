@@ -47,7 +47,7 @@ A key the control repo sets away from its default reaches each project one of tw
 
 | How it reaches the project | Keys |
 |---|---|
-| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env` |
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env`, `generate` (whose files `reconcile` also writes into the same pull request) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `dashboards`, `notify` (with `notify.webhook`) |
 
 ```yaml
@@ -143,6 +143,7 @@ dashboards: true
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket` (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), `endpoint` (the store's address, for an S3-compatible store, an emulator or a sovereign cloud), `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index)) and `role` (an AWS role ARN that writes, `s3://` only); see [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 | `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
+| `generate` | none (off) | each plain root's `backend.tf`, `providers.tf` and `versions.tf`, which `terragucci generate` writes and `tf-check` holds to: `backend`, `providers` and `required_version` for every root, then the same under `dirs` (root path globs) and `roots` (exact root paths); see [Generate backend and provider files](/terragucci/guides/generate-root-files/) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
@@ -184,7 +185,7 @@ version:
 
 A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
 
-A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version, and a Terragrunt repo runs one version of its binary for every unit. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version.
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version, and a Terragrunt repo runs one version of its binary for every unit. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-a-root-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
 
 ## Apply before merge
 

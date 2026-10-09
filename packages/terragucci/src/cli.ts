@@ -3,6 +3,7 @@
  *
  *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
  *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
+ *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
@@ -47,7 +48,7 @@
  * its approval, so it applied nothing.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APPLY_REQUIRES, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveRepo, responseTo, type ApplyRequire, type Approval, type Binary, type ForgeName, type Gate, type ProjectSettings, type TerragucciConfig } from "./config";
@@ -63,6 +64,7 @@ import { pushAgentChange, writePrompt } from "./agent-comment";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
+import { checkGenerated, describeGenerate, planGenerate } from "./generate";
 import { assertLinux, install, type Tool } from "./install";
 import { describeBinary, RootBinaries } from "./pins";
 import { plan } from "./plan";
@@ -87,6 +89,7 @@ import { parseImport } from "./respond/drift";
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <host/path>]
+  terragucci generate [--check] [--dry-run] [--config <file>]
   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
   terragucci plan [--root <glob>] [--project <host/path>] [--config <file>]
@@ -216,6 +219,28 @@ export async function main(argv: string[]): Promise<number> {
         if (json) return emit(envelope("reconcile", code, { mode, projects: outcomes }));
         console.log(describeReconcile(outcomes, mode));
         return code;
+      }
+      case "generate": {
+        // Each root's backend, provider and version files from terragucci.yml's generate key; --check is tf-check's step.
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        if (flags.check === true) {
+          const result = checkGenerated(cwd, settings);
+          emitCheck(cwd, result);
+          return result.ok ? 0 : 1;
+        }
+        const plan = planGenerate(cwd, settings);
+        if (plan.foreign.length) throw new ConfigError(plan.foreign.join("; "));
+        const dryRun = flags["dry-run"] === true;
+        if (!dryRun) {
+          for (const f of plan.files) {
+            if (f.status === "unchanged") continue;
+            if (f.status === "removed") unlinkSync(f.path);
+            else writeFileSync(f.path, f.content);
+          }
+        }
+        console.log(describeGenerate(cwd, plan, dryRun));
+        return 0;
       }
       case "estate": {
         const path = str(flags, "config") ?? findConfig(cwd);
