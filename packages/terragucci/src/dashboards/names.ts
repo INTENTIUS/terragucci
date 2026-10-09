@@ -1,6 +1,7 @@
 /**
  * The names the dashboards and alert rules read: the gauges a stage sends
- * (report/observe.ts, report/wave-telemetry.ts) and the span metrics a
+ * (report/observe.ts, report/wave-telemetry.ts), the ones terragucci estate
+ * sends (report/dora.ts), and the span metrics a
  * collector's `spanmetrics` connector makes from the stage spans.
  *
  * Plain data with no imports, so the stack's collector declaration
@@ -48,6 +49,11 @@ export const METRIC = {
   waveWaitingSince: "terragucci_wave_waiting_since_seconds",
   waveSettled: "terragucci_wave_settled_seconds",
   waveRoots: "terragucci_wave_roots",
+  // terragucci estate's DORA metrics (report/dora.ts), per project and for the estate as project "*".
+  doraDeployments: "terragucci_dora_deployments_per_week",
+  doraLeadTime: "terragucci_dora_lead_time_seconds",
+  doraFailureRate: "terragucci_dora_change_failure_ratio",
+  doraRestore: "terragucci_dora_restore_seconds",
 } as const;
 
 /** The `terragucci.result` a stage span carries: how the stage or the wave ended. */
