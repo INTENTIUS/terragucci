@@ -378,6 +378,10 @@ run_scale() { # scale
   : > "$runs_file"
   NUDGES="$work/nudges"
   : > "$NUDGES"
+  # The host's one-minute load average, once a minute, for the record: other work on the host slows the run.
+  ( while :; do uptime | sed -E 's/.*load averages?: *//; s/,//g' | awk '{print $1}'; sleep 60; done ) > "$work/load" &
+  local sampler=$!
+  trap 'kill "$sampler" 2>/dev/null || true' EXIT
   t0=$(date +%s)
   out="$(cd "$work/control" && TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "${tg[@]}" reconcile --config terragucci.yml --mode apply 2>&1)" || { echo "$out" >&2; die "reconcile failed"; }
   echo "$out" | tail -3 >&2
@@ -429,7 +433,7 @@ run_scale() { # scale
   for pair in "${prs[@]}"; do
     repo="${pair%%=*}"; pr="${pair#*=}"
     note="$(note_of "$repo" "$pr")"
-    printf '%s\t%s\t%s\n' "$repo" "$(printf '%s' "$note" | wc -c | tr -d ' ')" "$(printf '%s' "$note" | sed -n 's/^<!-- terragucci:plan roots=\(.*\) -->$/\1/p' | tr ',' '\n' | grep -c . || true)" "$(printf '%s' "$note" | grep -c '^\*\*Cut:\*\*' || true)" >> "$notes"
+    printf '%s\t%s\t%s\t%s\n' "$repo" "$(printf '%s' "$note" | wc -c | tr -d ' ')" "$(printf '%s' "$note" | sed -n 's/^<!-- terragucci:plan roots=\(.*\) -->$/\1/p' | tr ',' '\n' | grep -c . || true)" "$(printf '%s' "$note" | grep -c '^\*\*Cut:\*\*' || true)" >> "$notes"
   done
 
   # ── change ──
@@ -444,6 +448,7 @@ run_scale() { # scale
   phase_json="$(jq -c --argjson s "$t0" --argjson e "$(date +%s)" '. + {change: {start: $s, end: $e}}' <<<"$phase_json")"
 
   # ── verify and record ──
+  kill "$sampler" 2>/dev/null || true
   local held; held="$(state_instances)"
   log "verify: the state files hold $held of $resources resources"
   local jobs="$work/jobs.jsonl" ph id
@@ -456,7 +461,7 @@ run_scale() { # scale
   local out_file="$STATE/runs/scale-$resources.json"
   python3 "$HERE/summarize.py" --manifest "$manifest" --runs "$runs_file" --jobs "$jobs" --notes "$notes" --reports "$work/reports.tsv" \
     --phases "$phase_json" --created "$created" --held "$held" --release "$release" --choudoufu "$CHOUDOUFU_REF" \
-    --capacity "$CAPACITY" --per-repo "$PER_REPO" --parallelism "$PARALLELISM" --restarts "$(wc -l < "$NUDGES" | tr -d ' ')" > "$out_file"
+    --capacity "$CAPACITY" --per-repo "$PER_REPO" --parallelism "$PARALLELISM" --restarts "$(wc -l < "$NUDGES" | tr -d ' ')" --load "$work/load" > "$out_file"
   log "scale $scale: record in $out_file"
   jq -c '{resources: .estate.resources, roots: .estate.roots, repos: .estate.repos, passed, wall_seconds, runner_minutes, note_bytes_max: .note.bytes_max, report_bytes_max: .reports.report_json_bytes_max}' "$out_file" >&2
   jq -e .passed "$out_file" >/dev/null || return 1

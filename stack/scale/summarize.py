@@ -29,6 +29,17 @@ def ts(s):
         return None
 
 
+def host_load(path):
+    """The host's one-minute load average over the run: mean and highest of the samples, and how many."""
+    try:
+        xs = [float(l) for l in open(path) if l.strip()]
+    except (OSError, TypeError, ValueError):
+        return None
+    if not xs:
+        return None
+    return {"samples": len(xs), "mean": round(sum(xs) / len(xs), 2), "max": round(max(xs), 2), "cpus": os.cpu_count()}
+
+
 def run_record(a):
     manifest = json.load(open(a.manifest))
     jobs = [json.loads(line) for line in open(a.jobs) if line.strip()]
@@ -89,6 +100,7 @@ def run_record(a):
             "roots_per_repo": int(a.per_repo),
             "choudoufu_ref": a.choudoufu,
         },
+        "host_load": host_load(a.load),
         "passed": runs_ok and not failed,
         # Times the bench restarted its runner because Forgejo left a job waiting with the runner idle.
         "runner_restarts": int(a.restarts or 0),
@@ -134,7 +146,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--merge")
     ap.add_argument("--out")
-    for k in ["manifest", "runs", "jobs", "notes", "reports", "phases", "created", "held", "release", "choudoufu", "capacity", "per-repo", "parallelism", "restarts"]:
+    for k in ["manifest", "runs", "jobs", "notes", "reports", "phases", "created", "held", "release", "choudoufu", "capacity", "per-repo", "parallelism", "restarts", "load"]:
         ap.add_argument("--" + k)
     a = ap.parse_args()
     merge(a) if a.merge else run_record(a)
