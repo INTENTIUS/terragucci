@@ -15,24 +15,31 @@ prompt: |
 
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
+import { Steps } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
 Booted with `just example up`. `just example reset` gets you back to that from any step.
 :::
 
-Someone deletes a queue in the console. This scenario does the same through the API.
+Someone deletes a queue in the console.
 
-<Captured step="drift" optional />
+<Steps>
 
-The `drift` job runs at six every morning, or by hand from the Actions tab. It plans every root with `-refresh-only`, which compares state with what exists in [floci](/terragucci/concepts/glossary/#floci) and ignores the code. The report lists the deleted queue under deletes, in `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
+1. Delete the queue. This scenario does the same through the API.
 
-:::note
-floci does not keep tags, so tags show as drifted on every root. On AWS they would not. Look for the entry marked deleted outside Terraform.
-:::
+   <Captured step="drift" optional />
 
-The job opens one issue, `terragucci: drift found`. It names `envs/staging/orders` and the queue `shop-staging-orders-jobs`. A second run updates it.
+2. Run the `drift` job by hand from the Actions tab, or wait for six in the morning. It plans every root with `-refresh-only`, which compares state with what exists in [floci](/terragucci/concepts/glossary/#floci) and ignores the code. The report lists the deleted queue under deletes, in `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
 
-<Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
+   :::note
+   floci does not keep tags, so tags show as drifted on every root. On AWS they would not. Look for the entry marked deleted outside Terraform.
+   :::
+
+3. Open the issue the job opened, `terragucci: drift found`. It names `envs/staging/orders` and the queue `shop-staging-orders-jobs`. A second run updates it.
+
+   <Shot step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
+
+</Steps>
 
 A change waiting on main is not drift: a refresh-only plan never reads the code.
 

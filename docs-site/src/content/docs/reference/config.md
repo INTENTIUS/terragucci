@@ -18,7 +18,7 @@ With no `terragucci.yml`, `init` starts from these defaults:
 |---|---|
 | Roots | every directory whose `*.tf` or `*.tofu` files declare a backend or configure a provider, or, in a Terragrunt repo, each unit `terragrunt find` lists |
 | Binary | `.opentofu-version` gives `tofu`, `.terraform-version` gives `terraform`, then `.tofu` files, then the path, then `tofu` |
-| Version | the one `required_version` pins exactly, or terragucci's default for the binary |
+| Version | the repo's `.opentofu-version` or `.terraform-version`, then the one `required_version` pins exactly, or terragucci's default for the binary; a root that pins its own runs that one ([A version per root](#a-version-per-root)) |
 | Forge | from a workflow directory already in the repo, or the host of its `origin` remote |
 | Order | a root that reads another's state through `terraform_remote_state` applies after it |
 | Gate | `on-destroy`, so a wave waits for an approval only when it destroys or replaces something |
@@ -43,7 +43,12 @@ drift: "17 4 * * *"
 
 In a control repo, a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
 
-A project's jobs read these keys from the project's own `terragucci.yml`, so `reconcile` writes each one the control repo sets away from its default there: `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt` and `token_env`. The other keys reach the project in the pipeline `reconcile` writes: `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards` and `notify` (with `notify.webhook`).
+A key the control repo sets away from its default reaches each project one of two ways:
+
+| How it reaches the project | Keys |
+|---|---|
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env` |
+| in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 ```yaml
 defaults:
@@ -58,9 +63,9 @@ projects:
   codeberg.org/acme/edge: {}
 ```
 
-## Every key
+## A full example
 
-Each key set away from its default; keep only the lines you need. This file passes `config check`.
+Most keys set away from their default; [Keys](#keys) lists every one. Keep only the lines you need. This file passes `config check`.
 
 ```yaml
 roots: ["envs/*/*"]
@@ -120,22 +125,24 @@ dashboards: true
 |---|---|---|
 | `roots` | detected | globs of root directories |
 | `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
+| `steps` | none | commands run before or after a root's `init`, `plan`, `apply` or `drift`, in the stage's own job: each has `run`, one of `before` and `after`, and optionally `name`, `roots` (globs) and `on_failure` (`fail`, the default, or `approve`, which holds the root's wave at its gate instead). Read from `terragucci.yml` at base. Plain roots only; see [Run steps around a stage](/terragucci/guides/run-steps/) |
+| `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run steps around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image) |
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
-| `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any `chant approve` of its digest; `pr-review`, also the merged pull request's approval of its head when the wave plans what the review saw (on GitLab, an approval after the merge request's latest push); or `sealed`, only one sealed by a key the signers file lists. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
+| `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
-| `waves` | none | `canary`, a list of roots that go out first, as wave 1; `jobs`, the most jobs one wave's roots spread across, 1 when unset (plain roots on GitHub and Forgejo; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
-| `notify` | none (off) | `slack` and `teams`: the names of the secrets that hold a Slack or Microsoft Teams incoming webhook address; `webhook` and `webhook_key`, together: the secrets holding any endpoint's address and the key that signs the [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event posted to it; an apply job whose wave waits, is refused or fails posts the project, the wave, its roots, the approve command and the run's link to each, and under `approval: pr-review` a link to review the pull request when that review would approve a waiting wave. A message approves nothing |
-| `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON |
+| `waves` | none | `canary`, a list of roots that go out first, as wave 1; `jobs`, the most jobs one wave's roots spread across, 1 when unset (plain roots on GitHub and Forgejo, not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
+| `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/) |
+| `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
 | `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift) |
-| `rollouts` | `false` (off) | a cron schedule for the rollout job, which runs `respond rollout --mode apply` to open the next wave of each rollout in flight once the last applied; `respond.rollout: off` leaves it out. On GitHub and Forgejo it is its own workflow, `terragucci-rollout.yml`, and opens pull requests with the secret `token_env` names, else the job's token. On GitLab, add a schedule whose variable `TERRAGUCCI_SCHEDULE` is `rollouts`. Not in a control repo; see [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) |
+| `rollouts` | `false` (off) | a cron schedule for the rollout job, which opens the next wave of each rollout in flight once the last applied; `respond.rollout: off` leaves it out. Not in a control repo; see [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) for its token and the GitLab schedule |
 | `comments` | `false` (off) | GitLab only: the cron of the comments schedule, whose pipelines answer `/terragucci` merge request notes; see [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
-| `gitlab.token` | `unprotected` | GitLab only: `protected` keeps `GITLAB_TOKEN` (or the `token_env` variable) out of every merge request and branch pipeline. Mark the variable Protected and Masked. The plan job then holds no token and stops if it sees one, the comments job posts the plan notes, and the pipeline has no fmt job, so nothing commits formatting. Needs `comments`; see [the threat model](/terragucci/reference/threat-model/) |
+| `gitlab.token` | `unprotected` | GitLab only: `protected` keeps `GITLAB_TOKEN` (or the `token_env` variable, marked Protected and Masked) out of every merge request and branch pipeline; the comments job then posts the plan notes, and there is no fmt job. Needs `comments`; see [the threat model](/terragucci/reference/threat-model/) |
 | `runtime` | `forge` | `forge`, the only value: every stage runs on the forge's CI; see [Where it runs](/terragucci/reference/runtimes/) |
 | `reports` | none: the report is a CI artifact | `bucket` (`s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`), `endpoint` (the store's address, for an S3-compatible store, an emulator or a sovereign cloud), `prefix`, `url` (the browser address links use, such as the [front door](/terragucci/guides/keep-reports-in-a-bucket/#5-serve-the-index)) and `role` (an AWS role ARN that writes, `s3://` only); see [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
-| `version` | the one every root pins exactly, else terragucci's default for the binary | the binary's version |
+| `version` | the repo's version file, then the one every root pins exactly, else terragucci's default for the binary | the binary's version; as a map of root glob to version, the version each root it matches runs; see [A version per root](#a-version-per-root) |
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
@@ -147,7 +154,7 @@ dashboards: true
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, or a list of both; turns on `tf-publish` |
 | `modules.attest` | none (off) | `true`, or `key` (default `cosign.pub`): sign each release, attest its provenance and SBOM, and record it in the release ledger; see [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
-| `modules.require` | none (off) | `attested`: `tf-check` and `tf-plan` refuse a root that pins a release of a checked source unless it verifies; `tf-plan` reads it at base. See [Require attested releases](/terragucci/guides/publish-modules/#require-attested-releases) |
+| `modules.require` | none (off) | `attested`: `tf-check` and `tf-plan` refuse a root that pins a release of a checked source unless it verifies; `tf-plan` reads it at base. terragucci's CI images carry the HCL parser it reads pins with; elsewhere, `npm i -D @cdktn/hcl2json`. See [Require attested releases](/terragucci/guides/publish-modules/#require-attested-releases) |
 | `modules.trusted` | none | publishers in other repos that `require` checks: each a `source` (an `oci://` prefix or a git URL), the `key` (a path to their `cosign.pub` in this repo) and the `ledger` (the git URL whose `chant/lifecycle` holds their release ledger) |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
@@ -158,6 +165,27 @@ dashboards: true
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts.
+
+## A version per root
+
+A plain root can run its own OpenTofu or Terraform version, so one wave plans and applies roots on different versions. The first of these that names an exact version picks it:
+
+| Order | Where | Example |
+|---|---|---|
+| 1 | `version` in `terragucci.yml` as a map, the first glob the root's path matches | `"envs/legacy/*": "1.9.1"` |
+| 2 | a `.opentofu-version` (`tofu`) or `.terraform-version` (`terraform`) file in the root | `1.10.6` |
+| 3 | an exact `required_version` in the root | `required_version = "1.10.6"` |
+
+```yaml
+binary: tofu
+version:
+  "envs/legacy/*": "1.9.1"
+  envs/edge: "1.11.2"
+```
+
+A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
+
+A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Pins are for `tofu` and `terraform`: `choudoufu` takes one version, and a Terragrunt repo runs one version of its binary for every unit. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version.
 
 ## Apply before merge
 
@@ -172,7 +200,7 @@ apply:
 | Setting | Does | Allowed on |
 |---|---|---|
 | `when: merge` | only merged code applies, and the apply role never meets a pull request's code | every forge |
-| `when: pull-request` | a writer comments `/terragucci apply [wave-<n>]` on the open pull request and its head applies; `/terragucci lock` takes the locks without applying; roots (units in a Terragrunt repo) stay locked until merge, close or `/terragucci unlock`; after the merge, `terragucci/apply` fails if any root still plans a change | every forge, plain roots and Terragrunt repos; on GitLab it needs `comments` and `merge_token_env` ([GitLab](#apply-before-merge-on-gitlab)) |
+| `when: pull-request` | a writer's `/terragucci apply [wave-<n>]` on the open pull request applies its head, and its roots stay [locked](/terragucci/guides/apply-before-merge/#locks) until merge or close; after the merge, `terragucci/apply` fails if any root still plans a change | every forge, plain roots and Terragrunt repos, not with `waves.jobs`; on GitLab it needs `comments` and `merge_token_env` ([GitLab](#apply-before-merge-on-gitlab)) |
 | `merge: manual` | a person merges | `when: pull-request` only; `config check` refuses `merge` without it |
 | `merge: auto` | `pr-merge` merges once every wave applied, never after a partial apply | `when: pull-request` only |
 | `merge_token_env` | the secret the merge is made with; only `pr-merge`, which runs no pull request code, gets it; on GitLab the `comments` job too, which starts the apply pipeline with it | required on Forgejo with `merge: auto`, and on GitLab with either `merge` |

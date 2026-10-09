@@ -33,7 +33,7 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
    An approval binds a wave's set digest, so any root's plan changing after it, before the wave applied, means the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
 
-   In the example, approve the waiting wave, then merge the module bump. Its job stops and names the roots that moved:
+   In [the tutorial's example](/terragucci/tutorial/changed-wave/), approve the waiting wave, then merge the module bump. Its job stops and names the roots that moved:
 
    <Shot step="wave-refused" view="log" alt="The apply job's log after a module bump: the wave applies nothing, exit code 4, both digests and the roots whose plans moved" optional />
    <Captured step="wave-refused" cmd="just example merge" optional />
@@ -75,7 +75,7 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
    | Choice | Command | Result |
    |---|---|---|
-   | Keep the new plan | `npx terragucci approve wave-2 --plan <digest>` from a checkout, with the new digest the job printed, which approves it (add `--sign` under `approval: sealed`), then run the stage again ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
+   | Keep the new plan | `npx terragucci approve wave-2 --plan <digest>` from a checkout, with the new digest the job printed. It approves it, signs under `approval: sealed`, and restarts the wave ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
    | Drop it | Revert the change on the default branch. | The old approval does not come back: the refused run recorded a newer pending fact, so the wave waits for a fresh approval. |
 
 </Steps>
