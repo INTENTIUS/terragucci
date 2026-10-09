@@ -349,10 +349,10 @@ terragucci check-policy [--config <file>] [--base <ref>]
 ## install
 
 ```bash
-terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>
+terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>
 ```
 
-Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds.
+Fetches the release, checks it against its SHA256SUMS and prints the directory it unpacked to. The releases are Linux builds. With `modules.attest`, the publish job installs cosign this way before it publishes.
 
 ## --json
 

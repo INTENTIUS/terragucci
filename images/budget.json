@@ -1,6 +1,6 @@
 {
-  "tofu": 645000000,
-  "terraform": 630000000,
-  "terragrunt": 730000000,
-  "choudoufu": 790000000
+  "tofu": 505000000,
+  "terraform": 490000000,
+  "terragrunt": 590000000,
+  "choudoufu": 650000000
 }

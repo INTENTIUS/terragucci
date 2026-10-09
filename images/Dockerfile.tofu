@@ -2,7 +2,6 @@ FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
 RUN case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac && curl -fsSLo "/tmp/tofu_1.13.1_linux_$a.tar.gz" "https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_$a.tar.gz" && curl -fsSLo /tmp/SHA256SUMS "https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_SHA256SUMS" && (cd /tmp && grep " \*\?tofu_1.13.1_linux_$a.tar.gz$" SHA256SUMS | sed 's/ \*/  /' | sha256sum -c -) && mkdir -p /out && tar -xzf "/tmp/tofu_1.13.1_linux_$a.tar.gz" -C /out tofu
-RUN case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac && curl -fsSLo "/tmp/cosign-linux-$a" "https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign-linux-$a" && curl -fsSLo /tmp/SHA256SUMS "https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign_checksums.txt" && (cd /tmp && grep " \*\?cosign-linux-$a$" SHA256SUMS | sed 's/ \*/  /' | sha256sum -c -) && mkdir -p /out && install -m 0755 "/tmp/cosign-linux-$a" /out/cosign
 FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
 ENV USER=terragucci
 ENV HOME=/tmp

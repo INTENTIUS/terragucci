@@ -136,6 +136,8 @@ With `modules.attest`, the publish job also signs each new release with a key yo
    npx terragucci init
    ```
 
+   The publish job now installs cosign, checked against its release checksums, before it publishes.
+
 4. Merge a change to a module, then check what was released.
 
    ```bash
