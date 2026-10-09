@@ -47,7 +47,7 @@ A key the control repo sets away from its default reaches each project one of tw
 
 | How it reaches the project | Keys |
 |---|---|
-| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env`, `generate` (whose files `reconcile` also writes into the same pull request) |
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `reports`, `approval`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `steps`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require` and `modules.trusted`), `terragrunt`, `token_env`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 ```yaml
@@ -112,6 +112,8 @@ agent:
   via: forge
   token_env: AGENT_FORGE_TOKEN
   comment: true
+review:
+  agent: true
 decide:
   backend: laya
   url: http://decide:8790
@@ -161,6 +163,7 @@ dashboards: true
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge`), `token_env` and [`comment`](#the-agent-comment) |
 | `atlantis_comments` | `false` (off) | `true`: `atlantis plan` and `atlantis apply` comments work as `/terragucci plan` and `/terragucci apply`, with the same checks; see [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) |
+| `review` | none (off) | `agent`, `command`, `key_secret`, `instructions`, `timeout`: a model reviews each pull request's description against its plan; see [The review](#the-review) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
@@ -315,6 +318,29 @@ agent:
 | `timeout` | 30 | minutes before the agent's job is stopped |
 
 The agent's jobs get no cloud credentials; `init` refuses `agent.comment` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-agent-comment).
+
+## The review
+
+`review.agent` adds two jobs after a pull request's plan: a model compares the title and description with the diff, the plan note and the policy results, and the pipeline posts its review as a note. GitHub and Forgejo only; [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/).
+
+```yaml
+review:
+  agent: true
+  command: my-reviewer --stdin
+  key_secret: ANTHROPIC_API_KEY
+  instructions: .terragucci/review.md
+  timeout: 10
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `agent` | `false` | `true` turns the review on; the other keys need it |
+| `command` | Claude Code in print mode with no tools | run in the default branch's files with the prompt on stdin; what it prints is the review |
+| `key_secret` | `ANTHROPIC_API_KEY` | the secret holding the model's API key, given to the command's step alone |
+| `instructions` | `.terragucci/review.md` | the instructions file, read from the default branch only |
+| `timeout` | 10 | minutes before the review job is stopped |
+
+The review jobs get no cloud credentials and the command's step no forge token; `init` refuses `review` on GitLab. With `policy` set, each `tf-apply` wave reads the review's risk as [`input.review`](/terragucci/reference/policy/#review).
 
 ## The decide block
 
