@@ -86,7 +86,7 @@ packages/terragucci/src/report/cost.ts   cost-*
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert plan-no-lock sensitive-redacted provider-cache-once
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue
@@ -111,5 +111,8 @@ stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/cost-policy                cost-gate cost-policy
+stack/fixtures/provider-cache            provider-cache-once
+stack/break-bundle.mjs                    plan-no-lock sensitive-redacted provider-cache-once
+scripts/cli-bundle.mjs                    plan-no-lock sensitive-redacted provider-cache-once
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat notify-webhook cost-estimate
 example-terragrunt/                       tg-*
