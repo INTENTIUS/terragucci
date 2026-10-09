@@ -1,7 +1,7 @@
 ---
 title: Choose choudoufu, Terraform, OpenTofu or Terragrunt
 description: Pick the binary your roots run with, and see what each one gives the pipeline.
-claims: [check-diagnostics, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, root-pins, tf-terraform, tg-terraform]
+claims: [check-diagnostics, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, root-pins, tf-terraform, tg-terraform, tg-root-pins, tg-choudoufu]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-a-binary/.
   Run `npx terragucci init --dry-run --json` and tell me which binary it picked and why.
@@ -22,7 +22,7 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 | What `tf-check` runs | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` |
 | What the report times | each resource; [slow provider calls](/terragucci/reference/observability/#what-the-report-lists), [summed timings](/terragucci/reference/observability/#what-the-report-lists) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend | per-resource timings: not reported (Terraform sends no traces) | each resource | each unit, from Terragrunt's run report |
 | CI image | `terragucci-choudoufu`, choudoufu 0.23.0 | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 |
-| Version pin | `version` only | `version`, `.terraform-version`, or an exact `required_version`; per root too | `version`, `.opentofu-version`, or an exact `required_version`; per root too | `terragrunt.version`, or an exact `terragrunt_version_constraint` |
+| Version pin | `version` only | `version`, `.terraform-version`, or an exact `required_version`; per root too | `version`, `.opentofu-version`, or an exact `required_version`; per root too | `terragrunt.version`, or an exact `terragrunt_version_constraint`; per unit too, with the binary's pins |
 
 A pin the image does not carry is installed in the job, checked against the release's SHA256SUMS. Images are pinned by digest.
 
@@ -97,7 +97,7 @@ binary: tofu
 binary: tofu   # or terraform: the tool Terragrunt calls
 ```
 
-A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. Under Terragrunt, `binary` is `tofu` or `terraform`; `init` refuses `choudoufu`. Terraform is installed in the job. See [Use Terragrunt](/terragucci/guides/use-terragrunt/).
+A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. Under Terragrunt, `binary` is `tofu`, `terraform` or `choudoufu`, which Terragrunt calls through `TG_TF_PATH`. Terraform is installed in the job; with `choudoufu` the jobs run in the choudoufu image and install Terragrunt. See [Use Terragrunt](/terragucci/guides/use-terragrunt/).
 
 </TabItem>
 

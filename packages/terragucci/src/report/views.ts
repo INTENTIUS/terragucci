@@ -466,14 +466,17 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
  * binary.
  */
 export function binariesLine(report: Report): string | undefined {
-  if (!report.roots.some((r) => r.binary?.pin)) return undefined;
+  const pinOf = (b: NonNullable<Report["roots"][number]["binary"]>): string | undefined =>
+    [b.pin, b.terragrunt?.pin ? `Terragrunt ${b.terragrunt.version}, ${b.terragrunt.pin}` : undefined].filter(Boolean).join("; ") || undefined;
+  if (!report.roots.some((r) => r.binary && pinOf(r.binary))) return undefined;
   const byBinary = new Map<string, { pinned: string[]; others: number }>();
   for (const r of report.roots) {
     if (!r.binary) continue;
     const key = binaryText({ name: r.binary.name, ...(r.binary.version ? { version: r.binary.version } : {}) });
     const g = byBinary.get(key) ?? { pinned: [], others: 0 };
     byBinary.set(key, g);
-    if (r.binary.pin) g.pinned.push(`${code(r.path)} (${r.binary.pin})`);
+    const pin = pinOf(r.binary);
+    if (pin) g.pinned.push(`${code(r.path)} (${pin})`);
     else g.others++;
   }
   // The binaries roots pinned first, then the job's.

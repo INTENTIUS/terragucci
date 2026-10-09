@@ -155,7 +155,8 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const now = options.now ?? new Date().toISOString();
   const root = options.root.replace(/\/+$/, "");
   if (!root) throw new ConfigError("state export takes the root whose state to export: terragucci state export <root> [--version <id>]");
-  const why = refusal(repo, root);
+  // migrate.ts takes Terragrunt units (it prepares each through Terragrunt); an export reads the backend from the root's own files, so a unit stays refused here.
+  const why = existsSync(join(repo, root, "terragrunt.hcl")) ? `${root} is a Terragrunt unit, and state export reads the state of Terraform and OpenTofu roots only` : refusal(repo, root);
   if (why) throw new ConfigError(`state export: ${why}`);
   const by = options.actor || git(repo, ["config", "user.name"]) || git(repo, ["config", "user.email"]);
   if (!by) throw new ConfigError("state export names who asks: set git's user.name, or pass --actor <name>");

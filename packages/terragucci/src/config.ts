@@ -366,7 +366,7 @@ export interface ProjectSettings {
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
   locks?: Locks;
-  /** `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots spread across (plain roots, GitHub and Forgejo). */
+  /** `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots or units spread across (GitHub and Forgejo). */
   waves?: { canary?: string[]; jobs?: number };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
@@ -635,6 +635,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!SETTING_KEYS.has(k)) problems.push(`${where}.${k} is not a setting (settings: ${[...SETTING_KEYS].join(", ")})`);
   }
   stringList(s.roots, `${where}.roots`, problems);
+  if (s.roots !== undefined && s.terragrunt !== undefined) problems.push(`${where}.roots: ${ROOTS_NOT_TERRAGRUNT}`);
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   oneOf(s.gate, GATES, `${where}.gate`, problems);
@@ -719,7 +720,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       else if (typeof jobs === "number" && jobs > 1) {
         if (s.forge === "gitlab") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
         if (isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
-        if (s.terragrunt !== undefined) problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_TERRAGRUNT}`);
       }
     }
   }
@@ -974,7 +974,8 @@ export interface RegistrySettings {
 /** Why `waves.jobs` is refused on GitLab: a split wave's shares hold one apply lock between them on GitHub and Forgejo, and GitLab's apply jobs take a resource group one job at a time. */
 export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and Forgejo; GitLab runs one apply job at a time in its resource group, so leave waves.jobs unset there";
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
-export const WAVE_JOBS_NOT_TERRAGRUNT = "a Terragrunt wave applies its units with one run --all in one job; waves.jobs splits a wave of plain roots, so leave it unset";
+/** Why `roots` is refused in a Terragrunt repo: its units are what Terragrunt's discovery lists. */
+export const ROOTS_NOT_TERRAGRUNT = "a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude";
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
 
 /**

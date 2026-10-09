@@ -1779,15 +1779,37 @@ describe("a wave split across jobs (waves.jobs)", () => {
     expect(doc.jobs["apply-wave-2"].needs).toEqual(["apply-wave-1-share-1", "apply-wave-1-share-2"]);
   });
 
-  it("is refused on GitLab, in a Terragrunt repo and with apply.when: pull-request, by config check and by init", () => {
+  it.each(["github", "forgejo"] as const)("%s: a Terragrunt wave splits the same way, and a job after the last wave's shares runs any later wave with --rest", (forge) => {
+    const tg = { version: "0.99.0", parallelism: 4, exclude: [], installs: [] };
+    const doc = pipeline(forge, { layers: [["live/net"], ["live/a", "live/b", "live/c"]], terragrunt: tg });
+    const names = Object.keys(doc.jobs).filter((j) => /^apply-(wave|done|rest)/.test(j));
+    expect(names).toEqual(["apply-wave-1", "apply-wave-2", "apply-wave-2-share-1", "apply-wave-2-share-2", "apply-rest"]);
+    const step = (j: string): string => doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+    expect(step("apply-wave-1")).not.toContain("--rest");
+    expect(step("apply-wave-1")).not.toContain("--shares");
+    expect(step("apply-wave-2")).toContain("--terragrunt --shares 2");
+    expect(step("apply-wave-2")).not.toContain("--rest");
+    expect(step("apply-wave-2-share-1")).toContain("--terragrunt --shares 2 --share 1");
+    // The job after the shares applies like a wave's: credentials, caches and the stage with --rest from the wave past the pipeline's.
+    expect(doc.jobs["apply-rest"].needs).toEqual(["apply-wave-2-share-1", "apply-wave-2-share-2"]);
+    expect(step("apply-rest")).toContain("terragucci stage tf-apply --wave 3 --layers 'live/net;live/a,live/b,live/c' --binary tofu --gate on-destroy --terragrunt --rest");
+    expect(step("apply-rest")).toContain('tg status terragucci/apply success "every wave of units applied"');
+    expect(step("apply-rest")).toContain('hold_ref="${hold_prefix}apply-rest"');
+    // A Terragrunt wave that is not the last keeps --rest on the last wave's job.
+    const early = pipeline(forge, { layers: [["live/a", "live/b", "live/c"], ["live/z"]], terragrunt: tg });
+    expect(Object.keys(early.jobs).filter((j) => /^apply-(wave|done|rest)/.test(j))).toEqual(["apply-wave-1", "apply-wave-1-share-1", "apply-wave-1-share-2", "apply-wave-2"]);
+    expect(early.jobs["apply-wave-2"].steps.map((x: { run?: string }) => x.run ?? "").join("\n")).toContain("--terragrunt --rest");
+  });
+
+  it("is refused on GitLab and with apply.when: pull-request, by config check and by init", () => {
     expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2 })).toThrow(/waves\.jobs: a wave splits across jobs on GitHub and Forgejo/);
     expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, applyWhen: "pull-request" })).toThrow(/waves\.jobs: apply\.when: pull-request/);
-    expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, terragrunt: { installs: [] } as never })).toThrow(/waves\.jobs: a Terragrunt wave/);
     expect(() => validateConfig({ waves: { jobs: 0 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
     expect(() => validateConfig({ waves: { jobs: 1.5 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
     expect(() => validateConfig({ forge: "gitlab", waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: a wave splits across jobs on GitHub and Forgejo");
     expect(() => validateConfig({ apply: { when: "pull-request" }, waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: apply.when: pull-request");
-    expect(() => validateConfig({ terragrunt: { version: "0.99.1" }, waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: a Terragrunt wave");
+    expect(validateConfig({ terragrunt: { version: "1.1.6" }, waves: { jobs: 3 } }, "t")).toEqual({ terragrunt: { version: "1.1.6" }, waves: { jobs: 3 } });
+    expect(() => validateConfig({ terragrunt: { version: "1.1.6" }, roots: ["live/*"] }, "t")).toThrow("config.roots: a Terragrunt repo's units are the ones terragrunt find lists, so remove roots and leave units out with terragrunt.exclude");
     expect(validateConfig({ waves: { jobs: 3, canary: ["dev/*"] } }, "t")).toEqual({ waves: { jobs: 3, canary: ["dev/*"] } });
   });
 
@@ -2544,6 +2566,10 @@ describe("no forge token where the change's code runs", () => {
     expect(doc.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply");
     expect(JSON.stringify(doc.jobs.check)).not.toContain("respond fmt");
     expect(body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, respond: { fmt: "off" } }).content).jobs.fmt).toBeUndefined();
+    // A Terragrunt repo gets the job too: respond fmt runs terragrunt hcl fmt beside the binary's.
+    const tg = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/a"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [{ tool: "terragrunt", version: "0.99.0" }] } }).content);
+    expect(tg.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply --binary tofu");
+    expect(tg.jobs.fmt.steps.map((x: { name?: string }) => x.name)).toContain("Install terragrunt 0.99.0");
   });
 
   it("the step that runs the change's code starts again without the runner's token variables, and keeps the OIDC ones", async () => {

@@ -27,6 +27,7 @@ import {
 import { ledgerEntries, MIGRATE_DONE_FILE, MIGRATE_LEDGER_FILE } from "../src/report/audit";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import { tmp, write } from "./helpers";
+import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
@@ -115,15 +116,15 @@ describe("moving resources between states", () => {
 });
 
 describe("which roots a migration refuses", () => {
-  it("refuses a Terragrunt unit, a root with a cloud block, and a directory that is not a root", () => {
+  it("takes a Terragrunt unit, and refuses a root with a cloud block and a directory that is not a root", () => {
     const repo = write(tmp(), {
       "unit/terragrunt.hcl": "",
-      "unit/main.tf": "",
       "hcp/main.tf": 'terraform {\n  cloud {\n    organization = "acme"\n  }\n}\n',
       "empty/README.md": "",
       "ok/main.tf": 'resource "terraform_data" "a" {}\n',
     });
-    expect(refusal(repo, "unit")).toContain("Terragrunt unit");
+    // A unit holds no .tf files of its own: Terragrunt prepares its code, so it is not refused for that.
+    expect(refusal(repo, "unit")).toBeUndefined();
     expect(refusal(repo, "hcp")).toContain("cloud block");
     expect(refusal(repo, "empty")).toContain("holds no .tf or .tf.json files");
     expect(refusal(repo, "gone")).toContain("not a directory");
@@ -312,12 +313,28 @@ describe("running a migration from wave 1", () => {
 });
 
 describe("wave 1 and the migrations", () => {
-  it("refuses a Terragrunt repo with a migration before any unit plans", async () => {
+  it("runs a Terragrunt repo's migration before any unit plans, preparing each unit through Terragrunt", async () => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
-    const tg = write(tmp(), { "migrations/m.yml": "moves:\n  - from: a\n    to: b\n    addresses: [x.y]\n", "a/terragrunt.hcl": "" });
-    expect(await applyWave(tg, { wave: 1, layers: [["a"]], binary: "tofu", gate: "never", terragrunt: true, env: {} })).toBe(1);
-    expect(lines.join("\n")).toContain("not Terragrunt units; nothing was applied");
+    const dir = tmp();
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    const tg = write(join(dir, "work"), { "migrations/m.yml": "moves:\n  - from: a\n    to: b\n    addresses: [x.y]\n", "a/terragrunt.hcl": "", "b/terragrunt.hcl": "" });
+    git(tg, "init", "-q", "-b", "main");
+    git(tg, "add", "-A");
+    git(tg, "commit", "-q", "-m", "base");
+    git(tg, "remote", "add", "origin", origin);
+    git(tg, "push", "-q", "origin", "main");
+    const calls: string[][] = [];
+    // Terragrunt fails to prepare the unit: the migration fails, naming it, and the wave applies nothing.
+    const exec: TerragruntExec = async (_f, args) => {
+      calls.push([...args]);
+      return { code: 1, stdout: "", stderr: "Error: no backend" };
+    };
+    expect(await applyWave(tg, { wave: 1, layers: [["a", "b"]], binary: "tofu", gate: "never", terragrunt: true, terragruntExec: exec, terragruntPath: "tg", env: {} })).toBe(1);
+    expect(calls[0]).toEqual(["run", "--non-interactive", "--no-color", "--working-dir", "a", "--", "init", "-input=false", "-no-color"]);
+    expect(lines.join("\n")).toContain("terragrunt could not prepare a (init failed): Error: no backend");
+    expect(lines.join("\n")).toContain("did not apply, so no wave plans until it does");
     vi.restoreAllMocks();
   });
 });
@@ -354,5 +371,79 @@ describe("the S3 lock a migration holds", () => {
       return { ok: false, status: 404, text: async () => "" };
     }).remove("k.tflock");
     expect(seen).toEqual(["DELETE http://minio:9000/b/k.tflock"]);
+  });
+});
+
+// ── Terragrunt units ─────────────────────────────────────────────────────
+// Each unit's code runs in a working directory of Terragrunt's cache. The
+// Terragrunt stand-in runs TG_TF_PATH there, with the unit's input as a
+// TF_VAR_, as Terragrunt does; the simulated binary then works in that
+// directory, and must see the variable.
+
+describe("a migration between two Terragrunt units", () => {
+  function tgRepo() {
+    const dir = tmp("tg-units-");
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    const work = join(dir, "work");
+    mkdirSync(work);
+    write(work, {
+      "root.hcl": "",
+      "live/one/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n',
+      "live/two/terragrunt.hcl": 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n',
+      "migrations/split-b.yml": "moves:\n  - from: live/one\n    to: live/two\n    addresses: [terraform_data.b]\n",
+      ".gitignore": ".cache/\n",
+    });
+    const cache = join(dir, "cache");
+    write(cache, {
+      "one/want.json": JSON.stringify(["terraform_data.a"]),
+      "one/terraform.tfstate": JSON.stringify(state("L1", 5, [res("terraform_data", "a"), res("terraform_data", "b")])),
+      "two/want.json": JSON.stringify(["terraform_data.c", "terraform_data.b"]),
+      "two/terraform.tfstate": JSON.stringify(state("L2", 2, [res("terraform_data", "c")])),
+    });
+    git(work, "init", "-q", "-b", "main");
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "base");
+    git(work, "remote", "add", "origin", origin);
+    git(work, "push", "-q", "origin", "main");
+    const prepared: string[] = [];
+    const terragrunt: TerragruntExec = async (_file, args, opts) => {
+      const unit = args[args.indexOf("--working-dir") + 1]!;
+      prepared.push(unit);
+      const name = unit.split("/").pop()!;
+      // Terragrunt runs the binary in the unit's working directory, with its inputs as TF_VAR_ variables.
+      execFileSync(opts.env.TG_TF_PATH!, args.slice(args.indexOf("--") + 1), { cwd: join(cache, name), env: { ...process.env, ...opts.env, TF_VAR_unit: name } });
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    // The binary must run where Terragrunt ran it, with the unit's inputs.
+    const seen: string[] = [];
+    const exec: BinaryExec = (binary, args, dir, env) => {
+      seen.push(`${env.TF_VAR_unit}@${dir.split("/").pop()}`);
+      return fake(binary, args, dir, env);
+    };
+    return { work, cache, terragrunt, exec, prepared, seen };
+  }
+
+  it("moves the resource from one unit's state to the other's, in the directories Terragrunt prepared, behind the digest's approval", async () => {
+    const { work, cache, terragrunt, exec, prepared, seen } = tgRepo();
+    const lines: string[] = [];
+    const log = (l: string) => void lines.push(l);
+    const opts = { binary: "true", exec, env: {}, log, terragrunt: { path: "terragrunt", exec: terragrunt } };
+    const first = await runMigrations(work, { ...opts, now: T(1) });
+    expect(first.code).toBe(3);
+    expect(prepared).toEqual(["live/one", "live/two"]);
+    expect(new Set(seen)).toEqual(new Set(["one@one", "two@two"]));
+    const digest = first.records[0].digest;
+    approve(work, "split-b", digest, T(2));
+    const second = await runMigrations(work, { ...opts, now: T(3) });
+    expect(second.code).toBe(0);
+    expect(second.records[0]).toMatchObject({ status: "applied", digest });
+    const held = (u: string) => (JSON.parse(readFileSync(join(cache, u, "terraform.tfstate"), "utf-8")) as StateFile).resources.map((r) => r.name);
+    expect(held("one")).toEqual(["a"]);
+    expect(held("two")).toEqual(["c", "b"]);
+    expect(second.records[0].roots.map((r) => r.root)).toEqual(["live/one", "live/two"]);
+    // The units' own directories were never written: the override file went into the working directories, and is gone.
+    expect(existsSync(join(work, "live/one", OVERRIDE_FILE))).toBe(false);
+    expect(existsSync(join(cache, "one", OVERRIDE_FILE))).toBe(false);
   });
 });

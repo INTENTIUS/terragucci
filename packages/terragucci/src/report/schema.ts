@@ -235,11 +235,14 @@ export interface ReportRootBinary {
   version?: string;
   /** Where the root pinned its version: `.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`. Absent when it runs the job's binary unpinned. */
   pin?: string;
+  /** A Terragrunt unit: the Terragrunt release that ran it, and `terragrunt_version_constraint` when the unit pinned it (minor 24). */
+  terragrunt?: { version: string; pin?: string };
 }
 
 /** A root's binary as the note, the report and the log name it: `tofu 1.10.6 (.opentofu-version)`. */
 export function binaryText(b: ReportRootBinary): string {
-  return `${b.name}${b.version ? ` ${b.version}` : ""}${b.pin ? ` (${b.pin})` : ""}`;
+  const tg = b.terragrunt?.pin ? ` under Terragrunt ${b.terragrunt.version} (${b.terragrunt.pin})` : "";
+  return `${b.name}${b.version ? ` ${b.version}` : ""}${b.pin ? ` (${b.pin})` : ""}${tg}`;
 }
 
 export interface ReportRoot {

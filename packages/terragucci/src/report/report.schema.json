@@ -78,7 +78,16 @@
             "properties": {
               "name": { "type": "string" },
               "version": { "type": "string" },
-              "pin": { "type": "string" }
+              "pin": { "type": "string" },
+              "terragrunt": {
+                "description": "A Terragrunt unit: the Terragrunt release that ran it, and terragrunt_version_constraint when the unit pinned it (minor 24).",
+                "type": "object",
+                "required": ["version"],
+                "properties": {
+                  "version": { "type": "string" },
+                  "pin": { "type": "string" }
+                }
+              }
             }
           },
           "terragrunt": {
