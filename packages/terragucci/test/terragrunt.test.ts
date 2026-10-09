@@ -305,6 +305,7 @@ describe("init in a Terragrunt repo", () => {
     const check = doc.jobs.check.steps.at(-2).run as string;
     expect(check).toContain("terragrunt hcl fmt --check --diff");
     expect(check).toContain("terragrunt hcl validate --inputs --no-color --filter '!./catalog/**'");
+    expect(check).toContain("terragucci check-pins");
     expect(check).toContain("terragucci check-policy");
     const plan = doc.jobs.plan.steps.at(-2).run as string;
     const layers = "'live/dev/vpc;live/dev/app;live/prod/vpc;live/prod/app'";
