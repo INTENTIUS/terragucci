@@ -293,6 +293,20 @@
       "says": "the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker",
       "verdict": "pass",
       "break": "caught"
+    },
+    {
+      "forge": "gitlab",
+      "claim": "gl-check-token",
+      "says": "with GITLAB_TOKEN an unprotected variable the synth command of a branch runs in the check job with no forge token variable, and the check passes",
+      "verdict": "pass",
+      "break": "caught"
+    },
+    {
+      "forge": "gitlab",
+      "claim": "gl-managed-state",
+      "says": "a root on GitLab-managed state applies with its backend password passed as TF_HTTP_PASSWORD from the job token, and GitLab holds its state",
+      "verdict": "pass",
+      "break": "caught"
     }
   ]
 }

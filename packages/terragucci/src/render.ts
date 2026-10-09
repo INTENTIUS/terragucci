@@ -641,6 +641,8 @@ export interface ApplyWaveInput {
   synth?: string;
   /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
   notify?: boolean;
+  /** `policy:` is set: a denial is recorded on chant/lifecycle for an override, whatever the gate. */
+  policy?: boolean;
 }
 
 /**
@@ -692,8 +694,9 @@ export function applyScript(
       : []),
     ...(forge === "forgejo" ? [forgejoLock()] : forge === "github" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
-    // A waiting wave records what it planned on the chant/lifecycle branch, so the job's checkout must be able to push.
-    ...(forge === "gitlab" && gate !== "never" ? [gitlabPushRemote] : []),
+    // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
+    // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
+    ...(forge === "gitlab" && (gate !== "never" || input.policy) ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -1507,7 +1510,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   const applyJobs = Array.from({ length: waveCount }, (_, i) => ({
     name: `apply-wave-${i + 1}`,
-    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn }),
+    body: applyScript(binary, layers, forge, oidc, { wave: i + 1, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}) }),
   }));
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";

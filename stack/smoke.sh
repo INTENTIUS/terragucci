@@ -60,6 +60,14 @@ case "${1:-}" in
     ;;
 esac
 export SMOKE_ONLY
+# The forge the claims run on: forgejo, the validation stack, or gitlab, the
+# GitLab lab (stack/gitlab/gitlab.sh), whose claims are in smoke-gitlab.sh.
+SMOKE_FORGE="${SMOKE_FORGE:-forgejo}"
+case "$SMOKE_FORGE" in forgejo|gitlab) ;; *) echo "smoke: SMOKE_FORGE is forgejo or gitlab, not '$SMOKE_FORGE'" >&2; exit 2 ;; esac
+export SMOKE_FORGE
+# A claim's function is claim_<name> on Forgejo and gitlab_claim_<name> on GitLab.
+CLAIM_FN=claim_
+[ "$SMOKE_FORGE" = gitlab ] && CLAIM_FN=gitlab_claim_
 EXAMPLE="$(cd "$HERE/../example" && pwd)"
 JOB_CACHE_VOLUME=terragucci-job-cache
 # shellcheck source=mounted.sh
@@ -4509,7 +4517,7 @@ run_claim() { # name -> prints the SMOKE line, returns 1 on fail
   started=$(date +%s)
   trap 'cleanup_works; exit 130' INT
   trap 'cleanup_works; exit 143' TERM
-  if "claim_${name//-/_}"; then held=1; else held=0; fi
+  if "$CLAIM_FN${name//-/_}"; then held=1; else held=0; fi
   cleanup_works
   secs=$(( $(date +%s) - started ))
   if [ -z "${BREAK:-}" ]; then
@@ -10542,6 +10550,11 @@ runnable_names() {
   only "$(awk -F'|' '$3 == "" { print $1 }' <<<"$CLAIMS")"
 }
 
+# ── the GitLab claims ─────────────────────────────────────────────────────
+# GITLAB_CLAIMS, GITLAB_CLAIM_GROUPS and a gitlab_claim_<name> per claim.
+# shellcheck source=smoke-gitlab.sh
+. "$HERE/smoke-gitlab.sh"
+
 # ── the runner ────────────────────────────────────────────────────────────
 #
 # What each claim shares with the others, one line per claim:
@@ -10750,6 +10763,15 @@ approval-used        runner self! weight=200
 cdktn-affected       runner self! weight=200
 '
 
+# The Forgejo claims' table, which orders the rows of smoke.json on any forge.
+FORGEJO_CLAIMS="$CLAIMS"
+# On GitLab the claims are GitLab's, with their own groups and locks: no lock
+# of a run on the validation stack holds up a run on the lab.
+if [ "$SMOKE_FORGE" = gitlab ]; then
+  CLAIMS="$GITLAB_CLAIMS"
+  CLAIM_GROUPS="$GITLAB_CLAIM_GROUPS"
+  SMOKE_LOCK_DIR="${SMOKE_LOCK_DIR:-$HERE/gitlab/.state/locks}"
+fi
 SMOKE_LOCKS="${SMOKE_LOCK_DIR:-$HERE/.state/locks}"
 
 # ── the stack lock: one lock per shared resource ──
@@ -10847,7 +10869,7 @@ with_lock() { # resource, command... : run the command holding the resource alon
 if [ "${1:-}" = --list ]; then
   while IFS='|' read -r n _; do
     [ -n "$n" ] || continue
-    f=no; declare -F "claim_${n//-/_}" >/dev/null && f=yes
+    f=no; declare -F "$CLAIM_FN${n//-/_}" >/dev/null && f=yes
     g=no; awk -v n="$n" '$1 == n { f = 1 } END { exit !f }' <<<"$CLAIM_GROUPS" && g=yes
     echo "$n function=$f group=$g"
   done <<<"$CLAIMS"
@@ -10898,7 +10920,8 @@ claim_locks() { # claim, plain|break -> the locks its run holds
 SMOKE_JOBS="${SMOKE_JOBS:-6}"
 case "$SMOKE_JOBS" in ''|*[!0-9]*|0) SMOKE_JOBS=6 ;; esac
 [ -n "${SMOKE_SERIAL:-}" ] && SMOKE_JOBS=1
-SMOKE_LOG_DIR="${SMOKE_LOG_DIR:-$HERE/.state/smoke-logs/$(date +%Y%m%d-%H%M%S)}"
+if [ "$SMOKE_FORGE" = gitlab ]; then SMOKE_LOG_BASE="$HERE/gitlab/.state/smoke-logs"; else SMOKE_LOG_BASE="$HERE/.state/smoke-logs"; fi
+SMOKE_LOG_DIR="${SMOKE_LOG_DIR:-$SMOKE_LOG_BASE/$(date +%Y%m%d-%H%M%S)}"
 SMOKE_LINES_TO=stdout
 SMOKE_BREAK_VALUE=1
 QUEUE=""
@@ -11056,6 +11079,17 @@ runner_prep() {
   export SMOKE_CLI_BUILT=1
   SMOKE_TOFU_IMAGE="$(image_tag tofu)"; SMOKE_TG_IMAGE="$(image_tag terragrunt)"
   export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE
+  # The lab is never started here: GitLab is heavy, and `just gitlab-lab up`
+  # is a choice. Its jobs run the lab's own image, the tofu image with this
+  # tree's bundle (gitlab.sh image), so a GitLab run leaves the shared image
+  # tags as they are.
+  if [ "$SMOKE_FORGE" = gitlab ]; then
+    gitlab_lab_env || return 1
+    TG_TOFU_IMAGE="$("$HERE/gitlab/gitlab.sh" image 2>"$SMOKE_LOG_DIR/images.log")" \
+      || { echo "[smoke] the lab's image did not build; see $SMOKE_LOG_DIR/images.log" >&2; return 1; }
+    export TG_TOFU_IMAGE
+    return
+  fi
   # Built every time: a forge job runs the bundle inside the image, so an
   # image left from an older tree would test older code. The layer cache
   # makes a rebuild take seconds when only the bundle moved.
@@ -11130,7 +11164,10 @@ fi
 
 if [ -n "$SMOKE_ONLY" ]; then
   for n in $SMOKE_ONLY; do
-    grep -q "^$n|" <<<"$CLAIMS" || { echo "smoke: unknown claim '$n'" >&2; exit 2; }
+    grep -q "^$n|" <<<"$CLAIMS" && continue
+    if [ "$SMOKE_FORGE" = gitlab ]; then echo "smoke: no GitLab claim '$n' (GITLAB_CLAIMS in stack/smoke-gitlab.sh)" >&2
+    else echo "smoke: unknown claim '$n'" >&2; fi
+    exit 2
   done
   echo "[smoke] only: $(echo $SMOKE_ONLY)" >&2
 fi
@@ -11152,30 +11189,45 @@ if [ "${1:-}" = --record ]; then
     broken="$(cat "$SMOKE_LOG_DIR/$name.break.verdict" 2>/dev/null || true)"
     row="$(grep "^$name|" <<<"$CLAIMS")"
     says="$(cut -d'|' -f2 <<<"$row")"; issue="$(cut -d'|' -f3 <<<"$row")"
-    rows+=("$(jq -n --arg c "$name" --arg s "$says" --arg i "$issue" --arg p "$plain" --arg b "$broken" '{
+    # A GitLab row names its forge; a row with none is Forgejo's, as the
+    # file's own forge says.
+    rows+=("$(jq -n --arg c "$name" --arg s "$says" --arg i "$issue" --arg p "$plain" --arg b "$broken" --arg f "${SMOKE_FORGE#forgejo}" '{
       claim: $c, says: $s, needs: (if $i == "" then null else $i end),
       verdict: ($p | capture("verdict=(?<v>[a-z]+)").v),
       break: (if $b == "" then null else ($b | capture("verdict=(?<v>[a-z]+)").v) end)
-    }')")
+    } + (if $f == "" then {} else {forge: $f} end)')")
   done
   # Leave the example booted and clean for whoever runs next. Each claim puts
   # back what it changed, so this boots afresh only when something was left.
-  "$HERE/example.sh" verify >&2 || "$HERE/example.sh" up --fresh >&2
+  [ "$SMOKE_FORGE" != forgejo ] || "$HERE/example.sh" verify >&2 || "$HERE/example.sh" up --fresh >&2
   disk_check "$disk_start"
   new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
-  if [ -n "$SMOKE_ONLY" ]; then
-    # Only these claims ran: their rows replace the old ones and every other
-    # row stays as the last record left it, all in CLAIMS order. Each new row
-    # names the commit it ran on; the file's own commit is the last full record's.
+  # The rows' order: each Forgejo claim in CLAIMS order with its GitLab row
+  # after it, then the GitLab claims Forgejo has no row for.
+  order="$( { while IFS='|' read -r n _; do [ -n "$n" ] && printf 'forgejo %s\ngitlab %s\n' "$n" "$n"; done <<<"$FORGEJO_CLAIMS"
+    cut -d'|' -f1 <<<"$GITLAB_CLAIMS" | sed 's/^/gitlab /'; } | awk '!seen[$0]++' | jq -R . | jq -s .)"
+  if [ -n "$SMOKE_ONLY" ] || [ "$SMOKE_FORGE" != forgejo ]; then
+    # Only these claims ran: their rows replace the old ones (the same claim
+    # on the same forge) and every other row stays as the last record left it.
+    # Each new row names the commit it ran on; the file's own commit is the
+    # last full record's.
     [ -f "$out" ] || { echo "smoke: --only --record needs an existing $out" >&2; exit 2; }
-    new="$(jq --arg commit "$(git -C "$HERE/.." rev-parse --short HEAD)" --argjson order "$(cut -d'|' -f1 <<<"$CLAIMS" | jq -R . | jq -s .)" \
-      --slurpfile old "$out" '(map(. + {commit: $commit}) | map({key: .claim, value: .}) | from_entries) as $mine
-        | ($old[0].claims | map({key: .claim, value: .}) | from_entries) as $was
+    new="$(jq --arg commit "$(git -C "$HERE/.." rev-parse --short HEAD)" --argjson order "$order" \
+      --slurpfile old "$out" 'def key: (.forge // "forgejo") + " " + .claim;
+        (map(. + {commit: $commit}) | map({key: key, value: .}) | from_entries) as $mine
+        | ($old[0].claims | map({key: key, value: .}) | from_entries) as $was
         | [$order[] | ($mine[.] // $was[.]) | select(. != null)]' <<<"$new")"
     if [ "$(jq -S .claims "$out")" = "$(jq -S . <<<"$new")" ]; then echo "unchanged $out" >&2; exit 0; fi
     jq --argjson c "$new" '.claims = $c' "$out" > "$out.tmp" && mv "$out.tmp" "$out"
-    echo "wrote $(echo $SMOKE_ONLY | wc -w | tr -d ' ') rows into $out" >&2
+    echo "wrote the rows of $(echo ${SMOKE_ONLY:-$(names)} | wc -w | tr -d ' ') $SMOKE_FORGE claims into $out" >&2
     exit 0
+  fi
+  # Every Forgejo claim ran; the rows of other forges stay as they were.
+  if [ -f "$out" ]; then
+    new="$(jq --argjson order "$order" --slurpfile old "$out" 'def key: (.forge // "forgejo") + " " + .claim;
+      (map({key: key, value: .}) | from_entries) as $mine
+      | ($old[0].claims | map(select((.forge // "forgejo") != "forgejo")) | map({key: key, value: .}) | from_entries) as $was
+      | [$order[] | ($mine[.] // $was[.]) | select(. != null)]' <<<"$new")"
   fi
   # Same verdicts as the last record: keep it, date and all, so nothing diffs.
   if [ -f "$out" ] && [ "$(jq -S .claims "$out")" = "$(jq -S . <<<"$new")" ]; then

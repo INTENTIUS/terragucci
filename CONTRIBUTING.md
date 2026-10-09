@@ -255,7 +255,29 @@ just example-gitlab shot /root/example/-/merge_requests/1 note-dark.png dark --s
 
 `shot` takes a GitLab path or URL, the PNG to write, `light` or `dark`, and any further `stack/shot.mjs` flags (`--height`, `--scroll`, `--match`, `--fit`). GitLab's color mode is a setting of the signed-in user and ignores the browser's `prefers-color-scheme`. So `shot` signs in as root (the session is kept in `stack/.state/gitlab-cookies`), sets the color mode and the syntax theme to light or dark through the preferences form, and hands the session to `shot.mjs --cookie`. Before the picture, `shot.mjs` waits for a GitLab page's spinners and skeletons to go.
 
+`just example-gitlab capture` takes the docs' GitLab views from a reset example, light and dark, and writes them as the tutorial step `gitlab` (`docs-site/src/data/tutorial/gitlab.json`, `docs-site/src/assets/tutorial/gitlab-<view>-<light|dark>.png`), the way `just sandbox capture` writes `github`. A page uses them as `<Shot step="gitlab" view="note" ... />`. `TGLAB=1` runs any of these commands on the GitLab lab instead of the gitlab profile.
+
+| View | Page | Shows |
+|---|---|---|
+| `required` | Settings, Merge requests | "Pipelines must succeed", turned on |
+| `note` | the one-root merge request | the plan note |
+| `check` | the failed check job of `change/unformatted`'s first push | the file `tofu fmt` names |
+| `waiting` | the waiting `apply-wave-N` job after `merge destroy` | the wave's `chant approve` command |
+| `drift` | the issue the drift schedule's run opened | staging orders' deleted queue |
+
 `GITLAB_HIDE` is the hide list, like the tutorial's `FORGEJO_HIDE`: the left sidebar and its toggle, broadcast messages and the instance's alert banners (the "add an SSH key" one), callouts and feature highlights. `GITLAB_STYLE` gives the content the sidebar's width. Both are defaults in `stack/example-gitlab.sh` and can be overridden from the environment. Gravatar is off on the stack, so avatars are GitLab's initials.
+
+### The smoke claims on GitLab
+
+A smoke claim ported to GitLab runs on the GitLab lab, `stack/gitlab/`: GitLab CE, a gitlab-runner and floci under a compose project of their own (`tglab`), beside the validation stack and touching none of its names. `stack/README.md` (The GitLab lab) has its ports, what it costs the machine, and how a run on it is laid out.
+
+```bash
+just gitlab-lab up                    # several minutes; nothing else starts it
+just gitlab-claims tips note-footer   # plain and under BREAK=1; GitLab rows into smoke.json
+just gitlab-lab down
+```
+
+`SMOKE_FORGE=gitlab` switches `stack/smoke.sh` to the claims in `stack/smoke-gitlab.sh` (`GITLAB_CLAIMS`, `GITLAB_CLAIM_GROUPS`, `gitlab_claim_<name>`). A port is a new line in `GITLAB_CLAIMS` with the name of the Forgejo claim it matches, its group line and its function, and `just lint` holds the table to the same rules as `CLAIMS`. Its row in `smoke.json` carries `forge: "gitlab"`, sits after the Forgejo row of the same claim, and shows in the GitLab column of the validation page.
 
 ### The real-AWS pilot (SMOKE_AWS=1)
 
