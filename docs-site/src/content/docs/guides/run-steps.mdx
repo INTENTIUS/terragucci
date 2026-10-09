@@ -13,7 +13,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-Your commands run inside the job that plans, applies or checks drift, around each root's own `init`, `plan` and `apply`. terragucci runs them itself, so they need no job of their own and work the same on GitHub, GitLab and Forgejo. The plan note and the report list every step that ran:
+Your commands run around each root's `init`, `plan` and `apply` inside the job that already runs them. They need no job of their own and work the same on GitHub, GitLab and Forgejo. The plan note and the report list every step that ran:
 
 ```text
 **Steps (2):**
@@ -63,7 +63,7 @@ Your commands run inside the job that plans, applies or checks drift, around eac
    npx terragucci config check
    ```
 
-   The steps take effect for the changes after this one merges. [Why](#steps-are-read-at-base).
+   The steps apply to changes after this one merges ([why](#steps-are-read-at-base)).
 
 </Steps>
 
@@ -76,9 +76,9 @@ Your commands run inside the job that plans, applies or checks drift, around eac
 | drift | `init`, then `drift` around the refresh-only plan |
 | check | none |
 
-A root's steps run in this order: `before-init`, `init`, `after-init`, `before-plan`, the plan, `after-plan`. On an apply wave, `before-apply`, the apply and `after-apply` follow once the gate has decided. Roots that plan side by side run their steps side by side.
+A root's steps run in this order: `before-init`, `init`, `after-init`, `before-plan`, the plan, `after-plan`. On an apply wave `before-apply`, the apply and `after-apply` follow once the gate decides. Roots that plan side by side run their steps side by side.
 
-Each step gets the job's environment less its forge tokens, as the binary does, and these:
+Each step gets the job's environment minus its forge tokens (as the binary does), plus these:
 
 | Variable | Value |
 |---|---|
@@ -88,11 +88,11 @@ Each step gets the job's environment less its forge tokens, as the binary does, 
 | `TG_REPO` | the checkout's path |
 | `TG_PLAN_FILE` | after a plan and before an apply: the saved plan, which `tofu show -json "$TG_PLAN_FILE"` reads |
 
-A step's output goes to the job log, each line after the root and the step's name. The report keeps its name, moment, result, exit code and time, never its output.
+A step's output goes to the job log with each line prefixed by the root and step name. The report keeps its name, moment, result, exit code and time, never its output.
 
 ## In a Terragrunt repo
 
-A wave of units plans with one `run --all` and applies with another, so each moment comes once for the wave. Each step then runs in the directory of every unit its `roots` globs match, unit by unit, with `TG_ROOT` set to the unit:
+A wave of units plans with one `run --all` and applies with another, so each moment comes once per wave. A step then runs in each unit directory its `roots` globs match, one at a time, with `TG_ROOT` set to the unit:
 
 | Moment | Runs |
 |---|---|
@@ -101,7 +101,7 @@ A wave of units plans with one `run --all` and applies with another, so each mom
 | `before-apply`, `after-apply` | around the `run --all apply`, for the units that change |
 | `before-drift`, `after-drift` | around the drift job's refresh-only `run --all` |
 
-`after: init` is refused: Terragrunt inits each unit inside the `run --all plan`, so no command can run between a unit's init and its plan. Use `before: plan`. On an apply wave a step that fails fails the wave, and nothing in it applies; one after the apply fails the job though the units applied. A provisional preview of dependents runs no steps.
+`after: init` is refused because Terragrunt inits each unit inside the `run --all plan`, leaving no point between a unit's init and its plan; use `before: plan`. On an apply wave a step that fails fails the wave, and nothing in it applies; one after the apply fails the job though the units applied. A provisional preview of dependents runs no steps.
 
 ## Step failures
 
@@ -110,13 +110,13 @@ A wave of units plans with one `run --all` and applies with another, so each mom
 | `fail`, the default | fails the root, and its later steps do not run. On a plan the root is refused; on an apply wave nothing in the wave applies. A failure after the apply fails the job, though the root has applied |
 | `approve` | holds the root's wave at its gate. The steps after it still run. The wave waits for an approval of its set digest, whatever `gate` says, and the plan note shows the wave as one that waits |
 
-An `approve` step must run before the gate is decided, so it can only be a step before or after `init` or `plan`. `config check` refuses one on `apply` or `drift`.
+An `approve` step must run before the gate decides, so it can only sit on `init` or `plan`; `config check` refuses one on `apply` or `drift`.
 
 The wave waits through the same ledger as every other gated wave: [`chant approve`](/terragucci/concepts/glossary/#chant) of its digest on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), under the [approval mode](/terragucci/guides/approve-a-wave/#approval-modes) at base. A wave that changes nothing applies nothing, so it never waits. With `waves.jobs`, a share job whose `approve` step fails applies nothing unless the wave's job decided under an approval.
 
 ## Steps are read at base
 
-The steps come from `terragucci.yml` at base, never from the change being planned or applied:
+Each run reads the steps from `terragucci.yml` at its base, which the change cannot alter:
 
 | Run | Reads the steps at |
 |---|---|
@@ -125,11 +125,11 @@ The steps come from `terragucci.yml` at base, never from the change being planne
 | `apply.when: pull-request` | the base the pull request applies onto |
 | drift | the default branch, which it checks out |
 
-So a change cannot add, edit or remove a step that runs with the credentials it is applied with, and it cannot drop an `approve` step to skip the gate. A change that edits `steps` takes effect for the changes after it merges. When the base's file cannot be read and the checkout names no steps, none run; when the checkout names some, the stage fails. The [threat model](/terragucci/reference/threat-model/#steps) has the rest.
+So a change cannot add, edit or remove a step that runs with the credentials it is applied with, and it cannot drop an `approve` step to skip the gate. When the base's file cannot be read and the checkout names no steps, none run; when the checkout names some, the stage fails. The [threat model](/terragucci/reference/threat-model/#steps) has the rest.
 
 ## Run the jobs in your own image
 
-When a step needs a tool terragucci's image does not carry, build an image `FROM` terragucci's and name it:
+If a step needs a tool terragucci's image does not carry, build an image `FROM` terragucci's and name it:
 
 ```dockerfile
 FROM ghcr.io/intentius/terragucci-tofu:<the tag init names>

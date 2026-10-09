@@ -19,7 +19,7 @@ import Shot from '../../../components/Shot.astro';
 
 Every module that changed on the default branch released under a new number, each with a digest your roots can pin.
 
-Publishing is opt-in, and so is attesting on top of it:
+Each level is opt-in:
 
 | Level | Config | What it adds |
 |---|---|---|
@@ -69,9 +69,9 @@ Publishing is opt-in, and so is attesting on top of it:
    npx terragucci init
    ```
 
-   This adds a `publish` job that runs after `apply` on a push to the default branch, with full history.
+   It adds a `publish` job, run with full history after `apply` on each push to the default branch.
 
-4. Give it registry credentials. Only the publish job gets these.
+4. Give it registry credentials; no other job gets them.
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
@@ -93,19 +93,19 @@ Publishing is opt-in, and so is attesting on top of it:
 
 5. Merge a change to a module.
 
-   The next push to the default branch publishes. The OCI manifest digest prints with each version, and a root can pin it: `oci://registry.example.com/acme/modules/network@sha256:...`.
+   The next push to the default branch publishes, printing each version's OCI manifest digest for a root to pin: `oci://registry.example.com/acme/modules/network@sha256:...`.
 
-   With `git-tags`, each version is a tag on the repo, `<module>/v<version>`. Here `modules/service` changed after its first release and moved to 0.2.0; `modules/queue` did not:
+   With `git-tags`, each version is a tag on the repo, `<module>/v<version>`. Here `modules/service` moved to 0.2.0 after a change, while `modules/queue` stayed at 0.1.0:
 
    <Shot step="publish" view="tags" alt="The tags page of a Forgejo repo after three merges: modules/service/v0.2.0, modules/service/v0.1.0 and modules/queue/v0.1.0, each pushed by the pipeline's publish job" />
 
-   A published version never changes, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first. Unchanged content publishes nothing; different content under an existing tag stops the run and names the tag.
+   A published version never changes, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first; different content under an existing tag stops the run and names the tag.
 
 </Steps>
 
 ## Test each release
 
-With `modules.test`, the publish job runs the binary's `test` on each module before it publishes a release of it. A module with no test files is refused, and so is one whose tests fail; the other modules still publish, and the job fails at the end.
+With `modules.test`, the publish job runs the binary's `test` on each module before releasing it. A module with no test files or with failing tests is refused; the other modules still publish, and the job fails at the end.
 
 ```yaml
 binary: tofu
@@ -143,7 +143,7 @@ network 1.1.0: refused, not published to git-tags (modules/network has no tests 
 
 ## Serve a module registry
 
-With `modules.registry`, each release is also written as the [module registry protocol](https://opentofu.org/docs/internals/module-registry-protocol/), as static files. A bucket or a Pages site serves them, and roots call the modules by registry address, with a `version` that can be a constraint:
+With `modules.registry`, each release is also written as static files in the [module registry protocol](https://opentofu.org/docs/internals/module-registry-protocol/), served from a bucket or a Pages site. Roots call the modules by registry address, with a `version` that can be a constraint:
 
 ```hcl
 module "network" {
@@ -221,13 +221,13 @@ registry:
 
 `platform/modules/network` is `modules.example.com/platform/network/generic`. Two modules at one address stop the publish and name both.
 
-With `dir`, the publish job writes the files into that directory of its checkout, beside what is already there. Deploying the directory to the Pages site is up to you, and so is keeping the earlier versions in it (from the site's branch, for example): `versions` lists only what the directory holds.
+With `dir`, the publish job writes the files into that directory of its checkout, beside what is there. You deploy the directory to the Pages site and keep the earlier versions in it (from the site's branch, for example), since `versions` lists only what the directory holds.
 
 A [rollout](/terragucci/guides/roll-out-a-module-version/) of `modules/network` moves the `version` of each call to its registry address. A call pinned by a constraint such as `~> 1.0` has no one version to move, and the rollout refuses it.
 
 ## Attest each release
 
-With `modules.attest`, the publish job also signs each new release with a key you hold. It records the version in [chant](/terragucci/concepts/glossary/#chant)'s release ledger, so a root's pin can be checked against all of it.
+With `modules.attest`, the publish job also signs each new release with a key you hold and records the version in [chant](/terragucci/concepts/glossary/#chant)'s release ledger, so a root's pin can be checked against all of it.
 
 <Steps>
 
@@ -306,7 +306,7 @@ modules:
   require: attested
 ```
 
-Only checked sources are checked; a module from anywhere else, such as the public registry, is left alone:
+Only these sources are checked; a module from anywhere else, such as the public registry, is left alone:
 
 | Source | Checked when | Key | Ledger |
 |---|---|---|---|

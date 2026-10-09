@@ -1,13 +1,13 @@
 # @intentius/terragucci
 
-The whole Terraform and Terragrunt lifecycle, handled. terragucci writes your repo's pipeline for GitHub, GitLab or Forgejo. Most repos need no config file at all.
+terragucci writes the pipeline that runs the whole lifecycle of your Terraform or Terragrunt repo on GitHub, GitLab or Forgejo.
 
 ```bash
 npm i -D @intentius/terragucci
 npx terragucci init
 ```
 
-`init` reads the repo to decide what the pipeline needs, then writes it and reports what it found:
+`init` reads the repo and writes the pipeline it needs, then reports what it found:
 
 ```
 found 15 roots in 2 layers, tofu 1.13.1 (.opentofu-version), forge github (the origin remote (github.com))

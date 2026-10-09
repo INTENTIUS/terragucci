@@ -13,7 +13,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-A runner that kills a job mid-apply, on a timeout or a cancelled run, never lets the binary give back what it took on the state. The next plan of that root then waits until its timeout and fails. `terragucci unlock-state` does what a hand-run `force-unlock` would, with checks a hand run lacks:
+When a runner kills a job mid-apply (a timeout or a cancelled run), the binary never releases its hold on the state. The root's next plan then waits until its timeout and fails. `terragucci unlock-state` runs `force-unlock` with checks a hand run lacks:
 
 | Check | What it guards against |
 |---|---|
@@ -39,7 +39,7 @@ It works on the lock file an `s3` backend takes with `use_lockfile = true`. A co
      Created:   2026-10-09 18:02:11.420 +0000 UTC
    ```
 
-2. Make sure the job that took it is over. Stop it on the forge if it is still going.
+2. Make sure the job that took it has ended, and stop it on the forge if not.
 
 3. In a checkout of the default branch, with the backend's credentials and the forge token in the variable `token_env` names (`FORGEJO_TOKEN`, `GITHUB_TOKEN` or `GITLAB_TOKEN` by default), run:
 
@@ -47,18 +47,18 @@ It works on the lock file an `s3` backend takes with `use_lockfile = true`. A co
    npx terragucci unlock-state envs/prod/app
    ```
 
-   A run that began before the hold was taken and is still running may be the holder. Then nothing is freed, and the command exits 1 naming the run. With no such run, it records the release as waiting and prints the command that approves it:
+   A run that began before the hold and is still running may be the holder; then nothing is freed, and the command exits 1 naming the run. With no such run, it records the release as waiting and prints the command that approves it:
 
    ```text
    terragucci unlock-state: envs/prod/app: releasing lock 1f0c6a52-..., OperationTypeApply by root@runner-7 at 2026-10-09T18:02:11.420Z waits for an approval of digest jcs1-sha256:6d2b.... Approve it with:
    terragucci unlock-state:   chant approve tf-unlock envs/prod/app --plan jcs1-sha256:6d2b...
    ```
 
-4. Whoever approves your waves reads the output above and runs that [chant](/terragucci/concepts/glossary/#chant) command, with `--sign` under `approval: sealed`. The approval names this ID and no other.
+4. Whoever approves your waves runs that [chant](/terragucci/concepts/glossary/#chant) command, with `--sign` under `approval: sealed`. The approval names this ID and no other.
 
 5. Run `npx terragucci unlock-state envs/prod/app` again. It asks the forge about the runs once more and frees the state with the binary's `force-unlock` of that ID. The release goes in `_gates/tf-unlock/done.jsonl` with the approver and the person who ran it.
 
-6. Run the wave again, or push the next change. Its plan takes the state as usual.
+6. Rerun the wave or push the next change; its plan takes the state as usual.
 
 </Steps>
 

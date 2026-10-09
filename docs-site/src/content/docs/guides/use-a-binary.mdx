@@ -28,7 +28,7 @@ A pin the image does not carry is installed in the job, checked against the rele
 
 ### A version per root
 
-A root with its own `.opentofu-version` or `.terraform-version`, or an exact `required_version`, runs that version, and the rest of its wave runs the job's. `version` in `terragucci.yml` can also be a map of root glob to version:
+A root pinned by its own `.opentofu-version`, `.terraform-version` or exact `required_version` runs that version; the rest of its wave runs the job's. `version` in `terragucci.yml` can also be a map of root glob to version:
 
 ```yaml
 binary: tofu
@@ -36,13 +36,13 @@ version:
   "envs/legacy/*": "1.9.1"
 ```
 
-The plan job installs each pinned version once and plans each root with its own; the apply job does the same. The plan note and the report name each root's binary and version:
+The plan and apply jobs install each pinned version once and run each root with its own. The plan note and the report name each root's binary and version:
 
 ```text
 Binaries: tofu 1.10.6 for `old` (.opentofu-version); tofu 1.13.1 for 1 root.
 ```
 
-Run `npx terragucci init` after adding a pin, so the check job validates each root with its version too. [A version per root](/terragucci/reference/config/#a-version-per-root) has the order the pins are read in.
+Run `npx terragucci init` after adding a pin, so the check job validates each root with its version too. [A version per root](/terragucci/reference/config/#a-version-per-root) gives the order pins are read in.
 
 ## Your binary in `terragucci.yml`
 
@@ -55,7 +55,7 @@ Run `npx terragucci init` after adding a pin, so the check job validates each ro
 binary: choudoufu
 ```
 
-[choudoufu](https://github.com/INTENTIUS/choudoufu) is the OpenTofu fork from the team behind terragucci, and `binary: choudoufu` runs the same four stages on it. Nine things come with it:
+`binary: choudoufu` runs the same four stages on [choudoufu](https://github.com/INTENTIUS/choudoufu) and adds:
 
 | You get | Where you see it |
 |---|---|

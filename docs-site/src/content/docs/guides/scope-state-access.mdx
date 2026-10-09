@@ -14,7 +14,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-Each root plans and applies with the roles of its environment. A dev root's init, plan, apply and steps run as the dev roles, which your IAM policies let read and write dev's state keys and nothing else.
+Each root plans and applies with its environment's roles. A dev root's init, plan, apply and steps run as the dev roles, which your IAM policies limit to reading and writing dev's state keys.
 
 | Where | What it shows |
 |---|---|
@@ -77,15 +77,15 @@ Each root plans and applies with the roles of its environment. A dev root's init
    | a root reads the state of another environment's root | the reading root's roles need that state key too; move the output it needs, or grant that one key read-only and accept the reach |
    | a root matches no glob and `oidc` names no pair | add a glob for it, or set `plan_role` and `apply_role` |
 
-5. Run `terragucci init` to write the pipeline again, and merge it. The plan and apply jobs fetch the token as before and carry the stage's roles; the stage sets `AWS_ROLE_ARN` for each root. A state migration's reads and writes, and the state version an apply records, use the root's role too.
+5. Run `terragucci init` and merge the new pipeline. The plan and apply jobs fetch the token as before and carry the stage's roles; the stage sets `AWS_ROLE_ARN` for each root. A state migration's reads and writes, and the state version an apply records, use the root's role too.
 
 </Steps>
 
 ## Limits
 
-One job's token can be exchanged for every role whose trust names the job's subject. Code in a root that reads the token file can assume another environment's role itself. The roles keep each root's own runs to its environment's state, and keep a backend pointed at the wrong key from reading it; they do not separate two environments' code planned in one job. The [threat model](/terragucci/reference/threat-model/#state-access-per-environment) has the full table.
+A job's token can be exchanged for every role whose trust names the job's subject, so code in a root that reads the token file can assume another environment's role itself. The roles keep each root's own runs to its environment's state, and keep a backend pointed at the wrong key from reading it; they do not separate two environments' code planned in one job. The [threat model](/terragucci/reference/threat-model/#state-access-per-environment) has the full table.
 
-## See also
+## Next
 
 - [Credentials](/terragucci/reference/pipeline/#credentials) for the trust each role needs on each forge.
 - [`config check`](/terragucci/reference/cli/#config-check) for every warning.

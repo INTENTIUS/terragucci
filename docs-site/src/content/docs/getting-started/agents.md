@@ -6,7 +6,7 @@ prompt: setup
 
 Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only four opt-in features [run a model](/terragucci/#opt-in-coding-agent).
 
-This page is for a coding agent setting terragucci up, and the person handing it the task. Run your coding agent in the repository and paste it the prompt above. The repository can hold Terraform, OpenTofu or Terragrunt roots.
+Run your coding agent in a repository of Terraform, OpenTofu or Terragrunt roots and paste it the prompt above.
 
 ## Agent inputs
 
@@ -22,9 +22,9 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 ## Steps for the agent
 
-1. Install terragucci with `npm i -D @intentius/terragucci`, then run `npx terragucci init --dry-run --json`. It lists each finding with its reason and the files it would write. Show the user.
-2. Check what it found. When the binary or the forge is wrong, pass `--binary` or `--forge`, or ask the user.
-3. Write a `terragucci.yml` only if the defaults are wrong, as small as possible; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
+1. Install terragucci with `npm i -D @intentius/terragucci` and run `npx terragucci init --dry-run --json`. Show the user the findings with their reasons and the files it would write.
+2. Check what it found. Pass `--binary` or `--forge` if either is wrong, or ask the user.
+3. Write a `terragucci.yml`, as small as possible, only if the defaults are wrong; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
 5. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. Then stop. Approvals are [chant](/terragucci/concepts/glossary/#chant) records on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and they belong to the user.
 

@@ -1,6 +1,6 @@
 ---
 title: Coming from Atlantis or OpenTaco
-description: The Atlantis and OpenTaco comment commands and settings you use today, the terragucci command or key that does the same job, and what terragucci leaves out on purpose.
+description: Each Atlantis and OpenTaco comment command and setting, the terragucci command or key that does the same job, and what terragucci leaves out on purpose.
 claims: [comment-refused, import-atlantis, comment-atlantis]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-atlantis-or-opentaco/.
@@ -12,9 +12,7 @@ prompt: |
 
 ## Result
 
-Each Atlantis and OpenTaco command and setting below sits beside the terragucci comment, key or job that does the same work.
-
-terragucci runs as jobs in your forge's CI and writes to your git and your bucket, with no server and no account: `init` writes the jobs.
+Each Atlantis and OpenTaco command and setting sits beside the terragucci comment, key or job that does the same work. terragucci has no server and no account: `init` writes jobs that run in your forge's CI and write to your git and bucket.
 
 ## Import the settings
 
@@ -24,9 +22,9 @@ npx terragucci import digger     # reads digger.yml
 npx terragucci init
 ```
 
-[`import`](/terragucci/reference/cli/#import) writes `terragucci.yml` by the [settings table](#settings) below, and prints each setting the file carries with the row it falls under: written as a key, done with no key, not mapped and why, or [left out on purpose](#left-out-on-purpose) with the rule and what to do instead. The projects' directories become `roots`, so the pipeline `init` writes plans the same projects. `--dry-run` prints it all and writes nothing.
+[`import`](/terragucci/reference/cli/#import) writes `terragucci.yml` by the [settings table](#settings) below, and prints each setting under its row: written as a key, done with no key, not mapped and why, or [left out on purpose](#left-out-on-purpose) with the rule and what to do instead. The projects' directories become `roots`, so the generated pipeline plans the same projects. `--dry-run` prints it all and writes nothing.
 
-Atlantis and OpenTaco apply before merge, so the import writes `apply.when: pull-request`, with `apply.requires` from the projects' `apply_requirements`. `--apply-when merge` keeps terragucci's default instead. On GitLab it keeps `apply.when: merge` and says why: applying before merge there needs [`comments:` and a merge token](/terragucci/reference/config/#apply-before-merge-on-gitlab).
+Atlantis and OpenTaco apply before merge, so the import writes `apply.when: pull-request`, with `apply.requires` from the projects' `apply_requirements`. `--apply-when merge` keeps terragucci's default. On GitLab it keeps `apply.when: merge` and says why: applying before merge there needs [`comments:` and a merge token](/terragucci/reference/config/#apply-before-merge-on-gitlab).
 
 ## Comment commands
 
@@ -48,9 +46,9 @@ Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merg
 | Pass a failed policy | `atlantis approve_policies` | none | refused from a comment; a person `policy.override` lists runs [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) for one root's plan |
 | Approve | the forge's review | the forge's review | [`terragucci approve`](/terragucci/reference/cli/#approve) (it runs [`chant approve`](/terragucci/concepts/glossary/#chant)) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes) |
 
-With [`atlantis_comments: true`](/terragucci/reference/config/#keys), `atlantis plan`, `atlantis plan -d <dir>` and `atlantis apply` work as the `/terragucci` comments. The alias changes the words only: the comment goes through the same checks, so `atlantis apply` on an open pull request is refused unless `apply.when: pull-request` is set and its requirements pass. `-p`, `-w`, `--` and `atlantis apply -d` are refused with the reason from the tables on this page.
+With [`atlantis_comments: true`](/terragucci/reference/config/#keys), `atlantis plan`, `atlantis plan -d <dir>` and `atlantis apply` work as the `/terragucci` comments. The alias changes only the words. `atlantis apply` on an open pull request is still refused unless `apply.when: pull-request` is set and its requirements pass. `-p`, `-w`, `--` and `atlantis apply -d` are refused with the reason from the tables here.
 
-A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply saying a comment never runs it. [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) lists what each command accepts.
+A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply that a comment never runs it. [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) lists what each command accepts.
 
 ## Settings
 
@@ -85,7 +83,7 @@ A comment that names `approve`, `merge`, `destroy`, `import`, `state` or `force-
 | Default | before merge | before merge; `on_commit_to_default` applies after | after merge |
 | The other way | | `on_commit_to_default` | `apply.when: pull-request`; on GitLab with `comments:` set |
 
-[Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) sets it up. Under it, the open change's settings, gate and signers come from the default branch.
+[Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) sets it up; the open change's settings, gate and signers then come from the default branch.
 
 ## Left out on purpose
 

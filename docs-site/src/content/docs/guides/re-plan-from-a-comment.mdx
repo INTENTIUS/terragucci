@@ -26,10 +26,10 @@ import Shot from '../../../components/Shot.astro';
 
 <Tabs syncKey="forge">
 <TabItem label="GitHub">
-Supported: the `replan` job runs on each new pull request comment.
+The `replan` job runs on each new pull request comment.
 </TabItem>
 <TabItem label="GitLab">
-GitLab starts no pipeline for a merge request note, so a pipeline schedule polls for notes. A note is answered on the schedule's next run, within its interval.
+GitLab starts no pipeline for a merge request note. A pipeline schedule polls for notes instead and answers each on its next run.
 
 | Step | What to do |
 |---|---|
@@ -40,7 +40,7 @@ GitLab starts no pipeline for a merge request note, so a pipeline schedule polls
 The `comments` job runs from the default branch and holds no cloud credentials. It reads notes and calls GitLab's API: `/terragucci plan` starts a new merge request pipeline, whose plan job updates the plan note. Each reply carries a marker, so a note is answered once.
 </TabItem>
 <TabItem label="Forgejo">
-Supported, as on GitHub.
+As on GitHub.
 </TabItem>
 </Tabs>
 
@@ -66,21 +66,21 @@ Supported, as on GitHub.
    </TabItem>
    <TabItem label="GitLab">
 
-   The `comments` job starts a new merge request pipeline on its next run, and that pipeline's plan job updates the same note:
+   The note changes once the pipeline the `comments` job started has planned:
 
    <Shot step="gitlab" view="replan" alt="The plan note on a GitLab merge request, edited after the /terragucci plan note below it: one instance in one group, wave 2 with its set digest, and dev orders' queue keeping messages for seven days; below it, the comments job's reply that it started a pipeline to re-plan the merge request" />
 
    </TabItem>
    <TabItem label="Forgejo">
 
-   The same note on the example's pull request, updated in place, with the comment below it:
+   The example's note, updated in place above the comment:
 
    <Shot step="replan" view="note" alt="The plan note on the example's one-root pull request in Forgejo, planned again after the /terragucci plan comment below it: one instance in one group, wave 2 with its digest, and dev orders' queue keeping messages for seven days" />
 
    </TabItem>
    </Tabs>
 
-   A named root the change does not reach gets a "not affected" reply and nothing is updated. A name that is not a root is refused, with the roots listed:
+   A named root the change does not reach gets a "not affected" reply and no update; a name that is not a root is refused with the list of roots:
 
    <Shot step="replan" view="replies" alt="Two comments on the pull request and terragucci's replies: envs/prod/payments is not affected by this pull request, so nothing was planned; envs/nope is not a root of this repository, followed by the fifteen roots" />
 
@@ -88,7 +88,7 @@ Supported, as on GitHub.
 
 ## Comment forms
 
-The text is untrusted and never reaches a script; `terragucci comment` reads it from the event file, or on GitLab from the API. It accepts one line in one of these forms, and refuses anything else with the reason.
+The text is untrusted and never reaches a script; `terragucci comment` reads it from the event file, or on GitLab from the API. It accepts one line in one of these forms and refuses anything else, giving the reason.
 
 | Comment | Runs | Where | GitLab, with `comments:` set |
 |---|---|---|---|

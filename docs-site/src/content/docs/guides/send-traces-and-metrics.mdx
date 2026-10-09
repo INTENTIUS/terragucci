@@ -15,7 +15,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-Every plan, drift and apply job sends one trace and its metrics over OTLP to your collector, and your Grafana shows nine dashboards and the alerts `init` writes. The jobs run in your CI and send to your own collector; nothing else receives them.
+Every plan, drift and apply job sends one trace and its metrics over OTLP to your collector, and your Grafana shows nine dashboards and the alerts `init` writes. Nothing else receives them.
 
 With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the traces and reports also carry provider-call timings, timings summed by resource type on a large estate, and state lock waits.
 
@@ -74,7 +74,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
    dashboards: true
    ```
 
-   When your Grafana datasources are not named `prometheus` and `tempo`, give their uids instead:
+   If your Grafana datasources are not named `prometheus` and `tempo`, give their uids:
 
    ```yaml
    dashboards:
@@ -92,7 +92,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
      trace_url: "https://grafana.example.com/explore?left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22{trace_id}%22%7D%5D%7D"
    ```
 
-   The report links the run's trace in place of printing its id. With `reports.url` set, the Runs and Estate dashboards link back to the reports.
+   The report then links the run's trace instead of printing its id. The Runs and Estate dashboards link back to the reports when `reports.url` is set.
 
 5. Check the file and write the pipeline again.
 
@@ -115,9 +115,9 @@ An unreachable collector never fails a stage, so you can turn this on before the
    | `grafana/provisioning/alerting/terragucci.yaml` | Grafana, under `/etc/grafana/provisioning/alerting/` |
    | `prometheus/terragucci.rules.yml` | Prometheus, in `rule_files` |
 
-   Page from the Grafana alerting file or from the Prometheus `ErrorBudgetBurn` alerts, not both. `init` leaves files in that directory it did not write alone.
+   Page from the Grafana alerting file or from the Prometheus `ErrorBudgetBurn` alerts, not both. `init` leaves alone any file in that directory it did not write.
 
-6. Add the span metrics connector to your collector. The SLO dashboards read span metrics:
+6. Add the span metrics connector to your collector, for the SLO dashboards:
 
    ```yaml
    connectors:
@@ -134,7 +134,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
            buckets: [5s, 15s, 30s, 60s, 120s, 300s, 600s, 1200s, 1800s, 3600s]
    ```
 
-7. Open a pull request with `terragucci.yml`, the pipeline and `observability/terragucci/`, and merge it.
+7. Open and merge a pull request with `terragucci.yml`, the pipeline and `observability/terragucci/`.
 
 8. Open the next pull request that changes a root. Its plan job sends a trace with a span per root and the binary's spans inside it, and the Pipeline health and Change review dashboards show the run.
 

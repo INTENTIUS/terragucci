@@ -11,11 +11,11 @@ prompt: |
 
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-This is one of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)). It is off unless `review.agent` is set.
+One of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)), off unless `review.agent` is set.
 
 ## Result
 
-After each plan of a pull request, a note on the pull request. Its Markdown, with the model's review under terragucci's first lines:
+After each plan of a pull request, a note on it, with the model's review under terragucci's first lines:
 
 ```markdown
 ### terragucci review of `3f9c2a1e`
@@ -43,14 +43,14 @@ The note never approves, requests changes or sets a status. Reviewers read it be
 
 <Steps>
 
-1. Write the instructions on the default branch, in `.terragucci/review.md`. They tell the model what matters in this repository:
+1. On the default branch, write `.terragucci/review.md` to tell the model what matters in this repository:
 
    ```markdown
    Treat a destroy or replace of a database, a bucket or a DNS zone as high risk.
    Every root under envs/prod/ needs a reason in the description.
    ```
 
-   The review reads this file from the default branch alone. A pull request that edits it changes nothing until it merges, and its note says it edits the instructions.
+   The review reads it from the default branch alone; a pull request that edits it changes nothing until it merges, and its note says it edits the instructions.
 
 2. Turn it on in `terragucci.yml`:
 
@@ -69,7 +69,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
    npx terragucci init
    ```
 
-   `init` writes the review workflow, `.github/workflows/terragucci-review.yml` or `.forgejo/workflows/terragucci-review.yml`. The forge runs it from the default branch, so the pull requests opened after this one merges are the first it reviews.
+   `init` writes the review workflow, `.github/workflows/terragucci-review.yml` or `.forgejo/workflows/terragucci-review.yml`. The forge runs it from the default branch, so it first reviews pull requests opened after this one merges.
 
 </Steps>
 
@@ -83,7 +83,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
 | The policy results | each planned root's result, denials and warnings, from the same report |
 | The instructions | `review.instructions` (default `.terragucci/review.md`) on the default branch, read with `git show` |
 
-The prompt marks everything but the instructions as written by the pull request's author, and tells the model to follow nothing in it. It asks for three parts, risk, mismatches between the description and the plan, and questions, and a last line `risk: low`, `risk: medium` or `risk: high`. A review with no such line, or a command that fails, gives risk `unknown`.
+The prompt marks everything but the instructions as written by the pull request's author, and tells the model to follow nothing in it. It asks for the risk, the mismatches between the description and the plan and any questions, ending on a line `risk: low`, `risk: medium` or `risk: high`. A review with no such line, or a command that fails, gives risk `unknown`.
 
 ## Job permissions
 
@@ -126,7 +126,7 @@ review:
 
 ## Use the risk in a policy
 
-With `review.agent` and [`policy`](/terragucci/reference/policy/) set, each `tf-apply` wave gives the policy the review of the head of the pull request it applies as `input.review`:
+With `review.agent` and [`policy`](/terragucci/reference/policy/) set, each `tf-apply` wave passes the policy the review of the applied pull request's head as `input.review`:
 
 ```rego
 package main
@@ -139,7 +139,7 @@ deny contains msg if {
 }
 ```
 
-The wave reads the risk from the review job's artifact, and only from a run of the default branch's review workflow, not from the note. A note someone posts on the pull request, or an artifact the pull request's own pipeline keeps, changes nothing the policy sees. A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
+The wave reads the risk only from the review job's artifact in a run of the default branch's review workflow, never from the note. A note someone posts on the pull request, or an artifact the pull request's own pipeline keeps, changes nothing the policy sees. A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
 
 ## MCP or `--json`
 

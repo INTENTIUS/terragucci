@@ -15,7 +15,7 @@ import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Result
 
-A decision on a refused wave: either the new plan approved and applied, or the change that moved it removed.
+A decision on a refused wave: the new plan approved and applied, or the change that moved it removed.
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ A decision on a refused wave: either the new plan approved and applied, or the c
 
 1. Understand why it refused.
 
-   An approval binds a wave's set digest, so any root's plan changing after it, before the wave applied, means the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
+   An approval binds a wave's set digest, so if any root's plan changes between the approval and the apply, the wave applies nothing. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
 
    In [the tutorial's example](/terragucci/tutorial/changed-wave/), approve the waiting wave, then merge the module bump. Its job stops and names the roots that moved:
 

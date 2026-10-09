@@ -3,7 +3,7 @@ title: Approvals as records in your repo
 description: Why an approval is a commit on a branch of your own repo.
 ---
 
-An approval in terragucci is a record on the `chant/lifecycle` branch of your repository. [`chant approve`](/terragucci/concepts/glossary/#chant) writes it, and the record names the plan it approves.
+An approval is a record on your repository's `chant/lifecycle` branch. [`chant approve`](/terragucci/concepts/glossary/#chant) writes it, naming the plan it approves.
 
 | Question | Answer |
 |---|---|
@@ -15,7 +15,7 @@ An approval in terragucci is a record on the `chant/lifecycle` branch of your re
 
 ## Valid approvals
 
-Under `approval: ledger`, the default, a pushed line counts: it binds the plans; any writer can name any person.
+A pushed line counts and binds the plans under the default `approval: ledger`. Any writer can name any person.
 
 | `approval` | A wave's approval counts when | Read from |
 |---|---|---|
@@ -29,4 +29,4 @@ These files come from the applied commit's first parent, so a change cannot judg
 
 - [How waves and approvals work](/terragucci/concepts/waves-and-approvals/)
 - [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
-- [The audit trail](/terragucci/reference/audit-trail/): every approval, apply, override and refused wave across your projects in one record
+- [The audit trail](/terragucci/reference/audit-trail/): the approvals and applies, overrides and refused waves of all your projects in one record
