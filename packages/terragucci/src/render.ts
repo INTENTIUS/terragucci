@@ -1596,6 +1596,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
+  // review.agent: an apply job reads the verdict from the review job's artifact in the pull request's run, which takes actions: read on GitHub.
+  const reviewRead: Record<string, string> = input.review ? { actions: "read" } : {};
   // A job asks the forge for an OIDC token when it assumes a role, by oidc or by unit path.
   const needsToken = Boolean(oidc || credentials);
   // The canary wave comes from the repo's terragucci.yml at plan time, so a repo
@@ -2148,7 +2150,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     container: { image },
     if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
     // Before merge it also pushes the root locks and merges (contents: write), and reads the head's checks.
-    permissions: { contents: writesLedger || prApply || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...(needsToken ? { "id-token": "write" } : {}) },
+    permissions: { contents: writesLedger || prApply || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: applyConcurrency(forge),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
@@ -2234,7 +2236,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       needs: job.needs.length === 0 ? "check" : job.needs.length === 1 ? job.needs[0] : job.needs,
       if: applyIf,
       // contents: write only to record a waiting wave's plan on the chant/lifecycle branch, and with a wave split across jobs to hold the shared lock's tags.
-      permissions: { contents: writesLedger || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+      permissions: { contents: writesLedger || split ? "write" : "read", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
       // One apply per project at a time; nothing that waits is cancelled (applyConcurrency). A wave's shares apply side by side, under the run's shared lock.
       ...(job.share === undefined ? { concurrency: applyConcurrency(forge) } : {}),
@@ -2370,7 +2372,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ["resume", new Job({
         "runs-on": "ubuntu-latest",
         container: { image },
-        permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+        permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
         ...openid(needsToken),
         concurrency: applyConcurrency(forge),
         env: { TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
