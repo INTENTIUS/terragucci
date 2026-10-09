@@ -1705,6 +1705,14 @@
       "commit": "9c86b8a9"
     },
     {
+      "claim": "tg-state-export",
+      "says": "terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "80c81384"
+    },
+    {
       "claim": "tg-stacks",
       "says": "the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them",
       "needs": null,
