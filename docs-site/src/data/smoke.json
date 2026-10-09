@@ -782,7 +782,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "fbfefd6f"
     },
     {
       "claim": "cdf-write-race",
@@ -790,7 +790,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "fbfefd6f"
     },
     {
       "claim": "cdf-iam",
@@ -863,6 +863,14 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "abdef33f"
+    },
+    {
+      "claim": "plan-lock-fmt",
+      "says": "with locks: plan a pull request whose push the fmt job formats, with a push that starts no run, has its lock answered on the formatted head",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
     },
     {
       "claim": "policy-override",
@@ -1790,7 +1798,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "fb277cd4"
+      "commit": "fbfefd6f"
     },
     {
       "claim": "mcp-last-apply",
@@ -1807,6 +1815,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "6845193c"
+    },
+    {
+      "claim": "tg-pr-plan",
+      "says": "a pull request on the Terragrunt example, five waves and the tips job below the check job, gets its plan note on Forgejo",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
+      "claim": "github-drift-issue",
+      "says": "on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
+      "claim": "runner-nudge",
+      "says": "on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
     },
     {
       "claim": "mr-widget",
