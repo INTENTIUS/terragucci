@@ -220,7 +220,7 @@ const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: 
 const index = (reports: IndexEntry[]): string => JSON.stringify({ schema: "terragucci.report-index/v1", reports });
 
 describe("terragucci estate", () => {
-  it("in a single repo, reads the top index for the projects, each project's index.json, inventory.json, changes.json and states.json and the audit summary and record, and nothing else", async () => {
+  it("in a single repo, reads the top index for the projects, each project's index.json, inventory.json, changes.json and states.json, the run view of its newest applied commit, and the audit summary and record, and nothing else", async () => {
     const objects = new Map<string, string>();
     const all = threeProjects();
     objects.set("acme-reports:reports/index.json", index(all.flatMap((p) => p.reports!)));
@@ -243,6 +243,7 @@ describe("terragucci estate", () => {
       "GET acme-reports:reports/gitlab.example.com/platform/network/inventory.json",
       "GET acme-reports:reports/gitlab.example.com/platform/network/changes.json",
       "GET acme-reports:reports/gitlab.example.com/platform/network/states.json",
+      `GET acme-reports:reports/gitlab.example.com/platform/network/runs/${"b".repeat(40)}/run.json`,
       "GET acme-reports:reports/audit.json",
       "GET acme-reports:reports/audit.jsonl",
     ]);

@@ -310,6 +310,7 @@ audit-override|the audit record keeps a policy refusal after its report is repla
 audit-refused|a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved|
 audit-control|terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record|
 inventory|after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value|
+estate-graph|the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave|
 resource-history|one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value|
 state-versions|a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content|
 migrate-resume|with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again|
@@ -11599,6 +11600,144 @@ claim_inventory() {
   return $rc
 }
 
+# ── the estate's dependency graph ─────────────────────────────────────────
+# The example's dev roots and module in $1/wave, their states in the state
+# bucket given on floci and their resource names stamped; and in $1/billing a
+# second repo whose one root, invoices, reads dev platform's state.
+graph_repos() { # work, prefix, state bucket -> $1/wave and $1/origin.git, $1/billing/wave and $1/billing/origin.git
+  local work="$1" prefix="$2" state="$3" env="g$STAMP" root
+  mkdir -p "$work/wave/envs/dev" "$work/wave/modules/service" "$work/billing/wave/invoices"
+  cp "$EXAMPLE/modules/service/"*.tf "$work/wave/modules/service/"
+  for root in "$EXAMPLE"/envs/dev/*/; do
+    root="$(basename "$root")"
+    mkdir -p "$work/wave/envs/dev/$root"
+    cp "$EXAMPLE/envs/dev/$root/main.tf" "$EXAMPLE/envs/dev/$root/.terraform.lock.hcl" "$work/wave/envs/dev/$root/"
+    perl -pi -e "s/\"shop-terraform-state\"/\"$state\"/; s/\"shop-dev-logs\"/\"shop-$env-logs\"/; s/env(\s+)= \"dev\"/env\$1= \"$env\"/" "$work/wave/envs/dev/$root/main.tf"
+  done
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+  printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "billing/invoices.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\ndata "terraform_remote_state" "platform" {\n  backend = "s3"\n  config = {\n    bucket         = "%s"\n    key            = "envs/dev/platform.tfstate"\n    region         = "us-east-1"\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "invoices" {\n  input = data.terraform_remote_state.platform.outputs.logs_bucket\n}\n' "$state" "$state" > "$work/billing/wave/invoices/main.tf"
+  cp "$work/wave/terragucci.yml" "$work/billing/wave/terragucci.yml"
+  audit_origin "$work/billing"
+}
+
+# The edges the example's own files name: for each dev root, each
+# terraform_remote_state key it reads and the dev root whose backend holds
+# that key, as "<upstream> <reader>" lines, sorted. Read from the example, not
+# from terragucci.
+example_edges() {
+  local dir root key up
+  for dir in "$EXAMPLE"/envs/dev/*/; do
+    root="envs/dev/$(basename "$dir")"
+    for key in $(perl -0ne 'while (/data "terraform_remote_state"[^{]*\{.*?key\s*=\s*"([^"]+)"/sg) { print "$1\n" }' "$dir/main.tf"); do
+      for up in "$EXAMPLE"/envs/dev/*/; do
+        KEY="$key" perl -0ne 'exit(/backend "s3" \{[^}]*key\s*=\s*"\Q$ENV{KEY}\E"/s ? 0 : 1)' "$up/main.tf" && echo "envs/dev/$(basename "$up") $root"
+      done
+    done
+  done | sort
+}
+
+claim_estate_graph() {
+  # graph_repos' shop applies wave 1 (platform) under gate never; its run
+  # view then gives the blast radius of that change: platform, and every dev
+  # root that reads its state. Wave 2 (the four services) plans and waits
+  # under gate always. billing, a second project, applies invoices, which
+  # reads platform's state. terragucci estate then draws the graph: an edge
+  # for every state the example's files read (example_edges, from the files
+  # and not from terragucci), each a path in estate.html, and the edge from
+  # the shop's platform to billing's invoices, between projects. The shop's
+  # run view has a timeline: wave 1's plan and apply, ended, and wave 2's
+  # plan and its wait at the gate, open.
+  # BREAK: orders' read of platform is dropped from the shop's run.json
+  # before the page is built, so the graph loses that edge.
+  log() { echo "[smoke estate-graph] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="graph-$STAMP" state="tg-graph-$STAMP" layers sha key view page html want got edge from to
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$state" || { log "could not make the state bucket $state"; drop_work "$work"; return 1; }
+  graph_repos "$work" "$prefix" "$state"
+  want="$(example_edges)"
+  log "the example's edges: $(tr '\n' ';' <<<"$want")"
+  [ "$(wc -l <<<"$want" | tr -d ' ')" -ge 4 ] || { log "the example names fewer than four reads of a state: $want"; rc=1; }
+  layers='envs/dev/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search'
+  sha="$(git -C "$work/wave" rev-parse HEAD)"
+  key="$prefix/repo/runs/$sha"
+  if [ $rc = 0 ]; then
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-apply --wave 1 --layers "$layers" --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$key/run.html")" || { log "no run.html at $REPORT_BUCKET/$key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    grep -q '<div id="blast" data-roots="1" data-downstream="4">' <<<"$html" || { log "the run view's blast radius is not platform and its four readers: $(grep -o '<div id="blast"[^>]*>' <<<"$html")"; rc=1; }
+    for to in email orders payments search; do
+      grep -q "<li class=\"downstream\" data-root=\"envs/dev/$to\" data-depth=\"1\"><code>envs/dev/$to</code>, wave 2: reads <code>envs/dev/platform</code></li>" <<<"$html" || { log "the blast radius does not name envs/dev/$to reading platform"; rc=1; }
+    done
+    grep -q '<g class="node changed" data-project="repo" data-root="envs/dev/platform"' <<<"$html" || { log "the run view's graph does not mark platform as changed"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    AUDIT_CODE=0
+    audit_in "$work" terragucci stage tf-apply --wave 2 --layers "$layers" --binary tofu --gate always > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 3 ] || { log "wave 2 exited $AUDIT_CODE, not 3 (waiting)"; rc=1; }
+    AUDIT_CODE=0
+    audit_in "$work/billing" env GITHUB_REPOSITORY=smoke/billing terragucci stage tf-apply --wave 1 --layers invoices --binary tofu --gate never > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/billing/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "billing's wave 1 exited $AUDIT_CODE, not 0"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    view="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$key/run.json")" || { log "no run.json at $REPORT_BUCKET/$key"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    log "the shop's spans: $(jq -c '[.waves[] | {number, state, spans: [.spans[]? | {phase, end: (.end != null)}]}]' <<<"$view")"
+    jq -e '(.waves[0].spans | map(select(.end != null) | .phase) | index("plan") != null and index("apply") != null) and (.waves[1].spans | (map(select(.phase == "plan" and .end != null)) | length) == 1 and (map(select(.phase == "gate" and .end == null)) | length) == 1)' <<<"$view" >/dev/null \
+      || { log "the run view's timeline does not hold wave 1's plan and apply, ended, and wave 2's plan and open gate wait"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$key/run.html")"
+    grep -q '<rect class="span gate open" data-phase="gate" data-open' <<<"$html" || { log "run.html draws no open gate wait"; rc=1; }
+    grep -q '<rect class="span apply" data-phase="apply"' <<<"$html" || { log "run.html draws no apply"; rc=1; }
+    if [ -n "${BREAK:-}" ]; then
+      jq '(.roots[] | select(.root == "envs/dev/orders") | .reads) |= map(select(. != "envs/dev/platform"))' <<<"$view" | curl -fsS -o /dev/null -X PUT -H 'content-type: application/json' --data-binary @- "$FLOCI/$REPORT_BUCKET/$key/run.json" || { log "could not drop orders' read"; rc=1; }
+    fi
+  fi
+  if [ $rc = 0 ]; then
+    audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+    html="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.html")" || { log "no estate.html at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    got="$(jq -r '.graph.edges[]? | select(.from.project == "repo" and .to.project == "repo") | "\(.from.root) \(.to.root)"' <<<"$page" | sort)"
+    log "the graph's edges in the shop: $(tr '\n' ';' <<<"$got")"
+    [ "$got" = "$want" ] || { log "the graph's edges are not the example's: missing $(comm -23 <(echo "$want") <(echo "$got") | tr '\n' ';') extra $(comm -13 <(echo "$want") <(echo "$got") | tr '\n' ';')"; rc=1; }
+    while read -r from to; do
+      [ -n "$from" ] || continue
+      grep -q "<path class=\"edge\" data-from=\"repo $from\" data-to=\"repo $to\"" <<<"$html" || { log "estate.html draws no edge from $from to $to"; rc=1; }
+    done <<<"$want"
+    edge="$(jq -c '[.graph.edges[]? | select(.from.project != .to.project)]' <<<"$page")"
+    log "between projects: $edge"
+    [ "$edge" = '[{"from":{"project":"repo","root":"envs/dev/platform"},"to":{"project":"github.com/smoke/billing","root":"invoices"}}]' ] || { log "the graph does not have billing's invoices reading the shop's platform, alone, between projects"; rc=1; }
+    grep -q '<path class="edge cross" data-from="repo envs/dev/platform" data-to="github.com/smoke/billing invoices"' <<<"$html" || { log "estate.html draws no dashed edge between the projects"; rc=1; }
+    [ "$(jq '[.graph.nodes[]? | select(.project == "repo")] | length' <<<"$page")" = "$(wc -l <<<"$want" | tr -d ' ' | awk '{ print $1 + 1 }')" ] || { log "the graph does not hold every shop root: $(jq -c '[.graph.nodes[]?]' <<<"$page")"; rc=1; }
+    if grep -q '<script[^>]*src=' <<<"$html"; then log "estate.html loads a script"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the estate graph holds every edge the example reads and the one between projects, and the run view gives the blast radius and each wave's plan, gate wait and apply"
+  return $rc
+}
+
 # ── state versions ────────────────────────────────────────────────────────
 # One root, app, a terraform_data whose state is app.tfstate in a bucket of
 # its own on floci (s3 backend, use_lockfile), in a repo whose reports go to
@@ -13487,6 +13626,7 @@ audit-override       weight=150
 audit-refused        weight=150
 audit-control        weight=150
 inventory            weight=150
+estate-graph         weight=200
 resource-history     weight=200
 state-versions       weight=150
 migrate-split        weight=200
