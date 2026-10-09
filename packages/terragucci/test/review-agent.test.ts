@@ -8,6 +8,7 @@ import type { Fetch } from "../src/forge";
 import { renderPipeline, RenderError } from "../src/render";
 import { policyInput } from "../src/report/policy";
 import {
+  artifactBytes,
   parseReviewMarker,
   postReview,
   REVIEW_COMMAND,
@@ -110,6 +111,13 @@ describe("the review jobs", () => {
     const checkout = d.jobs.review.steps.find((s: { uses?: string }) => s.uses?.includes("checkout"));
     expect(checkout.with["persist-credentials"]).toBe(false);
     expect(checkout.with["fetch-depth"]).toBe(0);
+  });
+
+  it("github: the apply jobs read the review's artifact with actions: read, and only with review.agent on", () => {
+    for (const job of ["apply-wave-1", "apply-comment"]) {
+      expect(doc("github").jobs[job].permissions.actions, job).toBe("read");
+      expect(doc("github", false).jobs[job].permissions.actions, job).toBeUndefined();
+    }
   });
 
   it("the default command is Claude Code in print mode with no tools, MCP servers or project settings", () => {
@@ -268,13 +276,81 @@ describe("terragucci review post", () => {
 });
 
 describe("input.review", () => {
-  it("is the pipeline's newest note of the pull request's head; anyone else's counts for nothing", async () => {
-    const other = "b".repeat(40);
-    const note = (login: string, head: string, risk: string) => ({ user: { login }, body: `${REVIEW_MARK}${JSON.stringify({ head, risk })} -->\nx` });
-    const comments = [note("github-actions[bot]", HEAD, "medium"), note("github-actions[bot]", other, "low"), note("alice", HEAD, "low"), note("github-actions[bot]", HEAD, "high")];
-    const f = { repo: "o/r", get: async () => comments, post: async () => null };
-    expect(await reviewOfPull(f, { number: 7, head: HEAD })).toEqual({ found: true, risk: "high", pull_request: 7, head: HEAD });
-    expect(await reviewOfPull({ ...f, get: async () => [note("alice", HEAD, "low")] }, { number: 7, head: HEAD })).toEqual({ found: false, risk: "unknown", pull_request: 7, head: HEAD });
+  const other = "b".repeat(40);
+  const zip = (files: Record<string, string>): Buffer => {
+    const out = join(tmp(), "review.zip");
+    execFileSync("python3", ["-c", `import json,sys,zipfile\nz=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED)\nfor k,v in json.loads(sys.argv[2]).items(): z.writestr(k,v)\nz.close()`, out, JSON.stringify(files)]);
+    return readFileSync(out);
+  };
+  const review = (risk: string, rc = "0\n"): Buffer => zip({ "review.md": `Risk: a destroy.\n\nrisk: ${risk}\n`, rc, instructions: "default\n" });
+  /** A forge with runs, their artifacts and the artifacts' zips; it records the paths read. */
+  const forge = (runs: any[], artifacts: Record<number, any>, zips: Record<number, Buffer>) => {
+    const hits: string[] = [];
+    const f = {
+      repo: "o/r",
+      post: async () => null,
+      get: async (path: string) => {
+        hits.push(path);
+        if (path.startsWith("repos/o/r/actions/runs?")) return { workflow_runs: runs };
+        const m = /^repos\/o\/r\/actions\/runs\/(\d+)\/artifacts\?/.exec(path);
+        if (m) return artifacts[Number(m[1])] ?? [];
+        // Comments are never read: a note is not where the verdict comes from.
+        throw new Error(`unexpected GET ${path}`);
+      },
+    };
+    const bytes = async (path: string) => {
+      hits.push(path);
+      return zips[Number(/artifacts\/(\d+)\/zip$/.exec(path)?.[1])];
+    };
+    return { f, bytes, hits };
+  };
+
+  it("is the verdict in the review artifact of the newest pull_request run of the head, on GitHub", async () => {
+    const { f, bytes, hits } = forge(
+      [
+        { id: 10, event: "pull_request", head_sha: HEAD },
+        { id: 12, event: "pull_request", head_sha: HEAD },
+        { id: 13, event: "push", head_sha: HEAD },
+        { id: 14, event: "pull_request", head_sha: other },
+      ],
+      { 10: { artifacts: [{ id: 100, name: "terragucci-review", workflow_run: { id: 10 } }] }, 12: { artifacts: [{ id: 120, name: "terragucci-review", workflow_run: { id: 12 } }] } },
+      { 100: review("low"), 120: review("high") },
+    );
+    expect(await reviewOfPull(f, { number: 7, head: HEAD }, bytes)).toEqual({ found: true, risk: "high", pull_request: 7, head: HEAD, run: 12 });
+    expect(hits[0]).toBe(`repos/o/r/actions/runs?event=pull_request&head_sha=${HEAD}&per_page=100&limit=50`);
+    expect(hits).not.toContain("repos/o/r/actions/runs/13/artifacts?name=terragucci-review&per_page=100&limit=50");
+    expect(hits).not.toContain("repos/o/r/actions/runs/14/artifacts?name=terragucci-review&per_page=100&limit=50");
+  });
+
+  it("reads Forgejo's runs and artifact lists, and falls back to an older run when the newest kept no review", async () => {
+    const { f, bytes } = forge(
+      [{ id: 20, event: "pull_request", commit_sha: HEAD }, { id: 21, event: "pull_request", commit_sha: HEAD }],
+      { 20: [{ id: 200, name: "terragucci-review", run_id: 20 }], 21: [{ id: 210, name: "terragucci-review", run_id: 21, expired: true }] },
+      { 200: review("medium") },
+    );
+    expect(await reviewOfPull(f, { number: 7, head: HEAD }, bytes)).toEqual({ found: true, risk: "medium", pull_request: 7, head: HEAD, run: 20 });
+  });
+
+  it("is unknown when the review command failed, and not found when no run of the head kept a review", async () => {
+    const failed = forge([{ id: 30, event: "pull_request", head_sha: HEAD }], { 30: [{ id: 300, name: "terragucci-review", run_id: 30 }] }, { 300: review("low", "1\n") });
+    expect(await reviewOfPull(failed.f, { number: 7, head: HEAD }, failed.bytes)).toEqual({ found: true, risk: "unknown", pull_request: 7, head: HEAD, run: 30 });
+    // An artifact listed under another run's id is not this run's.
+    const elsewhere = forge([{ id: 31, event: "pull_request", head_sha: HEAD }], { 31: [{ id: 310, name: "terragucci-review", run_id: 99 }, { id: 311, name: "other", run_id: 31 }] }, { 310: review("low"), 311: review("low") });
+    expect(await reviewOfPull(elsewhere.f, { number: 7, head: HEAD }, elsewhere.bytes)).toEqual({ found: false, risk: "unknown", pull_request: 7, head: HEAD });
+  });
+
+  it("downloads the zip with the job's token and reads a missing one as none", async () => {
+    const seen: { url: string; auth?: string }[] = [];
+    const body = review("high");
+    const doFetch = async (url: string, init?: { headers?: Record<string, string> }) => {
+      seen.push({ url, auth: init?.headers?.authorization });
+      const found = url.endsWith("/1/zip");
+      return { ok: found, status: found ? 200 : 404, arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer };
+    };
+    const bytes = artifactBytes({ GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "https://api.example", TG_TOKEN: "t0k" }, doFetch);
+    expect((await bytes("repos/o/r/actions/artifacts/1/zip"))?.equals(body)).toBe(true);
+    expect(await bytes("repos/o/r/actions/artifacts/2/zip")).toBeUndefined();
+    expect(seen[0]).toEqual({ url: "https://api.example/repos/o/r/actions/artifacts/1/zip", auth: "token t0k" });
   });
 
   it("sits beside the plan's keys, and beside plan and run with input: hcp", () => {
