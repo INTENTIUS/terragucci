@@ -13,6 +13,6 @@ Every stage runs as a job on your forge's CI, and a stage's schedule becomes a w
 
 ## Approvals outside CI
 
-An approval recorded with [`chant approve`](/terragucci/concepts/glossary/#chant) on your laptop lands on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch and counts in the next CI run. A run that stops partway is run again.
+Run [`terragucci approve`](/terragucci/reference/cli/#approve) on your laptop: it records the approval on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch and restarts the waiting wave with your forge token. With `apply.resume` set, the scheduled resume job picks up any wave it could not restart ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)).
 
 Each stage also runs from your shell as `terragucci stage <name>`, with your own credentials; [Stages](/terragucci/reference/stages/) lists them.

@@ -30,7 +30,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `groups[]` | a stable id per normalized change, its roots and the change |
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
-| `waves[]` | number, roots, set digest, approval state (`waiting`, `approved` or `not-required` on a `tf-apply` wave, `not-requested` on a plan) and, on a gated wave, the ledger's branch and path; on a waiting wave, `waiting_since`, when it began waiting for an approval of this digest; on a `tf-apply` wave that applied nothing although it planned, `refused`: the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied; on a waiting `tf-apply` wave under `approval: pr-review`, `review`: the `pull_request` whose approving review of its head would approve the wave and the `url` to review it on; on a plan's wave, `review_digest`, the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to, and `waits`, whether the gate will hold it |
+| `waves[]` | one entry per wave; [its fields](#waves) are below |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
 | `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
@@ -48,6 +48,19 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
 | `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
+
+### waves
+
+| Field | On | Holds |
+|---|---|---|
+| `number`, `roots`, `set_digest` | every wave | the wave's number, its roots and the set digest |
+| `approval` | every wave | `waiting`, `approved` or `not-required` on a `tf-apply` wave; `not-requested` on a plan |
+| `gate` | a gated wave | the ledger's branch and path |
+| `waiting_since` | a waiting wave | when it began waiting for an approval of this digest |
+| `refused` | a `tf-apply` wave that planned but applied nothing | the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied |
+| `review` | a waiting `tf-apply` wave under `approval: pr-review` | the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
+| `review_digest` | a plan's wave | the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to |
+| `waits` | a plan's wave | whether the gate will hold it |
 
 The JSON Schema ships with the package as `@intentius/terragucci/report.schema.json`. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
 

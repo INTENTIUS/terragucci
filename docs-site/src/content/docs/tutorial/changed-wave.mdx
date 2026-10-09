@@ -49,12 +49,20 @@ An approval covers the plans you read and no others.
 
 <Captured step="wave-refused" optional />
 
-The wave's plans now differ from the approved ones. It applies nothing and the job fails with exit code 4. The log names each root whose plan moved. It prints the approved digest beside the new one.
+The wave's plans now differ from the approved ones, so it applies nothing:
+
+| You see | Where |
+|---|---|
+| the job fails with exit code 4 | the wave's job |
+| the approved digest beside the new one, and each root whose plan moved | the job's log |
 
 <Shot step="wave-refused" view="log" alt="Wave 4's apply job in Forgejo, refusing: the approved digest beside the planned one, and the eight roots that planned differently" optional />
 
 `npx terragucci respond wave-refused --approved <approved report> --current <current report> --wave 4` prints what changed; [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) describes the reports.
 
-If the new plan is what you meant, approve the new digest and run the job again. Otherwise revert the change.
+| If the new plan is | Do |
+|---|---|
+| what you meant | approve the new digest and run the job again |
+| not what you meant | revert the change |
 
 Had the job run between steps 2 and 3, wave 4 would have applied the destroy under your approval, and the module bump's wave 4 would wait for an approval of its own instead of refusing.

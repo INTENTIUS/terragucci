@@ -4,7 +4,7 @@ description: How a coding agent adopts terragucci in a repository, and the promp
 prompt: setup
 ---
 
-Setup needs no agent; [Get your first plan note](/terragucci/getting-started/) gives every step by hand. Only two features run an agent, and both are off until you add them ([what needs an agent](/terragucci/getting-started/#what-needs-an-agent)).
+Setup needs no agent. [Get your first plan note](/terragucci/getting-started/) gives every step by hand, and only two opt-in features [run one](/terragucci/#opt-in-coding-agent).
 
 This page is for a coding agent setting terragucci up, and the person handing it the task. Run your coding agent in the repository and paste it the prompt above. The repository can hold Terraform, OpenTofu or Terragrunt roots.
 
@@ -16,7 +16,7 @@ This page is for a coding agent setting terragucci up, and the person handing it
 | [`llms-full.txt`](https://intentius.io/terragucci/llms-full.txt) | the text of every page in one file |
 | Copy page as Markdown, under each page's title | that page's text, with its prompt |
 
-A task page's own prompt sits under its title as "Optional: hand this page to your coding agent". Each one forbids apply, approve and merge.
+A task page's own prompt sits under its title as "Optional: hand this page to your coding agent". Each one carries the line in step 5.
 
 A key that `terragucci config check` refuses is not part of terragucci.
 
@@ -26,7 +26,11 @@ A key that `terragucci config check` refuses is not part of terragucci.
 2. Check what it found. When the binary or the forge is wrong, pass `--binary` or `--forge`, or ask the user.
 3. Write a `terragucci.yml` only if the defaults are wrong, as small as possible; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
 4. Run `npx terragucci init` to write the pipeline, and show the user the file it wrote.
-5. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. The default branch, applying and approving are the user's, so run no `apply`, [`chant approve`](/terragucci/concepts/glossary/#chant) or `--mode apply`.
+5. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. Then stop. Approvals are [chant](/terragucci/concepts/glossary/#chant) records on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and they belong to the user.
+
+   ```text
+   Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+   ```
 6. Tell the user to install chant, and under `approval: sealed` to add their key to `.chant/allowed_signers` ([Before your first approval](/terragucci/getting-started/#before-your-first-approval)). Do not add a key yourself. The file must be on the default branch before the first merge that destroys something, because the apply reads it from before the merge.
 
 ## Rules for the agent
