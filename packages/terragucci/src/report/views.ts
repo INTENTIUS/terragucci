@@ -12,7 +12,7 @@ import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
 import { signed } from "./cost";
-import { actionWord, type Report, type ReportCost, type ReportNamed } from "./schema";
+import { actionWord, type Report, type ReportCost, type ReportNamed, type ReportStep } from "./schema";
 import { duration } from "./spans";
 import { TACO_NOTE_URL } from "./taco";
 
@@ -80,6 +80,21 @@ export function costTable(cost: ReportCost, name: (root: string) => string = (r)
     t += r.error ? `| ${name(r.root)} | | | not estimated: ${r.error.split(/\s+/).join(" ").replace(/\|/g, "\\|")} |\n` : `| ${name(r.root)} | ${amount(r.past_monthly_total)} | ${amount(r.monthly_total)} | ${r.monthly_delta === null ? "" : signed(r.monthly_delta)} |\n`;
   }
   t += `| **Total** | ${amount(cost.past_monthly_total)} | ${amount(cost.monthly_total)} | **${cost.monthly_delta === null ? "none" : signed(cost.monthly_delta)}** |\n`;
+  return t;
+}
+
+/** What a step came to, in words. */
+export function stepResult(s: ReportStep): string {
+  const exit = s.exit === null ? "no exit code" : `exit ${s.exit}`;
+  return s.status === "passed" ? "passed" : s.status === "failed" ? `failed, ${exit}` : `asks for an approval, ${exit}`;
+}
+
+/** Every step that ran, by root, in the order each root ran them. */
+export function stepsTable(report: Report, name: (root: string) => string = (r) => `\`${r}\``): string | undefined {
+  const rows = report.roots.flatMap((r) => (r.steps ?? []).map((s) => ({ root: r.path, s })));
+  if (rows.length === 0) return undefined;
+  let t = `**Steps (${rows.length}):**\n\n| Root | When | Step | Result |\n|---|---|---|---|\n`;
+  for (const { root, s } of rows) t += `| ${name(root)} | ${s.when} | ${s.name.split(/\s+/).join(" ").replace(/\|/g, "\\|")} | ${stepResult(s)} |\n`;
   return t;
 }
 
@@ -267,7 +282,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     let t = "| Wave | Roots | Digest of its changes | When it applies |\n|---|---|---|---|\n";
     for (const w of report.waves) {
       const when = w.waits && w.review_digest ? `waits for an approval: ${code(approveCommand(w.number, w.review_digest, options.sealed))}` : w.waits ? "waits for an approval" : "applies";
-      t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : "no change"} | ${when} |\n`;
+      const by = w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)` : "";
+      t += `| ${w.number} | ${w.roots.length} | ${w.review_digest ? code(w.review_digest) : "no change"} | ${when}${by} |\n`;
     }
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
     head.push(noteMarker({ head: run.commit, waves: report.waves.map((w) => ({ number: w.number, digest: w.review_digest ?? null, waits: w.waits === true })) }), "");
@@ -276,6 +292,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     for (const w of report.waves) t += `| ${w.number} | ${w.roots.length} | ${w.set_digest ? code(w.set_digest.slice(0, 19)) : "none"} | ${w.approval} |\n`;
     blocks.push({ kind: "line", units: 0, text: t + "\n" });
   }
+  const steps = stepsTable(report, (root) => to(code(root), rootAnchor(root)));
+  if (steps) blocks.push({ kind: "line", units: 0, text: steps + "\n" });
   if (report.cost && report.cost.roots.length > 0) blocks.push({ kind: "line", units: 0, text: costTable(report.cost, (root) => to(code(root), rootAnchor(root))) + "\n" });
   const unitsWord = report.unit === "instance" ? "Instances" : "Roots";
   for (const g of report.groups) {

@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 16;
+export const REPORT_MINOR = 17;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -266,6 +266,26 @@ export interface ReportRoot {
    * changed, by name (minor 15). Never a value.
    */
   applied_changes?: ReportAppliedChange[];
+  /** The steps that ran for it (minor 17), in the order they ran. Absent when none did. */
+  steps?: ReportStep[];
+}
+
+/** When a step runs: before or after a root's init, plan, apply or drift (minor 17). */
+export type ReportStepWhen = `${"before" | "after"}-${"init" | "plan" | "apply" | "drift"}`;
+
+/**
+ * One step that ran for a root (minor 17). `passed`: it exited 0. `failed`:
+ * it exited otherwise and the root failed. `approval`: it exited otherwise
+ * with `on_failure: approve`, so the root's wave waits for an approval.
+ * Its output stays in the job log.
+ */
+export interface ReportStep {
+  name: string;
+  when: ReportStepWhen;
+  status: "passed" | "failed" | "approval";
+  /** The exit code; null when it was killed or could not start. */
+  exit: number | null;
+  seconds: number;
 }
 
 /** What one apply did to one resource (minor 15). */
@@ -372,6 +392,11 @@ export interface ReportWave {
    * the page to review it on. Absent when no review can approve it.
    */
   review?: { pull_request: number; url: string };
+  /**
+   * The roots whose `on_failure: approve` step failed (minor 17): the gate
+   * holds the wave whatever the gate policy says, when it changes anything.
+   */
+  held_by_steps?: string[];
 }
 
 /**
