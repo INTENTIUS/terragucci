@@ -48,6 +48,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
 | `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
 | `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
+| `roots[].state` | on a `tf-apply` wave, for a root that applied or had nothing to apply: the state its backend holds afterwards, read from the object's metadata and never its contents: `backend`, `location` (`s3://<bucket>/<key>` or the local file), `version_id` (S3's version id), `versioning` (`on`, `off` or `unknown`) and a `note` saying why there is no version |
 | `roots[].steps` | the [steps](/terragucci/guides/run-steps/) that ran for the root, in order: `name`, `when` (such as `before-plan`), `status` (`passed`; `failed`, which failed the root; `approval`, a failed `on_failure: approve` step that holds the wave), `exit` and `seconds`; the steps' output stays in the job log |
 | `waves[].held_by_steps` | the roots whose `on_failure: approve` step failed, so the gate holds the wave when it changes anything, whatever `gate` says |
 | `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
@@ -114,7 +115,7 @@ Each `index.json` in the bucket is `terragucci.report-index/v1`, with its JSON S
 |---|---|
 | `generated` | when the page was built; every `age_seconds` is as of then |
 | `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes, `overridden_roots` when an override let a root through, and `resources` when a project has an inventory |
-| `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, `status` (`ok`, `no-index` or `error`), and `inventory`: its resource count, the count of each type (`types`) and each root's resources with the wave that recorded them (`roots`) |
+| `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, `status` (`ok`, `no-index` or `error`), `inventory`: its resource count, the count of each type (`types`) and each root's resources with the wave that recorded them (`roots`), and `states`: each root's state location, `versioning` and the version ids its applies left, newest first, each with its commit, wave and `report` |
 | `recent[]` | the 20 newest runs across every project |
 | `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |
 | `history` | the resource history beside the page: `page`, how many addresses it holds (`resources`) and `generated`, once an apply changed a resource; each listed resource with a history links its section as `history` |
@@ -142,3 +143,14 @@ Each project's `changes.json` is `terragucci.changes/v1`, with its JSON Schema i
 | `generated` | when it was built |
 | `audit` | whether `audit.jsonl` was read for the approvers |
 | `resources[]` | each address by `project` and `root`, with its `type`, its `id` (the anchor on `history.html`) and `applies`, oldest first: the row's actions, attributes, commit, wave, time and digests, the `report` link, and `approver` from the wave's apply entry in the audit trail, with that entry's `approval` id; `approver` is `null` when no gate held the wave, and absent when the audit trail has no entry for it |
+
+## State versions
+
+A project's `states.json` holds the version ids its roots' applies left, never a state's contents. Its `schema` is `terragucci.state-versions/v1`, checked by `dist/state-versions.schema.json`. When a wave uploads its report, every root it applied adds its version, unless the root already lists that version. A root keeps its newest 20.
+
+| Field | What it holds |
+|---|---|
+| `roots[].root`, `backend`, `location` | the root, its backend type, and `s3://<bucket>/<key>` or the local file |
+| `roots[].versioning`, `note` | `on`, `off` or `unknown` as the newest apply found it, and why there is no version |
+| `roots[].checked` | when that apply finished |
+| `roots[].versions[]` | newest first: `version_id`, the `commit`, `wave` and `finished` time of the wave that recorded it, and its directory as `path` |

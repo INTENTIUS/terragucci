@@ -25,10 +25,11 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 | the 20 newest runs | every project's `index.json` |
 | the resources each root holds, by project, root and type, with a filter box | each project's `inventory.json` |
 | each resource's change history, on `history.html` | each project's `changes.json`, and `audit.jsonl` for the approvers |
+| each root's state versions, newest first, or that its bucket keeps none | each project's `states.json` |
 | a link to the [audit trail](/terragucci/reference/audit-trail/), when the job writes one | `audit.json` beside the page |
 | the four DORA metrics per project and for the estate, week by week, also in `dora.json` | `audit.jsonl` and each project's `index.json` |
 
-The page reads `index.json`, `inventory.json`, `changes.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
+The page reads `index.json`, `inventory.json`, `changes.json`, `states.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
 
 ## Before you start
 
@@ -63,7 +64,7 @@ The page reads `index.json`, `inventory.json`, `changes.json`, `audit.json` and 
    {
      "Version": "2012-10-17",
      "Statement": [
-       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
+       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
        { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/audit.html", "arn:aws:s3:::acme-terragucci/reports/audit.json"] }
      ]
    }
@@ -223,6 +224,10 @@ Each `tf-apply` wave also records what it did to each resource of the roots it a
 | the commit, the wave, its report and the root's plan digest | the wave's report |
 
 Run `terragucci audit` before `terragucci estate` (step 5) to name the approvers. Without the audit trail the history still lists every apply but names nobody. A wave no gate held has no approver.
+
+## State versions
+
+Each `tf-apply` wave records the version id of each root's state, read from the bucket's versioning, and the page lists them per root, newest first. A root whose bucket keeps no versions says versions are off. [Find the state version an apply left](/terragucci/guides/find-a-state-version/) sets this up and says how to go back to a version.
 
 ## Delivery metrics
 

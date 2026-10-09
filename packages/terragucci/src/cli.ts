@@ -22,10 +22,11 @@
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
-  terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
+  terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
- *   terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
+ *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
  *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
+ *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
@@ -80,6 +81,7 @@ import { pinChecker } from "./publish/require";
 import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
+import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
@@ -114,8 +116,9 @@ const USAGE = `usage:
   terragucci approval-status [--forge github|forgejo] [--report <dir>]
   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
-  terragucci approve [wave-<k>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
+  terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
+  terragucci migrate revert <migration>
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
   terragucci respond rollout [--mode dry-run|apply]   continue every rollout in flight
 
@@ -310,7 +313,12 @@ export async function main(argv: string[]): Promise<number> {
             ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}), ...(str(flags, "bucket-url") ? { url: str(flags, "bucket-url") } : {}) } }
             : {}),
         }, json ? () => {} : console.error);
-        const code = result.failed ? 1 : 0;
+        let code = result.failed ? 1 : 0;
+        // A pull request's plan proves each state migration it carries, read only (./migrate.ts).
+        if (args[0] === "tf-plan" && flags.terragrunt !== true) {
+          const migrations = await runMigrations(cwd, { binary: str(flags, "binary") ?? result.report.run.binary ?? "tofu", planOnly: true, log: json ? console.error : console.log });
+          if (migrations.code !== 0) code = 1;
+        }
         const files = { html: `${result.dir}/report.html`, json: `${result.dir}/report.json`, note: `${result.dir}/note.md` };
         if (json) return emit(envelope("stage", code, { stage: args[0], change_set: result.report.change_set, files, uploaded: result.uploaded ?? null, ...(result.issue ? { issue: result.issue } : {}) }));
         console.log(renderText(result.report));
@@ -516,16 +524,23 @@ export async function main(argv: string[]): Promise<number> {
         const done = await overrideDenial(cwd, { root: args[0] ?? "", rules, reason: str(flags, "reason") ?? "", ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
         return done.code;
       }
+      case "migrate": {
+        if (args[0] !== "revert" || !args[1]) throw new ConfigError("migrate takes: migrate revert <migration>");
+        const file = writeRevert(cwd, args[1]);
+        console.log(`wrote ${file}: it puts back each state ${args[1]} wrote, to the version it recorded before`);
+        console.log(`revert the code of ${args[1]} in the same change; the plan job proves the revert and wave 1 waits for its approval`);
+        return 0;
+      }
       case "resume": {
         const forge = str(flags, "forge") ?? (process.env.GITLAB_CI === "true" ? "gitlab" : process.env.GITEA_ACTIONS === "true" || process.env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
         if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("resume's --forge is github, forgejo or gitlab");
         const out = str(flags, "out");
         const sha = process.env.TG_SHA || spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).stdout.trim();
-        const step = await resumeStep({ ledger: readLedger(cwd), forge, sha, env: process.env });
+        const step = await resumeStep({ ledger: readLedger(cwd), migrations: readLedger(cwd, MIGRATE_LEDGER), forge, sha, env: process.env });
         if (out) writeFileSync(resolve(cwd, out), step.kind === "apply" ? `TG_SHA=${step.sha}\nTG_PR=${step.pr ?? ""}\n` : "");
         if (step.kind === "none") console.log(`terragucci resume: nothing to resume: ${step.why}`);
         else {
-          for (const w of step.waves) console.log(`terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
+          for (const w of step.waves) console.log(w.migration ? `terragucci resume: migration ${w.migration}, which wave 1 runs, was approved by ${w.by} for ${w.digest}` : `terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
           console.log(step.kind === "apply" ? `terragucci resume: applying the waves again at ${step.sha.slice(0, 8)}; each gate decides` : `terragucci resume: retried ${step.job} of pipeline ${step.pipeline}${step.url ? ` (${step.url})` : ""}; the waves after it follow`);
         }
         return 0;
@@ -583,6 +598,8 @@ export async function main(argv: string[]): Promise<number> {
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.
+          // Migrations need a generated pipeline whose apply jobs may write chant/lifecycle.
+          problems.push(...migrationPipelineProblems(dirname(resolve(path))));
           if (config.apply?.when === "pull-request" && !config.forge && detectForge(dirname(resolve(path)))?.value === "gitlab") {
             problems.push(...gitlabPrApplyProblems(config as Record<string, unknown>, "config"));
           }
