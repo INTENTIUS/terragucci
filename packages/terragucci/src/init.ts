@@ -20,6 +20,7 @@ import {
   BUILT_IN,
   PROJECT_FILE_KEYS,
   resolveRepo,
+  ROOTS_NOT_TERRAGRUNT,
   responseTo,
   type Approval,
   type Binary,
@@ -28,7 +29,7 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { applyLayers, detectBinary, detectForge, detectVersion, findRootsWithReasons, type RootReason } from "./detect";
-import { STEPS_NOT_TERRAGRUNT } from "./steps";
+import { terragruntStepsRefusal } from "./steps";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
@@ -135,10 +136,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (detectedTg) {
     // A unit is a root, so the plain rule (a backend or a provider block) is off: modules are never roots.
     const tgSettings = settings.terragrunt ?? {};
-    if (settings.roots) notes.push("roots is ignored for a Terragrunt repo; use terragrunt.exclude");
-    if (settings.cost) throw new ConfigError("cost estimates read each root's plan from tf-plan, and a Terragrunt repo plans its units with run --all; remove cost");
+    if (settings.roots) throw new ConfigError(ROOTS_NOT_TERRAGRUNT);
     if (settings.synth) throw new ConfigError("synth is for roots a command writes, such as CDK Terrain's stacks; a Terragrunt repo's units are its own, so remove synth");
-    if (settings.steps?.length) throw new ConfigError(STEPS_NOT_TERRAGRUNT);
+    const stepsRefused = terragruntStepsRefusal(settings.steps);
+    if (stepsRefused) throw new ConfigError(stepsRefused);
     const found = await discoverUnits(repo, { exclude: tgSettings.exclude, binary: binary.value, ...(options.terragrunt ? { terragrunt: options.terragrunt } : {}) });
     notes.push(...found.notes);
     if (found.units.length === 0) {

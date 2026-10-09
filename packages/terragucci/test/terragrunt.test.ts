@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { ROOTS_NOT_TERRAGRUNT } from "../src/config";
 import { init } from "../src/init";
 import type { PolicyExec } from "../src/report/policy";
 import { runStage } from "../src/report/stage";
@@ -363,11 +364,16 @@ describe("init in a Terragrunt repo", () => {
     expect(body(r.files[0].content).check.variables).toMatchObject({ TG_PARALLELISM: "3" });
   });
 
-  it("explicit stacks and roots are named in the notes", async () => {
-    const repo = liveRepo({ "live/st/terragrunt.stack.hcl": "", "terragucci.yml": 'roots: ["live/*"]\n' });
+  it("explicit stacks are named in the notes", async () => {
+    const repo = liveRepo({ "live/st/terragrunt.stack.hcl": "" });
     const notes = (await init(repo, { binary: "tofu", dryRun: true, terragrunt: "/nonexistent/terragrunt" })).notes.join("\n");
     expect(notes).toMatch(/explicit stacks \(terragrunt.stack.hcl\) are not supported, so live\/st is left out/);
-    expect(notes).toMatch(/roots is ignored for a Terragrunt repo/);
+  });
+
+  it("roots is a config error naming terragrunt.exclude", async () => {
+    const repo = liveRepo({ "terragucci.yml": 'roots: ["live/*"]\n' });
+    await expect(init(repo, { binary: "tofu", dryRun: true, terragrunt: "/nonexistent/terragrunt" })).rejects.toThrow(ROOTS_NOT_TERRAGRUNT);
+    expect(ROOTS_NOT_TERRAGRUNT).toContain("terragrunt.exclude");
   });
 
   it("a terragrunt block in a repo with no Terragrunt files is an error", async () => {
@@ -525,6 +531,43 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(units["live/dev/vpc"].status).toBe("planned");
     expect(units["live/dev/app"].status).toBe("planned");
     expect(r.failed).toBe(true);
+  });
+
+  it("runs steps around each wave's run --all, in the units their globs match: a step after plan holds the wave or fails its unit", async () => {
+    const steps = [
+      "steps:",
+      "  - name: mark",
+      '    run: echo "$TG_STAGE $TG_ROOT" > step.txt',
+      "    before: plan",
+      '    roots: ["live/dev/*"]',
+      "  - name: verify",
+      '    run: test -f "$TG_PLAN_FILE" && exit 1',
+      "    after: plan",
+      '    roots: ["live/dev/vpc"]',
+      "    on_failure: approve",
+      "  - name: lint",
+      "    run: exit 3",
+      "    after: plan",
+      '    roots: ["live/prod/vpc"]',
+    ].join("\n");
+    const repo = liveRepo({ "terragucci.yml": `${steps}\n` });
+    const lines: string[] = [];
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc", "live/prod/vpc"], ["live/dev/app", "live/prod/app"]], terragruntExec: fakeTerragrunt(), env: {} }, (l) => lines.push(l));
+    expect(readFileSync(join(repo, "live/dev/vpc/step.txt"), "utf-8")).toBe("tf-plan live/dev/vpc\n");
+    expect(readFileSync(join(repo, "live/dev/app/step.txt"), "utf-8")).toBe("tf-plan live/dev/app\n");
+    const units = Object.fromEntries(r.report.roots.map((u) => [u.path, u]));
+    expect(units["live/dev/vpc"].steps!.map((x) => `${x.when} ${x.name} ${x.status}`)).toEqual(["before-plan mark passed", "after-plan verify approval"]);
+    expect(units["live/dev/vpc"].status).toBe("planned");
+    expect(units["live/prod/vpc"].status).toBe("failed");
+    expect(units["live/prod/vpc"].error).toContain("step after-plan lint failed with exit 3");
+    expect(r.report.waves[0]).toMatchObject({ number: 1, held_by_steps: ["live/dev/vpc"] });
+    expect(lines).toContain("live/dev/vpc: after-plan step verify exited 1, so its wave waits for an approval");
+    expect(r.failed).toBe(true);
+  });
+
+  it("refuses a step after init in a Terragrunt repo: the units init inside run --all plan", async () => {
+    const repo = liveRepo({ "terragucci.yml": "steps:\n  - name: late\n    run: echo late\n    after: init\n" });
+    await expect(runStage("tf-plan", repo, { out: join(repo, "out"), binary: "tofu", terragrunt: true, layers: [["live/dev/vpc"]], terragruntExec: fakeTerragrunt(), env: {} }, () => {})).rejects.toThrow(/steps late: a Terragrunt repo inits each unit inside the wave's run --all plan/);
   });
 
   it("with no --layers, discovery decides the units and the waves, the canary layers first", async () => {
