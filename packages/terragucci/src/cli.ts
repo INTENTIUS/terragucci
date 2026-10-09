@@ -81,7 +81,7 @@ import { pinChecker } from "./publish/require";
 import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
-import { MIGRATE_LEDGER, runMigrations, writeRevert } from "./migrate";
+import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
@@ -598,6 +598,8 @@ export async function main(argv: string[]): Promise<number> {
           // The approval mode this checkout holds, and where it comes from; a wave reads it at base.
           approval = checkoutApproval(dirname(resolve(path)), config);
           // A repo's forge, when the config does not name it, is the one init would detect.
+          // Migrations need a generated pipeline whose apply jobs may write chant/lifecycle.
+          problems.push(...migrationPipelineProblems(dirname(resolve(path))));
           if (config.apply?.when === "pull-request" && !config.forge && detectForge(dirname(resolve(path)))?.value === "gitlab") {
             problems.push(...gitlabPrApplyProblems(config as Record<string, unknown>, "config"));
           }

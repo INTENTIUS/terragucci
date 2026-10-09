@@ -37,15 +37,15 @@ packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history dora state-versions
 packages/terragucci/src/audit.ts          audit* migrate-split
 packages/terragucci/src/backend.ts        state-versions migrate-split migrate-backend migrate-revert
-packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert
+packages/terragucci/src/migrate.ts        migrate-split migrate-resume migrate-backend migrate-revert migrate-resume-never
 packages/terragucci/src/notify.ts         notify-chat notify-webhook
 packages/terragucci/src/notify.schema.json notify-webhook
 packages/terragucci/src/telemetry.ts      traces metrics lock-wait provider-calls summed-timings otlp-headers tg-spans dash-* drill-down alerts-fire
 
 # Approvals.
 packages/terragucci/src/approval.ts       sealed* ledger-default approval-* approve-command pr-review* signer-trust pending-expiry tg-sealed tg-gate-* waves refuse
-packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command approve-plan resume-approve signer-trust pending-expiry tg-sealed tg-gate-* migrate-resume
-packages/terragucci/src/resume.ts         resume-* migrate-resume
+packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command approve-plan resume-approve signer-trust pending-expiry tg-sealed tg-gate-* migrate-resume migrate-resume-never
+packages/terragucci/src/resume.ts         resume-* migrate-resume migrate-resume-never
 packages/terragucci/src/seal.ts           sealed* approval-at-base approve-command signer-trust tg-sealed
 packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate
 
@@ -109,7 +109,7 @@ stack/bootstrap.sh                        ALL
 stack/docker-compose.yml                  ALL
 stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-*
-stack/fixtures/migrate-roots              migrate-resume
+stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/cost-policy                cost-gate cost-policy
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat notify-webhook cost-estimate
 example-terragrunt/                       tg-*

@@ -77,7 +77,7 @@
  * wave decided.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describeChangedWave, waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
@@ -113,7 +113,7 @@ import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion } from "./backend";
-import { MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
+import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, stepsUsed, STEPS_NOT_TERRAGRUNT, waveStepsBase, type StepWhen } from "./steps";
 import type { StepSettings } from "./config";
 import type { ReportStep } from "./report/schema";
@@ -126,7 +126,7 @@ export const waveGate = (wave: number): string => `wave-${wave}`;
 export const approveLine = (wave: number, digest: string, mode: Approval = "ledger"): string => approveCommand(wave, digest, mode === "sealed");
 
 /** The migration files in a repo's migrations/. */
-const listMigrationFiles = (repo: string): string[] => readdirSync(join(repo, MIGRATIONS_DIR)).filter((f) => /\.ya?ml$/.test(f));
+const listMigrationFiles = (repo: string): string[] => migrationFiles(repo);
 
 /** Exit codes of `stage tf-apply`. */
 export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4 } as const;
