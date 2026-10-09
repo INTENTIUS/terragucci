@@ -7,9 +7,13 @@
  * Per project it shows the latest plan, the latest drift check, and the waves
  * of the newest commit that ran tf-apply: each wave's gate, how long a waiting
  * wave has waited, and the roots that failed. Below that, the newest runs
- * across every project.
+ * across every project, and the resources each root holds, from the
+ * project's inventory.json (./inventory.ts): addresses, types and providers,
+ * never a value.
  */
 import { esc } from "./html";
+import { countTypes, type Inventory } from "./inventory";
+import type { ReportResource } from "./schema";
 import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
@@ -27,6 +31,26 @@ export interface ProjectIndex {
   error?: string;
   /** Where the project's index.html and run directories are, from the page: relative, or absolute on another bucket's address. Absent when the page cannot link them. */
   base?: string;
+  /** Its inventory.json, when an apply wrote one. */
+  inventory?: Inventory;
+}
+
+/** One root's resources, as its newest applied wave left them. */
+export interface EstateInventoryRoot {
+  root: string;
+  commit: string;
+  finished: string;
+  wave?: number;
+  /** The wave's report.html, when the page can link it. */
+  report?: string;
+  resources: ReportResource[];
+}
+
+/** A project's resources: how many, how many of each type, and each root's list. */
+export interface EstateInventory {
+  resources: number;
+  types: { type: string; count: number }[];
+  roots: EstateInventoryRoot[];
 }
 
 /** A run as the page shows it. */
@@ -82,13 +106,15 @@ export interface EstateProject {
   failed: number;
   /** Roots the newest commit's apply waves applied under a policy override. Absent when none. */
   overridden?: number;
+  /** The resources its roots hold, from its inventory. Absent until an apply records them. */
+  inventory?: EstateInventory;
 }
 
 export interface Estate {
   schema: typeof ESTATE_SCHEMA;
   generated: string;
-  /** `overridden_roots` only when a policy override let a root through. */
-  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overridden_roots?: number };
+  /** `overridden_roots` only when a policy override let a root through; `resources` only when a project has an inventory. */
+  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overridden_roots?: number; resources?: number };
   projects: EstateProject[];
   /** The newest runs across every project, newest first. */
   recent: EstateRun[];
@@ -127,6 +153,20 @@ function run(e: IndexEntry, base: string | undefined): EstateRun {
 const dirOf = (base: string | undefined): string | undefined => (base === undefined || base === "" || base.endsWith("/") ? base : `${base}/`);
 
 const newest = (rows: IndexEntry[]): IndexEntry | undefined => rows.reduce<IndexEntry | undefined>((a, r) => (!a || at(r.finished) > at(a.finished) ? r : a), undefined);
+
+/** A project's resources from its inventory. */
+function inventoryOf(inv: Inventory, base: string | undefined): EstateInventory {
+  const roots = inv.roots.map((r) => ({
+    root: r.root,
+    commit: r.commit,
+    finished: r.finished,
+    ...(r.wave !== undefined ? { wave: r.wave } : {}),
+    ...(base !== undefined ? { report: `${base}${r.path}/report.html` } : {}),
+    resources: r.resources.map((x) => ({ address: x.address, type: x.type, provider: x.provider })),
+  }));
+  const all = roots.flatMap((r) => r.resources);
+  return { resources: all.length, types: countTypes(all), roots };
+}
 
 /** One project's state from its index rows. A row of another project (a top-of-prefix index) is left out. */
 export function projectState(p: ProjectIndex, now: Date): EstateProject {
@@ -177,6 +217,7 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     drifted: drift?.changed ?? 0,
     failed: failedIn(plan) + failedIn(drift) + (apply ? apply.waves.reduce((n, w) => n + (w.failed ?? 0), 0) : 0),
     ...(overridden > 0 ? { overridden } : {}),
+    ...(p.inventory ? { inventory: inventoryOf(p.inventory, base) } : {}),
   };
 }
 
@@ -184,6 +225,7 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
 export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Estate {
   const projects = indexes.map((p) => projectState(p, now));
   const overridden = projects.reduce((n, p) => n + (p.overridden ?? 0), 0);
+  const inventoried = projects.filter((p) => p.inventory);
   const recent = indexes
     .flatMap((p) => (p.reports ?? []).filter((r) => r.project === p.project).map((r) => ({ r, base: dirOf(p.base) })))
     .sort((a, b) => at(b.r.finished) - at(a.r.finished) || (a.r.path < b.r.path ? -1 : 1))
@@ -200,6 +242,7 @@ export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Es
       failed_roots: projects.reduce((n, p) => n + p.failed, 0),
       unreadable: projects.filter((p) => p.status === "error").length,
       ...(overridden > 0 ? { overridden_roots: overridden } : {}),
+      ...(inventoried.length > 0 ? { resources: inventoried.reduce((n, p) => n + p.inventory!.resources, 0) } : {}),
     },
     projects,
     recent,
@@ -254,6 +297,28 @@ function applyCell(p: EstateProject, now: Date): string {
   return `<td><ul>${waves.join("")}</ul><small>${short(p.apply.commit)}</small></td>`;
 }
 
+/** A provider's source address without the public registry's host. */
+const providerName = (p: string): string => p.replace(/^registry\.(terraform\.io|opentofu\.org)\//, "");
+
+/** The resources section: per project its counts by type, then each root's resources. A filter box narrows the rows once scripts run. */
+function resourcesSection(estate: Estate, now: Date): string {
+  const projects = estate.projects.filter((p) => p.inventory);
+  if (projects.length === 0) return `<p class="none">No apply has recorded its resources yet.</p>`;
+  const blocks = projects.map((p) => {
+    const inv = p.inventory!;
+    const types = inv.types.map((t) => `<code>${esc(t.type)}</code> ${t.count}`).join(", ");
+    const roots = inv.roots.map((r) => {
+      const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${r.resources.length} ${r.resources.length === 1 ? "resource" : "resources"}, ${link(r.report, `${r.wave !== undefined ? `wave ${r.wave}` : "applied"}`)} ${short(r.commit)} ${when(r.finished, now)}</th></tr>`;
+      const rows = r.resources.map((x) => `<tr data-r="${esc(`${r.root} ${x.address} ${x.type} ${x.provider}`.toLowerCase())}"><td><code>${esc(x.address)}</code></td><td><code>${esc(x.type)}</code></td><td>${esc(providerName(x.provider))}</td></tr>`);
+      return `<tbody class="inv" data-root="${esc(r.root)}">${head}${rows.join("")}</tbody>`;
+    });
+    return `<h3>${link(p.index, esc(p.project))}: ${inv.resources} ${inv.resources === 1 ? "resource" : "resources"} in ${inv.roots.length} ${inv.roots.length === 1 ? "root" : "roots"}</h3>
+<p class="types">${types}</p>
+<div class="scroll"><table class="resources"><thead><tr><th>Address</th><th>Type</th><th>Provider</th></tr></thead>${roots.join("\n")}</table></div>`;
+  });
+  return `<p><input type="search" id="resources-filter" placeholder="Filter by root, address, type or provider" aria-label="Filter resources" hidden></p>\n${blocks.join("\n")}`;
+}
+
 /**
  * The page. Its numbers are in the HTML, so it reads with scripts off; a
  * small script only moves the "ago" times forward while it is open, and the
@@ -268,7 +333,8 @@ export function renderEstateHtml(estate: Estate): string {
     [t.drifted_projects, t.drifted_projects === 1 ? "project drifted" : "projects drifted"],
     [t.failed_roots, t.failed_roots === 1 ? "root failed" : "roots failed"],
     ...(t.overridden_roots ? [[t.overridden_roots, t.overridden_roots === 1 ? "root applied by policy override" : "roots applied by policy override"]] : []),
-  ].map(([n, label]) => `<div class="tile${Number(n) > 0 && label !== "projects" ? " hot" : ""}"><b>${n}</b><span>${label}</span></div>`);
+    ...(t.resources !== undefined ? [[t.resources, t.resources === 1 ? "resource" : "resources"]] : []),
+  ].map(([n, label]) => `<div class="tile${Number(n) > 0 && label !== "projects" && !String(label).startsWith("resource") ? " hot" : ""}"><b>${n}</b><span>${label}</span></div>`);
   const waiting = estate.projects.flatMap((p) => p.waiting).sort((a, b) => b.age_seconds - a.age_seconds);
   const waitingRows = waiting.map((w) => `<tr><td>${esc(w.project)}</td><td>${link(w.report, `wave ${w.wave}`)}</td><td>${short(w.commit)}</td><td>${lasting(w.since, now)}</td></tr>`);
   const projectRows = estate.projects.map((p) => {
@@ -291,7 +357,7 @@ ${TACO_ICON}
 <style>${TACO_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}.tile.hot b{color:var(--warn)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}small,.none{color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Estate</h1>
 <p>${estate.projects.length} projects, built from their report indexes <time datetime="${esc(estate.generated)}">${esc(estate.generated)}</time>.</p>
 ${estate.audit ? `<p>Audit trail: <a href="${esc(estate.audit.page)}" id="audit-trail">${estate.audit.entries} ${estate.audit.entries === 1 ? "entry" : "entries"}</a>, built <time datetime="${esc(estate.audit.generated)}">${esc(estate.audit.generated)}</time>.</p>` : ""}
@@ -304,9 +370,11 @@ ${projectRows.join("\n")}
 </table></div>
 <h2>Recent runs</h2>
 ${recentRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Stage</th><th>Commit</th><th>Pull request</th><th>Changes</th><th></th><th>Finished</th><th></th></tr>\n${recentRows.join("\n")}\n</table></div>` : `<p class="none">No runs yet.</p>`}
+<h2 id="resources">Resources</h2>
+${resourcesSection(estate, now)}
 </main>
 <script type="application/json" id="terragucci-estate">${json}</script>
-<script>(function(){function f(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d>0?d+"d "+h+"h":h>0?h+"h "+m+"m":m+"m"}var n=Date.now();document.querySelectorAll("td time[datetime]").forEach(function(t){var s=Math.max(0,Math.round((n-Date.parse(t.getAttribute("datetime")))/1000));if(!isNaN(s))t.textContent=f(s)+(t.hasAttribute("data-for")?"":" ago")})})()</script>
+<script>(function(){function f(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d>0?d+"d "+h+"h":h>0?h+"h "+m+"m":m+"m"}var n=Date.now();document.querySelectorAll("td time[datetime],tbody.inv th time[datetime]").forEach(function(t){var s=Math.max(0,Math.round((n-Date.parse(t.getAttribute("datetime")))/1000));if(!isNaN(s))t.textContent=f(s)+(t.hasAttribute("data-for")?"":" ago")});var q=document.getElementById("resources-filter");if(q){q.hidden=false;q.addEventListener("input",function(){var v=q.value.toLowerCase().trim();document.querySelectorAll("tbody.inv").forEach(function(b){var n=0;b.querySelectorAll("tr[data-r]").forEach(function(r){var m=!v||r.getAttribute("data-r").indexOf(v)>=0;r.hidden=!m;if(m)n++});b.hidden=n===0})})}})()</script>
 </body></html>
 `;
 }

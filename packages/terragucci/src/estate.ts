@@ -10,10 +10,10 @@
  * `reports.role` of its own); the page goes to the bucket under `defaults`.
  * In a single repo the projects are the ones the top-of-prefix index lists.
  *
- * It reads `index.json` and nothing else: never a report, a plan's text or a
- * root's plan JSON (see report/estate.ts). The one other object it reads is
- * `audit.json`, the summary `terragucci audit` writes beside the page
- * (./audit.ts), so the page can link the audit trail.
+ * It reads each project's `index.json` and `inventory.json`, and never a
+ * report, a plan's text or a root's plan JSON (see report/estate.ts). The
+ * one other object it reads is `audit.json`, the summary `terragucci audit`
+ * writes beside the page (./audit.ts), so the page can link the audit trail.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -21,7 +21,8 @@ import { ConfigError, resolveProject, resolveRepo, type TerragucciConfig } from 
 import { age, buildEstate, renderEstateHtml, type Estate, type ProjectIndex } from "./report/estate";
 import { storeFromEnv } from "./report/bucket";
 import { bucketUrl, parseReportsBucket, PRESIGN_MAX_SECONDS, StoreError, type ObjectStore, type StoreFetch } from "./report/object-store";
-import { reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
+import { INVENTORY_SCHEMA, type Inventory } from "./report/inventory";
+import { inventoryKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
 
@@ -99,12 +100,28 @@ async function readProject(project: string, reports: Reports | undefined, out: R
   const served = reportsBase(reports);
   const base = sameBucket(reports, out) ? `${project}/` : served ? `${served}/${project}/` : undefined;
   const at = key(reports.prefix ?? "", project, "index.json");
+  let rows: IndexEntry[] | undefined;
   try {
     const text = await client(reports).get(at);
-    return { project, ...(text === undefined ? {} : { reports: parseIndex(text, at) }), ...(base !== undefined ? { base } : {}) };
+    rows = text === undefined ? undefined : parseIndex(text, at);
   } catch (e) {
     if (!(e instanceof StoreError) && !(e instanceof TypeError)) throw e;
     return { project, error: e.message, ...(base !== undefined ? { base } : {}) };
+  }
+  const inventory = rows ? await readInventoryOf(client(reports), inventoryKey(project, reports.prefix ?? "")) : undefined;
+  return { project, ...(rows ? { reports: rows } : {}), ...(inventory ? { inventory } : {}), ...(base !== undefined ? { base } : {}) };
+}
+
+/** A project's inventory, when an apply wrote one; one that cannot be read leaves the project without a resource list, never without its runs. */
+async function readInventoryOf(store: ObjectStore, at: string): Promise<Inventory | undefined> {
+  try {
+    const text = await store.get(at);
+    if (text === undefined) return undefined;
+    const parsed = JSON.parse(text) as Partial<Inventory>;
+    return parsed.schema === INVENTORY_SCHEMA && Array.isArray(parsed.roots) ? (parsed as Inventory) : undefined;
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
+    throw e;
   }
 }
 
