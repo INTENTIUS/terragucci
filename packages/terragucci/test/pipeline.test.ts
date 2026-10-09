@@ -1629,6 +1629,147 @@ describe("a GitHub wave whose push is no longer the branch tip", () => {
   });
 });
 
+describe("a wave split across jobs (waves.jobs)", () => {
+  const wide = [["net"], ["a", "b", "c", "d", "e"]];
+  const pipeline = (forge: ForgeName, extra: Record<string, unknown> = {}) =>
+    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, ...extra } as never).content);
+
+  it.each(["github", "forgejo"] as const)("%s: the wave's own job decides, its shares apply side by side, and a job after them posts the success", (forge) => {
+    const doc = pipeline(forge);
+    const names = Object.keys(doc.jobs).filter((j) => /^apply-(wave|done)/.test(j));
+    expect(names).toEqual(["apply-wave-1", "apply-wave-2", "apply-wave-2-share-1", "apply-wave-2-share-2", "apply-done"]);
+    // A wave of one root stays one job; the wide wave's job decides and needs the wave before.
+    expect(doc.jobs["apply-wave-2"].needs).toBe("apply-wave-1");
+    expect(doc.jobs["apply-wave-2-share-1"].needs).toBe("apply-wave-2");
+    expect(doc.jobs["apply-done"].needs).toEqual(["apply-wave-2-share-1", "apply-wave-2-share-2"]);
+    const step = (j: string): string => doc.jobs[j].steps.map((x: { run?: string }) => x.run ?? "").join("\n");
+    expect(step("apply-wave-1")).not.toContain("--shares");
+    expect(step("apply-wave-2")).toContain("--wave 2 --layers 'net;a,b,c,d,e' --binary tofu --gate on-destroy --shares 2");
+    expect(step("apply-wave-2")).not.toContain("--share ");
+    expect(step("apply-wave-2-share-2")).toContain("--shares 2 --share 2");
+    // Only the done job posts the success; the deciding job and the shares post none.
+    for (const j of ["apply-wave-2", "apply-wave-2-share-1"]) expect(step(j)).not.toContain("roots in 2 groups applied");
+    expect(step("apply-done")).toContain('tg status terragucci/apply success "6 roots in 2 groups applied"');
+    // The decision goes from the wave's job to its shares as an artifact.
+    const upload = doc.jobs["apply-wave-2"].steps.find((x: { name?: string }) => x.name === "Hand the decision to the wave's shares");
+    expect(upload.with).toMatchObject({ name: "terragucci-wave-2", path: "terragucci-wave/" });
+    const fetch = doc.jobs["apply-wave-2-share-1"].steps.findIndex((x: { name?: string }) => x.name === "Fetch the wave's decision");
+    expect(doc.jobs["apply-wave-2-share-1"].steps[fetch].with).toEqual({ name: "terragucci-wave-2", path: "terragucci-wave" });
+    expect(fetch).toBeLessThan(doc.jobs["apply-wave-2-share-1"].steps.findIndex((x: { run?: string }) => x.run?.includes("terragucci stage tf-apply")));
+    // The shares run outside the apply concurrency group; every apply job holds the run's shared lock instead.
+    expect(doc.jobs["apply-wave-2-share-1"].concurrency).toBeUndefined();
+    expect(doc.jobs["apply-wave-2"].concurrency).toBeDefined();
+    for (const j of names.filter((n) => n !== "apply-done")) {
+      expect(step(j)).toContain(`hold_ref="\${hold_prefix}${j}"`);
+      // Forgejo's dialect drops permissions; GitHub's job token needs contents: write to push the tags.
+      if (forge === "github") expect(doc.jobs[j].permissions.contents).toBe("write");
+    }
+    if (forge === "github") expect(doc.jobs["apply-done"].permissions).toEqual({ contents: "read", statuses: "write" });
+  });
+
+  it("on GitHub the apply a comment starts takes the lock tag the shares hold", () => {
+    const run = (doc: Record<string, any>): string => JSON.stringify(doc.jobs["apply-comment"].steps);
+    expect(run(pipeline("github"))).toContain("refs/tags/terragucci-apply-lock");
+    expect(run(body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {} }).content))).not.toContain("refs/tags/terragucci-apply-lock");
+  });
+
+  it("renders as before when no wave has more roots than one job", () => {
+    const plain = renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {} }).content;
+    expect(renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["network"], ["app"]], env: {}, waveJobs: 4 }).content).toBe(
+      renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["network"], ["app"]], env: {} }).content,
+    );
+    expect(renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, waveJobs: 1 }).content).toBe(plain);
+  });
+
+  it("splits a canary wave by the canary's own roots", () => {
+    const doc = pipeline("forgejo", { layers: [["dev/a", "dev/b", "prod/a", "prod/b", "prod/c"]], canary: ["dev/*"], waveJobs: 3 });
+    expect(Object.keys(doc.jobs).filter((j) => /^apply-(wave|done)/.test(j))).toEqual(["apply-wave-1", "apply-wave-1-share-1", "apply-wave-1-share-2", "apply-wave-2", "apply-wave-2-share-1", "apply-wave-2-share-2", "apply-wave-2-share-3", "apply-done"]);
+    expect(doc.jobs["apply-wave-2"].needs).toEqual(["apply-wave-1-share-1", "apply-wave-1-share-2"]);
+  });
+
+  it("is refused on GitLab, in a Terragrunt repo and with apply.when: pull-request, by config check and by init", () => {
+    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2 })).toThrow(/waves\.jobs: a wave splits across jobs on GitHub and Forgejo/);
+    expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, applyWhen: "pull-request" })).toThrow(/waves\.jobs: apply\.when: pull-request/);
+    expect(() => renderPipeline({ forge: "forgejo", binary: "tofu", version: "1.13.1", image: "img:1", layers: wide, env: {}, waveJobs: 2, terragrunt: { installs: [] } as never })).toThrow(/waves\.jobs: a Terragrunt wave/);
+    expect(() => validateConfig({ waves: { jobs: 0 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
+    expect(() => validateConfig({ waves: { jobs: 1.5 } }, "t")).toThrow("config.waves.jobs must be a whole number of 1 or more");
+    expect(() => validateConfig({ forge: "gitlab", waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: a wave splits across jobs on GitHub and Forgejo");
+    expect(() => validateConfig({ apply: { when: "pull-request" }, waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: apply.when: pull-request");
+    expect(() => validateConfig({ terragrunt: { version: "0.99.1" }, waves: { jobs: 3 } }, "t")).toThrow("config.waves.jobs: a Terragrunt wave");
+    expect(validateConfig({ waves: { jobs: 3, canary: ["dev/*"] } }, "t")).toEqual({ waves: { jobs: 3, canary: ["dev/*"] } });
+  });
+
+  describe("the shared lock", () => {
+    function remote(): { origin: string; work: string; sha: string } {
+      const origin = tmp("tg-origin-");
+      git(origin, "init", "-q", "--bare");
+      const work = tmp("tg-work-");
+      git(work, "init", "-q", "-b", "main");
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
+      git(work, "remote", "add", "origin", origin);
+      git(work, "push", "-q", "origin", "main");
+      return { origin, work, sha: git(work, "rev-parse", "HEAD").trim() };
+    }
+    const share = (s: number): string => applyScript("tofu", wide, "forgejo", undefined, { wave: 2, shares: 2, share: s, sharedLock: `apply-wave-2-share-${s}` });
+
+    it("lets a wave's shares apply side by side while another run waits, and leaves no tag behind", async () => {
+      const { origin, work, sha } = remote();
+      const { dir, env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", {
+        terragucci: `#!/usr/bin/env bash\necho "start $JOB $(date +%s.%N)" >> "$LOG"; sleep 1.5; echo "end $JOB $(date +%s.%N)" >> "$LOG"\nexit 0\n`,
+      });
+      const log = join(dir, "apply.log");
+      const base = { ...env, LOG: log, TG_BRANCH: "main", GITHUB_REF_NAME: "main", GITHUB_SHA: sha, TG_SHA: sha, TG_LOCK_POLL: "0.2" };
+      const go = (script: string, job: string, id: string, delay = 0) => new Promise<{ status: number | null; out: string }>((ok) => {
+        setTimeout(() => {
+          const p = spawn("bash", ["-c", script], { cwd: work, env: { ...process.env, ...base, JOB: job, GITHUB_RUN_ID: id } });
+          let out = "";
+          p.stdout.on("data", (c) => (out += c));
+          p.stderr.on("data", (c) => (out += c));
+          p.on("close", (status) => ok({ status, out }));
+        }, delay);
+      });
+      // Run 7's shares start first; run 8's wave job starts while they hold the lock.
+      const results = await Promise.all([go(share(1), "s1", "7"), go(share(2), "s2", "7", 300), go(applyScript("tofu", [["x"]], "forgejo"), "other", "8", 600)]);
+      expect(results.map((r) => r.status), results.map((r) => r.out).join("\n")).toEqual([0, 0, 0]);
+      const events = readFileSync(log, "utf-8").trim().split("\n").map((l) => l.split(" "));
+      const when = (what: string, job: string): number => Number(events.find((e) => e[0] === what && e[1] === job)![2]);
+      // The shares overlap, and the other run starts only once both ended.
+      expect(when("start", "s2")).toBeLessThan(when("end", "s1"));
+      expect(when("start", "other")).toBeGreaterThanOrEqual(Math.max(when("end", "s1"), when("end", "s2")));
+      expect(results[1].out).toContain("this run holds the apply lock; apply-wave-2-share-2 joins it");
+      expect(git(origin, "tag", "--list").trim()).toBe("");
+    });
+
+    it("keeps the lock while another job of its run still holds it, and the run's next job lets it go", async () => {
+      const { origin, work, sha } = remote();
+      const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
+      const lease = git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", git(work, "mktree").trim(), "-m", `run 7 ${Math.floor(Date.now() / 1000)}`).trim();
+      git(work, "push", "-q", "origin", `${lease}:refs/tags/terragucci-apply-lock`, `${lease}:refs/tags/terragucci-apply-hold-7-apply-wave-2-share-2`);
+      const vars = { ...env, TG_BRANCH: "main", GITHUB_REF_NAME: "main", GITHUB_SHA: sha, TG_SHA: sha, GITHUB_RUN_ID: "7", TG_LOCK_POLL: "0.2" };
+      const first = await run(`cd ${work} && ${share(1)}`, vars);
+      expect(first.status, first.out).toBe(0);
+      expect(git(origin, "tag", "--list").trim().split("\n")).toEqual(["terragucci-apply-hold-7-apply-wave-2-share-2", "terragucci-apply-lock"]);
+      // The sibling went without dropping its hold; the run's next job joins the lock and, the last of the run, lets it go.
+      git(work, "push", "-q", "origin", ":refs/tags/terragucci-apply-hold-7-apply-wave-2-share-2");
+      const next = await run(`cd ${work} && ${applyScript("tofu", [...wide, ["z"]], "forgejo", undefined, { wave: 3, sharedLock: "apply-wave-3" })}`, vars);
+      expect(next.status, next.out).toBe(0);
+      expect(next.out).toContain("this run holds the apply lock; apply-wave-3 joins it");
+      expect(git(origin, "tag", "--list").trim()).toBe("");
+    });
+
+    it("takes over a lock whose run is gone, and drops the holds that run left", async () => {
+      const { origin, work, sha } = remote();
+      const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
+      const lease = git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", git(work, "mktree").trim(), "-m", "run 99 1000").trim();
+      git(work, "push", "-q", "origin", `${lease}:refs/tags/terragucci-apply-lock`, `${lease}:refs/tags/terragucci-apply-hold-99-apply-wave-2-share-1`);
+      const r = await run(`cd ${work} && ${share(1)}`, { ...env, TG_BRANCH: "main", GITHUB_REF_NAME: "main", GITHUB_SHA: sha, TG_SHA: sha, GITHUB_RUN_ID: "7", TG_LOCK_POLL: "0.2" });
+      expect(r.status, r.out).toBe(0);
+      expect(r.out).toContain("run 99, which is gone; taking it over");
+      expect(git(origin, "tag", "--list").trim()).toBe("");
+    });
+  });
+});
+
 describe("two concurrent pushes to main on forgejo", () => {
   it("apply one after the other", async () => {
     const origin = tmp("tg-origin-");

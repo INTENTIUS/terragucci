@@ -286,7 +286,8 @@ export interface ProjectSettings {
   apply?: ApplySettings;
   /** When a pull request takes its root locks; see LOCKS. */
   locks?: Locks;
-  waves?: { canary?: string[] };
+  /** `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots spread across (plain roots, GitHub and Forgejo). */
+  waves?: { canary?: string[]; jobs?: number };
   /** A cron schedule for tf-drift, or false. */
   drift?: string | false;
   /**
@@ -560,7 +561,16 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.tips !== undefined && typeof s.tips !== "boolean") problems.push(`${where}.tips must be true or false`);
   if (s.waves !== undefined) {
     if (!isObject(s.waves)) problems.push(`${where}.waves must be a map`);
-    else stringList(s.waves.canary, `${where}.waves.canary`, problems);
+    else {
+      stringList(s.waves.canary, `${where}.waves.canary`, problems);
+      const jobs = s.waves.jobs;
+      if (jobs !== undefined && !(Number.isInteger(jobs) && (jobs as number) >= 1)) problems.push(`${where}.waves.jobs must be a whole number of 1 or more`);
+      else if (typeof jobs === "number" && jobs > 1) {
+        if (s.forge === "gitlab") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_GITLAB}`);
+        if (isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
+        if (s.terragrunt !== undefined) problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_TERRAGRUNT}`);
+      }
+    }
   }
   if (s.env !== undefined) {
     if (!isObject(s.env) || !Object.values(s.env).every((x) => typeof x === "string")) {
@@ -703,6 +713,10 @@ export interface ModulesSettings {
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
+/** Why `waves.jobs` is refused on GitLab: a split wave's shares hold one apply lock between them on GitHub and Forgejo, and GitLab's apply jobs take a resource group one job at a time. */
+export const WAVE_JOBS_NOT_GITLAB = "a wave splits across jobs on GitHub and Forgejo; GitLab runs one apply job at a time in its resource group, so leave waves.jobs unset there";
+export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
+export const WAVE_JOBS_NOT_TERRAGRUNT = "a Terragrunt wave applies its units with one run --all in one job; waves.jobs splits a wave of plain roots, so leave it unset";
 export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
 
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */

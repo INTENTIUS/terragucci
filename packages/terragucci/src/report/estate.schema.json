@@ -65,6 +65,7 @@
         "commit": { "type": "string" },
         "stage": { "enum": ["tf-plan", "tf-apply", "tf-drift"] },
         "wave": { "type": "integer" },
+        "share": { "type": "integer", "description": "The share of a tf-apply wave split across jobs." },
         "finished": { "type": "string" },
         "roots": { "type": "integer" },
         "changed": { "type": "integer" },

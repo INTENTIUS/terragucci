@@ -17,6 +17,7 @@
         "base": { "type": "string" },
         "stage": { "enum": ["tf-plan", "tf-apply", "tf-drift"] },
         "wave": { "type": "integer" },
+        "share": { "type": "integer", "minimum": 1, "description": "On a tf-apply wave split across jobs (waves.jobs), the share this report applied; waves[0].roots are its roots (minor 16)." },
         "binary": { "type": "string" },
         "runtime": { "type": "string" },
         "started": { "type": "string" },
