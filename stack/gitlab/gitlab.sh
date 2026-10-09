@@ -5,6 +5,8 @@
 #
 #   stack/gitlab/gitlab.sh up      start it, mint the root token, register the
 #                                  runner, write stack/gitlab/.state/gitlab.env
+#   stack/gitlab/gitlab.sh image   build the lab's tofu image, this tree's bundle
+#                                  in the tofu CI image, and print its tag
 #   stack/gitlab/gitlab.sh status  its containers, their memory, its volumes' size
 #   stack/gitlab/gitlab.sh stop    stop it and keep GitLab's volumes, so the next
 #                                  up skips GitLab's first-boot setup
@@ -113,8 +115,31 @@ job_containers() {
   done
 }
 
+# The lab's tofu image: the tofu CI image as it is in the local daemon, with
+# this tree's bundle in place of its own, tagged tglab-tofu:<bundle hash>.
+# Smoke runs on GitLab push their pipelines naming it (TG_TOFU_IMAGE), so they
+# test this tree and never rebuild the shared ghcr.io/intentius/* tags. Prints
+# the tag.
+image() {
+  local base bundle tag ctx
+  base="$(cd "$ROOT" && npx tsx scripts/images.ts tags | awk '$1 == "tofu" { print $2 }')"
+  docker image inspect "$base" >/dev/null 2>&1 || die "no $base in the local daemon; run 'just images' once"
+  (cd "$ROOT" && node scripts/build-cli.mjs >/dev/null) || die "the CLI did not build"
+  bundle="$ROOT/packages/terragucci/dist/terragucci.mjs"
+  tag="tglab-tofu:$(shasum -a 256 "$bundle" | cut -c1-12)"
+  if ! docker image inspect "$tag" >/dev/null 2>&1; then
+    ctx="$(mktemp -d "${TMPDIR:-/tmp}/tglab-image.XXXXXX")"
+    cp "$bundle" "$ctx/terragucci.mjs"
+    printf 'FROM %s\nCOPY --chmod=0755 terragucci.mjs /usr/local/bin/terragucci\n' "$base" > "$ctx/Dockerfile"
+    docker build -q -t "$tag" "$ctx" >/dev/null || die "could not build $tag"
+    log "built $tag from $base and this tree's bundle"
+  fi
+  echo "$tag"
+}
+
 case "${1:-}" in
   up) up ;;
+  image) image ;;
   status) status ;;
   stop) job_containers; "${COMPOSE[@]}" stop >&2 ;;
   down)

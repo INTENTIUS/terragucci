@@ -11079,15 +11079,23 @@ runner_prep() {
   export SMOKE_CLI_BUILT=1
   SMOKE_TOFU_IMAGE="$(image_tag tofu)"; SMOKE_TG_IMAGE="$(image_tag terragrunt)"
   export SMOKE_TOFU_IMAGE SMOKE_TG_IMAGE
+  # The lab is never started here: GitLab is heavy, and `just gitlab-lab up`
+  # is a choice. Its jobs run the lab's own image, the tofu image with this
+  # tree's bundle (gitlab.sh image), so a GitLab run leaves the shared image
+  # tags as they are.
+  if [ "$SMOKE_FORGE" = gitlab ]; then
+    gitlab_lab_env || return 1
+    TG_TOFU_IMAGE="$("$HERE/gitlab/gitlab.sh" image 2>"$SMOKE_LOG_DIR/images.log")" \
+      || { echo "[smoke] the lab's image did not build; see $SMOKE_LOG_DIR/images.log" >&2; return 1; }
+    export TG_TOFU_IMAGE
+    return
+  fi
   # Built every time: a forge job runs the bundle inside the image, so an
   # image left from an older tree would test older code. The layer cache
   # makes a rebuild take seconds when only the bundle moved.
   echo "[smoke] building the CI images (a few minutes the first time)" >&2
   (cd "$HERE/.." && npx tsx scripts/images.ts build >"$SMOKE_LOG_DIR/images.log" 2>&1) \
     || { echo "[smoke] the CI images did not build; see $SMOKE_LOG_DIR/images.log" >&2; return 1; }
-  # The lab is never started here: GitLab is heavy, and `just gitlab-lab up`
-  # is a choice. Its runner takes the images just built.
-  if [ "$SMOKE_FORGE" = gitlab ]; then gitlab_lab_env; return; fi
   "$HERE/bootstrap.sh" forgejo >/dev/null 2>"$SMOKE_LOG_DIR/bootstrap.log" \
     || { cat "$SMOKE_LOG_DIR/bootstrap.log" >&2; echo "[smoke] the stack did not start" >&2; return 1; }
   # The steward claim runs alongside others, so its fountain profile starts

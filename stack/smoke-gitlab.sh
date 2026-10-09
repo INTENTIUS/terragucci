@@ -86,6 +86,8 @@ gl_push() { # dir project branch message -> prints the sha
     if [ -z "${TG_KEEP_DIGESTS:-}" ]; then
       for f in .gitlab/*.yml .gitlab-ci.yml; do
         if [ -f "$f" ]; then perl -pi -e 's#(ghcr\.io/intentius/terragucci-[a-z]+:[^@\s]+)\@sha256:[0-9a-f]{64}#$1#g' "$f"; fi
+        # The lab's image: the tofu image with this tree's bundle (gitlab.sh image).
+        if [ -f "$f" ] && [ -n "${TG_TOFU_IMAGE:-}" ]; then TG_TOFU_IMAGE="$TG_TOFU_IMAGE" perl -pi -e 's#ghcr\.io/intentius/terragucci-tofu:[^@\s"'"'"']+#$ENV{TG_TOFU_IMAGE}#g' "$f"; fi
       done
     fi
     git add -A
