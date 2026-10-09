@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/state-edges/v1/state-edges.schema.json",
+  "title": "terragucci.state-edges/v1",
+  "description": "edges.json in a project's directory of a reports prefix: for each root, the roots whose state it reads, the newest run that planned it and the newest tf-apply wave that changed it. Root paths and run facts, never a state's contents or an output's value. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "roots"],
+  "$defs": {
+    "run": {
+      "type": "object",
+      "required": ["stage", "commit", "finished", "path"],
+      "properties": {
+        "stage": { "type": "string", "description": "tf-plan, tf-drift or tf-apply." },
+        "commit": { "type": "string" },
+        "finished": { "type": "string" },
+        "wave": { "type": "integer" },
+        "path": { "type": "string", "description": "The run's directory, relative to the project's index.json." },
+        "pull_request": { "type": "string", "description": "The pull or merge request a plan was for." },
+        "version_id": { "type": "string", "description": "An apply: the state version it left, when the backend keeps versions." }
+      }
+    }
+  },
+  "properties": {
+    "schema": { "const": "terragucci.state-edges/v1" },
+    "roots": {
+      "type": "array",
+      "description": "By root path.",
+      "items": {
+        "type": "object",
+        "required": ["root", "reads"],
+        "properties": {
+          "root": { "type": "string" },
+          "reads": {
+            "type": "array",
+            "description": "The roots whose state it reads, as the newest default-branch run found them in its code.",
+            "items": {
+              "type": "object",
+              "required": ["root", "via"],
+              "properties": {
+                "root": { "type": "string" },
+                "via": { "enum": ["terraform_remote_state", "dependency"] }
+              }
+            }
+          },
+          "reads_seen": { "type": "string", "description": "When the run that found its reads finished." },
+          "planned": { "$ref": "#/$defs/run", "description": "The newest run that planned it: a pull request's plan, a drift check or an apply wave's plan." },
+          "applied": { "$ref": "#/$defs/run", "description": "The newest tf-apply wave that changed one of its resources." }
+        }
+      }
+    }
+  }
+}

@@ -132,6 +132,29 @@ Forgejo sets the run token's scope itself; a job with a cloud role asks only for
 
 With `reports.bucket` and no `reports.role`, the plan, re-plan and drift jobs also hold the bucket keys ([Credentials](/terragucci/reference/pipeline/#credentials)).
 
+## State access per environment
+
+A role reaches every state its IAM policy grants, whichever root the job is running. With one `plan_role` and one `apply_role`, every root's plan and apply runs as the same pair, so a change to a dev root plans with a role that can read prod's state, and a dev apply holds a role that can write it.
+
+With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) (or `terragrunt.credentials` for units), each root runs with the pair of the first glob it matches. Grant each pair its own environment's state keys alone, and a root's init, plan, apply and steps run with no identity that reaches another environment's state. A mistake in one environment's code, or a backend pointed at the wrong key, is refused by the cloud.
+
+| Guard | Covers | Does not cover |
+|---|---|---|
+| a pair per environment, scoped to its state keys | a root reading or writing another environment's state with the identity it runs as | code that reads the job's token file and assumes another environment's role itself: one job's token is good for every role whose trust names the job's subject, so the subject separates plan from apply, not environments |
+| `config check` | warns when one role is two environments' role, when a root reads another environment's state through `terraform_remote_state` (its roles must reach that state), and when a root is left with no role; lists each role's roots and the state keys it needs | the IAM policy itself: `config check` reads the roots' code, never the cloud, so a policy wider than the keys it lists goes unseen |
+| state contents never in the reports bucket | reports, `states.json`, `edges.json` and the estate page hold version ids and root paths only | a provider or step that prints state values into a job log |
+
+### Exporting a state
+
+[`terragucci state export`](/terragucci/guides/export-a-state-version/) downloads one version of a root's state, to the machine of the person who runs it and nowhere else.
+
+| Guard | Stops | Does not stop |
+|---|---|---|
+| a request on `chant/lifecycle`, and an approval of its digest by someone other than the requester | an export nobody else agreed to, through terragucci | someone whose own identity reads the bucket downloading the object with the cloud's CLI; scope who holds such an identity |
+| under `approval: sealed`, the approval's seal | a forged approval line | a listed approver's stolen key |
+| the record in `_gates/tf-state-export/done.jsonl`, written before the file | an export the audit trail does not name | a requester name chosen by the person running it: under `ledger` it is git's `user.name` or `--actor` |
+| no job artifact, no bucket copy | the state reaching everyone with read access to the repo, or the bucket's readers | the requester's own copy once written |
+
 ## What each approval mode stops
 
 The gate policy decides when a wave waits: `always`, `on-destroy` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent.

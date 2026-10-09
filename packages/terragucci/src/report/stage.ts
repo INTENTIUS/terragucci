@@ -14,6 +14,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { rootRoleEnv } from "../roles";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit, terragruntDependents, type TerragruntUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
@@ -31,7 +32,7 @@ import { applyLayers, detectBinary, findRoots, globMatch, remoteStateReads, root
 import { linkRoot, type Link, type Linked } from "../linked";
 import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
-import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terragrunt";
+import { detectTerragrunt, discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt";
 import { findIssue, ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
@@ -804,14 +805,16 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const timing = observer.root(root);
     let bin = binaries.expected(root);
     let path = binary;
+    // The root's own role, when `oidc.roles` names one (../roles.ts).
+    const rootEnv = rootRoleEnv(binEnv, root);
     const run = (...args: string[]) =>
-      observer.commandAsync(timing, path, args, binEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+      observer.commandAsync(timing, path, args, rootEnv, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
     const ran: ReportStep[] = [];
     const holds: string[] = [];
     /** Run one moment's steps; the error when one failed the root. */
     const step = async (when: StepWhen, file?: string): Promise<string | undefined> => {
       if (steps.length === 0) return undefined;
-      const o = await runSteps(steps, when, { repo, root, stage: drift ? "tf-drift" : "tf-plan", env: binEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
+      const o = await runSteps(steps, when, { repo, root, stage: drift ? "tf-drift" : "tf-plan", env: rootEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
       ran.push(...o.runs);
       holds.push(...o.holds);
       return o.error;
@@ -937,7 +940,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       await eachLimited(ups, limit.value, async (up) => {
         // The upstream's own binary reads its state; the job's when its pin cannot be installed, and its own plan says why.
         const upBinary = await binaries.resolve(up).then((b) => b.path, () => binary);
-        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), binEnv, initTurn));
+        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), rootRoleEnv(binEnv, up), initTurn));
       });
       const first = index;
       index += layer.length;
@@ -1004,6 +1007,8 @@ interface Planned {
   notices?: string[];
   /** tf-plan of plain roots: what the change reaches through the roots that read the changed roots' state. */
   blast?: ReportBlast;
+  /** A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads. */
+  dependencies?: ReadonlyMap<string, string[]>;
 }
 
 /**
@@ -1107,8 +1112,11 @@ async function runTerragruntStage(
     const plannedPaths = inputs.map((r) => r.path);
     // A wave covers what it planned for real: no unit that waits for its upstream, and no preview.
     const real = new Set(inputs.filter((r) => !r.terragrunt?.provisional).map((r) => r.path));
+    // Each unit's dependencies, from discovery or, when the pipeline named the waves, its terragrunt.hcl.
+    const edges = units ?? walkUnits(repo, settings.terragrunt?.exclude);
     return await finish(repo, settings, options, env, log, {
       binary, started, inputs, plans, redacted, all: all.length ? all : plannedPaths, roots: plannedPaths, observer, mockReads,
+      dependencies: new Map(edges.map((u) => [u.path, u.dependencies])),
       ...(drift ? { stage: "tf-drift" as const, names: planned.names } : {}),
       deferred: deferred.sort((a, b) => (a.unit < b.unit ? -1 : 1)),
       ...(existsSync(join(repo, "root.hcl")) ? { configDirs: ["."] } : {}),
@@ -1246,9 +1254,9 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast, dependencies }: Planned,
 ): Promise<StageResult> {
-  let inputs = planned;
+  let inputs = dependencies ? planned.map((i) => ({ ...i, ...(dependencies.get(i.path)?.length ? { dependencies: dependencies.get(i.path) } : {}) })) : planned;
   let policy: ReportPolicy | undefined;
   const drift = stage === "tf-drift";
   // cost: the estimator over each root's stored plan, before the policy, which reads the figures; a failed estimate is named and fails nothing.

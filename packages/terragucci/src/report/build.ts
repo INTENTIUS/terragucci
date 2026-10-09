@@ -63,6 +63,8 @@ export interface RootInput {
   steps?: ReportStep[];
   /** The roots whose state it reads, and which outputs it planned on. */
   reads?: ReportRead[];
+  /** A Terragrunt unit's dependencies, by path. */
+  dependencies?: string[];
 }
 
 export interface WaveInput {
@@ -281,6 +283,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.applied && src.state ? { state: src.state } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
       ...(src.reads?.length ? { reads: src.reads } : {}),
+      ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
     };
   });
 

@@ -56,6 +56,7 @@ import { ConfigError, findConfig, type Approval } from "./config";
 import type { S3Fetch, S3Target } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
+import { rootRoleEnv } from "./roles";
 
 export const MIGRATE_OP = "tf-migrate";
 export const MIGRATE_LEDGER = `_gates/${MIGRATE_OP}.jsonl`;
@@ -654,13 +655,15 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   const versions = new Map<string, string | undefined>();
   for (const root of roots) {
     const dir = join(repo, root);
-    await initRoot(exec, options.binary, root, dir, env);
-    const o = stateObject(dir, env);
+    // Each root with its own role, when `oidc.roles` names one (./roles.ts).
+    const renv = rootRoleEnv(env, root);
+    await initRoot(exec, options.binary, root, dir, renv);
+    const o = stateObject(dir, renv);
     const why = backendRefusal(root, o);
     if (why) throw new ConfigError(`migration ${m.name} cannot run: ${why}`);
     objects.set(root, o);
     versions.set(root, await versionOf(o, options.fetch));
-    before.set(root, await pullState(exec, options.binary, root, dir, env));
+    before.set(root, await pullState(exec, options.binary, root, dir, renv));
   }
   const after = new Map<string, StateFile>();
   const sources = new Map<string, Source & { version?: string; state: StateFile }>();
@@ -670,14 +673,14 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
   } else if (m.kind === "backends") {
     for (const [i, b] of m.backends.entries()) {
       const dir = join(repo, b.root);
-      const object = stateObject(dir, env, { type: b.from.backend, config: b.from.config });
+      const object = stateObject(dir, rootRoleEnv(env, b.root), { type: b.from.backend, config: b.from.config });
       const why = backendRefusal(b.root, object);
       if (why) throw new ConfigError(`migration ${m.name} cannot run: the backend it moves from: ${why}`);
       if (locationOf(object) === locationOf(objects.get(b.root)!)) throw new ConfigError(`migration ${m.name}: ${b.root}'s code names the backend it moves from, ${locationOf(object)}; change the backend block in the same change`);
       if (before.get(b.root)) throw new ConfigError(`migration ${m.name}: the backend ${b.root}'s code names, ${locationOf(objects.get(b.root)!)}, already holds a state, so a move would overwrite it`);
       const block = backendBlock(b.from.backend, b.from.config);
       const data = join(options.work, `source-${i}`);
-      const state = await withBackend(exec, options.binary, b.root, dir, block, data, env, `the backend it moves from`, (benv) => pullState(exec, options.binary, b.root, dir, benv));
+      const state = await withBackend(exec, options.binary, b.root, dir, block, data, rootRoleEnv(env, b.root), `the backend it moves from`, (benv) => pullState(exec, options.binary, b.root, dir, benv));
       if (!state) throw new ConfigError(`migration ${m.name}: ${locationOf(object)} holds no state of ${b.root} to move`);
       sources.set(b.root, { object, block, data, version: await versionOf(object, options.fetch), state });
       after.set(b.root, state);
@@ -715,7 +718,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
     writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
     const src = sources.get(root);
     files.set(root, { path, object: objects.get(root)!, state, beforeCount: before.get(root)?.resources.length ?? 0, ...(src ? { source: { object: src.object, block: src.block, data: src.data } } : {}) });
-    const proof = await proofPlan(exec, options.binary, repo, root, path, options.work, i, env);
+    const proof = await proofPlan(exec, options.binary, repo, root, path, options.work, i, rootRoleEnv(env, root));
     log(`${root}: ${proof.changes.length === 0 ? "no changes against its new state" : `${proof.changes.length} change${proof.changes.length === 1 ? "" : "s"} against its new state: ${proof.changes.join(", ")}`}`);
     const o = objects.get(root)!;
     const b = before.get(root) ?? null;
@@ -810,12 +813,12 @@ async function movedSince(repo: string, plan: PlannedMigration, options: Migrate
     const f = plan.files.get(r.root)!;
     const dir = join(repo, r.root);
     const v = await versionOf(f.object, options.fetch);
-    const s = await pullState(exec, options.binary, r.root, dir, env);
+    const s = await pullState(exec, options.binary, r.root, dir, rootRoleEnv(env, r.root));
     let same = (v ?? undefined) === r.before.version_id && (s ? stateDigest(s) : null) === r.before.digest;
     if (same && f.source && r.source) {
       const src = f.source;
       const sv = await versionOf(src.object, options.fetch);
-      const ss = await withBackend(exec, options.binary, r.root, dir, src.block, src.data, env, "the backend it moves from", (benv) => pullState(exec, options.binary, r.root, dir, benv));
+      const ss = await withBackend(exec, options.binary, r.root, dir, src.block, src.data, rootRoleEnv(env, r.root), "the backend it moves from", (benv) => pullState(exec, options.binary, r.root, dir, benv));
       same = (sv ?? undefined) === r.source.version_id && (ss ? stateDigest(ss) : null) === r.source.digest;
     }
     if (!same) moved.push(r.root);
@@ -845,14 +848,14 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
     for (const r of order) {
       const f = plan.files.get(r.root)!;
       const lockArgs = f.object.backend === "s3" ? ["-lock=false"] : [];
-      const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], join(repo, r.root), env);
+      const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], join(repo, r.root), rootRoleEnv(env, r.root));
       if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
       log(`${r.root}: wrote its new state`);
     }
     const roots: MigrationRoot[] = [];
     for (const [i, r] of record.roots.entries()) {
       const f = plan.files.get(r.root)!;
-      const verify = await planChanges(exec, options.binary, join(repo, r.root), env, options.work, `${i}-verify`, f.object.backend !== "s3");
+      const verify = await planChanges(exec, options.binary, join(repo, r.root), rootRoleEnv(env, r.root), options.work, `${i}-verify`, f.object.backend !== "s3");
       const v = await versionOf(f.object, options.fetch);
       roots.push({ ...r, after: { ...r.after, ...(v ? { version_id: v } : {}) }, verify });
       log(`${r.root}: ${verify.changes.length === 0 ? "no changes against its backend" : `${verify.changes.length} changes against its backend: ${verify.changes.join(", ")}`}`);

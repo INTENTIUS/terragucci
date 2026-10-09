@@ -116,6 +116,8 @@ export default defineConfig({
 								{ label: 'Keep reports in a bucket', slug: 'guides/keep-reports-in-a-bucket' },
 								{ label: 'See every project in one page', slug: 'guides/see-every-project' },
 								{ label: 'Find the state version an apply left', slug: 'guides/find-a-state-version' },
+								{ label: 'Export a state version', slug: 'guides/export-a-state-version' },
+								{ label: 'Track the roots that read other roots\' state', slug: 'guides/track-cross-state-edges' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
 							],
 						},
@@ -123,6 +125,7 @@ export default defineConfig({
 							label: 'Set it up your way',
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
+								{ label: 'Keep each environment\'s roles to its own state', slug: 'guides/scope-state-access' },
 								{ label: 'Choose your binary', slug: 'guides/use-a-binary' },
 								{ label: 'Use Terragrunt', slug: 'guides/use-terragrunt' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
