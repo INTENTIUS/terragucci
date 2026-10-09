@@ -27,6 +27,7 @@
  *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's digest with chant approve, then start its apply again with your token)
  *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
+ *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan with chant approve)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
@@ -87,6 +88,7 @@ import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
 import { notify, NOTIFY_EVENTS, readOutcome, waveNotice, type NotifyEvent } from "./notify";
 import { parseImport } from "./respond/drift";
+import { unlockState } from "./unlock";
 
 const USAGE = `usage:
   terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
@@ -119,6 +121,7 @@ const USAGE = `usage:
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
+  terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
   terragucci respond rollout [--mode dry-run|apply]   continue every rollout in flight
 
@@ -530,6 +533,11 @@ export async function main(argv: string[]): Promise<number> {
         console.log(`wrote ${file}: it puts back each state ${args[1]} wrote, to the version it recorded before`);
         console.log(`revert the code of ${args[1]} in the same change; the plan job proves the revert and wave 1 waits for its approval`);
         return 0;
+      }
+      case "unlock-state": {
+        if (!args[0] || args.length > 1) throw new ConfigError("unlock-state takes one root: unlock-state <root>");
+        const done = await unlockState(cwd, args[0], { ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), log: (l) => console.log(`terragucci unlock-state: ${l}`) });
+        return done.code;
       }
       case "resume": {
         const forge = str(flags, "forge") ?? (process.env.GITLAB_CI === "true" ? "gitlab" : process.env.GITEA_ACTIONS === "true" || process.env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
