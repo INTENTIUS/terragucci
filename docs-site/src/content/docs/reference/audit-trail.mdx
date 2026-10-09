@@ -70,7 +70,7 @@ The estate page links `audit.html` once `audit.json` is beside it. Flags are on 
 
 ## What each entry holds
 
-Every line is `terragucci.audit/v1`, with these fields in this order:
+Every line is `terragucci.audit/v1`, whose JSON Schema ships in the package as `dist/audit.schema.json`, with these fields in this order:
 
 | Field | What it holds |
 |---|---|
@@ -91,10 +91,10 @@ Every line is `terragucci.audit/v1`, with these fields in this order:
 | `kind` | From | `result` | `detail` |
 |---|---|---|---|
 | `approval-requested` | a pending line in `_gates/tf-apply.jsonl` | `waiting` | `expires`, `run_id`, `roots` |
-| `approval` | an approval line in `_gates/tf-apply.jsonl` | `unsigned`, `sealed` or `review` | `signer` (sealed), `via`, `pr`, `head`, `reviewers` (review), `committed_by` |
+| `approval` | an approval line in `_gates/tf-apply.jsonl` | `unsigned`, `sealed` or `review` | `signer` (sealed), `via`, `pr`, `head`, `reviewers` (review), `relayed_by`, `committed_by` |
 | `approval-revoked` | an approval line a commit removed | `revoked` | `approved_by`, `approved_at` |
 | `override-requested` | a denial a wave recorded in `_gates/policy-override.jsonl` | `denied` | `rules`, `plan_digest` |
-| `override` | an override line in `_gates/policy-override.jsonl` | `unsigned` or `sealed` | `reason`, `rules`, `plan_digest`, `signer`, `committed_by` |
+| `override` | an override line in `_gates/policy-override.jsonl` | `unsigned` or `sealed` | `reason`, `rules`, `plan_digest`, `signer`, `relayed_by`, `committed_by` |
 | `override-revoked` | an override line a commit removed | `revoked` | `approved_by`, `approved_at` |
 | `apply` | a `tf-apply` wave report | `applied`, `failed` or `waiting` | `wave`, `commit`, `roots`, `gate`, `approval` (the id of the approval entry it applied under), `changes`, `failed`, `overrides` |
 | `refused` | a `tf-apply` wave report's `waves[].refused` | `changed-after-approval`, `changed-after-review`, `changed-after-override` or `denied-by-policy` | `approved` (the digest approved), `moved` or `denied` (the roots), `rules` (by root, for a denial) |
@@ -106,6 +106,7 @@ Every line is `terragucci.audit/v1`, with these fields in this order:
 | `who` on an `approval` | `ledger`: the name the approver gave; anyone who can push to `chant/lifecycle` can write any name, and `detail.committed_by` is the commit's author |
 | `detail.signer` | `sealed`: the seal's signer; the wave checks it against `.chant/allowed_signers` at base |
 | `detail.via`, `pr`, `reviewers` | `pr-review`: the apply job recorded a review of that head by a writer other than the author |
+| `detail.relayed_by` | the line's `relayedBy`: a service, such as a chat bot, wrote it for the person `who` names. `ledger` and `pr-review`: the relayer's word that `who` approved; the line counts like any other, and `committed_by` is the account that pushed it. `sealed`: the seal still decides; the line counts only when its seal verifies for `who`, and the seal covers the relayer's name |
 
 ## How it stays complete
 

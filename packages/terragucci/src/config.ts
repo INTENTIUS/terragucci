@@ -100,6 +100,12 @@ export interface ApplySettings {
   merge?: ApplyMerge;
   merge_token_env?: string;
   requires?: ApplyRequire[];
+  /**
+   * Minutes between runs of the resume job, which applies a waiting wave once
+   * an approval of its digest is on chant/lifecycle (resume.ts). Off when
+   * unset. 5 to 60.
+   */
+  resume?: number;
 }
 
 /**
@@ -185,6 +191,7 @@ export const RESPONSES = {
   tips: ["pull-request", "off"],
   fmt: ["commit", "off"],
   publish: ["notes", "off"],
+  /** next-wave: with `rollouts:` set, init writes a job that runs `respond rollout` on that schedule, so a merged and applied wave's next one opens within one interval. off leaves the job out. */
   rollout: ["next-wave", "off"],
   "version-bump": ["off", "suggest"],
   /** terragucci#30: a typed decision flags a pull request whose description leaves out what its plan destroys or replaces. Needs `decide:`. */
@@ -289,11 +296,12 @@ export interface ProjectSettings {
    */
   synth?: string;
   /**
-   * Chat notifications: the names of the secrets holding a Slack or Teams
-   * incoming webhook. An apply job whose wave waits, is refused or fails
-   * posts to each (notify.ts).
+   * Notifications: the names of the secrets holding a Slack or Teams
+   * incoming webhook, and a generic webhook's address with the key that
+   * signs its body. An apply job whose wave waits, is refused or fails posts
+   * to each (notify.ts).
    */
-  notify?: { slack?: string; teams?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string };
   /**
    * Cost estimates per root in the plan note: Infracost on the customer's
    * own key (`key_secret`, default INFRACOST_API_KEY), or a `command` that
@@ -306,6 +314,14 @@ export interface ProjectSettings {
    * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
    */
   comments?: string | false;
+  /**
+   * A cron schedule, or false: init writes a job that runs `terragucci respond
+   * rollout --mode apply` on it, which opens the next wave of every rollout in
+   * flight once the last one merged and applied. A single repo's key: a
+   * control repo's rollout spans its projects, so it is continued from the
+   * control repo. `respond.rollout: off` leaves the job out.
+   */
+  rollouts?: string | false;
   /** GitLab only: how the project keeps its forge token; see TOKEN_PROTECTIONS. */
   gitlab?: { token?: GitLabToken };
   runtime?: Runtime;
@@ -329,7 +345,7 @@ export interface ProjectSettings {
    */
   telemetry?: { headers_secret?: string; trace_url?: string };
   tips?: boolean;
-  modules?: { path?: string; publish?: string | string[] };
+  modules?: ModulesSettings;
   /**
    * Cloud identities the pipeline takes over OIDC, so no long-lived keys sit in CI.
    * Plan runs pull-request code and gets the read-only identity; apply gets the
@@ -420,7 +436,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "notify", "cost", "rollouts",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -468,12 +484,15 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   if (s.notify !== undefined) {
     const n = s.notify;
-    if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: slack, teams)`);
+    const keys = ["slack", "teams", "webhook", "webhook_key"];
+    if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: ${keys.join(", ")})`);
     else {
       for (const [k, v] of Object.entries(n)) {
-        if (k !== "slack" && k !== "teams") problems.push(`${where}.notify.${k} is not a setting (settings: slack, teams)`);
-        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address itself`);
+        if (!keys.includes(k)) problems.push(`${where}.notify.${k} is not a setting (settings: ${keys.join(", ")})`);
+        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the ${k === "webhook_key" ? "key that signs the webhook's body, such as WEBHOOK_KEY; never the key" : `webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address`} itself`);
       }
+      // A generic webhook is always signed, so its receiver can tell terragucci's posts from anyone's.
+      if ((n.webhook === undefined) !== (n.webhook_key === undefined)) problems.push(`${where}.notify.webhook and notify.webhook_key go together: the key signs every body posted to the webhook`);
     }
   }
   if (s.cost !== undefined && s.cost !== true) {
@@ -494,6 +513,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.comments must be a cron schedule or false`);
   }
   if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${COMMENTS_GITLAB_ONLY}`);
+  if (s.rollouts !== undefined && s.rollouts !== false && !(typeof s.rollouts === "string" && s.rollouts.trim() !== "")) {
+    problems.push(`${where}.rollouts must be a cron schedule or false`);
+  }
   if (s.gitlab !== undefined) {
     if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
     else {
@@ -581,17 +603,74 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.dashboards !== undefined) checkDashboards(s.dashboards, `${where}.dashboards`, problems);
   if (s.modules !== undefined) {
     if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
+    else checkModules(s.modules as Record<string, unknown>, `${where}.modules`, problems);
+  }
+}
+
+const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted"]);
+
+function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
+  for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
+  if (m.path !== undefined && typeof m.path !== "string") problems.push(`${where}.path must be a glob`);
+  const targets = Array.isArray(m.publish) ? m.publish : m.publish === undefined ? [] : [m.publish];
+  for (const t of targets) {
+    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t))) {
+      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
+    }
+  }
+  if (m.attest !== undefined) {
+    // true reads the public key at cosign.pub.
+    if (isObject(m.attest)) {
+      for (const k of Object.keys(m.attest)) if (k !== "key") problems.push(`${where}.attest.${k} is not a setting; use key`);
+      const key = m.attest.key;
+      if (key !== undefined && (typeof key !== "string" || key === "")) problems.push(`${where}.attest.key must be the path of the public key, such as cosign.pub`);
+    } else if (typeof m.attest !== "boolean") problems.push(`${where}.attest must be true or a map with key`);
+    if (m.attest !== false && m.publish === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish too`);
+  }
+  if (m.trusted !== undefined) {
+    if (!Array.isArray(m.trusted)) problems.push(`${where}.trusted must be a list of sources, each with source, key and ledger`);
     else {
-      if (s.modules.path !== undefined && typeof s.modules.path !== "string") problems.push(`${where}.modules.path must be a glob`);
-      const targets = Array.isArray(s.modules.publish) ? s.modules.publish : s.modules.publish === undefined ? [] : [s.modules.publish];
-      for (const t of targets) {
-        if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t))) {
-          problems.push(`${where}.modules.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
-        }
-      }
+      m.trusted.forEach((t, i) => {
+        const at = `${where}.trusted[${i}]`;
+        if (!isObject(t)) return void problems.push(`${at} must be a map with source, key and ledger`);
+        for (const k of Object.keys(t)) if (!["source", "key", "ledger"].includes(k)) problems.push(`${at}.${k} is not a setting; use source, key, ledger`);
+        if (typeof t.source !== "string" || !/^(oci:\/\/[^/]+\/.+|(git::)?(https?|ssh):\/\/.+)$/.test(t.source)) problems.push(`${at}.source must be an oci:// prefix or a git URL, as the roots' module sources begin`);
+        if (typeof t.key !== "string" || t.key === "") problems.push(`${at}.key must be the path of the publisher's cosign public key`);
+        if (typeof t.ledger !== "string" || !/^(https?|ssh|file):\/\/.+/.test(t.ledger)) problems.push(`${at}.ledger must be the URL of the git repository whose chant/lifecycle branch holds the release ledger`);
+      });
+    }
+  }
+  if (m.require !== undefined) {
+    if (m.require !== "attested") problems.push(`${where}.require is ${JSON.stringify(m.require)}; the one setting is attested`);
+    else if (!m.attest && !(Array.isArray(m.trusted) && m.trusted.length > 0)) {
+      problems.push(`${where}.require: attested checks the releases this repo attests and the sources ${where}.trusted lists; set ${where}.attest or ${where}.trusted`);
     }
   }
 }
+
+/** A publisher in another repo whose releases `modules.require: attested` checks. */
+export interface TrustedModuleSource {
+  /** How the roots' module sources begin: an `oci://` prefix, or the publisher's git URL with or without `git::`. */
+  source: string;
+  /** The publisher's cosign public key, a path in this repo. */
+  key: string;
+  /** The git repository whose `chant/lifecycle` branch holds the publisher's release ledger. */
+  ledger: string;
+}
+
+export interface ModulesSettings {
+  path?: string;
+  publish?: string | string[];
+  /** Sign each release, write its provenance and SBOM, and record it in the release ledger. `true` reads the key at cosign.pub. */
+  attest?: boolean | { key?: string };
+  /** `attested`: tf-check and tf-plan refuse a root that pins a release of a checked source unless it verifies. */
+  require?: "attested";
+  /** Publishers in other repos whose releases `require` checks. */
+  trusted?: TrustedModuleSource[];
+}
+
+/** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
+export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
 
 /** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
 export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
@@ -639,6 +718,8 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
   for (const k of Object.keys(a)) if (!APPLY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${APPLY_KEYS.join(", ")})`);
   oneOf(a.when, APPLY_WHEN, `${where}.when`, problems);
   oneOf(a.merge, APPLY_MERGE, `${where}.merge`, problems);
+  // GitHub runs a schedule at most every 5 minutes.
+  if (a.resume !== undefined && !(Number.isInteger(a.resume) && (a.resume as number) >= 5 && (a.resume as number) <= 60)) problems.push(`${where}.resume must be the minutes between the resume job's runs, from 5 to 60`);
   if (a.merge !== undefined && a.when !== "pull-request") problems.push(`${where}.merge is set, and only a pull request applied before it merges is merged by terragucci; set ${where}.when to pull-request or drop merge`);
   if (a.merge_token_env !== undefined) {
     if (!(typeof a.merge_token_env === "string" && SECRET_NAME.test(a.merge_token_env))) problems.push(`${where}.merge_token_env must name the secret holding the token the merge is made with, such as MERGE_TOKEN`);
@@ -654,7 +735,7 @@ function checkApply(a: unknown, where: string, problems: string[], forge?: unkno
   }
 }
 
-const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires"];
+const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume"];
 
 function checkPolicy(p: unknown, where: string, problems: string[]): void {
   if (!isObject(p)) {
@@ -898,6 +979,7 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
           problems.push(`${where}: ${(e as Error).message}`);
         }
         checkSettings(s ?? {}, `projects["${key}"]`, problems);
+        if (isObject(s) && s.rollouts) problems.push(`projects["${key}"].rollouts: ${ROLLOUTS_SINGLE_REPO}`);
       }
     }
     if (Object.keys(rest).length) {
@@ -907,6 +989,7 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
     checkSettings(rest, "config", problems);
   }
   if (defaults !== undefined) checkSettings(defaults, "defaults", problems);
+  if (isObject(defaults) && defaults.rollouts) problems.push(`defaults.rollouts: ${ROLLOUTS_SINGLE_REPO}`);
   if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
   if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
   // JSON's view: an undefined property is the same as an absent one.

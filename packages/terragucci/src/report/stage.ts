@@ -32,6 +32,7 @@ import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terr
 import { findIssue, ForgeError, type Fetch } from "../forge";
 import { buildReport, planFiles, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
+import { pinChecker } from "../publish/require";
 import { describeTips, repoTips } from "../tips";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
@@ -697,6 +698,17 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const binEnv = { ...env, TF_PLUGIN_CACHE_DIR: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "plugins-")) };
   const initTurn = oneAtATime();
 
+  // modules.require: attested, checked for every root before any plans, one at a time, since each check fetches into the checkout.
+  const pinRefusals = new Map<string, string[]>();
+  if (!drift && roots.length > 0) {
+    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env });
+    for (const root of pins ? roots : []) {
+      const r = await pins!(root);
+      if (r.refused.length) pinRefusals.set(root, r.refused);
+      else if (r.verified.length) log(`${root}: attested ${r.verified.join("; ")}`);
+    }
+  }
+
   const inputs: RootInput[] = [];
   const plans = new Map<string, { text?: string; json?: string }>();
   const names = new Map<string, Map<string, string>>();
@@ -728,6 +740,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
       lines.push(line);
       return { root, lines, input: { path: root, planner, error, preventDestroy: new Set() } };
     };
+    const refused = pinRefusals.get(root);
+    if (refused) {
+      observer.endRoot(timing);
+      return failed(refused.join("\n"), `${root}: refused by modules.require: attested`);
+    }
     try {
       const init = await initTurn(() => run("init", "-input=false", "-no-color"));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);

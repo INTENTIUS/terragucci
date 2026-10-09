@@ -63,6 +63,13 @@ describe("the ledger's history", () => {
     expect(ledgerEntries(P, APPLY_LEDGER, parseLedgerLog(log)).map((e) => e.id)).toEqual(entries.map((e) => e.id));
   });
 
+  it("keeps who relayed an approval, and leaves it out when nobody did", () => {
+    const relayed = { ...bob, resolvedBy: "github:dana", relayedBy: "chat-bot", timestamp: "2026-10-07T10:06:00.000Z" };
+    const [own, other] = ledgerEntries(P, APPLY_LEDGER, [bob, relayed].map((l, i) => ({ line: JSON.stringify(l), added: true, commit: `r${i}`, author: "x", date: l.timestamp })));
+    expect(other).toMatchObject({ kind: "approval", who: "github:dana", detail: { relayed_by: "chat-bot", committed_by: "x" } });
+    expect(own!.detail).not.toHaveProperty("relayed_by");
+  });
+
   it("gives an override its reason, and the rules and plan digest of the denial it answers", () => {
     const denial = { version: 1, kind: "pending", op: "policy-override", gate: "app", timestamp: "2026-10-07T09:00:00.000Z", expiresAt: "2026-10-09T09:00:00.000Z", planDigest: "sha256:o1", members: [{ member: "app", planDigest: "sha256:p1" }], rules: ["main.deny_public"] };
     const dave = { version: 1, kind: "resolution", op: "policy-override", gate: "app", resolvedBy: "dave", timestamp: "2026-10-07T09:30:00.000Z", planDigest: "sha256:o1", note: "the probe goes out" };

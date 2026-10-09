@@ -13,10 +13,17 @@ import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { ConfigError } from "./config";
 
-export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost";
+export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost" | "cosign";
 
 /** The Infracost release a plan job installs for `cost:`. */
 export const INFRACOST_VERSION = "0.10.45";
+
+/**
+ * The cosign release the publish job installs for `modules.attest`: the 2.x
+ * line, whose key-based signing takes `--tlog-upload=false`. Not in the
+ * images, since attest is opt-in and cosign is a 137 MB binary.
+ */
+export const COSIGN_VERSION = "2.6.5";
 
 export interface Release {
   url: string;
@@ -56,6 +63,11 @@ export function release(tool: Tool, version: string, a = arch()): Release {
     const base = `https://github.com/infracost/infracost/releases/download/v${version}`;
     const file = `infracost-linux-${a}.tar.gz`;
     return { url: `${base}/${file}`, sums: `${base}/${file}.sha256`, file, kind: "tar.gz", member: `infracost-linux-${a}` };
+  }
+  if (tool === "cosign") {
+    const base = `https://github.com/sigstore/cosign/releases/download/v${version}`;
+    const file = `cosign-linux-${a}`;
+    return { url: `${base}/${file}`, sums: `${base}/cosign_checksums.txt`, file, kind: "binary" };
   }
   if (tool === "choudoufu") {
     const base = `https://github.com/INTENTIUS/choudoufu/releases/download/v${version}`;

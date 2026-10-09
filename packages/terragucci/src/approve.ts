@@ -8,7 +8,11 @@
  * `chant approve tf-apply wave-<k> --plan <digest>`, with `--sign` under
  * `approval: sealed`. With one wave waiting it needs no argument. It binds
  * the digest the wave planned, so it approves those plans and no others.
- * `--dry-run` prints the command and runs nothing.
+ * `--plan <digest>` pins the digest a person read (in a chat message, a plan
+ * note or a report): approve runs only when a wave waits for exactly that
+ * digest, and otherwise exits 1 naming the digest waiting, so plans that
+ * moved since are never approved in their place. `--dry-run` prints the
+ * command and runs nothing.
  *
  * `terragucci override <root> --rule <id>... --reason <text>` does the same
  * for a root the policy denied in a `tf-apply` wave (./override.ts): it finds
@@ -21,10 +25,13 @@
  */
 import { spawnSync } from "node:child_process";
 import { delimiter, join } from "node:path";
+import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { readLedger, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
 import { checkoutApproval } from "./approval";
 import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
+import type { Fetch } from "./forge";
+import { originOf, resumeAfterApproval } from "./resume";
 
 export interface WaitingWave {
   wave: number;
@@ -32,6 +39,9 @@ export interface WaitingWave {
   since: string;
   expiresAt: string;
   description?: string;
+  /** The run or pipeline that waited, and the commit it planned, when the pending fact names them. */
+  runId?: string;
+  commit?: string;
 }
 
 const at = (iso: string): number => new Date(iso).getTime();
@@ -47,7 +57,7 @@ export function waitingWaves(ledger: GateLedger): WaitingWave[] {
   for (const [gate, p] of newest) {
     const answered = ledger.resolutions.some((r) => r.gate === gate && r.planDigest === p.planDigest && at(r.timestamp) >= at(p.timestamp));
     if (answered) continue;
-    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}) });
+    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
   }
   return out.sort((a, b) => a.wave - b.wave);
 }
@@ -68,24 +78,47 @@ export function describeStored(text: string | undefined): string[] {
 }
 
 export interface ApproveOptions {
-  /** `wave-<k>` or `<k>`. Default: the one wave waiting. */
+  /** `wave-<k>` or `<k>`. Default: the one wave waiting, or with `plan` the one waiting for that digest. */
   wave?: string;
+  /** `--plan <digest>`: approve only a wave waiting for this digest. */
+  plan?: string;
   /** `--sign [key]`: true for chant's own key lookup. Default: `--sign` under approval: sealed. */
   sign?: string | true;
   actor?: string;
   dryRun?: boolean;
   /** The chant executable. Default: chant from node_modules/.bin, then the path. */
   chant?: string;
+  /** `--no-resume`: approve only, and leave the wave to the resume job or a re-run. Default: resume it with the approver's token. */
+  resume?: boolean;
+  /** The forge calls of the resume. Default: fetch. */
+  fetch?: Fetch;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
 }
 
-/** Find the wave, say what it does, and run chant approve for its digest. Returns chant's exit code (0 for a dry run). */
-export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ code: number; command: string; wave: WaitingWave }> {
+/**
+ * Find the wave, say what it does, and run chant approve for its digest.
+ * Returns chant's exit code (0 for a dry run), or 1 with no command when
+ * `plan` names a digest no wave waits for.
+ */
+export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ code: number; command: string; wave?: WaitingWave }> {
   const log = o.log ?? ((l: string) => console.log(l));
   const waiting = waitingWaves(readLedger(repo));
   let chosen: WaitingWave | undefined;
-  if (o.wave !== undefined) {
+  if (o.plan !== undefined) {
+    const plan = o.plan.trim();
+    if (!/^\S+$/.test(plan)) throw new ConfigError("--plan takes the digest to approve, such as jcs1-sha256:...");
+    const k = o.wave === undefined ? undefined : Number(/^(?:wave-)?(\d+)$/.exec(o.wave)?.[1]);
+    if (k !== undefined && (!Number.isInteger(k) || k < 1)) throw new ConfigError(`approve takes a wave as wave-<k> or <k>, not ${JSON.stringify(o.wave)}`);
+    const candidates = k === undefined ? waiting : waiting.filter((w) => w.wave === k);
+    chosen = candidates.find((w) => samePlanDigest(w.digest, plan));
+    if (!chosen) {
+      const what = k === undefined ? "no wave" : waveGate(k);
+      const now = candidates.length > 0 ? `; waiting: ${candidates.map((w) => `${waveGate(w.wave)} for ${w.digest}`).join(", ")}` : k === undefined ? ": no wave waits for an approval" : " is not waiting";
+      log(`not approved: ${what} waits for ${plan}${now}. The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest`);
+      return { code: 1, command: "" };
+    }
+  } else if (o.wave !== undefined) {
     const k = Number(/^(?:wave-)?(\d+)$/.exec(o.wave)?.[1]);
     if (!Number.isInteger(k) || k < 1) throw new ConfigError(`approve takes a wave as wave-<k> or <k>, not ${JSON.stringify(o.wave)}`);
     chosen = waiting.find((w) => w.wave === k);
@@ -111,7 +144,15 @@ export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ c
     return { code: 0, command, wave };
   }
   const code = runChant(repo, args, command, o, log);
-  if (code === 0) log(`approved ${waveGate(wave.wave)}; run its job again, or comment /terragucci apply, and it applies these plans`);
+  if (code === 0) {
+    log(`approved ${waveGate(wave.wave)}`);
+    const config = configPath ? await loadConfig(configPath) : {};
+    const url = spawnSync("git", ["remote", "get-url", "origin"], { cwd: repo, encoding: "utf-8" }).stdout?.trim() ?? "";
+    const origin = originOf(url, typeof (config as { forge?: unknown }).forge === "string" ? (config as { forge: string }).forge : undefined);
+    if (o.resume === false) log("not resumed (--no-resume): run its job again, comment /terragucci apply, or let the resume job apply it");
+    else if (!origin) log("not resumed from here: the origin is not on github.com or gitlab.com and terragucci.yml names no forge; run its job again, or comment /terragucci apply");
+    else log(await resumeAfterApproval({ origin, wave, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
+  }
   return { code, command, wave };
 }
 

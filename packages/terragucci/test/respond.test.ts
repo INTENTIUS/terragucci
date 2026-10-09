@@ -417,6 +417,22 @@ describe("terragucci respond on the command line", () => {
     const { code, out } = await run(dir, "respond", "rollout", "modules/x", "--json");
     expect(code).toBe(0);
     expect(JSON.parse(out).results.skipped).toBe("respond.rollout is off");
+    const all = await run(dir, "respond", "rollout", "--json");
+    expect([all.code, JSON.parse(all.out).results.skipped]).toEqual([0, "respond.rollout is off"]);
+  });
+
+  it("with no module named, continues every rollout in flight: here none, read from the forge's pull requests", async () => {
+    const dir = write(tmp(), { "terragucci.yml": "forge: forgejo\n", "a/main.tf": 'terraform {\n  backend "s3" {}\n}\n' });
+    git(dir, "init", "-q");
+    git(dir, "remote", "add", "origin", "https://code.example.com/acme/infra.git");
+    const asked: string[] = [];
+    const fetch = (async (url: string) => {
+      asked.push(url);
+      return { ok: true, status: 200, json: async () => [{ html_url: "https://code.example.com/acme/infra/pulls/1", title: "x", state: "open", body: "", head: { ref: "feature" } }], text: async () => "" };
+    }) as unknown as Fetch;
+    const r = await respond("rollout", dir, { fetch });
+    expect([r.response, r.text, r.data]).toEqual(["next-wave", "no rollout in flight", { mode: "dry-run", rollouts: [] }]);
+    expect(asked).toEqual(["https://code.example.com/api/v1/repos/acme/infra/pulls?state=all&sort=recentupdate&limit=50&page=1"]);
   });
 });
 

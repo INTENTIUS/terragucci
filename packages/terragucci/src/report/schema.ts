@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 12;
+export const REPORT_MINOR = 13;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -332,6 +332,12 @@ export interface ReportWave {
   waiting_since?: string;
   /** Why a `tf-apply` wave applied nothing although it planned (minor 11). Absent when it was not refused. */
   refused?: ReportRefusal;
+  /**
+   * A waiting `tf-apply` wave under `approval: pr-review` (minor 13): the pull
+   * request whose approving review of its head would approve the wave, and
+   * the page to review it on. Absent when no review can approve it.
+   */
+  review?: { pull_request: number; url: string };
 }
 
 /**

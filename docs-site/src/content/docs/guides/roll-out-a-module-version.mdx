@@ -23,8 +23,9 @@ Every root that pins the module moved to the new version through one pull reques
 | Roots that pin the module exactly by `oci://` tag or digest, registry `version` or git tag | a range cannot move ([Stages](/terragucci/reference/stages/#rolling-out-a-module-version) lists the cases) |
 | The new version published ([Publish your modules](/terragucci/guides/publish-modules/)) | the rollout pins roots to it |
 | The HCL parser beside terragucci: `npm i -D @cdktn/hcl2json` | the rollout edits each root's pin with it |
-| A forge token that can open pull requests, in the variable `token_env` names | only the apply run needs it, to open the rollout's pull requests |
+| A forge token that can open pull requests, in the variable `token_env` names | the apply run and the rollout job open the rollout's pull requests with it |
 | Optional: `waves.canary` in `terragucci.yml` | it picks the roots that move first |
+| Optional: `rollouts` in `terragucci.yml` | a scheduled job opens each next wave, so nobody runs step 5 |
 
 ## Steps
 
@@ -63,13 +64,22 @@ Every root that pins the module moved to the new version through one pull reques
 
    <Shot step="pin" view="files" alt="The pull request's files: each dev service main.tf moves its ref from modules/service/v1.0.0 to v1.1.0" optional />
 
-5. Run the rollout again. Each run takes at most one step, so schedule it or run it after each merge:
+5. Let the next wave open. With `rollouts` set, `init` writes a job that runs `terragucci respond rollout --mode apply` on that schedule:
+
+   ```yaml
+   rollouts: "*/15 * * * *"
+   token_env: ROLLOUT_TOKEN
+   ```
+
+   Each run opens the next wave of every rollout whose last wave merged and applied, so a wave opens within one interval of the last one applying. A rollout with a pull request still open, or one closed unmerged, is left alone. On GitHub and Forgejo the job is its own workflow, `terragucci-rollout.yml`, which you can also start by hand. It opens pull requests with the secret `token_env` names, else the job's own token. GitHub runs no workflow for a pull request the job's own token opens, so name a secret holding a token that can push branches and open pull requests. On GitLab, add a pipeline schedule with that cron and the variable `TERRAGUCCI_SCHEDULE` set to `rollouts`; `init` prints the steps. `respond.rollout: off` leaves the job out.
+
+   Without `rollouts`, run the rollout again after each merge. Each run takes at most one step:
 
    ```bash
    npx terragucci rollout modules/network 1.4.0 --mode apply
    ```
 
-   The next wave opens after the last wave merged and applied (`apply/<path>` per directory, else `terragucci/apply`). A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
+   Either way, the next wave opens after the last wave merged and applied (`apply/<path>` per directory, else `terragucci/apply`). A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
 
    | Exit code | Meaning |
    |---|---|
@@ -77,7 +87,7 @@ Every root that pins the module moved to the new version through one pull reques
    | 3 | a pull request waits for a merge or an apply |
    | 1 | the rollout stopped |
 
-   From a control repo, wave 1 holds every project's canaries and later waves follow in config order. Each project gets its own pull request per wave.
+   From a control repo, wave 1 holds every project's canaries and later waves follow in config order. Each project gets its own pull request per wave. `rollouts` is a single repo's key, since a project's pipeline sees only its own roots; in a control repo, run `terragucci respond rollout --mode apply` on a schedule of your own.
 
 </Steps>
 

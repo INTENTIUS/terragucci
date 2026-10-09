@@ -74,6 +74,28 @@ const missing = (what, expected, found, page) => {
   }
 }
 
+// The reader contracts: every index row field and every top-level estate field is on report-schema.md,
+// every audit entry field on audit-trail.mdx, and each schema file the package ships on reports-bucket.mdx.
+{
+  const schema = (name) => JSON.parse(read(`packages/terragucci/src/report/${name}`));
+  const on = (page, name) => page.includes("`" + name + "`") || page.includes("`" + name + "[]`");
+  const fields = [
+    ["reference/report-schema", "report-index.schema.json", (s) => s.$defs.row.properties],
+    ["reference/report-schema", "estate.schema.json", (s) => s.properties],
+    ["reference/audit-trail", "audit.schema.json", (s) => s.properties],
+  ];
+  for (const [name, file, props] of fields) {
+    const page = docPage(name);
+    const text = read(page);
+    for (const field of Object.keys(props(schema(file)))) if (!on(text, field)) problems.push(`${page}: ${field} is in ${file} and not on the page`);
+  }
+  const bucketPage = docPage("reference/reports-bucket");
+  const layout = read(bucketPage);
+  for (const file of readdirSync("packages/terragucci/src/report").filter((f) => f.endsWith(".schema.json"))) {
+    if (!layout.includes("`dist/" + file + "`")) problems.push(`${bucketPage}: the package ships dist/${file} and the page does not name it`);
+  }
+}
+
 // Every page is true as written: no roadmap words, and no mention of Temporal. Held over the site's
 // source, the READMEs and the package's source, whose messages reach a user's terminal.
 {
