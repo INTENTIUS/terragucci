@@ -17,7 +17,7 @@
         "base": { "type": "string" },
         "stage": { "enum": ["tf-plan", "tf-apply", "tf-drift"] },
         "wave": { "type": "integer" },
-        "share": { "type": "integer", "minimum": 1, "description": "On a tf-apply wave split across jobs (waves.jobs), the share this report applied; waves[0].roots are its roots (minor 16)." },
+        "share": { "type": "integer", "minimum": 1, "description": "On a tf-apply wave split across jobs (waves.jobs), the share this report applied; waves[0].roots are its roots (minor 20)." },
         "binary": { "type": "string" },
         "runtime": { "type": "string" },
         "started": { "type": "string" },
@@ -199,6 +199,18 @@
                 "attributes": { "type": "array", "items": { "type": "string" } },
                 "previous_address": { "type": "string" }
               }
+            }
+          },
+          "state": {
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20).",
+            "type": "object",
+            "required": ["backend", "versioning"],
+            "properties": {
+              "backend": { "type": "string" },
+              "location": { "type": "string" },
+              "version_id": { "type": "string" },
+              "versioning": { "enum": ["on", "off", "unknown"] },
+              "note": { "type": "string" }
             }
           },
           "steps": {

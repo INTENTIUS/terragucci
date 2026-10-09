@@ -9,12 +9,14 @@
  * wave has waited, and the roots that failed. Below that, the newest runs
  * across every project, and the resources each root holds, from the
  * project's inventory.json (./inventory.ts): addresses, types and providers,
- * never a value.
+ * never a value. Last, the state versions each root's applies left, from the
+ * project's states.json (./state-versions.ts): version ids, never contents.
  */
 import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
 import type { ReportResource } from "./schema";
 import type { ChangeRow } from "./history";
+import type { StateVersions } from "./state-versions";
 import { renderDoraSection, type Dora } from "./dora";
 import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
@@ -37,6 +39,20 @@ export interface ProjectIndex {
   inventory?: Inventory;
   /** Its changes.json rows, when an apply wrote them: the history page's, never the estate page's. */
   changes?: ChangeRow[];
+  /** Its states.json, when an apply recorded a root's state. */
+  states?: StateVersions;
+}
+
+/** One root's state on the page: where it is, whether its backend keeps versions, and the versions its applies left, newest first. */
+export interface EstateStateRoot {
+  root: string;
+  backend: string;
+  location?: string;
+  versioning: "on" | "off" | "unknown";
+  note?: string;
+  /** When the newest apply that recorded it finished. */
+  checked: string;
+  versions: { version_id: string; commit: string; finished: string; wave?: number; report?: string }[];
 }
 
 /** One root's resources, as its newest applied wave left them. */
@@ -119,6 +135,8 @@ export interface EstateProject {
   overridden?: number;
   /** The resources its roots hold, from its inventory. Absent until an apply records them. */
   inventory?: EstateInventory;
+  /** Each root's state versions, from its states.json. Absent until an apply records them. */
+  states?: EstateStateRoot[];
 }
 
 export interface Estate {
@@ -184,6 +202,25 @@ function inventoryOf(inv: Inventory, base: string | undefined): EstateInventory 
   return { resources: all.length, types: countTypes(all), roots };
 }
 
+/** A project's state versions, each run linked to its report when the page can link it. */
+function statesOf(st: StateVersions, base: string | undefined): EstateStateRoot[] {
+  return st.roots.map((r) => ({
+    root: r.root,
+    backend: r.backend,
+    ...(r.location !== undefined ? { location: r.location } : {}),
+    versioning: r.versioning,
+    ...(r.note !== undefined ? { note: r.note } : {}),
+    checked: r.checked,
+    versions: r.versions.map((v) => ({
+      version_id: v.version_id,
+      commit: v.commit,
+      finished: v.finished,
+      ...(v.wave !== undefined ? { wave: v.wave } : {}),
+      ...(base !== undefined ? { report: `${base}${v.path}/report.html` } : {}),
+    })),
+  }));
+}
+
 /** One project's state from its index rows. A row of another project (a top-of-prefix index) is left out. */
 export function projectState(p: ProjectIndex, now: Date): EstateProject {
   const base = dirOf(p.base);
@@ -235,6 +272,7 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     failed: failedIn(plan) + failedIn(drift) + (apply ? apply.waves.reduce((n, w) => n + (w.failed ?? 0), 0) : 0),
     ...(overridden > 0 ? { overridden } : {}),
     ...(p.inventory ? { inventory: inventoryOf(p.inventory, base) } : {}),
+    ...(p.states ? { states: statesOf(p.states, base) } : {}),
   };
 }
 
@@ -337,6 +375,32 @@ function resourcesSection(estate: Estate, now: Date): string {
 }
 
 /**
+ * The state versions section: per project, each root's state, and either the
+ * versions its applies left, newest first, or why there are none.
+ */
+function statesSection(estate: Estate, now: Date): string {
+  const projects = estate.projects.filter((p) => p.states && p.states.length > 0);
+  if (projects.length === 0) return `<p class="none">No apply has recorded a state version yet.</p>`;
+  const blocks = projects.map((p) => {
+    const roots = p.states!.map((r) => {
+      const where = r.location ? ` <code>${esc(r.location)}</code>` : "";
+      const state =
+        r.versioning === "off"
+          ? `<span class="warn">versions are off</span>${r.note ? `: ${esc(r.note)}` : ""}`
+          : r.versioning === "unknown"
+            ? `<span class="warn">versions unknown</span>${r.note ? `: ${esc(r.note)}` : ""}`
+            : `${r.versions.length} ${r.versions.length === 1 ? "version" : "versions"}`;
+      const head = `<tr class="head"><th colspan="3"><code>${esc(r.root)}</code>: ${esc(r.backend)}${where}, ${state}</th></tr>`;
+      const rows = r.versions.map((v) => `<tr><td><code>${esc(v.version_id)}</code></td><td>${link(v.report, v.wave !== undefined ? `wave ${v.wave}` : "applied")} ${short(v.commit)}</td><td>${when(v.finished, now)}</td></tr>`);
+      return `<tbody class="states" data-root="${esc(r.root)}">${head}${rows.join("")}</tbody>`;
+    });
+    return `<h3>${link(p.index, esc(p.project))}</h3>
+<div class="scroll"><table><thead><tr><th>Version id</th><th>Written by</th><th>When</th></tr></thead>${roots.join("\n")}</table></div>`;
+  });
+  return blocks.join("\n");
+}
+
+/**
  * The page. Its numbers are in the HTML, so it reads with scripts off; a
  * small script only moves the "ago" times forward while it is open, and the
  * estate JSON rides inline for a reader that wants it.
@@ -374,7 +438,7 @@ ${TACO_ICON}
 <style>${TACO_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}.tile.hot b{color:var(--warn)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th,tbody.states th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
 </head><body><main><h1 class="brand">${TACO_IMG}Estate</h1>
 <p>${estate.projects.length} projects, built from their report indexes <time datetime="${esc(estate.generated)}">${esc(estate.generated)}</time>.</p>
 ${estate.audit ? `<p>Audit trail: <a href="${esc(estate.audit.page)}" id="audit-trail">${estate.audit.entries} ${estate.audit.entries === 1 ? "entry" : "entries"}</a>, built <time datetime="${esc(estate.audit.generated)}">${esc(estate.audit.generated)}</time>.</p>` : ""}
@@ -389,6 +453,8 @@ ${projectRows.join("\n")}
 ${recentRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Stage</th><th>Commit</th><th>Pull request</th><th>Changes</th><th></th><th>Finished</th><th></th></tr>\n${recentRows.join("\n")}\n</table></div>` : `<p class="none">No runs yet.</p>`}
 ${dora ? `<h2 id="delivery">Delivery</h2>\n${renderDoraSection(dora, (name) => link(estate.projects.find((p) => p.project === name)?.index, esc(name)))}\n` : ""}<h2 id="resources">Resources</h2>
 ${estate.history ? `<p>Change history: <a href="${esc(estate.history.page)}" id="resource-history">${estate.history.resources} ${estate.history.resources === 1 ? "resource" : "resources"}</a>, each apply that changed one with its approver.</p>\n` : ""}${resourcesSection(estate, now)}
+<h2 id="state-versions">State versions</h2>
+${statesSection(estate, now)}
 </main>
 <script type="application/json" id="terragucci-estate">${json}</script>
 <script>(function(){function f(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d>0?d+"d "+h+"h":h>0?h+"h "+m+"m":m+"m"}var n=Date.now();document.querySelectorAll("td time[datetime],tbody.inv th time[datetime]").forEach(function(t){var s=Math.max(0,Math.round((n-Date.parse(t.getAttribute("datetime")))/1000));if(!isNaN(s))t.textContent=f(s)+(t.hasAttribute("data-for")?"":" ago")});var q=document.getElementById("resources-filter");if(q){q.hidden=false;q.addEventListener("input",function(){var v=q.value.toLowerCase().trim();document.querySelectorAll("tbody.inv").forEach(function(b){var n=0;b.querySelectorAll("tr[data-r]").forEach(function(r){var m=!v||r.getAttribute("data-r").indexOf(v)>=0;r.hidden=!m;if(m)n++});b.hidden=n===0})})}})()</script>

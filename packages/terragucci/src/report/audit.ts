@@ -27,7 +27,7 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 /** Where an entry was read: a ledger line and the commit that added or removed it, or a report in the bucket. */
@@ -78,6 +78,9 @@ export interface LedgerChange {
 export const LEDGER_BRANCH = "chant/lifecycle";
 export const APPLY_LEDGER = "_gates/tf-apply.jsonl";
 export const OVERRIDE_LEDGER_FILE = "_gates/policy-override.jsonl";
+/** The state migrations' gates, and the record of each migration's writes beside them (../migrate.ts). */
+export const MIGRATE_LEDGER_FILE = "_gates/tf-migrate.jsonl";
+export const MIGRATE_DONE_FILE = "_gates/tf-migrate/done.jsonl";
 
 const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
 
@@ -138,6 +141,7 @@ const drop = <T extends Record<string, unknown>>(o: T): Partial<T> => Object.fro
  * commit's page on the forge, when one is known.
  */
 export function ledgerEntries(project: string, path: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined = () => undefined): AuditEntry[] {
+  if (path === MIGRATE_DONE_FILE) return migrationEntries(project, changes, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   // An override line names its digest; the denial it answers (a pending line of that digest) holds the rules and the root's plan digest.
   const denials = new Map<string, Line>();
@@ -232,6 +236,41 @@ const REFUSED: Record<ReportRefusal["reason"], string> = {
 };
 
 /**
+ * The entries of `_gates/tf-migrate/done.jsonl`: one per migration that ran
+ * its writes, with who approved it, its digest, and each root's state
+ * version before and after. Never a state's contents: the line holds none.
+ */
+function migrationEntries(project: string, changes: LedgerChange[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of changes) {
+    if (!c.added) continue;
+    const r = parse(c.line);
+    if (!r || r.version !== 1 || r.kind !== "migration" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    const url = commitUrl(c.commit);
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, MIGRATE_DONE_FILE, c.line),
+      kind: "migration",
+      project,
+      at: r.timestamp,
+      who: str(r.approvedBy) ?? null,
+      what: r.gate,
+      digest: str(r.planDigest) ?? null,
+      result: str(r.result) ?? "applied",
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: MIGRATE_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({ roots: Array.isArray(r.roots) ? r.roots : undefined, file_digest: str(r.file_digest), error: str(r.error), commit: str(r.commit), run_id: str(r.runId) }),
+    });
+  }
+  return out;
+}
+
+/** The state version each root of an apply report recorded, by root: the version id, never the contents. Undefined when none recorded one. */
+function stateVersions(report: Report): { root: string; location?: string; version_id?: string; versioning: string }[] | undefined {
+  const rows = report.roots.filter((r) => r.state).map((r) => ({ root: r.path, ...(r.state!.location ? { location: r.state!.location } : {}), ...(r.state!.version_id ? { version_id: r.state!.version_id } : {}), versioning: r.state!.versioning }));
+  return rows.length > 0 ? rows : undefined;
+}
+
+/**
  * The entry of one `tf-apply` wave report. An applied wave names the
  * approval it applied under: the newest approval entry of its gate and
  * digest written before it finished.
@@ -283,7 +322,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
     kind: "apply",
     who: approval?.who ?? (overrides.length > 0 ? overrides.map((o) => o.by).join(", ") : null),
     result,
-    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides }),
+    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
   };
 }
 

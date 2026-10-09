@@ -38,6 +38,8 @@ import {
   LEDGER_BRANCH,
   missingEntries,
   OVERRIDE_LEDGER_FILE,
+  MIGRATE_LEDGER_FILE,
+  MIGRATE_DONE_FILE,
   parseLedgerLog,
   readRecord,
   renderAuditHtml,
@@ -186,7 +188,7 @@ function readLedger(source: Source): AuditEntry[] | "none" {
   }
   try {
     const entries: AuditEntry[] = [];
-    for (const path of [APPLY_LEDGER, OVERRIDE_LEDGER_FILE]) {
+    for (const path of [APPLY_LEDGER, OVERRIDE_LEDGER_FILE, MIGRATE_LEDGER_FILE, MIGRATE_DONE_FILE]) {
       const log = git(dir, ["-c", "core.quotepath=off", "log", "--reverse", "--no-color", "--no-ext-diff", "--no-renames", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", ref, "--", path]);
       if (!log.ok) throw new Error(`cannot read the history of ${path} on ${LEDGER_BRANCH}: ${log.err}`);
       entries.push(...ledgerEntries(source.project, path, parseLedgerLog(log.out), source.commitUrl));
