@@ -19,9 +19,11 @@ packages/terragucci/src/render-terragrunt.ts tg-* steward
 packages/terragucci/src/terragrunt.ts     tg-*
 packages/terragucci/src/render-agent.ts   comment-agent
 packages/terragucci/src/agent-comment.ts  comment-agent
+packages/terragucci/src/render-review.ts  review-*
+packages/terragucci/src/review-agent.ts   review-*
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-*
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* review-policy
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
@@ -45,19 +47,19 @@ packages/terragucci/src/approval.ts       sealed* ledger-default approval-* appr
 packages/terragucci/src/approve.ts        sealed* ledger-default approval-* approve-command approve-plan resume-approve signer-trust pending-expiry tg-sealed tg-gate-*
 packages/terragucci/src/resume.ts         resume-*
 packages/terragucci/src/seal.ts           sealed* approval-at-base approve-command signer-trust tg-sealed
-packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate
+packages/terragucci/src/review.ts         pr-review* notify-chat cost-gate review-*
 
 # Pull request comments (GitLab's files run in the GitLab claims, not here).
 packages/terragucci/src/comment-gitlab.ts
 packages/terragucci/src/comment-apply-gitlab.ts
 packages/terragucci/src/plan-note-gitlab.ts plan-token-free note-* comment-* drift-overdue
-packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check
+packages/terragucci/src/plan-note.ts      plan-token-free note-* comment-* drift-overdue pr-review* description-check review-agent
 packages/terragucci/src/gitlab-ci.ts
 packages/terragucci/src/comment-apply.ts  comment-apply tg-comment-apply pr-apply* comment-refused pr-confirm pr-guard
 packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm pr-guard
 
 # Reports and what reads them.
-packages/terragucci/src/report/policy.ts  policy policy-* tg-policy check check-diagnostics cost-policy
+packages/terragucci/src/report/policy.ts  policy policy-* tg-policy check check-diagnostics cost-policy review-policy
 packages/terragucci/src/report/drift      drift drift-* tg-drift respond-drift
 packages/terragucci/src/report/estate.ts  estate estate-* front-door audit* reader-contracts inventory resource-history dora
 packages/terragucci/src/report/inventory.ts inventory reader-contracts

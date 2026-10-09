@@ -292,6 +292,26 @@ export interface AgentCommentSettings {
 
 export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
 
+/**
+ * `review`: a model reviews each pull request's intent against its plan
+ * (review-agent.ts), off unless `agent` is true. It posts a note and never
+ * approves; a `tf-apply` wave's policy reads its risk as `input.review`.
+ */
+export interface ReviewSettings {
+  /** Turns the review on. */
+  agent?: boolean;
+  /** The command line, run with the prompt on stdin; it prints the review. Default: Claude Code in print mode with no tools (REVIEW_COMMAND in review-agent.ts). */
+  command?: string;
+  /** The secret holding the model's API key, mapped into the review command's step alone. Default `ANTHROPIC_API_KEY`. */
+  key_secret?: string;
+  /** The instructions file, read from the default branch. Default `.terragucci/review.md`. */
+  instructions?: string;
+  /** Minutes before the review job is stopped. Default 10. */
+  timeout?: number;
+}
+
+export const REVIEW_KEYS = ["agent", "command", "key_secret", "instructions", "timeout"] as const;
+
 /** The settings one project (or one repo) can carry. Every key is optional. */
 export interface ProjectSettings {
   /** Globs of root directories. Detected when absent. */
@@ -408,6 +428,8 @@ export interface ProjectSettings {
    * push to a pull request's branch; its role, when named, is read-only.
    */
   agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; comment?: boolean | AgentCommentSettings };
+  /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
+  review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
   decide?: DecideSettings;
   /** The AWS region whose CloudTrail drift attribution reads. Default: the region the aws CLI already uses. */
@@ -477,6 +499,7 @@ export const PROJECT_FILE_KEYS = [
   "runtime",
   "telemetry",
   "respond",
+  "review",
   "decide",
   "audit_region",
   "modules",
@@ -513,7 +536,7 @@ export function findConfig(dir: string): string | undefined {
 
 const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "policy", "respond", "agent", "review", "decide", "audit_region", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts",
 ]);
 
 const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -712,6 +735,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
     }
   }
+  if (s.review !== undefined) checkReview(s.review, `${where}.review`, problems);
   if (s.decide !== undefined) checkDecide(s.decide, `${where}.decide`, problems);
   if (s.dashboards !== undefined) checkDashboards(s.dashboards, `${where}.dashboards`, problems);
   if (s.modules !== undefined) {
@@ -951,6 +975,32 @@ function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problem
   if (typeof tokenEnv === "string" && tokenEnv !== "" && !SECRET_NAME.test(tokenEnv)) {
     problems.push(`${where} reads agent.token_env as a secret name, so token_env must be one, such as AGENT_FORGE_TOKEN`);
   }
+}
+
+/** `review`: a map of REVIEW_KEYS. */
+function checkReview(r: unknown, where: string, problems: string[]): void {
+  if (!isObject(r)) {
+    problems.push(`${where} must be a map (settings: ${REVIEW_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(r)) {
+    if (!(REVIEW_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${REVIEW_KEYS.join(", ")})`);
+  }
+  if (r.agent !== undefined && typeof r.agent !== "boolean") problems.push(`${where}.agent must be true or false`);
+  if (r.command !== undefined && (typeof r.command !== "string" || r.command.trim() === "" || /[\r\n]/.test(r.command))) {
+    problems.push(`${where}.command must be one command line that reads the prompt on stdin and prints the review, such as claude -p`);
+  }
+  if (r.key_secret !== undefined && !(typeof r.key_secret === "string" && SECRET_NAME.test(r.key_secret))) {
+    problems.push(`${where}.key_secret must name the secret holding the model's API key, such as ANTHROPIC_API_KEY`);
+  }
+  if (r.instructions !== undefined) {
+    const p = typeof r.instructions === "string" ? r.instructions.replace(/^\.\//, "") : "";
+    if (!p || p.startsWith("/") || p.split("/").some((x) => x === ".." || x === "") || !/^[A-Za-z0-9_.\/-]+$/.test(p)) {
+      problems.push(`${where}.instructions must be a file path inside the repository, such as .terragucci/review.md`);
+    }
+  }
+  if (r.timeout !== undefined && !(Number.isInteger(r.timeout) && (r.timeout as number) >= 1)) problems.push(`${where}.timeout must be a whole number of 1 or more`);
+  if (r.agent === undefined && Object.keys(r).length > 0) problems.push(`${where}.agent is missing, so no review runs; set ${where}.agent: true`);
 }
 
 const DECIDE_KEYS = ["backend", "url", "model", "token_env", "thresholds"];

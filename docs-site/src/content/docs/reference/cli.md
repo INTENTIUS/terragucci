@@ -253,6 +253,22 @@ On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments`
 
 [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
 
+## review
+
+```text
+terragucci review prompt --report <dir> [--instructions <path>]
+terragucci review post --dir <dir>
+```
+
+The two halves of the [review](/terragucci/guides/agent-review-a-pull-request/), run by the generated `review` and `review-note` jobs.
+
+| Command | Does |
+|---|---|
+| `review prompt` | reads the pull request from the event file, the diff of its base and head from git, and the plan note and policy results from the report in `--report`; reads the instructions (`--instructions`, default `.terragucci/review.md`) from `origin/<default branch>` with `git show`, never from the checkout; writes the prompt to `/tmp/terragucci-review/prompt.md` and unpacks the default branch's files into `/tmp/terragucci-review/work` |
+| `review post` | reads the review and its command's exit code from `--dir` and posts them as one note on the pull request `TG_PR` names, with the head `TG_SHA` names; edits the note the pipeline posted before |
+
+`review prompt` exits 2 when the event names no pull request, or the checkout has no default branch ref. `review post` exits 0 even when the forge refuses the note, and says why.
+
 ## pr-lock
 
 ```text
