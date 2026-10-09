@@ -54,7 +54,7 @@ A waiting wave exits with code 3 and prints the approval command; run it, then r
 
 ## A wide wave across jobs
 
-`parallelism` bounds what one job runs at once, and every wave gets a single job, so a wave of a few hundred roots keeps one runner busy while the rest idle. Set `waves.jobs` to spread it over several (plain roots, GitHub and Forgejo):
+`parallelism` bounds what one job runs at once, and every wave gets a single job, so a wave of a few hundred roots keeps one runner busy while the rest idle. Set `waves.jobs` to spread it over several (GitHub and Forgejo):
 
 ```yaml
 waves:
@@ -68,7 +68,9 @@ waves:
 
 Shares run side by side as far as runners are free, and the next wave starts after the last of them. The gate, its ledger record and the approve command stay per wave. Each share copies its report to the bucket under `tf-apply-wave-<n>-share-<s>`.
 
-`init` refuses the key on GitLab, in a Terragrunt repo and under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
+In a Terragrunt repo the wave's job plans every unit with one `run --all`, and each share plans and applies its own units with one `run --all --filter`. When the last wave splits, an `apply-rest` job after its shares runs any wave Terragrunt's edges cut past the pipeline's, as the last wave's job does otherwise.
+
+`init` refuses the key on GitLab and under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
 
 ## One apply at a time
 

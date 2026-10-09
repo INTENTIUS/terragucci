@@ -318,7 +318,11 @@ cdktn-affected|with synth set a pull request that changes one CDK Terrain stack 
 wave-jobs|with waves.jobs: 2 a wave of four roots waits at one gate in its own job, and once approved applies in two share jobs of two roots each, under one approval used once|
 steps-before-plan|a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step|
 steps-stop|a step before apply that exits 1 fails the wave job before anything applies|
-steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|'
+steps-gate|a step with on_failure approve that fails holds its wave at the gate under gate never, and an approval of the digest applies it|
+tg-cost-gate|with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies|
+tg-steps-gate|a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it|
+tg-wave-jobs|with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once|
+tg-respond-fmt|in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -11248,6 +11252,220 @@ YAML
   return $rc
 }
 
+# The Terragrunt gated-waves fixture (live/canary/one, then live/fleet/three and
+# live/fleet/two) in a fresh repo, with gate: never and, unless BREAK, the lines
+# given on stdin appended to its terragucci.yml, and its pipeline written again.
+tg_never_repo() { # name
+  local extra
+  extra="$(cat)"
+  gated_repo "$1" tg-gated-waves || return 1
+  sed 's/^gate: always$/gate: never/' "$work/tree/terragucci.yml" > "$work/terragucci.yml.new" && mv "$work/terragucci.yml.new" "$work/tree/terragucci.yml"
+  [ -n "${BREAK:-}" ] || printf '%s\n' "$extra" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; return 1; }
+}
+
+claim_tg_cost_gate() {
+  # The Terragrunt gated-waves fixture with gate: never and cost naming
+  # cost.mjs, which prices 10.00 a month for each resource a unit's saved plan
+  # creates, with approve_above: 15. Each unit creates one resource. The push
+  # to main applies wave 1 (live/canary/one, +10.00, within the amount), and
+  # wave 2 (live/fleet/three and live/fleet/two, +20.00) waits for an approval
+  # although the gate is never: its log names +20.00 USD, the amount 15.00 USD
+  # and the commit it was read at, and gives the approve command.
+  # BREAK: terragucci.yml has no cost, so every unit applies under gate: never.
+  log() { echo "[smoke tg-cost-gate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-cost-gate" sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  tg_never_repo tg-cost-gate <<'YAML' || { drop_work "$work"; return 1; }
+cost:
+  command: node cost.mjs
+  approve_above: 15
+YAML
+  cp "$HERE/fixtures/cost-policy/cost.mjs" "$work/tree/cost.mjs"
+  sha="$(push_tree "$work/tree" "$repo" main "tg-cost-gate: three units")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    applied="$(tg_gated_applied tg-cost-gate)"
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    grep -E 'monthly cost|waits|approve tf-apply' <<<"$logs" | tail -8 >&2 || true
+    log "after the push: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, within the amount, and wave 2 to wait"; rc=1; }
+    grep -qE "wave 2 of 2: the monthly cost changes by \+20\.00 USD, over cost\.approve_above 15\.00 USD in the config at [0-9a-f]{40}, so it waits for an approval although gate is never" <<<"$logs" \
+      || { log "wave 2 did not wait for its cost, naming +20.00 USD and the amount 15.00 USD"; rc=1; }
+    grep -qE 'chant approve tf-apply wave-2 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 2 gave no approve command"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 1 applied within the amount; wave 2 waited under gate: never for its +20.00 USD over 15.00 USD"
+  return $rc
+}
+
+claim_tg_steps_gate() {
+  # The Terragrunt gated-waves fixture with gate: never and a step after plan
+  # on live/canary/* that checks the unit's saved plan is there and exits 1,
+  # with on_failure: approve. The push to main stops at wave 1: the step runs
+  # in live/canary/one after the wave's run --all plan and asks for an
+  # approval, so the wave waits at its gate and prints the chant approve
+  # command, and no unit has state. Approving wave 1 and pushing again applies
+  # every unit: live/canary/one under the approval, wave 2 with no gate.
+  # BREAK: terragucci.yml has no steps, so the first push applies every unit.
+  log() { echo "[smoke tg-steps-gate] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-steps-gate" sha applied logs rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  # shellcheck disable=SC2016 # the step's shell expands TG_PLAN_FILE
+  tg_never_repo tg-steps-gate <<'YAML' || { drop_work "$work"; return 1; }
+steps:
+  - name: verify
+    run: test -f "$TG_PLAN_FILE" && echo "no signature for this unit" && exit 1
+    after: plan
+    roots: ["live/canary/*"]
+    on_failure: approve
+YAML
+  sha="$(push_tree "$work/tree" "$repo" main "tg-steps-gate: a step asks for an approval")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  if [ $rc = 0 ]; then
+    applied="$(tg_gated_applied tg-steps-gate)"
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    log "after the first push: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ -z "$applied" ] || { log "a unit applied before the wave held by the step was approved"; rc=1; }
+    grep -E 'after-plan|step verify|chant approve tf-apply wave-1' <<<"$logs" | head -6 >&2 || true
+    grep -q "live/canary/one: after-plan verify: no signature for this unit" <<<"$logs" || { log "the step did not run in live/canary/one after its plan"; rc=1; }
+    grep -q "live/canary/one: step verify asks for an approval, so the gate holds this wave" <<<"$logs" || { log "wave 1 was not held by the step"; rc=1; }
+    grep -qE 'chant approve tf-apply wave-1 --plan (jcs1-)?sha256:[0-9a-f]+' <<<"$logs" || { log "wave 1 did not wait with its approve command"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve tg-steps-gate 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "tg-steps-gate: after wave 1 was approved")" || rc=1
+    [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+    applied="$(tg_gated_applied tg-steps-gate)"
+    log "after the approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "expected every unit to apply once wave 1 was approved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the step after the wave's run --all plan held wave 1 at its gate under gate: never, and the approval of its digest let it apply"
+  return $rc
+}
+
+claim_tg_wave_jobs() {
+  # The Terragrunt gated-waves fixture with waves.jobs: 2. Wave 1
+  # (live/canary/one) is one unit and one job; wave 2 (live/fleet/three and
+  # live/fleet/two) gets apply-wave-2, which plans both units with one run --all
+  # and gates the wave, and two share jobs of one unit each, then apply-rest.
+  # Push, approve wave 1, push: wave 1 applies and wave 2 waits at its one
+  # gate. Approve wave 2 once and push: each share plans its own unit with
+  # run --all --filter and applies it, apply-wave-2 applies nothing, and the
+  # ledger holds one approval of wave 2, used once.
+  # BREAK: the share jobs lose --shares 2 --share <s>, so each one plans,
+  # gates and applies the whole wave: the second finds the approval spent.
+  log() { echo "[smoke tg-wave-jobs] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-wave-jobs" sha applied rc=0 wf s got all="" ledger used approvals
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo tg-wave-jobs tg-gated-waves || { drop_work "$work"; return 1; }
+  echo "  jobs: 2" >> "$work/tree/terragucci.yml"
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init with waves.jobs: 2 failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  apply-wave-2-share-2:' "$wf" || { log "init wrote no share jobs for wave 2"; drop_work "$work"; return 1; }
+  grep -q '^  apply-rest:' "$wf" || { log "init wrote no apply-rest job after wave 2's shares"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed 's# --shares 2 --share [0-9]##' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  job_log() { # run id, job name
+    local id
+    id="$(api "$URL/api/v1/repos/$repo/actions/runs/$1/jobs" | jq -r --arg n "$2" '.[] | select(.name == $n) | .id' | head -1)"
+    [ -n "$id" ] && api "$URL/api/v1/repos/$repo/actions/jobs/$id/logs" 2>/dev/null
+  }
+  sha="$(push_tree "$work/tree" "$repo" main "tg-wave-jobs: first")"
+  wait_run "$repo" "$sha"
+  gated_approve tg-wave-jobs 1 || rc=1
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "tg-wave-jobs: after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(tg_gated_applied tg-wave-jobs)"
+    log "after wave 1's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$applied" = "live/canary/one " ] || { log "expected live/canary/one alone to apply, wave 2 waiting at its gate"; rc=1; }
+    job_log "$RUN_ID" apply-wave-2 | grep "chant approve tf-apply wave-2" >/dev/null || { log "apply-wave-2 did not print the approval command for wave 2"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve tg-wave-jobs 2 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "tg-wave-jobs: after wave 2 was approved")"
+    wait_run "$repo" "$sha"
+    applied="$(tg_gated_applied tg-wave-jobs)"
+    log "after wave 2's approval: run $RUN_STATUS, state for: ${applied:-nothing}"
+    [ "$RUN_STATUS" = success ] || { print_logs "$repo" "$RUN_ID" >&2; log "the run ended $RUN_STATUS"; rc=1; }
+    [ "$applied" = "live/canary/one live/fleet/three live/fleet/two " ] || { log "expected every unit to have state"; rc=1; }
+    # Each share planned and applied one unit of its own.
+    for s in 1 2; do
+      got="$(job_log "$RUN_ID" "apply-wave-2-share-$s" | sed -n 's#.*applied \(live/fleet/[a-z]*\)$#\1#p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+      log "apply-wave-2-share-$s applied: ${got:-nothing}"
+      case "$got" in live/fleet/three|live/fleet/two) all="$all $got" ;; *) log "apply-wave-2-share-$s should have applied one unit of its own"; rc=1 ;; esac
+    done
+    [ "$all" = " live/fleet/three live/fleet/two" ] || [ "$all" = " live/fleet/two live/fleet/three" ] || { log "the shares did not split wave 2 between them"; rc=1; }
+    job_log "$RUN_ID" apply-wave-2 | grep -E "applied live/fleet/" >/dev/null && { log "apply-wave-2 applied a unit itself"; rc=1; }
+    ledger="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl)"
+    used="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply/applied.jsonl | jq -s '[.[] | select(.gate == "wave-2")] | length')"
+    approvals="$(jq -s '[.[] | select(.gate == "wave-2" and .kind != "pending")] | length' <<<"$ledger")"
+    log "wave 2 on the ledger: $approvals approval(s), used $used time(s)"
+    { [ "$approvals" = 1 ] && [ "$used" = 1 ]; } || { log "expected one approval of wave 2, used once"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 2 waited at one gate, then its two share jobs each planned and applied their own unit under that one approval"
+  return $rc
+}
+
+claim_tg_respond_fmt() {
+  # The Terragrunt gated-waves fixture: main is pushed without a run, then a
+  # branch whose live/canary/one/terragrunt.hcl is not formatted. The branch's
+  # check fails on terragrunt hcl fmt --check, and the pipeline's fmt job runs
+  # terragrunt hcl fmt and pushes one commit, style: terragrunt hcl fmt, to the
+  # branch, with the file formatted; main does not move.
+  # BREAK: the fmt job runs respond fmt in dry-run mode, which commits nothing.
+  log() { echo "[smoke tg-respond-fmt] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/tg-respond-fmt" wf main_sha sha head branch_head subject file rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  gated_repo tg-respond-fmt tg-gated-waves || { drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  grep -q '^  fmt:' "$wf" || { log "init wrote no fmt job for a Terragrunt repo"; drop_work "$work"; return 1; }
+  if [ -n "${BREAK:-}" ]; then
+    sed 's#respond fmt --mode apply#respond fmt --mode dry-run#' "$wf" > "$wf.new" && mv "$wf.new" "$wf"
+  fi
+  main_sha="$(push_tree "$work/tree" "$repo" main "tg-respond-fmt: formatted [skip ci]")" || { drop_work "$work"; return 1; }
+  perl -0pi -e 's/inputs = \{\n  rev =/inputs = {\n      rev     =/' "$work/tree/live/canary/one/terragrunt.hcl"
+  grep -q '^      rev     =' "$work/tree/live/canary/one/terragrunt.hcl" || { log "could not unformat the unit"; drop_work "$work"; return 1; }
+  sha="$(push_tree "$work/tree" "$repo" smoke-fmt "tg-respond-fmt: unformatted")" || rc=1
+  [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
+  # The run reads as failed once its check fails, while the fmt job after it may still be running: wait for that job.
+  if [ $rc = 0 ]; then
+    for _ in $(seq 1 100); do
+      case "$(api "$URL/api/v1/repos/$repo/actions/runs/$RUN_ID/jobs" | jq -r '[.[] | select(.name == "fmt")][0].status // "missing"')" in
+        success|failure|cancelled|skipped|missing) break ;;
+      esac
+      sleep 3
+    done
+    run_logs "$repo" "$RUN_ID" | grep -E 'hcl fmt|committed|would commit|already formatted' | tail -6 >&2 || true
+    branch_head="$(remote_head "$repo" smoke-fmt)"
+    head="$(remote_head "$repo" main)"
+    log "after the branch's run ($RUN_STATUS): smoke-fmt at ${branch_head:0:8}, pushed ${sha:0:8}"
+    [ -n "$branch_head" ] && [ "$branch_head" != "$sha" ] || { log "the fmt job pushed no commit to smoke-fmt"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    subject="$(api "$URL/api/v1/repos/$repo/git/commits/$branch_head?stat=false&files=false&verification=false" | jq -r '.commit.message' | head -1)"
+    [ "$subject" = "style: terragrunt hcl fmt" ] || { log "the branch's last commit is '$subject'"; rc=1; }
+    file="$(file_at "$repo" smoke-fmt "$branch_head" live/canary/one/terragrunt.hcl)"
+    grep -q '^  rev = ' <<<"$file" || { log "live/canary/one/terragrunt.hcl is not formatted on the branch"; rc=1; }
+    [ "$head" = "$main_sha" ] || { log "main moved"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "the fmt job pushed one terragrunt hcl fmt commit to smoke-fmt; main untouched"
+  return $rc
+}
+
 names() { only "$(cut -d'|' -f1 <<<"$CLAIMS")"; }
 # The names given, kept to SMOKE_ONLY when it is set.
 only() {
@@ -11486,6 +11704,10 @@ wave-jobs            runner self! weight=250
 steps-before-plan    runner self! weight=200
 steps-stop           runner self! weight=150
 steps-gate           runner self! weight=200
+tg-cost-gate         runner self! weight=200
+tg-steps-gate        runner self! weight=200
+tg-wave-jobs         runner self! weight=300
+tg-respond-fmt       runner self! weight=150
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

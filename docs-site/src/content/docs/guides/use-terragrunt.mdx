@@ -1,7 +1,7 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
-claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents]
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-terragrunt/.
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
@@ -35,7 +35,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
    npx terragucci init --dry-run
    ```
 
-   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. Explicit stacks are not supported: `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
+   Each unit is a root, taken from `terragrunt find`, so `.terragrunt-filters` is honoured. `roots` does not apply here, and `init` refuses it: leave units out with `terragrunt.exclude`. Explicit stacks are not supported: `init` skips a directory holding a `terragrunt.stack.hcl` and names it in its notes.
 
    Without Terragrunt on the path, `init` reads the units' `dependency` and `dependencies` paths to cut the waves; the apply jobs check them with `terragrunt find`.
 
@@ -76,6 +76,10 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 | `/terragucci apply` | on a merged pull request (GitHub, Forgejo, and GitLab with `comments:` set) reruns its waves from the merge commit behind the same gate, with [these refusals](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request); it approves nothing |
 | When a change applies | after it merges, by default. With `apply.when: pull-request` (GitHub, Forgejo, and GitLab with `comments:` set), `/terragucci apply` on the approved open pull request applies its waves of units from the head: [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) |
 | Locks before merge | on units: a changed unit and the units whose `dependency` blocks name it; a change outside every unit's directory locks every unit ([Locks](/terragucci/guides/apply-before-merge/#locks)) |
+| `cost` | each unit's saved plan is priced, and `approve_above` holds a wave as it holds a wave of roots ([Estimate the cost of a change](/terragucci/guides/estimate-cost/)) |
+| `steps` | each moment runs once around the wave's `run --all`, in every unit the step's `roots` globs match; `after: init` is refused, since Terragrunt inits each unit inside the plan ([Run steps around a stage](/terragucci/guides/run-steps/#in-a-terragrunt-repo)) |
+| `waves.jobs` | a wide wave's job plans every unit and decides the gate; each share job plans and applies its own units with `run --all --filter` ([A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
+| A failed format check on a branch | the `fmt` job runs `terragrunt hcl fmt` and the binary's `fmt`, and pushes the commit to the branch |
 
 A wave of units the gate holds waits as a wave of roots does, naming its units, its set digest and the approve command:
 
