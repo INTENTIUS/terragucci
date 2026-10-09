@@ -133,7 +133,7 @@ dashboards: true
 | `forge` | read from the project's host | `github`, `gitlab` or `forgejo`, for a host terragucci cannot name |
 | `gate` | `on-destroy` | `always`, `on-destroy` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy) |
 | `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one. Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
-| `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset |
+| `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `branches`: roots that apply from a branch other than the default; see [Apply from other branches](#apply-from-other-branches). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset |
 | `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when it applies before merge or a writer comments `/terragucci lock`; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1; `jobs`, the most jobs one wave's roots spread across, 1 when unset (plain roots on GitHub and Forgejo, not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
 | `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`terragucci.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay`: the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
@@ -167,6 +167,7 @@ dashboards: true
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
+| `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts.
 
@@ -253,6 +254,54 @@ On GitHub, `mergeable` reads `mergeable_state: blocked`, so a required status th
 Gate, approval mode, signers and this file come from the default branch. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check an apply comment must pass.
 
 Unmerged pull request code runs with the apply role. Forks never apply; require reviews in branch protection. [What the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach).
+
+## Apply from other branches
+
+```yaml
+apply:
+  branches:
+    release: ["envs/prod/*"]
+    staging: ["envs/staging/*"]
+```
+
+Each key is a branch, and its list holds root globs. A push to `release` runs the apply waves for the roots under `envs/prod/` and no others. The waves, the gate and the approval are the ones a push to the default branch gets: `chant approve tf-apply wave-<n>` approves the waiting wave's plans whichever branch it waits on. A push to the default branch skips every root a glob here matches, and so does `/terragucci apply` on a pull request merged into it. A push to any other branch applies nothing.
+
+| On a push to | Applies |
+|---|---|
+| the default branch | every root no branch's glob matches |
+| a branch named here | only the roots its globs match |
+| any other branch | nothing |
+
+The waves are cut from the roots the branch applies, so a branch's wave 1 holds its first roots in apply order. A wave with nothing to apply on that branch passes without planning.
+
+The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) applies the default branch's waiting waves only. A wave waiting on a branch named here applies when its run runs again: `terragucci approve` re-runs it on GitHub and GitLab, and on Forgejo the branch's next push runs it.
+
+`config check` refuses a glob listed under two branches, `apply.branches` with `apply.when: pull-request`, where a push applies nothing, and in a Terragrunt repo. Run `npx terragucci init` after a change to the map: the apply jobs carry it. The fmt job never commits to a branch named here.
+
+## Jobs of your own
+
+`init` writes the whole pipeline file each time it runs, so a job added to that file by hand is gone after the next `init`. Name the job under `own_jobs` and `init` writes it again each time, after its own jobs:
+
+```yaml
+own_jobs: ci/own-jobs.yml   # or the jobs themselves, as a map
+```
+
+```yaml
+# ci/own-jobs.yml
+notify-done:
+  needs: apply-wave-2
+  runs-on: ubuntu-latest
+  steps:
+    - run: echo "wave 2 applied"
+```
+
+| Forge | Where the jobs go |
+|---|---|
+| GitHub | under `jobs:` in `.github/workflows/terragucci.yml` |
+| Forgejo | under `jobs:` in `.forgejo/workflows/terragucci.yml` |
+| GitLab | at the top level of `.gitlab/terragucci.yml`, which `.gitlab-ci.yml` includes |
+
+Each job keeps every key and value the file gives it, in the forge's own syntax; comments in the file are not carried, and `init` checks only the job's name. A name terragucci gives one of its own jobs is refused, and so is a GitLab keyword such as `variables`. The jobs run in the same run as terragucci's, so `needs` may name a wave's job and an artifact download reads that run's reports. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) adds its job this way.
 
 ## Plan locks
 
