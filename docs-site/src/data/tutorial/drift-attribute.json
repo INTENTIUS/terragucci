@@ -1,9 +1,9 @@
 {
   "step": "drift-attribute",
-  "source_hash": "89523777c20d72d8",
+  "source_hash": "197b083215a6a023",
   "commands": [],
   "shots": {
-    "issue-light": "770ac801463b3198",
-    "issue-dark": "e1c8c5de4548ffe9"
+    "issue-light": "a512a5f142b59c71",
+    "issue-dark": "0373d8be7673c704"
   }
 }

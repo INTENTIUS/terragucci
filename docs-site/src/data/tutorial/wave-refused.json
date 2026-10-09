@@ -1,6 +1,6 @@
 {
   "step": "wave-refused",
-  "source_hash": "89523777c20d72d8",
+  "source_hash": "197b083215a6a023",
   "commands": [
     {
       "cmd": "just example approve",
@@ -9,7 +9,7 @@
     },
     {
       "cmd": "just example change module-bump",
-      "output": "[example] pushed change/module-bump at 01ddf5aa\n[example] run 12 for 01ddf5aa (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/12/jobs/1/attempt/1)\n[example] run 13 for 01ddf5aa (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/13/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/12/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/13/jobs/0/attempt/1 (success)",
+      "output": "[example] pushed change/module-bump at be3d525c\n[example] run 12 for be3d525c (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/12/jobs/1/attempt/1)\n[example] run 13 for be3d525c (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/13/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/5 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/12/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/13/jobs/0/attempt/1 (success)",
       "exit": 0
     },
     {

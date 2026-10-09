@@ -43,7 +43,8 @@ const capture = (step) => {
   const file = join(data, `${step}.json`);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
 };
-const fix = (step) => `run just capture ${step}`;
+// The github step is shot on the sandbox on github.com, not on the stack.
+const fix = (step) => (step === "github" ? "run just sandbox capture" : `run just capture ${step}`);
 
 // The <Captured> and <Shot> on one page.
 function checkCaptures(label, text) {
