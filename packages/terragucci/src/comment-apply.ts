@@ -45,7 +45,7 @@ import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { applyWaves } from "./apply";
-import { apiOf, BRANCH, LOGIN, parseComment, SHA, type CommentDecision } from "./comment";
+import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { rootDependencies } from "./detect";
 import type { Fetch } from "./forge";
@@ -114,7 +114,7 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
   if (event === null || typeof event !== "object") return broke(`the event file ${eventPath} is not a JSON object`);
 
   if (event.action !== "created") return stop("not a new comment");
-  const parsed = parseComment(event.comment?.body);
+  const parsed = parseComment(event.comment?.body, parseOptions(env));
   // A plan comment, or one not addressed to terragucci, belongs to the replan job.
   if (!parsed || parsed.kind === "plan" || parsed.kind === "agent") return stop("the comment does not ask for an apply");
   const prMode = o.when === "pull-request";
@@ -581,7 +581,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
   }
 
   if (event.action !== "created") return stop("not a new comment");
-  const parsed = parseComment(event.comment?.body);
+  const parsed = parseComment(event.comment?.body, parseOptions(env));
   const prMode = o.when === "pull-request";
   // Under apply.when: pull-request the apply-comment job holds /terragucci lock and unlock.
   if (!parsed || !(parsed.kind === "plan" || (!prMode && (parsed.kind === "lock" || parsed.kind === "unlock")))) return stop("another job reads this comment");

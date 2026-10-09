@@ -1,7 +1,7 @@
 ---
 title: Re-plan a pull request from a comment
 description: Ask for a read-only re-plan of a pull request by writing /terragucci plan, and run an approved apply with /terragucci apply, on GitHub, Forgejo and GitLab.
-claims: [comment-plan, comment-apply, comment-not-affected, tg-comment-apply, pr-lock]
+claims: [comment-plan, comment-apply, comment-not-affected, tg-comment-apply, pr-lock, comment-atlantis]
 prompt: |
   Read https://intentius.io/terragucci/guides/re-plan-from-a-comment/.
   Check that the default branch's pipeline has the comment trigger (on GitLab, the `comments` job and a pipeline schedule with TERRAGUCCI_SCHEDULE set to comments); if it does not, run `npx terragucci init` and open a pull request with the result.
@@ -98,6 +98,7 @@ The text is untrusted and never reaches a script; `terragucci comment` reads it 
 | `/terragucci apply wave-<n>` | the approved waves up to wave n | as above | an open merge request with `apply.when: pull-request`; otherwise refused, since GitLab runs the waves after a retried job by itself |
 | `/terragucci lock` | locks on the roots (in a Terragrunt repo, the units) this pull request reaches, with no apply | `apply.when: pull-request` or `locks: plan` | `apply.when: pull-request`, through `mr-apply`; otherwise answered as unsupported |
 | `/terragucci unlock` | a release of this pull request's locks | `apply.when: pull-request` or `locks: plan` | as `lock` |
+| `atlantis plan [-d <dir>]`, `atlantis apply` | the same as `/terragucci plan [<root>]` and `/terragucci apply`, with the same checks | `atlantis_comments: true` | the same, with `atlantis_comments: true` |
 | `/terragucci agent <ask>` | a coding agent's change | `agent.comment` set; see [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) | answered as unsupported |
 
 No comment approves, and a re-plan cannot change what an approval binds. [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists every check each command must pass. A refusal is a reply that starts with `terragucci:`.

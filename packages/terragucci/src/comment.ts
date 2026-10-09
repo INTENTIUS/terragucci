@@ -19,10 +19,18 @@
  * `agent.comment` is set in terragucci.yml. Its ask is data: it goes into the
  * agent's prompt file and its commit message, never into a shell, and the
  * agent job (agent-comment.ts) gets no cloud credentials.
+ *
+ * With `atlantis_comments: true` the pipeline sets TG_ATLANTIS_COMMENTS=1 on
+ * every job, and `atlantis plan` and `atlantis apply` read as `/terragucci
+ * plan` and `/terragucci apply` (fromAtlantis). The alias changes the words
+ * and nothing else: the rewritten comment is parsed by the same grammar and
+ * decided by the same checks, and a form terragucci has no counterpart for is
+ * refused with the migration guide's reason.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { ConfigError } from "./config";
 import type { Fetch } from "./forge";
+import { commentCell, leftOut } from "./import/guide";
 
 /** The commands. Everything else is refused, by name when it is a command people may expect. `agent` runs only where `agent.comment` is set. */
 export const COMMENT_COMMANDS = ["plan", "apply", "agent"] as const;
@@ -54,9 +62,13 @@ export type ParsedComment =
  * that starts with `/terragucci` is a command or it is refused: the whole
  * comment is the command, one line, words separated by spaces or tabs.
  */
-export function parseComment(body: unknown): ParsedComment | undefined {
+export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment | undefined {
   if (typeof body !== "string") return undefined;
   const text = body.trim();
+  if (o.atlantis) {
+    const alias = fromAtlantis(text);
+    if (alias !== undefined) return typeof alias === "string" ? parseComment(alias) : alias;
+  }
   if (text !== "/terragucci" && !/^\/terragucci[ \t]/.test(text)) return undefined;
   if (/[\r\n]/.test(text)) return { kind: "refused", reason: "a command is one line, and nothing else in the comment" };
   const words = text.split(/[ \t]+/);
@@ -85,6 +97,55 @@ export function parseComment(body: unknown): ParsedComment | undefined {
   if (root === undefined) return { kind: "plan" };
   if (!ROOT.test(root) || root.split("/").some((s) => s === "" || s === "." || s === "..")) return { kind: "refused", reason: "the root is a path from the repository root, like `envs/dev/orders`" };
   return { kind: "plan", root };
+}
+
+/** The variable the generated pipeline sets to 1 on every job when `atlantis_comments` is on. */
+export const ATLANTIS_COMMENTS_ENV = "TG_ATLANTIS_COMMENTS";
+
+export interface ParseOptions {
+  /** Read `atlantis plan` and `atlantis apply` too. */
+  atlantis?: boolean;
+}
+
+/** The parse options a job's environment sets. */
+export function parseOptions(env: NodeJS.ProcessEnv): ParseOptions {
+  return env[ATLANTIS_COMMENTS_ENV] === "1" ? { atlantis: true } : {};
+}
+
+/**
+ * An `atlantis plan` or `atlantis apply` comment in terragucci's words:
+ * `-d <dir>` names the root, and whatever else follows is passed on to the
+ * same grammar. A form terragucci has no counterpart for is refused with the
+ * guide's reason. Undefined for any other comment, which stays unaddressed.
+ */
+export function fromAtlantis(text: string): string | ParsedComment | undefined {
+  const m = /^atlantis[ \t]+(plan|apply)(?=\s|$)/.exec(text);
+  if (!m) return undefined;
+  if (/[\r\n]/.test(text)) return { kind: "refused", reason: "a command is one line, and nothing else in the comment" };
+  const verb = m[1] as "plan" | "apply";
+  const words = text.split(/[ \t]+/).slice(2);
+  const refuse = (reason: string): ParsedComment => ({ kind: "refused", reason });
+  const rest: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w === "-d" || w === "--dir" || w === "-p" || w === "--project") {
+      if (verb === "apply") {
+        const l = leftOut("Applying one root of a wave");
+        return refuse(`\`atlantis apply ${w}\` applies one root, and terragucci does not: ${l.rule}. ${commentCell("Apply part of the change")}`);
+      }
+      if (w === "-p" || w === "--project") return refuse(`a root goes by its path, not a project name: write \`atlantis plan -d <dir>\` or ${commentCell("Plan one project")}`);
+      const dir = words[++i];
+      if (dir === undefined) return refuse("`-d` names the root's directory, like `atlantis plan -d envs/dev/orders`");
+      rest.push(dir.replace(/^\.\/+/, "").replace(/\/+$/, ""));
+    } else if (w === "-w" || w === "--workspace") return refuse(`\`${w}\` picks a workspace, and terragucci has ${commentCell("Plan one workspace")}`);
+    else if (w === "--") {
+      const l = leftOut("Flags at run time");
+      return refuse(`a comment passes no flags to the binary: ${l.rule}. Instead: ${l.instead}`);
+    } else if (w === "--verbose") continue;
+    else if (w.startsWith("-")) return refuse(`\`atlantis ${verb}\` takes ${verb === "plan" ? "`-d <dir>` and nothing else" : "nothing, or a wave like `wave-2`"} here`);
+    else rest.push(w);
+  }
+  return `/terragucci ${verb}${rest.length ? ` ${rest.join(" ")}` : ""}`;
 }
 
 /** `/terragucci apply` with nothing after it, or with one wave: `wave-<n>`, n from 1. */
@@ -163,7 +224,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   if (event === null || typeof event !== "object") return broke(`the event file ${eventPath} is not a JSON object`);
 
   if (event.action !== "created") return stop("not a new comment");
-  const parsed = parseComment(event.comment?.body);
+  const parsed = parseComment(event.comment?.body, parseOptions(env));
   if (!parsed) return stop("the comment is not addressed to terragucci");
   const number = event.issue?.number;
   if (!Number.isInteger(number) || number < 1) return stop("the comment has no issue number");
