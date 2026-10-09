@@ -131,6 +131,7 @@ images/                                   ALL
 example/                                  ALL
 stack/lib.sh                              ALL
 stack/mounted.sh                          ALL
+stack/locks.sh                            ALL
 stack/bootstrap.sh                        ALL
 stack/docker-compose.yml                  ALL
 stack/example.sh                          ALL
