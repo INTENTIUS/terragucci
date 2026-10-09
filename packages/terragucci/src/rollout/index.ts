@@ -34,8 +34,9 @@ import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parsePro
 import { detectBinary, detectForge, findRoots, hostOfRemote, rootDependencies } from "../detect";
 import { DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "../forge";
 import type { Fetch as RegistryFetch } from "../publish/oci";
+import { parseRegistrySource } from "../publish/registry";
 import { IDENTITY, where, withToken } from "../reconcile";
-import { newestPublished, ociRepoFor } from "./discover";
+import { newestPublished, ociRepoFor, registryAliases } from "./discover";
 import { appliedState, fetchForge, type ListedPullRequest, type RolloutForge } from "./forge";
 import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locker } from "./lock";
 import { loadHclParser } from "./parser";
@@ -63,8 +64,10 @@ export interface RolloutOptions {
   parser?: Hcl2Json;
   /** For tests: writes a root's lock file. Default: the project's binary. */
   locker?: (binary: string) => Locker;
-  /** For tests: the registry client for OCI discovery. */
+  /** For tests: the registry client for OCI and module registry discovery. */
   registryFetch?: RegistryFetch;
+  /** Set by the walk: the registry addresses (`host/namespace/name/system`) a module named by its path is published at. */
+  aliases?: string[];
 }
 
 export type RootState = "from" | "to" | "refused" | "elsewhere" | "absent";
@@ -516,10 +519,12 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   // 1. Every root's calls, and the versions they pin.
   const roots = new Map<string, string[]>();
   const calls = new Map<string, ModuleCall[]>();
+  // A module named by its path is also every registry address modules.registry publishes it at.
+  if (options.kind === "module") options = { ...options, aliases: registryAliases(options.name, [...projects.map((p) => p.settings), config.defaults ?? {}]) };
   for (const p of projects) {
     // A project whose roots synth writes has none in its checkout to move: it is listed refused, with why.
     roots.set(p.key, p.settings.synth ? [] : rootsOf(p));
-    if (options.kind === "module") for (const r of roots.get(p.key)!) calls.set(`${p.key}\0${r}`, await moduleCalls(p.dir, r, options.name, parser!));
+    if (options.kind === "module") for (const r of roots.get(p.key)!) calls.set(`${p.key}\0${r}`, await moduleCalls(p.dir, r, options.name, parser!, options.aliases));
   }
 
   let to = options.to;
@@ -531,7 +536,9 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
       for (const t of Array.isArray(publish) ? publish : publish ? [publish] : []) if (t.startsWith("oci://")) oci.add(ociRepoFor(t, options.name));
     }
     for (const list of calls.values()) for (const c of list) if (c.pin.module.startsWith("oci://")) oci.add(c.pin.module.split("?")[0]!);
-    const found = await newestPublished({ module: options.name, repos: [repo, ...projects.map((p) => p.dir)], oci: [...oci], env: options.env, fetch: options.registryFetch });
+    const registries = new Set(options.aliases ?? []);
+    for (const list of calls.values()) for (const c of list) if (c.pin.at === "version" && parseRegistrySource(c.pin.module)) registries.add(c.pin.module);
+    const found = await newestPublished({ module: options.name, repos: [repo, ...projects.map((p) => p.dir)], oci: [...oci], registries: [...registries], env: options.env, fetch: options.registryFetch });
     if (!found) throw new ConfigError(`found no published version of ${options.name}; name the version to roll out`);
     to = found.version;
     discovered = found.from;
@@ -676,7 +683,7 @@ async function openPart(
   for (const root of moving) {
     const moved =
       options.kind === "module"
-        ? await movePins(project.dir, await moduleCalls(project.dir, root, options.name, parser!), result.from!, result.to, parser!)
+        ? await movePins(project.dir, await moduleCalls(project.dir, root, options.name, parser!, options.aliases), result.from!, result.to, parser!)
         : moveLock(project.dir, root, options.name, result.from!, result.to, lockerFor(project));
     if ("refused" in moved) {
       part.state = "failed";

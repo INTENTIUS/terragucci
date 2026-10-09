@@ -37,6 +37,7 @@ import { buildReport, planFiles, type RootInput, type WaveInput } from "./build"
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
 import { describeTips, repoTips } from "../tips";
+import { renamesIn } from "../tips/moved";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf } from "../respond/drift";
@@ -49,7 +50,9 @@ import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
+import type { Report, ReportBlast, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
+import { blastRadius } from "./graph";
+import { changesSomething } from "./changing";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
 import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
@@ -327,6 +330,16 @@ export function spawnAsync(file: string, args: string[], env: NodeJS.ProcessEnv)
     child.on("error", (e) => (error = e));
     child.on("close", (code) => done({ status: error ? null : code, stdout: Buffer.concat(out).toString("utf-8"), stderr: Buffer.concat(err).toString("utf-8"), ...(error ? { error } : {}) }));
   });
+}
+
+/**
+ * The providers an `init` downloaded, as `<source> v<version>`, from the
+ * `- Installed <source> v<version> (...)` lines OpenTofu and Terraform print.
+ * A provider taken from the plugin cache prints `- Using ... from the shared
+ * cache directory` instead, so it is not counted.
+ */
+export function providerDownloads(initOutput: string): string[] {
+  return [...initOutput.matchAll(/^- Installed (\S+) v(\S+) /gm)].map((m) => `${m[1]} v${m[2]}`);
 }
 
 /** Runs a piece of work after the one before it finished. */
@@ -712,8 +725,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   // The roots share one provider cache, the job's or one of the stage's own, so a provider downloads once per job rather
-  // than once per root (some 700 MB for the AWS provider). The cache is not safe for inits that run together, so they
-  // take turns. Plans still run at once.
+  // than once per root (some 700 MB for the AWS provider). The binary takes a provider from the cache only for a root
+  // whose .terraform.lock.hcl names it; a root without one downloads it again to check the package. The cache is not
+  // safe for inits that run together, so they take turns. Plans still run at once. Each download is in the log.
   const binEnv = { ...env, TF_PLUGIN_CACHE_DIR: env.TF_PLUGIN_CACHE_DIR || mkdtempSync(join(work, "plugins-")) };
   const initTurn = oneAtATime();
 
@@ -825,6 +839,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (stepError) return failed(stepError, `${root}: a step before init failed`);
       const init = await initTurn(() => run("init", "-input=false", "-no-color"));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      for (const d of providerDownloads(init.stdout)) lines.push(`${root}: downloaded ${d}`);
       stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
@@ -958,7 +973,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
       };
     });
 
-  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}) });
+  // The blast radius: the roots whose plan changes something, and every root that reads their state, followed through.
+  const changing = inputs.filter((i) => i.plan !== undefined && !i.error && changesSomething(i.plan)).map((i) => i.path);
+  const blast = !drift && changing.length > 0 ? blastRadius(readsOf, changing, { waveOf, planned: new Set(roots) }) : undefined;
+  return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}) });
 }
 
 interface Planned {
@@ -984,6 +1002,8 @@ interface Planned {
   attributions?: Map<string, Attributed>;
   /** Lines for the note about how the roots were selected (`synth`: how many were unchanged). */
   notices?: string[];
+  /** tf-plan of plain roots: what the change reaches through the roots that read the changed roots' state. */
+  blast?: ReportBlast;
 }
 
 /**
@@ -1226,7 +1246,7 @@ async function finish(
   options: StageOptions,
   env: NodeJS.ProcessEnv,
   log: (line: string) => void,
-  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [] }: Planned,
+  { binary, started, inputs: planned, waves, plans, redacted, all, roots, observer, mockReads, deferred, configDirs, stage = "tf-plan", names, attributions, notices: selection = [], blast }: Planned,
 ): Promise<StageResult> {
   let inputs = planned;
   let policy: ReportPolicy | undefined;
@@ -1286,13 +1306,15 @@ async function finish(
     ...(deferred?.length ? { deferred } : {}),
     ...(policy ? { policy } : {}),
   });
+  if (blast) report.blast = blast;
   // Tips are advice: they read the repo and the finished report, and change neither.
   if (settings.tips) {
     const parser = await loadHclParser().catch(() => undefined);
     if (!parser) log("tips: the HCL parser is not installed, so the lint tips are left out (npm i -D @cdktn/hcl2json)");
     const destroying = [...new Set(report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => n.root))];
     try {
-      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}) });
+      const renames = inputs.flatMap((i) => (i.plan && !i.error ? renamesIn(i.path, i.plan) : []));
+      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}) });
     } catch (e) {
       log(`tips: skipped, ${(e as Error).message}`);
       report.tips = [];

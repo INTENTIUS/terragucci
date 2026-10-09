@@ -22,7 +22,8 @@ Pushes apply one at a time in the order they arrived; none cancels another.
 | Stand-down | a wave whose commit is no longer the branch tip stands down, on GitHub and Forgejo |
 | Pull request locks | none under the defaults `apply.when: merge` and `locks: apply`; with [`locks: plan`](#plan-locks), from a pull request's first plan; under `apply.when: pull-request`, an applying pull request or one a writer comments `/terragucci lock` on locks the roots it reaches (in a Terragrunt repo, the units) |
 | Parallelism | `tf-plan`, `tf-drift` and `tf-apply` plan and apply a layer's or wave's roots at once, up to `parallelism`: 3 for GitLab-managed state, 4 otherwise, and 16 units for Terragrunt's `run --all` on other backends |
-| Provider cache | a stage's roots share one, the job's `TF_PLUGIN_CACHE_DIR` or one of the stage's own, and their inits take turns, so each provider downloads once per job |
+| State lock | `tf-plan` and `tf-drift` plan with `-lock=false`, so a pull request plan or a drift run never waits for an apply that holds a root's lock, and never holds one up |
+| Provider cache | a stage's roots share one, the job's `TF_PLUGIN_CACHE_DIR` or one of the stage's own, and their inits take turns, so each provider downloads once per job. The binary takes a provider from the cache only for a root whose `.terraform.lock.hcl` pins it; a root without one downloads it again. The job log names each download as `<root>: downloaded <provider> v<version>` |
 
 ## Resume after an approval
 
