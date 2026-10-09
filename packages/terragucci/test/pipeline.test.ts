@@ -2474,6 +2474,10 @@ describe("no forge token where the change's code runs", () => {
     expect(doc.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply");
     expect(JSON.stringify(doc.jobs.check)).not.toContain("respond fmt");
     expect(body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, respond: { fmt: "off" } }).content).jobs.fmt).toBeUndefined();
+    // A Terragrunt repo gets the job too: respond fmt runs terragrunt hcl fmt beside the binary's.
+    const tg = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/a"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [{ tool: "terragrunt", version: "0.99.0" }] } }).content);
+    expect(tg.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply --binary tofu");
+    expect(tg.jobs.fmt.steps.map((x: { name?: string }) => x.name)).toContain("Install terragrunt 0.99.0");
   });
 
   it("the step that runs the change's code starts again without the runner's token variables, and keeps the OIDC ones", async () => {

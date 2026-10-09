@@ -373,6 +373,30 @@ describe("respond: running a response", () => {
     expect(git(bare, "rev-parse", "main")).not.toBe(git(bare, "rev-parse", "feature"));
   });
 
+  it("fmt in a Terragrunt repo runs terragrunt hcl fmt too, and commits the .hcl files it changed", async () => {
+    const { repo, bare } = checkout({ "root.hcl": "", "live/app/terragrunt.hcl": 'inputs = {\n    a   = 1\n}\n' });
+    git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature");
+    const dir = tmp();
+    // The binary finds nothing to format; Terragrunt's hcl fmt rewrites the unit's file, as the real one would.
+    const bin = join(dir, "tofu");
+    writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+    const tg = join(dir, "terragrunt");
+    writeFileSync(tg, `#!/bin/sh\n[ "$1 $2" = "hcl fmt" ] || exit 9\nprintf 'inputs = {\\n  a = 1\\n}\\n' > live/app/terragrunt.hcl\n`);
+    chmodSync(bin, 0o755);
+    chmodSync(tg, 0o755);
+    const env = { ...process.env, TERRAGUCCI_TERRAGRUNT: tg };
+    const dry = await respond("fmt", repo, { branch: "feature", binary: bin, env });
+    expect(dry.text).toBe("feature: would commit terragrunt hcl fmt on live/app/terragrunt.hcl");
+    expect(git(bare, "show", "feature:live/app/terragrunt.hcl")).toContain("    a   = 1");
+    const r = await respond("fmt", repo, { branch: "feature", mode: "apply", fetch: forgejo().fetch, binary: bin, env });
+    expect(r.text).toBe("feature: committed terragrunt hcl fmt on live/app/terragrunt.hcl");
+    expect(git(bare, "show", "feature:live/app/terragrunt.hcl")).toBe("inputs = {\n  a = 1\n}\n");
+    expect(git(bare, "log", "-1", "--format=%s", "feature").trim()).toBe("style: terragrunt hcl fmt");
+    // A Terragrunt that fails is named, not taken for formatted.
+    writeFileSync(tg, "#!/bin/sh\necho 'Error: invalid HCL' >&2\nexit 1\n");
+    await expect(respond("fmt", repo, { branch: "feature", binary: bin, env })).rejects.toThrow(/feature: terragrunt hcl fmt failed:\nError: invalid HCL/);
+  });
+
   it("fmt names a binary that cannot run, and a file fmt cannot parse, instead of calling the branch formatted", async () => {
     const { repo } = checkout({ "app/main.tf": "locals {\n" });
     git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature");

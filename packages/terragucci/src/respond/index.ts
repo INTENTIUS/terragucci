@@ -9,6 +9,7 @@ import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
 import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, findRoots, globMatch } from "../detect";
+import { detectTerragrunt } from "../terragrunt";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
@@ -320,17 +321,32 @@ async function fmt(repo: string, settings: ResolvedSettings, binary: string, mod
   try {
     const f = spawnSync(binary, ["fmt", "-recursive", "-list=true", ...(mode === "apply" ? [] : ["-check"])], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv(env) });
     if (f.error) throw new ConfigError(`respond fmt could not run ${binary}: ${f.error.message}`);
-    const files = f.stdout.split("\n").filter(Boolean).sort();
+    const listed = f.stdout.split("\n").filter(Boolean);
     // -check exits non-zero when it lists a file; non-zero with nothing listed
     // is a file fmt could not parse, which is not "already formatted".
-    if (f.status !== 0 && files.length === 0) throw new ConfigError(`${branch}: ${binary} fmt failed:\n${tail(f.stderr || f.stdout)}`);
+    if (f.status !== 0 && listed.length === 0) throw new ConfigError(`${branch}: ${binary} fmt failed:\n${tail(f.stderr || f.stdout)}`);
+    const tools = listed.length ? [`${binary} fmt`] : [];
+    let files = listed;
+    // A Terragrunt repo's own files are HCL the binary does not read: terragrunt hcl fmt formats them, in this
+    // throwaway checkout, and git names what it changed.
+    if (detectTerragrunt(tree.dir)) {
+      const terragrunt = env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
+      const h = spawnSync(terragrunt, ["hcl", "fmt", "--no-color"], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv({ ...env, TG_NON_INTERACTIVE: "true" }) });
+      if (h.error) throw new ConfigError(`respond fmt could not run ${terragrunt}: ${h.error.message}`);
+      if (h.status !== 0) throw new ConfigError(`${branch}: terragrunt hcl fmt failed:\n${tail(h.stderr || h.stdout)}`);
+      const changed = git(tree.dir, ["diff", "--name-only"]).split("\n").filter((p) => p.endsWith(".hcl"));
+      if (changed.length) tools.push("terragrunt hcl fmt");
+      files = [...new Set([...files, ...changed])];
+    }
+    files.sort();
     const data = { branch, files };
+    const what = tools.join(" and ");
     if (files.length === 0) return { text: `${branch}: already formatted`, data };
-    if (mode !== "apply") return { text: `${branch}: would commit ${binary} fmt on ${files.join(", ")}`, data };
+    if (mode !== "apply") return { text: `${branch}: would commit ${what} on ${files.join(", ")}`, data };
     git(tree.dir, ["add", "-A"]);
-    git(tree.dir, [...IDENTITY, "commit", "-q", "--no-verify", "-m", `style: ${binary} fmt`]);
+    git(tree.dir, [...IDENTITY, "commit", "-q", "--no-verify", "-m", `style: ${what}`]);
     git(tree.dir, ["push", "-q", "origin", `HEAD:refs/heads/${branch}`]);
-    return { text: `${branch}: committed ${binary} fmt on ${files.join(", ")}`, data };
+    return { text: `${branch}: committed ${what} on ${files.join(", ")}`, data };
   } finally {
     tree.done();
   }
