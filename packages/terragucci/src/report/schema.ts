@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 17;
+export const REPORT_MINOR = 19;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -227,8 +227,25 @@ export interface ReportTimings {
   note?: string;
 }
 
+/** The binary a root ran, and the version it pinned when it pinned one (minor 18). */
+export interface ReportRootBinary {
+  /** tofu, terraform or choudoufu. */
+  name: string;
+  /** Absent when the binary did not say. */
+  version?: string;
+  /** Where the root pinned its version: `.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`. Absent when it runs the job's binary unpinned. */
+  pin?: string;
+}
+
+/** A root's binary as the note, the report and the log name it: `tofu 1.10.6 (.opentofu-version)`. */
+export function binaryText(b: ReportRootBinary): string {
+  return `${b.name}${b.version ? ` ${b.version}` : ""}${b.pin ? ` (${b.pin})` : ""}`;
+}
+
 export interface ReportRoot {
   path: string;
+  /** The binary the root ran (minor 18). */
+  binary?: ReportRootBinary;
   /** Set when the root is a Terragrunt unit. */
   terragrunt?: ReportUnit;
   status: "planned" | "failed";
@@ -266,6 +283,26 @@ export interface ReportRoot {
    * changed, by name (minor 15). Never a value.
    */
   applied_changes?: ReportAppliedChange[];
+  /** The steps that ran for it (minor 17), in the order they ran. Absent when none did. */
+  steps?: ReportStep[];
+}
+
+/** When a step runs: before or after a root's init, plan, apply or drift (minor 17). */
+export type ReportStepWhen = `${"before" | "after"}-${"init" | "plan" | "apply" | "drift"}`;
+
+/**
+ * One step that ran for a root (minor 17). `passed`: it exited 0. `failed`:
+ * it exited otherwise and the root failed. `approval`: it exited otherwise
+ * with `on_failure: approve`, so the root's wave waits for an approval.
+ * Its output stays in the job log.
+ */
+export interface ReportStep {
+  name: string;
+  when: ReportStepWhen;
+  status: "passed" | "failed" | "approval";
+  /** The exit code; null when it was killed or could not start. */
+  exit: number | null;
+  seconds: number;
 }
 
 /** What one apply did to one resource (minor 15). */
@@ -372,11 +409,16 @@ export interface ReportWave {
    * the page to review it on. Absent when no review can approve it.
    */
   review?: { pull_request: number; url: string };
-  /** The wave's monthly cost, when `cost` is on (minor 17): the sums over its roots estimated, and with `cost.approve_above` whether it waits for it. */
+  /**
+   * The roots whose `on_failure: approve` step failed (minor 17): the gate
+   * holds the wave whatever the gate policy says, when it changes anything.
+   */
+  held_by_steps?: string[];
+  /** The wave's monthly cost, when `cost` is on (minor 19): the sums over its roots estimated, and with `cost.approve_above` whether it waits for it. */
   cost?: ReportWaveCost;
 }
 
-/** One wave's monthly cost (minor 17). */
+/** One wave's monthly cost (minor 19). */
 export interface ReportWaveCost {
   currency: string;
   /** The change over the wave's roots estimated. Null when none was. */
@@ -495,7 +537,7 @@ export interface Report {
   intent?: ReportIntent;
   /** The run's policy check, when `policy` is on (minor 6). Each root's verdict is under the root. */
   policy?: ReportPolicy;
-  /** The cost estimate of a `tf-plan` run, or of a `tf-apply` wave's plans (minor 17), when `cost` is on (minor 12). */
+  /** The cost estimate of a `tf-plan` run, or of a `tf-apply` wave's plans (minor 19), when `cost` is on (minor 12). */
   cost?: ReportCost;
 }
 

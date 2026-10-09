@@ -1,7 +1,7 @@
 ---
 title: Choose Terraform, OpenTofu, Terragrunt or choudoufu
 description: Pick the binary your roots run with, and see what each one gives the pipeline.
-claims: [check-diagnostics, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, tf-terraform, tg-terraform]
+claims: [check-diagnostics, cdf-concurrency, cdf-write-race, cdf-iam, cdf-shared-bucket, pinned-install, root-pins, tf-terraform, tg-terraform]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-a-binary/.
   Run `npx terragucci init --dry-run --json` and tell me which binary it picked and why.
@@ -22,9 +22,27 @@ Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `t
 | What `tf-check` runs | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) |
 | What the report times | nothing (no traces) | each resource | each unit, from Terragrunt's run report | each resource; [slow provider calls](/terragucci/reference/observability/#what-the-report-lists), [summed timings](/terragucci/reference/observability/#what-the-report-lists) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend |
 | CI image | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 | `terragucci-choudoufu`, choudoufu 0.23.0 |
-| Version pin | `version`, or an exact `required_version` | `version`, or an exact `required_version` | `terragrunt.version`, or an exact `terragrunt_version_constraint` | `version` only |
+| Version pin | `version`, `.terraform-version`, or an exact `required_version`; per root too | `version`, `.opentofu-version`, or an exact `required_version`; per root too | `terragrunt.version`, or an exact `terragrunt_version_constraint` | `version` only |
 
 A pin the image does not carry is installed in the job, checked against the release's SHA256SUMS. Images are pinned by digest.
+
+### A version per root
+
+A root with its own `.opentofu-version` or `.terraform-version`, or an exact `required_version`, runs that version, and the rest of its wave runs the job's. `version` in `terragucci.yml` can also be a map of root glob to version:
+
+```yaml
+binary: tofu
+version:
+  "envs/legacy/*": "1.9.1"
+```
+
+The plan job installs each pinned version once and plans each root with its own; the apply job does the same. The plan note and the report name each root's binary and version:
+
+```text
+Binaries: tofu 1.10.6 for `old` (.opentofu-version); tofu 1.13.1 for 1 root.
+```
+
+Run `npx terragucci init` after adding a pin, so the check job validates each root with its version too. [A version per root](/terragucci/reference/config/#a-version-per-root) has the order the pins are read in.
 
 ## Your binary in `terragucci.yml`
 
