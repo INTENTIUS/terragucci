@@ -253,6 +253,7 @@ pinned-install|a pinned binary version the image does not carry is installed in 
 drift-close|a drift run that finds no drift closes the drift issue an earlier run opened|
 estate-control|terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults|
 estate-override|the estate page counts the roots applied under a policy override, in estate.json and estate.html|
+reader-contracts|the index.json files, estate.json and report.json a run and terragucci estate write to the bucket hold to the JSON Schemas the package ships, and a project named views writes nothing under the prefix kept for viewers|
 comment-refused|a comment naming approve, merge, destroy, import, state or force-unlock is answered that a comment never runs it, and nothing plans or applies|
 note-stale|a push to the default branch that changes a root an open pull request planned marks its plan note stale|
 pr-confirm|with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing|
@@ -7680,6 +7681,84 @@ claim_estate_override() {
   return $rc
 }
 
+claim_reader_contracts() {
+  # One project plans, then applies wave 1, with its reports in the bucket;
+  # terragucci estate then writes estate.json to the same prefix. Each object
+  # is read back from floci and held to the JSON Schema the built package
+  # ships: both index.json files, estate.json and each run's report.json. The
+  # check reads an object with properties as closed, so a field the writer
+  # adds and the schema lacks fails it. Then a repo with no remote, in a
+  # directory named views, plans: its upload is refused, and nothing is
+  # under <prefix>/views/.
+  # BREAK: the index is held to a copy of its schema without the row field
+  # `changed`, as a schema that fell behind its writer would be.
+  log() { echo "[smoke reader-contracts] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 code=0 prefix="reader-contracts-$STAMP" bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" dist="$HERE/../packages/terragucci/dist" project=smoke.local/contracts/app schemas f out listed
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  for f in contracts views; do
+    estate_project "$work/$f" "$(printf '  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s' "$REPORT_BUCKET" "$prefix")"
+  done
+  in_dir() { # project dir, then the command; the repo is named after the directory unless the environment names it
+    local dir="$1"; shift
+    run_copied --rm --network terragucci -v "$work/$dir:/work/$dir" -w "/work/$dir" -v "$bundle:/usr/local/bin/terragucci:ro" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' "$image" "$@"
+  }
+  local named=(env GITHUB_SERVER_URL=http://smoke.local GITHUB_REPOSITORY=contracts/app GITHUB_RUN_ID=7)
+  in_dir contracts "${named[@]}" terragucci stage tf-plan --layers app >&2 || { log "the plan run failed"; rc=1; }
+  clean_mounted "$work/contracts" "$image"
+  if [ $rc = 0 ]; then
+    in_dir contracts "${named[@]}" terragucci stage tf-apply --wave 1 --layers app --binary tofu --gate never >&2 || { log "the wave failed"; rc=1; }
+    clean_mounted "$work/contracts" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    mkdir -p "$work/page"
+    run_copied --rm --network terragucci -v "$work/page:/page" -w /page -v "$bundle:/usr/local/bin/terragucci:ro" "${AWS_DOCKER_ENV[@]}" \
+      "$image" terragucci estate --bucket "s3://$REPORT_BUCKET" --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    mkdir -p "$work/got"
+    curl -fsS -o "$work/got/top-index.json" "$FLOCI/$REPORT_BUCKET/$prefix/index.json" || { log "no index.json at the top of $prefix"; rc=1; }
+    curl -fsS -o "$work/got/project-index.json" "$FLOCI/$REPORT_BUCKET/$prefix/$project/index.json" || { log "no index.json at $prefix/$project"; rc=1; }
+    curl -fsS -o "$work/got/estate.json" "$FLOCI/$REPORT_BUCKET/$prefix/estate.json" || { log "no estate.json at $prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    [ "$(jq -r '[.reports[].stage] | sort | join(",")' "$work/got/project-index.json")" = "tf-apply,tf-plan" ] || { log "the project index lists $(jq -c '[.reports[].stage]' "$work/got/project-index.json"), not a plan and a wave"; rc=1; }
+    local n=0 path
+    for path in $(jq -r '.reports[].path' "$work/got/project-index.json"); do
+      n=$((n + 1))
+      curl -fsS -o "$work/got/report-$n.json" "$FLOCI/$REPORT_BUCKET/$prefix/$project/$path/report.json" || { log "no report.json at $prefix/$project/$path"; rc=1; }
+    done
+    schemas="$dist"
+    if [ -n "${BREAK:-}" ]; then
+      schemas="$work/schemas"; mkdir -p "$schemas"; cp "$dist"/*.schema.json "$schemas/"
+      jq 'del(.["$defs"].row.properties.changed)' "$dist/report-index.schema.json" > "$schemas/report-index.schema.json"
+    fi
+    check() { (cd "$HERE/.." && npx tsx scripts/schema-check.ts "$@") >&2; }
+    check "$schemas/report-index.schema.json" "$work/got/top-index.json" "$work/got/project-index.json" || { log "an index.json does not hold to report-index.schema.json"; rc=1; }
+    check "$schemas/estate.schema.json" "$work/got/estate.json" || { log "estate.json does not hold to estate.schema.json"; rc=1; }
+    check "$schemas/report.schema.json" "$work/got"/report-*.json || { log "a report.json does not hold to report.schema.json"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    out="$(in_dir views terragucci stage tf-plan --layers app 2>&1)" || code=$?
+    clean_mounted "$work/views" "$image"
+    printf '%s\n' "$out" | tail -n 5 >&2
+    [ "$code" != 0 ] || { log "the plan of a project named views passed its upload"; rc=1; }
+    grep -q "kept for viewers" <<<"$out" || { log "the refusal does not say the prefix is kept for viewers"; rc=1; }
+    listed="$(curl -fsS "$FLOCI/$REPORT_BUCKET?list-type=2&prefix=$prefix/views/" | grep -o '<Key>[^<]*</Key>' || true)"
+    [ -z "$listed" ] || { log "objects landed under $prefix/views/: $listed"; rc=1; }
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "both indexes, estate.json and both reports hold to the shipped schemas, and a project named views wrote nothing under $prefix/views/"
+  return $rc
+}
+
 # ── comments, notes and the edge rules of apply before merge ──────────────
 
 # A scratch repo with two roots, app and net, each a terraform_data with local
@@ -10257,6 +10336,7 @@ pinned-install       weight=60
 drift-close          self! weight=90
 estate-control       self! weight=80
 estate-override      weight=150
+reader-contracts     weight=110
 comment-refused      runner self! weight=200
 note-stale           runner self! weight=200
 pr-confirm           runner self! weight=300

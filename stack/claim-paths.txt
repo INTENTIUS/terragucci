@@ -32,7 +32,7 @@ packages/terragucci/src/install.ts        pinned-install tf-terraform tg-terrafo
 packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr-apply-lock tg-lock-fanout lock-wait pr-close-release
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile estate-control audit-control
-packages/terragucci/src/estate.ts         estate estate-* front-door audit*
+packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts
 packages/terragucci/src/audit.ts          audit*
 packages/terragucci/src/notify.ts         notify-chat notify-webhook
 packages/terragucci/src/notify.schema.json notify-webhook
@@ -56,7 +56,12 @@ packages/terragucci/src/comment.ts        comment-* tg-comment-apply pr-confirm 
 # Reports and what reads them.
 packages/terragucci/src/report/policy.ts  policy policy-* tg-policy
 packages/terragucci/src/report/drift      drift drift-* tg-drift respond-drift
-packages/terragucci/src/report/estate.ts  estate estate-* front-door audit*
+packages/terragucci/src/report/estate.ts  estate estate-* front-door audit* reader-contracts
+packages/terragucci/src/report/store.ts   report highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* reader-contracts
+packages/terragucci/src/report/report.schema.json reader-contracts
+packages/terragucci/src/report/report-index.schema.json reader-contracts
+packages/terragucci/src/report/estate.schema.json reader-contracts
+packages/terragucci/src/report/audit.schema.json reader-contracts
 packages/terragucci/src/report/audit.ts   audit*
 packages/terragucci/src/report/highlight.ts highlight*
 packages/terragucci/src/report/azure-blob.ts blob-azure*
@@ -73,6 +78,9 @@ packages/terragucci/src/publish/require.ts require-*
 packages/terragucci/src/publish           publish publish-attest require-* version-bump-job
 packages/terragucci/src/rollout           rollout rollout-*
 packages/terragucci/src/tips              tips respond-tips
+
+# The JSON Schema check a claim runs on what a run wrote.
+scripts/schema-check.ts                   reader-contracts
 
 # What every claim stands on.
 packages/terragucci/package.json          ALL

@@ -1,0 +1,76 @@
+---
+title: The reports bucket
+description: Every key terragucci writes under your reports prefix, the JSON Schema of each object a program reads, and the prefix kept for a viewer's own files.
+prompt: |
+  Read https://intentius.io/terragucci/reference/reports-bucket/.
+  Write a script that reads estate.json and index.json at the top of my reports prefix with a read-only identity, validates each against the JSON Schema the page names, and prints every waiting wave with its project, age and report.
+  Read only: write nothing to the bucket.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+With `reports.bucket` set, terragucci writes under one prefix (`reports.prefix`, empty by default) in your S3 bucket, GCS bucket or Azure Blob container. The keys below are the layout a program can rely on: a release adds keys and never moves one.
+
+## Keys
+
+| Key | Written by | What it is |
+|---|---|---|
+| `<prefix>/index.json`, `index.html` | every upload | every project's runs, newest first |
+| `<prefix>/<project>/index.json`, `index.html` | every upload | one project's runs, newest first |
+| `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-<n>]/` | every upload | one run's report directory, below |
+| `<prefix>/traces/<trace id>.html` | an upload whose run sent a trace | a page that forwards to the run's `report.html` |
+| `<prefix>/estate.json`, `estate.html` | [`terragucci estate`](/terragucci/guides/see-every-project/) | every project's latest plan, drift check and apply waves |
+| `<prefix>/audit.jsonl`, `audit.html`, `audit.json` | [`terragucci audit`](/terragucci/reference/audit-trail/) | the audit trail, its page and its summary |
+| `<prefix>/views/` | nothing | kept for a viewer's own files |
+
+`<project>` is `<host>/<path>` of the repo, for example `github.com/acme/infra`, so it holds slashes. A repo with no git remote is named after its directory. `<yyyy>/<mm>` is the month the run finished, in UTC, and `<commit>` is the full SHA. `<stage>` is `tf-plan`, `tf-drift` or `tf-apply`, and a `tf-apply` directory ends in `-wave-<n>`.
+
+## A run's directory
+
+| File | What it is |
+|---|---|
+| `report.json` | the report, `terragucci.report/v1`; see [Report JSON schema](/terragucci/reference/report-schema/) |
+| `report.html` | the report as a page, with `report.json` inline |
+| `note.md` | the pull request note |
+| `summary.txt` | the grouped plan as text |
+| `gitlab-terraform.json` | GitLab's `reports:terraform` counts |
+| `roots/<root>/plan.txt`, `roots/<root>/plan.json` | each root's full plan, and its JSON with sensitive values redacted |
+| `roots/<root>/cost.json` | the estimator's output, with `cost` set |
+| `intent.json` | the description check's decision, after `respond description` |
+
+Links inside a run's files are relative, so they resolve wherever the bucket is served. A row's `path` in an `index.json` is relative to that index.
+
+## JSON Schemas
+
+Each JSON object a program reads names its schema in its `schema` field, and the package ships a JSON Schema for each in its `dist/` directory:
+
+| Object | `schema` | JSON Schema |
+|---|---|---|
+| `report.json` | `terragucci.report/v1` | `dist/report.schema.json`, also exported as `@intentius/terragucci/report.schema.json` |
+| `index.json` | `terragucci.report-index/v1` | `dist/report-index.schema.json` |
+| `estate.json` | `terragucci.estate/v1` | `dist/estate.schema.json` |
+| each line of `audit.jsonl` | `terragucci.audit/v1` | `dist/audit.schema.json` |
+
+Within `v1` a release only adds fields, and an existing field keeps its meaning. A reader checks `schema` and ignores fields it does not know. The schemas leave objects open, so a validator accepts a field a later release added.
+
+```bash
+npm pack @intentius/terragucci
+tar -xzf intentius-terragucci-*.tgz package/dist/estate.schema.json
+```
+
+[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json` and `estate.json`, and [The audit trail](/terragucci/reference/audit-trail/#what-each-entry-holds) the fields of an audit entry.
+
+## The views prefix
+
+terragucci never writes or reads under `<prefix>/views/`. A tool that renders your reports, such as a static page built in a scheduled job, writes its files under `<prefix>/views/<tool>/`, where they never meet a key of terragucci's. An upload whose project name would start with `views` is refused before anything is written; give the repo a git remote.
+
+Whatever serves the bucket serves `views/` too. A presigned link opens one object, and the [front door](/terragucci/guides/keep-reports-in-a-bucket/#the-front-door) serves every key under the prefix to whoever your identity provider signs in.
+
+## Reading it
+
+| To read | An identity needs |
+|---|---|
+| every project's runs and the estate | `GetObject` on `<prefix>/*index.json` and `<prefix>/estate.json` |
+| a run's report | `GetObject` on `<prefix>/*/report.json` |
+| the audit trail | `GetObject` on `<prefix>/audit.jsonl` |
+
+A reader needs no list permission: an index row names each run's directory, and the report names each root's plan files.

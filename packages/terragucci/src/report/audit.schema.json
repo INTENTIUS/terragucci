@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/audit/v1/audit.schema.json",
+  "title": "terragucci.audit/v1",
+  "description": "One line of audit.jsonl at the top of a reports prefix: an approval, apply, policy override or refused wave. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "id", "kind", "project", "at", "who", "what", "digest", "result", "evidence"],
+  "properties": {
+    "schema": { "const": "terragucci.audit/v1" },
+    "id": { "type": "string", "description": "sha256: over where the entry came from; the same records give the same id." },
+    "kind": { "enum": ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused"] },
+    "project": { "type": "string", "description": "<host>/<path> of the repo." },
+    "at": { "type": "string", "description": "When it happened, ISO 8601." },
+    "who": { "type": ["string", "null"], "description": "The approver, the overrider, whoever removed the line, or for an apply the approver it applied under. Null when nobody did." },
+    "what": { "type": "string", "description": "The gate (wave-<k>) or, for an override, the root." },
+    "digest": { "type": ["string", "null"], "description": "The wave's set digest, or the digest an override binds. Null when a root failed to plan." },
+    "result": { "type": "string" },
+    "evidence": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": { "enum": ["ledger", "report"] },
+        "branch": { "type": "string" },
+        "path": { "type": "string" },
+        "commit": { "type": "string" },
+        "bucket": { "type": "string" },
+        "key": { "type": "string" },
+        "url": { "type": "string" },
+        "job_url": { "type": "string" }
+      }
+    },
+    "detail": { "type": "object", "description": "What else the source says, by kind." }
+  }
+}

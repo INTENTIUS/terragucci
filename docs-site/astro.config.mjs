@@ -147,6 +147,7 @@ export default defineConfig({
 						{ label: 'The generated pipeline', slug: 'reference/pipeline' },
 						{ label: 'The plan report', slug: 'reference/report' },
 						{ label: 'Report JSON schema', slug: 'reference/report-schema' },
+						{ label: 'The reports bucket', slug: 'reference/reports-bucket' },
 						{ label: 'Webhook event schema', slug: 'reference/notify-event' },
 						{ label: 'The audit trail', slug: 'reference/audit-trail' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
