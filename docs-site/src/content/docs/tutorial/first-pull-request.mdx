@@ -15,6 +15,7 @@ prompt: |
 
 import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
+import { Steps } from '@astrojs/starlight/components';
 
 :::note[Where the example stands]
 Booted with `just example up`, nothing changed yet. `just example reset` gets you back here from any later step.
@@ -22,40 +23,48 @@ Booted with `just example up`, nothing changed yet. `just example reset` gets yo
 
 ## Change one root
 
-Orders in dev should keep unpicked jobs for seven days instead of four: one line in `envs/dev/orders/main.tf`. One command makes the branch and opens the pull request:
+Orders in dev should keep unpicked jobs for seven days instead of four: one line in `envs/dev/orders/main.tf`.
 
-<Captured step="first-pr" />
+<Steps>
 
-The push and the pull request each start a run. The pull request's run posts the plan note and the push's run is the check; take the run numbers from the output.
+1. Make the branch and open the pull request with one command. The push and the pull request each start a run: the pull request's run posts the plan note and the push's run is the check. Take the run numbers from the output.
 
-Open the pull request link in Forgejo:
+   <Captured step="first-pr" />
 
-<Shot step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" />
+2. Open the pull request link in Forgejo:
 
-`tf-check` runs on the branch push, and on a pull request only from a fork: a format check, then `validate` for every root. Look at the push's run, the second link printed. Both steps pass. The plan note is a comment in the conversation:
+   <Shot step="first-pr" view="files" alt="The pull request's files tab, adding job_retention_seconds = 604800 to dev orders" />
 
-<Shot step="first-pr" view="pull" alt="The pull request in Forgejo with its check passing and its plan note for the one root" />
+3. Look at the push's run, the second link printed. `tf-check` runs on the branch push, and on a pull request only from a fork: a format check, then `validate` for every root. Both steps pass. The plan note is a comment in the conversation:
+
+   <Shot step="first-pr" view="pull" alt="The pull request in Forgejo with its check passing and its plan note for the one root" />
+
+</Steps>
 
 ## Break the formatting
 
-Now add a badly formatted file:
+<Steps>
 
-```hcl
-locals {
-    team   = "orders"
-  owner = "shop"
-}
-```
+1. Add a badly formatted file:
 
-The scenario opens it as a second pull request. The check fails, and `just example logs` prints the file and the change `tofu fmt` would make.
+   ```hcl
+   locals {
+       team   = "orders"
+     owner = "shop"
+   }
+   ```
 
-<Captured step="check" />
+2. The scenario opens it as a second pull request. The check fails, and `just example logs` prints the file and the change `tofu fmt` would make.
 
-In Forgejo the failed step is "Format check and validate, every root":
+   <Captured step="check" />
 
-<Shot step="check" view="log" alt="The failed check job in Forgejo, its format step open on the diff tofu fmt -check printed for envs/dev/orders/locals.tf" />
+3. In Forgejo the failed step is "Format check and validate, every root":
 
-Run `tofu fmt -recursive` in your own repo and the check goes green again.
+   <Shot step="check" view="log" alt="The failed check job in Forgejo, its format step open on the diff tofu fmt -check printed for envs/dev/orders/locals.tf" />
+
+4. Run `tofu fmt -recursive` in your own repo and the check goes green again.
+
+</Steps>
 
 ## What you saw
 

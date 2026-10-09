@@ -71,7 +71,15 @@ Every root that pins the module moved to the new version through one pull reques
    token_env: ROLLOUT_TOKEN
    ```
 
-   Each run opens the next wave of every rollout whose last wave merged and applied, so a wave opens within one interval of the last one applying. A rollout with a pull request still open, or one closed unmerged, is left alone. On GitHub and Forgejo the job is its own workflow, `terragucci-rollout.yml`, which you can also start by hand. It opens pull requests with the secret `token_env` names, else the job's own token. GitHub runs no workflow for a pull request the job's own token opens, so name a secret holding a token that can push branches and open pull requests. On GitLab, add a pipeline schedule with that cron and the variable `TERRAGUCCI_SCHEDULE` set to `rollouts`; `init` prints the steps. `respond.rollout: off` leaves the job out.
+   Each run opens the next wave of every rollout whose last wave merged and applied, so a wave opens within one interval of the last one applying. A rollout with a pull request still open, or one closed unmerged, is left alone.
+
+   | Forge | Job | Token | Schedule |
+   |---|---|---|---|
+   | GitHub | its own workflow, `terragucci-rollout.yml`, which you can also start by hand | the secret `token_env` names, else the job's own; GitHub runs no workflow for a pull request the job's own token opens, so name a secret holding a token that can push branches and open pull requests | the `rollouts` cron |
+   | Forgejo | the same | the secret `token_env` names, else the job's own | the `rollouts` cron |
+   | GitLab | the `rollout` job in the pipeline | the `token_env` variable | a pipeline schedule with that cron and the variable `TERRAGUCCI_SCHEDULE` set to `rollouts`; `init` prints the steps |
+
+   `token_env` is the project's forge token variable, not the rollout's alone: on GitLab every job that pushes or opens a merge request reads it, and on GitHub and Forgejo the fmt, tips, version-bump and drift jobs export their own token under that name. `respond.rollout: off` leaves the rollout job out.
 
    Without `rollouts`, run the rollout again after each merge. Each run takes at most one step:
 

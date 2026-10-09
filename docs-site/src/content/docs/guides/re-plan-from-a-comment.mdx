@@ -119,7 +119,11 @@ A comment that asks for nothing ends the job cleanly. A forge 403 or failure, or
 | A failed wave | prints its triage (`respond.apply-failed`) |
 | [Terragrunt](/terragucci/guides/use-terragrunt/) | the same job and refusals; each wave runs `tf-apply --terragrunt` on its units from the merge commit |
 
-On GitLab, `/terragucci apply` retries the waiting wave's job in the merge commit's pipeline. `stage tf-apply` decides its gate again, so a wave with no approval waits again, and the waves after it follow, each behind its own gate. A merge commit that a later apply superseded is refused, as on GitHub.
+| On GitLab | |
+|---|---|
+| `/terragucci apply` | retries the waiting wave's job in the merge commit's pipeline |
+| The gate | `stage tf-apply` decides it again, so a wave with no approval waits again; the waves after it follow, each behind its own gate |
+| A merge commit a later apply superseded | refused, as on GitHub |
 
 ## Apply an open pull request
 
