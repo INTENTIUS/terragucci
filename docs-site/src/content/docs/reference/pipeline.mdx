@@ -306,6 +306,17 @@ The push starts the pull request's plan job, which plans the change with its rea
 | `CLAUDE.md`, `AGENTS.md` | any directory | agent instructions |
 | `.gitattributes`, `.gitmodules` | any directory | git settings |
 
+### The drift agent
+
+With `agent.drift` set on GitHub or Forgejo, a drift run that opens the drift issue starts the two jobs below, after the `drift` job, on the commit it planned. The drift job's step writes `issue.json` beside its report and says in its outputs whether it opened the issue. Neither job gets a cloud role.
+
+| Job | Token | Does |
+|---|---|---|
+| `drift-agent` | the job's own, read-only; the agent's step runs without it | checks out the commit without credentials, fetches the drift report, `terragucci drift-agent prompt` writes the prompt, runs the agent command with the prompt on stdin and the model's key in that step alone, and keeps the change as a patch |
+| `drift-agent-push` | the secret `agent.token_env` names | in a fresh container, applies the patch to the same commit; refuses a patch touching a [guarded path](#paths-an-agent-cannot-change), otherwise commits it to `terragucci/drift-agent-<issue>`, pushes it without force, opens the pull request and comments its link on the drift issue |
+
+The pull request starts the plan job like any other, and its merge applies through the gate. [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) covers the setup.
+
 ### The review
 
 With `review.agent` set on GitHub or Forgejo, a pull request from the repo gets two jobs after its plan job, whether the plan passed or failed. Neither gets a cloud role.

@@ -161,7 +161,7 @@ dashboards: true
 | `modules.trusted` | none | publishers in other repos that `require` checks: each a `source` (an `oci://` prefix or a git URL), the `key` (a path to their `cosign.pub` in this repo) and the `ledger` (the git URL whose `chant/lifecycle` holds their release ledger) |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
-| `agent` | none | `via` (`forge`), `token_env` and [`comment`](#the-agent-comment) |
+| `agent` | none | `via` (`forge`), `token_env`, [`comment`](#the-agent-comment) and [`drift`](#the-drift-agent) |
 | `atlantis_comments` | `false` (off) | `true`: `atlantis plan` and `atlantis apply` comments work as `/terragucci plan` and `/terragucci apply`, with the same checks; see [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) |
 | `review` | none (off) | `agent`, `command`, `key_secret`, `instructions`, `timeout`: a model reviews each pull request's description against its plan; see [The review](#the-review) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
@@ -318,6 +318,25 @@ agent:
 | `timeout` | 30 | minutes before the agent's job is stopped |
 
 The agent's jobs get no cloud credentials; `init` refuses `agent.comment` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-agent-comment).
+
+## The drift agent
+
+`agent.drift` runs an agent when the drift job opens the drift issue, and opens a pull request with what it changed; GitHub and Forgejo only. [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) sets it up.
+
+```yaml
+drift: "0 6 * * *"
+respond:
+  drift: off
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  drift:
+    key_secret: ANTHROPIC_API_KEY
+    max_turns: 30
+    timeout: 30
+```
+
+Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule, and `respond.drift` set to `attribute` or `off`: the agent's pull request takes the place of the codified one. The agent's jobs get no cloud credentials; `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
 
 ## The review
 
