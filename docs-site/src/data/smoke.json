@@ -1555,6 +1555,22 @@
       "commit": "8fd354f"
     },
     {
+      "claim": "linked-plan",
+      "says": "a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
+      "claim": "linked-states",
+      "says": "after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "68fd6a8"
+    },
+    {
       "claim": "chat-approve",
       "says": "a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave",
       "needs": null,

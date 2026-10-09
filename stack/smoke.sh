@@ -335,7 +335,9 @@ steps-gate|a step with on_failure approve that fails holds its wave at the gate 
 chat-approve|a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave|
 chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave|
 chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
-chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|'
+chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
+linked-plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
+linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -839,6 +841,177 @@ claim_refuse() {
   fi
   drop_work "$work"
   [ $rc = 0 ] && log "wave 1 changed after its approval, applied nothing and named canary/one"
+  return $rc
+}
+
+# The linked-states fixture's state keys under <name>/ in floci emptied, and
+# its two roots applied at rev 1 in the tofu CI image, from a copy in $work/apply.
+linked_apply() { # name
+  local name="$1" key image root
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  curl -fsS -o /dev/null -X PUT "$FLOCI/shop-terraform-state"
+  for key in $(curl -fsS "$FLOCI/shop-terraform-state?list-type=2&prefix=$name/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g'); do
+    curl -s -o /dev/null -X DELETE "$FLOCI/shop-terraform-state/$key" || true
+  done
+  linked_copy "$name" "$work/apply"
+  for root in net app; do
+    run_copied --rm --network terragucci -v "$work/apply:/repo" -w "/repo/$root" \
+      -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+      "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "could not apply $root"; return 1; }
+  done
+  clean_mounted "$work/apply" "$image"
+}
+
+linked_copy() { # name, dir -> the linked-states fixture in dir, its state keys under <name>/
+  mkdir -p "$2"
+  cp -R "$HERE/fixtures/linked-states/." "$2/"
+  find "$2" -name main.tf -exec sed -i.bak "s#@PREFIX@#$1#" {} \;
+  find "$2" -name '*.bak' -delete
+}
+
+linked_state() { # name, root -> the state's resources as "<name>=<input>" lines
+  curl -fsS "$FLOCI/shop-terraform-state/$1/$2.tfstate" 2>/dev/null \
+    | jq -r '.resources[]? | select(.mode == "managed") | .name as $n | .instances[]? | "\($n)=\(.attributes.input | if type == "object" then .value else . end)"' 2>/dev/null | sort || true
+}
+
+linked_key() { # prefix, sha -> the key of sha's run view in the reports bucket
+  curl -fsS "$FLOCI/$REPORT_BUCKET?list-type=2&prefix=$1/" | grep -o "<Key>[^<]*/runs/$2/run.json</Key>" | sed -E 's#</?Key>##g' | head -1
+}
+
+claim_linked_plan() {
+  # net (wave 1) and app (wave 2, reading net's state) applied at rev 1; then
+  # net's rev.txt goes to 2 and tf-plan runs in the CI image. app plans on
+  # net's planned outputs: its name moves to net-2, and its stamp, which net
+  # knows only once it applies, shows as known after apply. The report says
+  # app read net's planned outputs with stamp unknown, and wave 2 plans again
+  # once wave 1 applies, with no review digest. app's files are as they were.
+  # BREAK: tf-plan plans app alone (--root app), so net is not planned with
+  # it and app plans on net's applied state: no change.
+  log() { echo "[smoke linked-plan] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" r plan code=0 rc=0 args=()
+  [ -n "${BREAK:-}" ] && args=(--root app)
+  image="$(image_tag tofu)"
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  linked_apply linked-plan || { drop_work "$work" "$image"; return 1; }
+  linked_copy linked-plan "$work/tree"
+  echo 2 > "$work/tree/net/rev.txt"
+  git -C "$work/tree" init -q -b main
+  git -C "$work/tree" add -A && git -C "$work/tree" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "linked-plan: net at rev 2"
+  run_copied --rm --network terragucci -v "$work/tree:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --layers 'net;app' ${args[@]+"${args[@]}"} >&2 || code=$?
+  clean_mounted "$work/tree" "$image"
+  r="$work/tree/terragucci-report/report.json"
+  [ -f "$r" ] || { log "tf-plan exited $code and wrote no report"; drop_work "$work" "$image"; return 1; }
+  plan="$(cat "$work/tree/terragucci-report/roots/app/plan.txt" 2>/dev/null || true)"
+  grep -q '"net-1" -> "net-2"' <<<"$plan" || { log "app's plan does not move its name to net-2: $(grep -m1 input <<<"$plan")"; rc=1; }
+  grep -q '"stamp-1" -> (known after apply)' <<<"$plan" || { log "app's plan does not leave its stamp unknown until net applies"; rc=1; }
+  jq -e '.roots[] | select(.path == "app") | .reads == [{upstream: "net", data: "net", outputs: "planned", unknown: ["stamp"]}]' "$r" >/dev/null \
+    || { log "the report does not say app read net's planned outputs with stamp unknown: $(jq -c '.roots[] | select(.path == "app") | .reads' "$r")"; rc=1; }
+  jq -e '.waves[] | select(.number == 2) | .replans_after == [1] and .review_digest == null and .reads == [1]' "$r" >/dev/null \
+    || { log "wave 2 is not marked to plan again once wave 1 applies: $(jq -c '.waves[] | select(.number == 2)' "$r")"; rc=1; }
+  [ -z "$(git -C "$work/tree" status --porcelain -- net app)" ] || { log "the plan left app's or net's files changed: $(git -C "$work/tree" status --porcelain -- net app | tr '\n' ' ')"; rc=1; }
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "app planned on net's planned outputs: name net-2, stamp unknown, and wave 2 plans again once wave 1 applies"
+  return $rc
+}
+
+claim_linked_states() {
+  # The linked-states fixture (net in wave 1, app in wave 2 reading net's
+  # state), gate always, a reports bucket, both roots applied at rev 1. A pull
+  # request moves net to rev 2: its plan note shows app's name moving to
+  # net-2, says app read stamp before net knows it, and that wave 2 plans
+  # again once wave 1 applies. Merged: wave 1 waits, and wave 2 plans nothing
+  # yet. Wave 1 approved, the next run applies it, then wave 2 plans on the
+  # state wave 1 applied: its plan shows net-2 and stamp-2, and it waits for
+  # an approval of that digest. The run view in the bucket says wave 1
+  # applied and wave 2 waiting on that digest. Wave 2 approved: app holds
+  # net-2 and stamp-2, and the run view says both applied.
+  # BREAK: apply-wave-2 loses its needs: apply-wave-1, so it plans while wave
+  # 1 still waits, on net's old state.
+  log() { echo "[smoke linked-states] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work repo="$USER/linked-states" name=linked-states prefix sha head pr note merge logs key view plan digest pending wf rc=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  prefix="linked-$(date +%s)${BREAK:+b}"
+  gated_repo "$name" linked-states || { drop_work "$work"; return 1; }
+  linked_apply "$name" || { drop_work "$work"; return 1; }
+  printf 'reports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" >> "$work/tree/terragucci.yml"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
+  wf="$work/tree/.forgejo/workflows/terragucci.yml"
+  if [ -n "${BREAK:-}" ]; then sed '/^    needs: apply-wave-1$/d' "$wf" > "$wf.new" && mv "$wf.new" "$wf"; fi
+  sha="$(push_tree "$work/tree" "$repo" main "linked-states: first")"
+  wait_run "$repo" "$sha"
+  log "first push, both roots applied at rev 1: run $RUN_STATUS"
+
+  echo 2 > "$work/tree/net/rev.txt"
+  head="$(push_tree "$work/tree" "$repo" change "linked-states: net to rev 2")" || rc=1
+  [ $rc = 0 ] && { pr="$(pr_open "$repo" change "linked-states: net to rev 2")" || rc=1; }
+  [ $rc = 0 ] && { wait_run "$repo" "$head" pull_request || rc=1; }
+  if [ $rc = 0 ]; then
+    note="$(api "$URL/api/v1/repos/$repo/issues/$pr/comments?limit=50" | jq -r '[.[] | select(.body | contains("terragucci tf-plan"))] | last | .body // empty')"
+    grep -q "plans again once wave 1 applies" <<<"$note" || { log "the plan note does not say wave 2 plans again once wave 1 applies"; rc=1; }
+    grep -q 'reads `net`; `stamp` known once it applies' <<<"$note" || { log "the plan note does not say app read net's stamp before net knows it"; rc=1; }
+    grep -q '"net-1" -> "net-2"' <<<"$note" || { log "the plan note does not show app's name moving to net-2"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "pull request $pr did not merge"; rc=1; }
+    merge="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.merge_commit_sha // empty')"
+    { [ -n "$merge" ] && wait_run "$repo" "$merge" push; } || rc=1
+  fi
+  if [ $rc = 0 ]; then
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    log "after the merge: run $RUN_STATUS; app at: $(linked_state "$name" app | tr '\n' ' ')"
+    grep -q "chant approve tf-apply wave-1" <<<"$logs" || { log "wave 1 did not wait for its approval"; rc=1; }
+    # Wave 2 plans only once wave 1 applied: nothing of it runs while wave 1 waits.
+    if grep -q "wave 2 of 2: planning app" <<<"$logs"; then
+      log "wave 2 planned while wave 1 waited: $(grep -m1 'app: \(Plan\|No changes\)' <<<"$logs")"; rc=1
+    fi
+  fi
+  [ $rc = 0 ] && { gated_approve "$name" 1 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "linked-states: after wave 1 was approved")"
+    wait_run "$repo" "$sha"
+    logs="$(run_logs "$repo" "$RUN_ID")"
+    log "after wave 1's approval: run $RUN_STATUS; net at: $(linked_state "$name" net | tr '\n' ' ')"
+    grep -q "app plans on the state net (wave 1) applied" <<<"$logs" || { log "wave 2 did not say it plans on the state wave 1 applied"; rc=1; }
+    grep -q "chant approve tf-apply wave-2" <<<"$logs" || { log "wave 2 did not wait for an approval of its plan"; rc=1; }
+    key="$(linked_key "$prefix" "$sha" || true)"
+    view="$([ -z "$key" ] || curl -fsS "$FLOCI/$REPORT_BUCKET/$key")"
+    [ -n "$view" ] || { log "no run view for $sha in $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    log "run view: $(jq -c '[.waves[] | {number, state, approval}]' <<<"$view")"
+    jq -e '.waves[0].state == "applied" and .waves[1].state == "waiting" and .waves[1].reads == [1] and ((.roots[] | select(.root == "app") | .reads) == ["net"])' <<<"$view" >/dev/null \
+      || { log "the run view does not say wave 1 applied and wave 2, reading net, waiting"; rc=1; }
+    digest="$(jq -r '.waves[1].digest // empty' <<<"$view")"
+    pending="$(file_at "$repo" chant/lifecycle "$(remote_head "$repo" chant/lifecycle)" _gates/tf-apply.jsonl | jq -rs '[.[] | select(.kind == "pending" and .gate == "wave-2")] | last | .planDigest // empty')"
+    { [ -n "$digest" ] && [ "$digest" = "$pending" ]; } || { log "wave 2's digest in the run view ($digest) is not the one it waits on ($pending)"; rc=1; }
+    plan="$(curl -fsS "$FLOCI/$REPORT_BUCKET/${key%/runs/*}/$(jq -r '.waves[1].report' <<<"$view")/report.json" | jq -c '.roots[] | select(.path == "app") | [.reads, [.changes[].attributes[]? | select(.path == "input") | .after]]')"
+    log "wave 2's plan of app: $plan"
+    jq -e '.[0] == [{upstream: "net", data: "net", outputs: "applied"}] and ((.[1] | sort) == ["net-2", "stamp-2"])' <<<"$plan" >/dev/null \
+      || { log "wave 2's plan of app is not on net's applied state with net-2 and stamp-2"; rc=1; }
+  fi
+  [ $rc = 0 ] && { gated_approve "$name" 2 || rc=1; }
+  if [ $rc = 0 ]; then
+    sha="$(push_tree "$work/tree" "$repo" main "linked-states: after wave 2 was approved")"
+    wait_run "$repo" "$sha"
+    log "after wave 2's approval: run $RUN_STATUS; app at: $(linked_state "$name" app | tr '\n' ' ')"
+    [ "$(linked_state "$name" app | tr '\n' ' ')" = "name=net-2 stamp=stamp-2 " ] || { log "app does not hold net-2 and stamp-2"; rc=1; }
+    key="$(linked_key "$prefix" "$sha" || true)"
+    view="$([ -z "$key" ] || curl -fsS "$FLOCI/$REPORT_BUCKET/$key")"
+    jq -e '[.waves[].state] == ["applied", "applied"]' <<<"$view" >/dev/null 2>&1 || { log "the run view after wave 2 applied: $(jq -c '[.waves[].state]' <<<"$view" 2>/dev/null)"; rc=1; }
+    curl -fsS "$FLOCI/$REPORT_BUCKET/${key%.json}.html" | grep -q 'data-wave="2" data-state="applied"' || { log "run.html does not show wave 2 applied"; rc=1; }
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "wave 2 planned again once wave 1 applied, showed net-2 and stamp-2, waited for that plan's approval, and the run view followed each wave"
   return $rc
 }
 
@@ -12678,6 +12851,8 @@ reconcile       runner self! weight=300
 rollout         runner self! weight=250
 fresh-plan      ex after=boot weight=250
 waves           runner self! weight=200
+linked-states   runner self! weight=260
+linked-plan     self! weight=90
 refuse          runner self! weight=200
 sealed          runner self! weight=200
 publish         runner self! registry! weight=200
