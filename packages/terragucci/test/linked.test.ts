@@ -194,6 +194,20 @@ describe("tf-plan plans a root on the planned outputs of the roots it reads", ()
     expect(logs.some((l) => l.startsWith("app: the plan on the planned outputs of net failed (Invalid for_each argument)"))).toBe(true);
   });
 
+  it("puts the roots that read a changed root's state in the blast radius, and the note names one this run did not plan", async () => {
+    const repo = estate();
+    const { report } = await runStage("tf-plan", repo, { binary: linkedTofu(tmp()), layers: [["net"], ["app"]], root: "net", out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, () => {});
+    expect(validate(REPORT_SCHEMA, report)).toEqual([]);
+    expect(report.blast).toEqual({ roots: ["net"], downstream: [{ root: "app", reads: ["net"], depth: 1, wave: 2, planned: false }] });
+    const note = renderNote(report);
+    expect(note).toContain("**Blast radius:** 1 root changes (`net`), and 1 root downstream reads their state:");
+    expect(note).toContain("- `app` (wave 2) reads `net`; not planned in this run");
+    // Both planned: app changes too, so nothing is downstream of the change, and the note says nothing of it.
+    const both = await runStage("tf-plan", estate(), { binary: linkedTofu(tmp()), layers: [["net"], ["app"]], out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, () => {});
+    expect(both.report.blast).toEqual({ roots: ["app", "net"], downstream: [] });
+    expect(renderNote(both.report)).not.toContain("Blast radius");
+  });
+
   it("plans on the applied state when the upstream is not planned in the run", async () => {
     const repo = estate();
     const { report } = await runStage("tf-plan", repo, { binary: linkedTofu(tmp()), layers: [["net"], ["app"]], root: "app", out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, () => {});

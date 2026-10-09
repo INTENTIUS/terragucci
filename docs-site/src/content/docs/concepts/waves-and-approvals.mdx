@@ -77,6 +77,29 @@ With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each 
 
 Each wave's job rewrites its own column when it starts applying and when it ends, and links its report. A wave's `report.json` says the same in `waves[].state`, and a pull request's report marks the waves that plan again in `waves[].replans_after`.
 
+Below the waves the page has two more parts:
+
+| Part | Shows |
+|---|---|
+| Blast radius | the roots whose plan in a wave changes something, every root that reads their state through `terraform_remote_state`, followed through, and the dependency graph of the commit's roots with both marked |
+| Timeline | each wave's plan, its wait at the gate and its apply on one time axis, a wait that has not ended drawn open, and the time in each as a table |
+
+A wave that waited has two plans on the timeline: the one that asked for the approval, and the one after it, which applies. In `run.json` each wave carries `changed`, the roots whose plan changes something, and `spans`, each with `phase` (`plan`, `gate` or `apply`), `start`, and `end` once it ended. Each root carries `state`, the state its backend block names, and `external`, its reads of a state no root of the repo holds, which the [estate page](/terragucci/guides/see-every-project/) matches to other projects' roots.
+
+### Blast radius in the plan note
+
+A pull request's plan note names the same radius: the roots whose plan changes something, and each root downstream that reads their state, with its wave. A root the run did not plan, such as one `--root` left out, is marked "not planned in this run".
+
+```text
+**Blast radius:** 1 root changes (`envs/dev/platform`), and 3 roots downstream read their state:
+
+- `envs/dev/orders` (wave 2) reads `envs/dev/platform`
+- `envs/dev/payments` (wave 2) reads `envs/dev/platform`
+- `envs/dev/search` (wave 2) reads `envs/dev/platform`
+```
+
+The note leaves it out when no root reads a changed root's state. `report.json` carries it as `blast`. Terragrunt units are not in it.
+
 ## When a wave waits
 
 The gate policy decides which waves wait for a person.
