@@ -17,6 +17,7 @@ import { CHANGES_SCHEMA, HISTORY_SCHEMA } from "../src/report/history";
 import { DORA_SCHEMA } from "../src/report/dora";
 import { INVENTORY_SCHEMA } from "../src/report/inventory";
 import { STATES_SCHEMA } from "../src/report/state-versions";
+import { RUN_SCHEMA, runSkeleton, withWave } from "../src/report/run-view";
 import { EDGES_SCHEMA } from "../src/report/state-edges";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import type { Report } from "../src/report/schema";
@@ -36,6 +37,7 @@ const EDGES = schema("state-edges.schema.json");
 const CHANGES = schema("changes.schema.json");
 const HISTORY = schema("history.schema.json");
 const DORA = schema("dora.schema.json");
+const RUN_VIEW = schema("run.schema.json");
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1" };
@@ -81,9 +83,10 @@ function runs(): Report[] {
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 3, finished: at(10, 30) }, roots: smallFixture().slice(0, 1), waves: [{ number: 3, roots: ["envs/dev/orders"], approval: "approved" }] }),
     // A share of a wave split across jobs (waves.jobs).
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 4, share: 2, finished: at(10, 40) }, roots: smallFixture().slice(1, 2), waves: [{ number: 4, roots: ["envs/dev/search"], approval: "approved" }] }),
-    // b reads a's state: a drift check of the default branch finds the edge, and a pull request plans b after a applied.
-    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-drift", finished: at(9) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ root: "a", via: "terraform_remote_state" }] }] }),
-    buildReport({ run: { ...RUN, project: NET, ...LINKS, finished: at(9, 30) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ root: "a", via: "terraform_remote_state" }] }] }),
+    // b reads a's state: a plan of the default branch finds the edge, and a pull request plans b after a applied.
+    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-drift", finished: at(9) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
+    buildReport({ run: { ...RUN, project: NET, commit: b, finished: at(9, 10) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
+    buildReport({ run: { ...RUN, project: NET, ...LINKS, finished: at(9, 30) }, roots: [{ path: "b", planner: "tofu", plan: plan([]), reads: [{ upstream: "a", data: "a", outputs: "applied" }] }] }),
   ];
 }
 
@@ -102,7 +105,7 @@ const named = (s: Json): string[] => Object.keys(s.properties ?? {});
 
 describe("the reader contracts' schemas", () => {
   it("use only the keywords the check reads, and name the schema id the writer puts in `schema`", () => {
-    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [EDGES, EDGES_SCHEMA]] as const) {
+    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [RUN_VIEW, RUN_SCHEMA], [EDGES, EDGES_SCHEMA]] as const) {
       expect(unknownKeywords(s)).toEqual([]);
       expect(s.title).toBe(id);
       expect(s.properties.schema.const).toBe(id);
@@ -112,11 +115,24 @@ describe("the reader contracts' schemas", () => {
 
   it("ship beside report.schema.json: the build copies each one into dist, which the package publishes", () => {
     const shipped = readdirSync(SRC).filter((f) => f.endsWith(".schema.json")).sort();
-    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "state-edges.schema.json", "state-versions.schema.json"]);
+    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "run.schema.json", "state-edges.schema.json", "state-versions.schema.json"]);
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "../package.json"), "utf-8"));
     expect(pkg.files).toContain("dist");
     const build = readFileSync(join(import.meta.dirname, "../../../scripts/build-cli.mjs"), "utf-8");
     for (const f of shipped) expect(build).toContain(`"${f}"`);
+  });
+});
+
+describe("run.json", () => {
+  it("is what the waves' jobs write, and between them they carry every field the schema names", () => {
+    const skeleton = runSkeleton(WEB, "c0ffee", [["net"], ["app", "web"]], new Map([["app", new Set(["net"])]]));
+    let v = withWave(undefined, skeleton, { number: 1, state: "applied", gate: "wave-1", policy: "always", approval: "approved", digest: "d1", report: "2026/10/c0ffee/tf-apply-wave-1" }, at(1));
+    v = withWave(JSON.stringify(v), skeleton, { number: 2, state: "waiting", approval: "waiting", digest: "d2", command: "chant approve tf-apply wave-2 --plan d2", shares: 2 }, at(2));
+    v = withWave(JSON.stringify(v), skeleton, { number: 2, shares_applied: [1] }, at(3));
+    expect(validate(RUN_VIEW, v)).toEqual([]);
+    expect([...keys([v as unknown as Json])].sort()).toEqual(named(RUN_VIEW).sort());
+    expect([...keys(v.roots as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.roots.items).sort());
+    expect([...keys(v.waves as unknown as Json[])].sort()).toEqual(named(RUN_VIEW.properties.waves.items).sort());
   });
 });
 

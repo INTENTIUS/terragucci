@@ -6,7 +6,7 @@ import { buildReport, type RootInput } from "../src/report/build";
 import { buildEstate, readInlineEstate, renderEstateHtml } from "../src/report/estate";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import type { Report, ReportRead } from "../src/report/schema";
-import { addToStateEdges, EDGES_SCHEMA, edgesOf, hasEdgeFacts, readStateEdges } from "../src/report/state-edges";
+import { addToStateEdges, EDGES_SCHEMA, edgesOf, hasEdgeFacts, readsOf, readStateEdges, type EdgeRead } from "../src/report/state-edges";
 import { runStage } from "../src/report/stage";
 import { uploadReport, writeReportDir } from "../src/report/store";
 import { validate, type Json } from "../../../scripts/schema-check";
@@ -18,41 +18,41 @@ const schema = (name: string): Json => JSON.parse(readFileSync(join(SRC, name), 
 const at = (h: number): string => `2026-10-07T${String(h).padStart(2, "0")}:00:00.000Z`;
 const NOW = new Date("2026-10-07T23:00:00.000Z");
 const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1" };
-const READS_NETWORK: ReportRead[] = [{ root: "network", via: "terraform_remote_state" }];
+/** As the report names it: app's terraform_remote_state block reading network. */
+const READS_NETWORK: ReportRead[] = [{ upstream: "network", data: "up", outputs: "applied" }];
+/** As edges.json keeps it. */
+const EDGE_NETWORK: EdgeRead[] = [{ root: "network", via: "terraform_remote_state" }];
 
 const changed = (): Json => plan([rc("terraform_data.x", ["update"], { input: "a" }, { input: "b" })]);
 const same = (): Json => plan([]);
 
 /** A run of `stage` over roots, each with its plan, its reads, and on an apply whether it applied. */
-function run(stage: "tf-plan" | "tf-drift" | "tf-apply", finished: string, roots: Record<string, { plan?: Json; reads?: ReportRead[]; error?: string }>, extra: Partial<Report["run"]> = {}): Report {
+function run(stage: "tf-plan" | "tf-drift" | "tf-apply", finished: string, roots: Record<string, { plan?: Json; reads?: ReportRead[]; dependencies?: string[]; error?: string }>, extra: Partial<Report["run"]> = {}): Report {
   const inputs: RootInput[] = Object.entries(roots).map(([path, r]) => ({
     path,
     planner: "tofu" as const,
     ...(r.error ? { error: r.error } : { plan: r.plan ?? same() }),
     ...(stage === "tf-apply" && !r.error ? { applied: true } : {}),
     ...(r.reads ? { reads: r.reads } : {}),
+    ...(r.dependencies ? { dependencies: r.dependencies } : {}),
   }));
   return buildReport({ run: { ...RUN, stage, finished, ...(stage === "tf-apply" ? { wave: 1 } : {}), ...extra }, roots: inputs, ...(stage === "tf-apply" ? { waves: [{ number: 1, roots: Object.keys(roots), approval: "not-required" as const }] } : {}) });
 }
 
 describe("each root's reads in its report", () => {
-  it("a drift check names the roots a root reads through terraform_remote_state, and none for a root that reads none", async () => {
-    const bin = tmp();
-    const tofu = join(bin, "tofu");
-    writeFileSync(tofu, `#!/bin/sh
-chdir="\${1#-chdir=}"; shift
-case "$1" in
-  plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done; exit 0 ;;
-  show) if [ "$2" = "-json" ]; then echo '{"format_version":"1.2","resource_changes":[],"resource_drift":[]}'; else echo "plan text"; fi ;;
-esac
-exit 0
-`);
-    chmodSync(tofu, 0o755);
-    const repo = write(tmp(), { "network/main.tf": backend("network.tfstate"), "app/main.tf": backend("app.tfstate") + remoteState("network.tfstate") });
-    const { report } = await runStage("tf-drift", repo, { binary: tofu, layers: [["network"], ["app"]], out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, () => {});
-    expect(report.roots.find((r) => r.path === "app")?.reads).toEqual(READS_NETWORK);
-    expect(report.roots.find((r) => r.path === "network")?.reads).toBeUndefined();
-    expect(validate(schema("report.schema.json"), report)).toEqual([]);
+  it("are its remote state blocks' upstreams, once each, then a unit's dependencies", () => {
+    expect(readsOf({ reads: [...READS_NETWORK, { upstream: "network", data: "again", outputs: "planned" }, { upstream: "dns", data: "d", outputs: "applied" }] })).toEqual([
+      { root: "dns", via: "terraform_remote_state" },
+      { root: "network", via: "terraform_remote_state" },
+    ]);
+    expect(readsOf({ dependencies: ["live/vpc", "live/vpc"] })).toEqual([{ root: "live/vpc", via: "dependency" }]);
+    expect(readsOf({})).toEqual([]);
+  });
+
+  it("a unit's dependencies are in the report as roots[].dependencies", () => {
+    const r = run("tf-plan", at(9), { "live/app": { dependencies: ["live/vpc"] } });
+    expect(r.roots[0].dependencies).toEqual(["live/vpc"]);
+    expect(validate(schema("report.schema.json"), r)).toEqual([]);
   });
 });
 
@@ -60,7 +60,7 @@ describe("edges.json", () => {
   it("keeps each root's reads, its newest plan, and the newest apply that changed it", () => {
     let e = addToStateEdges(undefined, run("tf-apply", at(9), { network: { plan: changed() }, app: { plan: same(), reads: READS_NETWORK } }), "w1");
     expect(e.roots).toEqual([
-      { root: "app", reads: READS_NETWORK, reads_seen: at(9), planned: { stage: "tf-apply", commit: RUN.commit, finished: at(9), wave: 1, path: "w1" } },
+      { root: "app", reads: EDGE_NETWORK, reads_seen: at(9), planned: { stage: "tf-apply", commit: RUN.commit, finished: at(9), wave: 1, path: "w1" } },
       { root: "network", reads: [], reads_seen: at(9), planned: { stage: "tf-apply", commit: RUN.commit, finished: at(9), wave: 1, path: "w1" }, applied: { stage: "tf-apply", commit: RUN.commit, finished: at(9), wave: 1, path: "w1" } },
     ]);
     // A later apply that changes nothing in network leaves its last apply where it was.
@@ -70,14 +70,17 @@ describe("edges.json", () => {
   });
 
   it("a pull request's plan moves the plan forward but never the reads, and an older run never replaces a newer one", () => {
-    let e = addToStateEdges(undefined, run("tf-drift", at(9), { app: { plan: same(), reads: READS_NETWORK } }), "d");
+    let e = addToStateEdges(undefined, run("tf-apply", at(9), { app: { plan: same(), reads: READS_NETWORK } }), "w");
     e = addToStateEdges(JSON.stringify(e), run("tf-plan", at(11), { app: { plan: same(), reads: [] } }, { pull_request: "7" }), "pr");
-    expect(e.roots[0]).toMatchObject({ reads: READS_NETWORK, planned: { stage: "tf-plan", pull_request: "7", finished: at(11) } });
-    e = addToStateEdges(JSON.stringify(e), run("tf-drift", at(8), { app: { plan: same(), reads: [{ root: "other", via: "terraform_remote_state" }] } }), "old");
-    expect(e.roots[0]).toMatchObject({ reads: READS_NETWORK, planned: { finished: at(11) } });
-    // A root that failed to plan keeps its last plan.
-    e = addToStateEdges(JSON.stringify(e), run("tf-drift", at(12), { app: { error: "boom", reads: READS_NETWORK } }), "f");
-    expect(e.roots[0].planned?.finished).toBe(at(11));
+    expect(e.roots[0]).toMatchObject({ reads: EDGE_NETWORK, planned: { stage: "tf-plan", pull_request: "7", finished: at(11) } });
+    // A drift check names no reads, and leaves them; an older apply does not replace newer facts.
+    e = addToStateEdges(JSON.stringify(e), run("tf-drift", at(12), { app: { plan: same() } }), "d");
+    expect(e.roots[0]).toMatchObject({ reads: EDGE_NETWORK, planned: { stage: "tf-drift", finished: at(12) } });
+    e = addToStateEdges(JSON.stringify(e), run("tf-apply", at(8), { app: { plan: same(), reads: [{ upstream: "other", data: "o", outputs: "applied" }] } }), "old");
+    expect(e.roots[0]).toMatchObject({ reads: EDGE_NETWORK, planned: { finished: at(12) } });
+    // A root that failed to plan keeps its last plan and its reads.
+    e = addToStateEdges(JSON.stringify(e), run("tf-apply", at(13), { app: { error: "boom", reads: [] } }), "f");
+    expect(e.roots[0]).toMatchObject({ reads: EDGE_NETWORK, planned: { finished: at(12) } });
   });
 
   it("is written for a report with reads or an applied change, and not for one with neither", () => {
@@ -97,7 +100,7 @@ describe("edges.json", () => {
     e = addToStateEdges(JSON.stringify(e), run("tf-drift", at(12), { app: { plan: same(), reads: READS_NETWORK } }), "d");
     expect(edgesOf(e)[0].status).toBe("current");
     // A producer with no recorded change: unknown.
-    expect(edgesOf(addToStateEdges(undefined, run("tf-drift", at(9), { app: { reads: READS_NETWORK } }), "d"))[0].status).toBe("unknown");
+    expect(edgesOf(addToStateEdges(undefined, run("tf-plan", at(9), { app: { reads: READS_NETWORK } }), "p"))[0].status).toBe("unknown");
   });
 });
 
@@ -147,7 +150,7 @@ describe("the cross-state edges on the estate page", () => {
 
   it("says no root reads another's state when none does, and escapes root names", () => {
     expect(renderEstateHtml(buildEstate([{ project: "p", reports: [] }], NOW))).toContain("No root reads another root's state");
-    const bad = addToStateEdges(undefined, run("tf-drift", at(9), { "<b id=x>": { reads: [{ root: "</script><i>", via: "dependency" }] } }), "x");
+    const bad = addToStateEdges(undefined, run("tf-plan", at(9), { "<b id=x>": { dependencies: ["</script><i>"] } }), "x");
     const html = renderEstateHtml(buildEstate([{ project: "p", reports: [], edges: bad }], NOW));
     expect(html).not.toContain("<b id=x>");
     expect(html).not.toContain("</script><i>");

@@ -210,6 +210,12 @@ export interface StateRef {
   key: string;
 }
 
+/** A `terraform_remote_state` block: its label, the state it reads, and whether it repeats (count or for_each). */
+interface RemoteRead extends StateRef {
+  name: string;
+  repeated: boolean;
+}
+
 function blockBody(text: string, start: number): string {
   let depth = 0;
   for (let i = text.indexOf("{", start); i < text.length; i++) {
@@ -224,9 +230,9 @@ function attr(body: string, name: string): string | undefined {
 }
 
 /** The state a root's backend block names, and the states its `terraform_remote_state` blocks read, as written in its code. */
-export function stateOf(repo: string, root: string): { own?: StateRef; reads: StateRef[] } {
+export function stateOf(repo: string, root: string): { own?: StateRef; reads: RemoteRead[] } {
   let own: StateRef | undefined;
-  const reads: StateRef[] = [];
+  const reads: RemoteRead[] = [];
   for (const f of tfFiles(join(repo, root))) {
     const text = stripComments(readFileSync(f, "utf-8"));
     for (const m of text.matchAll(/\bbackend\s+"[^"]+"\s*\{/g)) {
@@ -234,28 +240,38 @@ export function stateOf(repo: string, root: string): { own?: StateRef; reads: St
       const key = attr(body, "key") ?? attr(body, "prefix");
       if (key) own = { bucket: attr(body, "bucket"), key };
     }
-    for (const m of text.matchAll(/\bdata\s+"terraform_remote_state"\s+"[^"]+"\s*\{/g)) {
+    for (const m of text.matchAll(/\bdata\s+"terraform_remote_state"\s+"([^"]+)"\s*\{/g)) {
       const body = blockBody(text, m.index!);
       const key = attr(body, "key") ?? attr(body, "prefix");
-      if (key) reads.push({ bucket: attr(body, "bucket"), key });
+      if (key) reads.push({ name: m[1], bucket: attr(body, "bucket"), key, repeated: /^\s*(count|for_each)\s*=/m.test(body) });
     }
   }
   return { own, reads };
 }
 
-/** For each root, the roots whose state it reads through `terraform_remote_state`. */
-export function rootDependencies(repo: string, roots: string[]): Map<string, Set<string>> {
+/**
+ * Each root's `terraform_remote_state` blocks that read another root's state:
+ * the block's label, the root it reads, and whether the block repeats (count
+ * or for_each), which a linked plan leaves on the applied state.
+ */
+export function remoteStateReads(repo: string, roots: string[]): Map<string, { name: string; upstream: string; repeated: boolean }[]> {
   const states = new Map(roots.map((r) => [r, stateOf(repo, r)]));
-  const deps = new Map<string, Set<string>>(roots.map((r) => [r, new Set()]));
+  const out = new Map<string, { name: string; upstream: string; repeated: boolean }[]>(roots.map((r) => [r, []]));
   for (const [root, { reads }] of states) {
     for (const read of reads) {
       for (const [other, { own }] of states) {
         if (other === root || !own) continue;
-        if (own.key === read.key && (!own.bucket || !read.bucket || own.bucket === read.bucket)) deps.get(root)!.add(other);
+        if (own.key === read.key && (!own.bucket || !read.bucket || own.bucket === read.bucket)) out.get(root)!.push({ name: read.name, upstream: other, repeated: read.repeated });
       }
     }
   }
-  return deps;
+  return out;
+}
+
+/** For each root, the roots whose state it reads through `terraform_remote_state`. */
+export function rootDependencies(repo: string, roots: string[]): Map<string, Set<string>> {
+  const reads = remoteStateReads(repo, roots);
+  return new Map(roots.map((r) => [r, new Set(reads.get(r)!.map((x) => x.upstream))]));
 }
 
 /**

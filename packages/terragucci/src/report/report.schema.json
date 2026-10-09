@@ -201,17 +201,10 @@
               }
             }
           },
-          "reads": {
-            "description": "The roots whose state it reads, from its code: a terraform_remote_state block whose backend names another root's state, or a Terragrunt unit's dependency and dependencies blocks (minor 21). Absent when it reads none.",
+          "dependencies": {
+            "description": "A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads, as plain paths in its terragrunt.hcl (minor 23). Absent when it names none.",
             "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["root", "via"],
-              "properties": {
-                "root": { "type": "string" },
-                "via": { "enum": ["terraform_remote_state", "dependency"] }
-              }
-            }
+            "items": { "type": "string" }
           },
           "state": {
             "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20).",
@@ -237,6 +230,21 @@
                 "status": { "enum": ["passed", "failed", "approval"] },
                 "exit": { "type": ["integer", "null"] },
                 "seconds": { "type": "number" }
+              }
+            }
+          },
+          "reads": {
+            "description": "The roots whose state the root reads through terraform_remote_state, and which outputs it planned on: planned, the upstream's plan in this run, with the outputs known only once it applies under unknown; applied, its state as it stands (minor 21).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["upstream", "data", "outputs"],
+              "properties": {
+                "upstream": { "type": "string" },
+                "data": { "type": "string" },
+                "outputs": { "enum": ["planned", "applied"] },
+                "unknown": { "type": "array", "items": { "type": "string" } },
+                "why": { "type": "string" }
               }
             }
           }
@@ -299,7 +307,10 @@
               "approve_above": { "type": "number" },
               "over": { "type": "boolean" }
             }
-          }
+          },
+          "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed." },
+          "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read (minor 21)." },
+          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply and waits for an approval of that plan; its review digest is null (minor 21)." }
         }
       }
     },

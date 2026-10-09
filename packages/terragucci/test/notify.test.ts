@@ -5,7 +5,7 @@ import type { WaveOutcome } from "../src/apply";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { notify, readOutcome, runUrl, signature, slackMessage, teamsMessage, waveNotice, webhookEvent } from "../src/notify";
+import { driftNotice, notify, notifyDrift, readOutcome, replanUrl, runUrl, signature, slackDrift, slackMessage, teamsDrift, teamsMessage, waveNotice, webhookEvent } from "../src/notify";
 import { applyScript, renderPipeline } from "../src/render";
 import { tmp, validate, write } from "./helpers";
 
@@ -136,5 +136,81 @@ describe("notify: chat webhooks for a wave", () => {
     for (const e of ["waiting", "refused", "failed"]) expect(script).toContain(`terragucci notify ${e} --wave 1 --outcome "$outcome" --outcome-json "$outcome_json" || true`);
     expect(script).toContain('TG_OUTCOME="$outcome" TG_OUTCOME_JSON="$outcome_json" terragucci stage tf-apply');
     expect(applyScript("tofu", [["a"]], forge, undefined, { wave: 1 })).not.toContain("terragucci notify");
+  });
+});
+
+describe("notify: the relay's buttons", () => {
+  it("with notify.relay, a waiting wave's Slack message carries Approve and Decline, each naming the wave and digest", () => {
+    const n = waveNotice("waiting", 2, { result: waiting, reportDir: report(), env: { ...ENV, TERRAGUCCI_RELAY: "terragucci" } });
+    expect(n.relay).toBe("terragucci");
+    const m = slackMessage(n);
+    expect(m.text).toBe(slackMessage({ ...n, relay: undefined }).text);
+    const actions = m.blocks?.[1] as any;
+    expect(actions.elements.map((e: any) => [e.action_id, e.text.text, JSON.parse(e.value)])).toEqual([
+      ["terragucci-approve", "Approve", { wave: 2, plan: "jcs1-sha256:ab" }],
+      ["terragucci-decline", "Decline", { wave: 2, plan: "jcs1-sha256:ab" }],
+    ]);
+    const card = (teamsMessage(n) as any).attachments[0].content;
+    expect(card.body.at(-1).text).toBe("Approve here: reply @terragucci approve wave-2 jcs1-sha256:ab. Decline: reply @terragucci decline wave-2 jcs1-sha256:ab.");
+  });
+
+  it("a refused or failed wave, or one with no relay, gets no buttons", () => {
+    expect(slackMessage(waveNotice("waiting", 2, { result: waiting, reportDir: report(), env: ENV })).blocks).toBeUndefined();
+    const refused: WaveOutcome = { ...waiting, status: "refused", exit: 4 };
+    expect(slackMessage(waveNotice("refused", 2, { result: refused, reportDir: report(), env: { ...ENV, TERRAGUCCI_RELAY: "terragucci" } })).blocks).toBeUndefined();
+  });
+
+  it("takes notify.relay as a name beside slack or teams", () => {
+    expect(validateConfig({ notify: { slack: "S", relay: "terragucci" } }, "t").notify).toEqual({ slack: "S", relay: "terragucci" });
+    expect(() => validateConfig({ notify: { webhook: "H", webhook_key: "K", relay: "terragucci" } }, "t")).toThrow(/notify.relay needs notify.slack or notify.teams/);
+    expect(() => validateConfig({ notify: { slack: "S", relay: "<at>x</at>" } }, "t")).toThrow(/notify.relay must name your relay/);
+  });
+
+  it.each(["github", "forgejo", "gitlab"] as const)("%s: the apply jobs get the relay's name as a plain value", (forge) => {
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, notify: { slack: "CHAT_SLACK", relay: "terragucci" } }).content;
+    const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+    const job = forge === "gitlab" ? doc["apply-wave-1"] : doc.jobs["apply-wave-1"];
+    expect((forge === "gitlab" ? job.variables : job.env).TERRAGUCCI_RELAY).toBe("terragucci");
+  });
+});
+
+describe("notify: drift", () => {
+  const driftReport = (roots: { path: string; status: string; changes: unknown[] }[]): string => write(tmp(), { "report.json": JSON.stringify({ run: { project: "github.com/acme/infra" }, roots }) });
+
+  it("names the drifted roots, and a Re-plan button opens the page where the check runs again", () => {
+    const n = driftNotice(driftReport([{ path: "app", status: "planned", changes: [{}] }, { path: "net", status: "planned", changes: [] }, { path: "db", status: "failed", changes: [] }]), { ...ENV, GITHUB_WORKFLOW_REF: "acme/infra/.github/workflows/terragucci.yml@refs/heads/main" })!;
+    expect(n).toEqual({ project: "github.com/acme/infra", roots: ["app"], failed: ["db"], run: "https://github.com/acme/infra/actions/runs/42", replan: "https://github.com/acme/infra/actions/workflows/terragucci.yml" });
+    const slack = slackDrift(n);
+    expect(slack.text.split("\n")).toEqual(["*terragucci: drift in github.com/acme/infra: 1 root changed outside Terraform, 1 could not be refreshed*", "Drifted: app", "Not refreshed: db", "Run: <https://github.com/acme/infra/actions/runs/42>"]);
+    expect((slack.blocks?.[1] as any).elements).toEqual([{ type: "button", action_id: "terragucci-replan", text: { type: "plain_text", text: "Re-plan" }, url: n.replan }]);
+    const card = (teamsDrift(n) as any).attachments[0].content;
+    expect(card.actions[0]).toEqual({ type: "Action.OpenUrl", title: "Re-plan", url: n.replan });
+  });
+
+  it("opens the Run workflow page on Forgejo and the pipeline schedules on GitLab", () => {
+    expect(replanUrl({ GITHUB_SERVER_URL: "http://forgejo:3000", GITHUB_REPOSITORY: "acme/infra", GITEA_ACTIONS: "true" })).toBe("http://forgejo:3000/acme/infra/actions?workflow=terragucci.yml");
+    expect(replanUrl({ GITLAB_CI: "true", CI_PROJECT_URL: "https://gitlab.com/acme/infra" })).toBe("https://gitlab.com/acme/infra/-/pipeline_schedules");
+  });
+
+  it("posts nothing when there is no drift, and only to Slack and Teams", async () => {
+    expect(driftNotice(driftReport([{ path: "app", status: "planned", changes: [] }]), ENV)).toBeUndefined();
+    const posted: string[] = [];
+    const post = (async (url: string) => (posted.push(url), { ok: true, status: 200 })) as any;
+    const n = driftNotice(driftReport([{ path: "app", status: "planned", changes: [{}] }]), ENV);
+    const lines = await notifyDrift(n, { TERRAGUCCI_SLACK_WEBHOOK: "https://s", TERRAGUCCI_WEBHOOK: "https://w", TERRAGUCCI_WEBHOOK_KEY: "k" }, post);
+    expect(posted).toEqual(["https://s"]);
+    expect(lines).toEqual(["posted to Slack: terragucci: drift in github.com/acme/infra: 1 root changed outside Terraform"]);
+  });
+
+  it.each(["github", "forgejo", "gitlab"] as const)("%s: the drift job gets the chat secrets, never the webhook's, and posts after the stage", (forge) => {
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, drift: "0 6 * * *", notify: { slack: "CHAT_SLACK", webhook: "HOOK_URL", webhook_key: "HOOK_KEY" } }).content;
+    const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+    const job = forge === "gitlab" ? doc.drift : doc.jobs.drift;
+    const env = forge === "gitlab" ? job.variables : job.env;
+    expect(env.TERRAGUCCI_SLACK_WEBHOOK).toBe(forge === "gitlab" ? "$CHAT_SLACK" : "${{ secrets.CHAT_SLACK }}");
+    expect(env.TERRAGUCCI_WEBHOOK).toBeUndefined();
+    expect(text).toContain("terragucci notify drift --report terragucci-report || true");
+    const quiet = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, drift: "0 6 * * *", notify: { webhook: "HOOK_URL", webhook_key: "HOOK_KEY" } }).content;
+    expect(quiet).not.toContain("terragucci notify drift");
   });
 });

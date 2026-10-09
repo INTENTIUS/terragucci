@@ -29,7 +29,7 @@ A consumer goes stale when a change reaches the producer and not the consumer: i
 | a `terraform_remote_state` block whose backend's `bucket` and `key` name another root's state | the code of both roots, as it orders the apply waves |
 | a Terragrunt unit's `dependency` or `dependencies` block | the unit's `terragrunt.hcl` |
 
-Each report lists a root's reads as `roots[].reads`. Each upload keeps them in the project's `edges.json`. Beside them it keeps the newest run that planned each root, and the newest apply wave that changed it. The reads follow the default branch's code; a pull request's plan moves the consumer's last plan forward and never changes its reads. Nothing reads a state or an output's value.
+Each report lists a root's `terraform_remote_state` reads as `roots[].reads`, and a unit's dependencies as `roots[].dependencies`. Each upload keeps them in the project's `edges.json`. Beside them it keeps the newest run that planned each root, and the newest apply wave that changed it. The reads follow the newest plan or apply of the default branch. A pull request's plan, or a drift check, moves the consumer's last plan forward and never changes its reads. Nothing reads a state or an output's value.
 
 ## Steps
 
