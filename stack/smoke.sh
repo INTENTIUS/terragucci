@@ -5158,6 +5158,20 @@ pr_mergeable() { # repo, number -> waits until the forge has finished checking t
   echo "$m"
 }
 
+# Merge a pull request once the forge has worked out that it can. Forgejo
+# answers a merge with 405 while it is still checking the pull request, so a
+# 405 is read as "not yet" and the merge is tried again, for up to a minute.
+merge_pr() { # repo, number
+  local i code
+  for i in $(seq 1 20); do
+    [ "$(api "$URL/api/v1/repos/$1/pulls/$2" | jq -r .mergeable)" = true ] || { sleep 3; continue; }
+    code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$1/pulls/$2/merge")"
+    case "$code" in 2??) return 0 ;; 405) sleep 3 ;; *) echo "the merge of pull request $2 answered $code" >&2; return 1 ;; esac
+  done
+  echo "pull request $2 never merged: the forge did not call it mergeable, or answered 405, for a minute" >&2
+  return 1
+}
+
 claim_pr_requires() {
   # Two repos with apply.when: pull-request and apply.merge: manual. In
   # pr-requires, apply.requires is [approved]: a pull request changes
@@ -15120,7 +15134,7 @@ claim_tip_moved() {
     base="$(api "$URL/api/v1/repos/$repo/pulls/$pr" | jq -r '.base.ref')"
     files="$(pr_files "$repo" "$pr")"
     [ "$base" = rename ] && [ "$files" = app/main.tf ] || { log "pull request $pr goes into $base and changes $files, not rename and app/main.tf"; drop_work "$work"; return 1; }
-    api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" || { log "could not merge pull request $pr"; drop_work "$work"; return 1; }
+    merge_pr "$repo" "$pr" || { log "could not merge pull request $pr"; drop_work "$work"; return 1; }
     log "merged pull request $pr into rename"
   else
     log "no pull request from terragucci/tip/moved-app"
