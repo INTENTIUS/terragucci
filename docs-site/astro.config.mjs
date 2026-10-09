@@ -107,6 +107,7 @@ export default defineConfig({
 								{ label: 'Apply a pull request before it merges', slug: 'guides/apply-before-merge' },
 								{ label: 'Move resources between roots', slug: 'guides/move-resources-between-roots' },
 								{ label: 'Release a state lock a killed job left', slug: 'guides/release-a-state-lock' },
+								{ label: 'Ephemeral environments per pull request', slug: 'guides/ephemeral-environments' },
 							],
 						},
 						{

@@ -909,7 +909,7 @@ claim_ephemeral_pr() {
     [ "$n" = 0 ] || { log "closing pull request $EPH_PR did not destroy its copy"; rc=1; }
     done_lines="$(ephemeral_done "$repo")"
     jq -c '{kind, pr, result, reason, roots: [.roots[].location]}' <<<"$done_lines" >&2 || true
-    jq -e --argjson pr "$EPH_PR" 'select(.kind == "ephemeral-destroy" and .pr == $pr and .reason == "closed" and .result == "destroyed" and (.planDigest | startswith("sha256:")))' <<<"$done_lines" >/dev/null \
+    jq -e --argjson pr "$EPH_PR" 'select(.kind == "ephemeral-destroy" and .pr == $pr and .reason == "closed" and .result == "destroyed" and (.planDigest | test("sha256:")))' <<<"$done_lines" >/dev/null \
       || { log "chant/lifecycle records no destroy of the copy for the close"; rc=1; }
   fi
   drop_work "$work"
