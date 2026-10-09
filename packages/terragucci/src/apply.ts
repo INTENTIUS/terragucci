@@ -95,6 +95,7 @@ import { globMatch, remoteStateReads, rootDependencies, rootStates } from "./det
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
+import { comparePreview } from "./tg-preview-gate";
 import { runPath } from "./report/store";
 import { buildReport, planFiles } from "./report/build";
 import { StageObserver } from "./report/observe";
@@ -116,10 +117,11 @@ import { changesSomething, forgeCalls, pullOf, reviewDigest, reviewWave, type Re
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
-import { discoverUnits, refineWaves } from "./terragrunt";
+import { discoverUnits, refineWaves, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion } from "./backend";
+import { rootRoleEnv } from "./roles";
 import { migrationFiles, MIGRATIONS_DIR, runMigrations, type MigrationRecord } from "./migrate";
 import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
 import type { StepSettings } from "./config";
@@ -597,7 +599,8 @@ async function planRoot(repo: string, binaries: RootBinaries, root: string, work
 
 async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps): Promise<PlannedRoot> {
   const dir = join(repo, root);
-  const env = { ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir };
+  // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
+  const env = rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root);
   const planFile = join(work, `${i}.tfplan`);
   const expected = binaries.expected(root);
   const failed = { root, timing, planFile, env, changes: 0, destroys: 0, summary: "", binary: binaries.binary, bin: expected, steps: [] as ReportStep[], holds: [] as string[] };
@@ -611,7 +614,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   const bin: ReportRootBinary = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
   if (bin.pin) console.log(`${root}: ${binaryText(bin)}`);
   const base = { ...failed, binary, bin };
-  const stepEnv = ws ? { ...ws, env: { ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir } } : undefined;
+  const stepEnv = ws ? { ...ws, env: rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root) } : undefined;
   let stepError = await rootSteps(repo, base, stepEnv, "before-init");
   if (stepError) return { ...base, error: stepError };
   const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], env, dir));
@@ -642,7 +645,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
 }
 
 async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, ws?: WaveSteps): Promise<boolean> {
-  const stepEnv = ws ? { ...ws, env: { ...ws.env, TF_PLUGIN_CACHE_DIR: p.env.TF_PLUGIN_CACHE_DIR } } : undefined;
+  const stepEnv = ws ? { ...ws, env: rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: p.env.TF_PLUGIN_CACHE_DIR }, p.root) } : undefined;
   const before = await rootSteps(repo, p, stepEnv, "before-apply", p.planFile);
   if (before) {
     console.log(`FAILED ${p.root}: nothing applied`);
@@ -816,6 +819,8 @@ interface WaveRun {
   reads?: Map<string, ReportRead[]>;
   /** The waves whose roots its roots read. */
   waveReads?: number[];
+  /** A Terragrunt wave: its plans against the merged pull request's preview of them. */
+  preview?: ReportWave["preview"];
   /** When its roots finished planning. */
   plannedAt?: string;
   /** When the wait at its gate began: the pending record its approval answered, or the first run that asked. */
@@ -914,18 +919,22 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     redacted += safe.values;
     plans.set(p.root, { json: JSON.stringify(safe.plan, null, 2) + "\n" });
   }
+  // The roots whose state each root reads, from the code: remote state for plain roots, dependency blocks for units.
+  // A Terragrunt unit's dependency and dependencies blocks, from its terragrunt.hcl: the units whose outputs it reads.
+  const unitDeps = options.terragrunt ? new Map(walkUnits(repo, settings.terragrunt?.exclude).map((u) => [u.path, u.dependencies])) : undefined;
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => {
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
       const steps = p.steps?.length ? { steps: p.steps } : {};
-      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps };
+      const deps = unitDeps?.get(p.root)?.length ? { dependencies: unitDeps.get(p.root) } : {};
+      if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), error: p.error.split("\n")[0], ...policy, ...steps, ...deps };
       const state = w.states?.get(p.root);
       const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}) };
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...deps };
     }),
-    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -1390,13 +1399,16 @@ async function priceWave(
 
 /**
  * What the wave's policy reads as `input.review`: the verdict the review job
- * kept as its artifact, in a run of the head of the pull request this commit
- * merged (or `TG_PR`'s, applied before merge). Notes on the pull request are
- * not read: any run's token can post one. GitLab has no review job, and a
+ * kept as its artifact, in a run of the default branch's review workflow that
+ * reviewed the head of the pull request this commit merged (or `TG_PR`'s,
+ * applied before merge). Notes on the pull request are not read: any run's
+ * token can post one. Nor is an artifact a run of the pull request's own
+ * pipeline kept, which the pull request can edit. GitLab has no review job, and a
  * commit no pull request made has no review: both read as not found.
  */
-async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string): Promise<PolicyReview> {
-  if (env.GITLAB_CI === "true") return noReview();
+async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string, forge: string | undefined): Promise<PolicyReview> {
+  if (env.GITLAB_CI === "true" || forge === "gitlab") return noReview();
+  const on: "github" | "forgejo" = forge === "forgejo" || forge === "github" ? forge : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
   const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   try {
     const f = forgeCalls(env, options.fetch);
@@ -1405,10 +1417,11 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
       console.log(`${label}: review: no pull request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
       return noReview();
     }
-    const { run, ...review } = await reviewOfPull(f, pr, artifactBytes(env, (options.fetch ?? fetch) as unknown as FetchBytes));
+    const { run, skipped, ...review } = await reviewOfPull(f, pr, artifactBytes(env, (options.fetch ?? fetch) as unknown as FetchBytes), on);
+    for (const s of skipped) console.log(`${label}: review: skipped the review artifact of ${s.run === null ? "an unnamed run" : `run ${s.run}`}, since ${s.why}`);
     console.log(review.found
-      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk} in run ${run}, which the policy reads as input.review`
-      : `${label}: review: no run of pull request ${pr.number}'s head ${pr.head.slice(0, 8)} kept a review, so input.review.found is false`);
+      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk} in run ${run} of the default branch's review workflow, which the policy reads as input.review`
+      : `${label}: review: no run of the default branch's review workflow kept a review of pull request ${pr.number}'s head ${pr.head.slice(0, 8)}, so input.review.found is false`);
     return review;
   } catch (e) {
     console.log(`${label}: review: could not read the pull request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
@@ -1441,7 +1454,7 @@ async function policyGate(
     // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
     const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
     // With review.agent on, the policy reads the review of the merged pull request's head as input.review.
-    const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label) : undefined;
+    const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label, settings.forge) : undefined;
     const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit, ...(review ? { review } : {}) });
     const denied = found.failed;
     w.policy = found.policy;
@@ -2151,6 +2164,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
   for (const u of heldBySteps) console.log(`${label}: ${u}: step ${holds.get(u)!.join(", ")} asks for an approval, so the gate holds this wave`);
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
+  w.preview = await comparePreview({ repo, env: options.env ?? process.env, wave: options.wave, binary: options.binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
   const stop = await gateWave(repo, options, { label, roots: changing.map((p) => p.root), planned: changing, members, digest, changes: changes + changing.filter((p) => p.changes === 0).length, destroys, heldBySteps }, facts, w);
   if (stop !== undefined) return stop;
   recordOverridesUsed(repo, options, changing);

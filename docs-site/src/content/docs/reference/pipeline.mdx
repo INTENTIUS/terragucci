@@ -199,6 +199,17 @@ oidc:
 | The job sets | `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Trust | an IAM OIDC provider for the issuer; each role allows `sts:AssumeRoleWithWebIdentity` on `aud` and `sub`: the pull-request and default branch subjects for plan, the default branch's alone for apply |
 
+Each environment can have its own pair of roles, chosen by the root's path:
+
+```yaml
+oidc:
+  roles:
+    "envs/prod/**": { plan: arn:aws:iam::111122223333:role/prod-plan, apply: arn:aws:iam::111122223333:role/prod-apply }
+    "envs/dev/**": { plan: arn:aws:iam::444455556666:role/dev-plan, apply: arn:aws:iam::444455556666:role/dev-apply }
+```
+
+The job fetches its token as before and carries the stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage gives each root the role of the first glob it matches as `AWS_ROLE_ARN`: its init, plan and apply, its [steps](/terragucci/guides/run-steps/), the state version an apply records, and a [migration](/terragucci/reference/migration-files/)'s reads and writes of its state. A root no glob matches runs with `plan_role` or `apply_role`. [Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/) shows the policy each role needs and the warnings `config check` gives.
+
 </TabItem>
 <TabItem label="GCP">
 
@@ -307,16 +318,34 @@ The push starts the pull request's plan job, which plans the change with its rea
 | `CLAUDE.md`, `AGENTS.md` | any directory | agent instructions |
 | `.gitattributes`, `.gitmodules` | any directory | git settings |
 
-### The review
+### The drift agent
 
-With `review.agent` set on GitHub or Forgejo, a pull request from the repo gets two jobs after its plan job, whether the plan passed or failed. Neither gets a cloud role.
+With `agent.drift` set on GitHub or Forgejo, a drift run that opens the drift issue starts the two jobs below, after the `drift` job, on the commit it planned. The drift job's step writes `issue.json` beside its report and says in its outputs whether it opened the issue. Neither job gets a cloud role.
 
 | Job | Token | Does |
 |---|---|---|
-| `review` | the job's own, read-only; the command's step runs without it | checks out the head with the whole history and no credentials kept; `terragucci review prompt` writes the prompt from the event, the diff and the plan job's report, with the instructions from the default branch; runs the review command in the default branch's files with the prompt on stdin and the model's key in that step alone; keeps what it prints, and its exit code, as the `terragucci-review` artifact |
+| `drift-agent` | the job's own, read-only; the agent's step runs without it | checks out the commit without credentials, fetches the drift report, `terragucci drift-agent prompt` writes the prompt, runs the agent command with the prompt on stdin and the model's key in that step alone, and keeps the change as a patch |
+| `drift-agent-push` | the secret `agent.token_env` names | in a fresh container, applies the patch to the same commit; refuses a patch touching a [guarded path](#paths-an-agent-cannot-change), otherwise commits it to `terragucci/drift-agent-<issue>`, pushes it without force, opens the pull request and comments its link on the drift issue |
+
+The pull request starts the plan job like any other, and its merge applies through the gate. [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) covers the setup.
+
+### The review
+
+With `review.agent` set on GitHub or Forgejo, `init` writes a second workflow, `terragucci-review.yml`, beside the pipeline. The forge runs it from the default branch, so a pull request that edits it changes nothing until it merges.
+
+| Forge | Runs on | Waits for the plan |
+|---|---|---|
+| GitHub | `workflow_run`, when the pipeline's `pull_request` run of a pull request from the repo completes, passed or failed | the run that started it has finished |
+| Forgejo | `pull_request_target` of a pull request from the repo (opened, reopened, synchronize); Forgejo has no `workflow_run` | the `review` job waits up to 30 minutes for the `plan` job of the pipeline's run of the head, then reviews without its report |
+
+It has two jobs. Neither gets a cloud role.
+
+| Job | Token | Does |
+|---|---|---|
+| `review` | the job's own: on GitHub it reads contents, actions and pull requests; the command's step runs without it | checks out the head with the whole history and no credentials kept; `terragucci review prompt` reads the pull request, fetches the plan job's report from the pipeline's run of the head, and writes the prompt from them and the diff, with the instructions from the default branch; runs the review command in the default branch's files with the prompt on stdin and the model's key in that step alone; keeps what it prints, its exit code, and the pull request, head and base it reviewed as the `terragucci-review-<head>` artifact |
 | `review-note` | the job's own, to comment | in a fresh container, `terragucci review post` posts the review as one note, or edits the note it posted before |
 
-The note's first line is a marker with the head and the risk, for people to read. A `tf-apply` wave reads the risk from the `terragucci-review` artifact of a run of the head instead, as [`input.review`](/terragucci/reference/policy/#review), and on GitHub its job gets `actions: read` for that. [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) covers the setup.
+The note's first line is a marker with the head and the risk, for people to read. A `tf-apply` wave reads the risk from the `terragucci-review-<head>` artifact instead, and only from a run of the default branch's review workflow, as [`input.review`](/terragucci/reference/policy/#review); on GitHub its job gets `actions: read` for that. [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) covers the setup.
 
 ### Terragrunt
 

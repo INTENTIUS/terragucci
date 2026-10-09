@@ -54,7 +54,7 @@ describe("respond: the config", () => {
 
   it("checks the integration itself", () => {
     expect(problems({ agent: { token_env: "" , runs: "x" } })).toEqual([
-      "config.agent.runs is not a setting (settings: via, token_env, comment)",
+      "config.agent.runs is not a setting (settings: via, token_env, comment, drift)",
       "config.agent.via is missing; use forge",
       "config.agent.token_env must name the variable holding the agent's forge token",
     ]);
@@ -62,7 +62,7 @@ describe("respond: the config", () => {
 
   it("has no role setting, since the agent job holds no cloud role", () => {
     expect(problems({ agent: { via: "forge", token_env: "AGENT_TOKEN", role: "arn:aws:iam::1:role/plan" } })).toEqual([
-      "config.agent.role is not a setting (settings: via, token_env, comment)",
+      "config.agent.role is not a setting (settings: via, token_env, comment, drift)",
     ]);
   });
 

@@ -5,19 +5,26 @@ import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, validateConfig, type ForgeName } from "../src/config";
 import type { Fetch } from "../src/forge";
-import { renderPipeline, RenderError } from "../src/render";
+import { MARKER, PIPELINE_PATHS, renderPipeline, RenderError, REPORT_DIR } from "../src/render";
+import { PLAN_WAIT_MINUTES } from "../src/render-review";
 import { policyInput } from "../src/report/policy";
 import {
   artifactBytes,
+  fetchPlanReport,
   parseReviewMarker,
+  PIPELINE_WORKFLOW,
+  PLAN_REPORT_ARTIFACT,
   postReview,
   REVIEW_COMMAND,
   REVIEW_MARK,
+  REVIEW_PATHS,
   reviewInput,
   reviewNoteBody,
   reviewOfPull,
   reviewPrompt,
+  reviewSubject,
   riskOf,
+  untrustedRun,
   writeReviewPrompt,
 } from "../src/review-agent";
 import { git, tmp, write } from "./helpers";
@@ -62,43 +69,84 @@ describe("review in terragucci.yml", () => {
   });
 });
 
-describe("the review jobs", () => {
+describe("the review workflow", () => {
   const layers = [["app"]];
   const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
   const oidc = { plan_role: "arn:aws:iam::111:role/plan-ro", apply_role: "arn:aws:iam::111:role/apply-rw" };
   const review = reviewInput(validateConfig({ review: { agent: true, key_secret: "REVIEW_KEY", instructions: "docs/review.md", timeout: 7 } }, "t"))!;
-  const doc = (forge: ForgeName, withReview = true): Record<string, any> =>
-    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, ...(withReview ? { review } : {}) }).content);
+  const rendered = (forge: ForgeName, withReview = true) => renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, ...(withReview ? { review } : {}) });
+  const doc = (forge: ForgeName, withReview = true): Record<string, any> => body(rendered(forge, withReview).content);
+  const wf = (forge: "github" | "forgejo"): Record<string, any> => body(rendered(forge).extra!.find((f) => f.path === REVIEW_PATHS[forge])!.content);
 
-  it("are off unless review.agent is on", () => {
+  it("is a file of its own, written only with review.agent on, and the pipeline has no review job", () => {
     for (const forge of ["github", "forgejo"] as const) {
-      expect(doc(forge, false).jobs.review).toBeUndefined();
-      expect(doc(forge, false).jobs["review-note"]).toBeUndefined();
+      expect(rendered(forge, false).extra?.some((f) => f.path === REVIEW_PATHS[forge]) ?? false).toBe(false);
+      expect(rendered(forge).extra!.find((f) => f.path === REVIEW_PATHS[forge])!.content.startsWith(MARKER)).toBe(true);
+      for (const job of ["review", "review-note"]) expect(doc(forge).jobs[job], `${forge} ${job}`).toBeUndefined();
     }
+    expect(PIPELINE_PATHS.github.endsWith(`/${PIPELINE_WORKFLOW}`)).toBe(true);
+    expect(PIPELINE_PATHS.forgejo.endsWith(`/${PIPELINE_WORKFLOW}`)).toBe(true);
+    expect(PLAN_REPORT_ARTIFACT).toBe(REPORT_DIR);
+    expect(doc("github").name).toBe("terragucci");
   });
 
-  it("are refused on GitLab", () => {
+  it.each(["github", "forgejo"] as const)("%s: own_jobs go into the pipeline, never the review workflow, and a job of theirs named review is the pipeline's alone", (forge) => {
+    const own = { review: { "runs-on": "ubuntu-latest", steps: [{ run: "echo mine" }] } };
+    const r = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, review, ownJobs: own });
+    expect(r.content).toContain("echo mine");
+    const rw = r.extra!.find((f) => f.path === REVIEW_PATHS[forge])!.content;
+    expect(rw).not.toContain("echo mine");
+    expect(rw).not.toContain("own_jobs");
+    expect(body(r.content).jobs.review.steps).toEqual([{ run: "echo mine" }]);
+    expect(Object.keys(body(rw).jobs)).toEqual(["review", "review-note"]);
+  });
+
+  it("is refused on GitLab", () => {
     expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, review })).toThrow(RenderError);
   });
 
-  it.each(["github", "forgejo"] as const)("%s: the review runs after the plan of a pull request from the repo, and the note job after it", (forge) => {
-    const d = doc(forge);
-    expect(d.jobs.review.needs).toBe("plan");
-    expect(d.jobs.review.if).toBe("always() && (needs.plan.result == 'success' || needs.plan.result == 'failure') && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository");
+  it("github: runs on workflow_run, from the default branch, after the pipeline's pull_request run of the repo's own branch", () => {
+    const d = wf("github");
+    expect(d.on).toEqual({ workflow_run: { workflows: ["terragucci"], types: ["completed"] } });
+    expect(d.jobs.review.if).toBe("github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')");
     expect(d.jobs.review["timeout-minutes"]).toBe(7);
+    const checkout = d.jobs.review.steps.find((s: { uses?: string }) => s.uses?.includes("checkout"));
+    expect(checkout.with.ref).toBe("${{ github.event.workflow_run.head_sha }}");
+    const keep = d.jobs.review.steps.find((s: { name?: string }) => s.name === "Keep the review");
+    expect(keep.with.name).toBe("terragucci-review-${{ github.event.workflow_run.head_sha }}");
+    expect(d.jobs["review-note"].env).toMatchObject({ TG_PR: "${{ github.event.workflow_run.pull_requests[0].number }}", TG_SHA: "${{ github.event.workflow_run.head_sha }}" });
+  });
+
+  it("forgejo: runs on pull_request_target, which has the base's workflow, waits for the plan, and a group per pull request", () => {
+    const d = wf("forgejo");
+    expect(d.on).toEqual({ pull_request_target: { types: ["opened", "reopened", "synchronize"] } });
+    expect(d.jobs.review.if).toBe("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(d.jobs.review["timeout-minutes"]).toBe(7 + PLAN_WAIT_MINUTES);
+    expect(d.concurrency).toEqual({ group: "terragucci-review-${{ github.event.pull_request.number }}", "cancel-in-progress": false });
+    const checkout = d.jobs.review.steps.find((s: { uses?: string }) => s.uses?.includes("checkout"));
+    expect(checkout.with.ref).toBe("${{ github.event.pull_request.head.sha }}");
+    const keep = d.jobs.review.steps.find((s: { name?: string }) => s.name === "Keep the review");
+    expect(keep.with.name).toBe("terragucci-review-${{ github.event.pull_request.head.sha }}");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the prompt step fetches the plan report outside the checkout, and the note job follows the review", (forge) => {
+    const d = wf(forge);
     expect(d.jobs["review-note"].needs).toBe("review");
     const prompt = d.jobs.review.steps.find((s: { id?: string }) => s.id === "prompt");
-    expect(prompt.run).toContain("terragucci review prompt --report terragucci-report --instructions 'docs/review.md'");
-    expect(prompt.env.TG_DEFAULT_BRANCH).toBe("${{ github.event.repository.default_branch }}");
+    expect(prompt.run).toContain("terragucci review prompt --report /tmp/terragucci-review/report --instructions 'docs/review.md'");
+    expect(prompt.env).toEqual({ TG_DEFAULT_BRANCH: "${{ github.event.repository.default_branch }}", TG_TOKEN: "${{ github.token }}" });
+    expect(d.jobs.review.steps.some((s: { uses?: string }) => s.uses?.includes("download-artifact"))).toBe(false);
     expect(d.jobs["review-note"].steps.at(-1).run).toContain("terragucci review post --dir /tmp/terragucci-review/out");
   });
 
-  it.each(["github", "forgejo"] as const)("%s: no forge write token and no cloud role in the review job; the key is in the command's step alone", (forge) => {
-    const d = doc(forge);
+  it.each(["github", "forgejo"] as const)("%s: no cloud role in the review job, no token in the command's step, and the key there alone", (forge) => {
+    const d = wf(forge);
     const job = JSON.stringify(d.jobs.review);
-    for (const s of [oidc.plan_role, oidc.apply_role, "id-token", "github.token", "TG_TOKEN", "enable-openid-connect"]) expect(job, s).not.toContain(s);
+    for (const s of [oidc.plan_role, oidc.apply_role, "id-token", "enable-openid-connect"]) expect(job, s).not.toContain(s);
+    // Forgejo ignores permissions:, so its serializer drops them; the command's step drops the token itself.
     if (forge === "github") {
-      expect(d.jobs.review.permissions).toEqual({ contents: "read" });
+      expect(d.permissions).toEqual({ contents: "read" });
+      expect(d.jobs.review.permissions).toEqual({ contents: "read", actions: "read", "pull-requests": "read" });
       expect(d.jobs["review-note"].permissions).toEqual({ "pull-requests": "write" });
     }
     const run = d.jobs.review.steps.find((s: { name?: string }) => s.name === "Run the review command on the prompt");
@@ -106,7 +154,6 @@ describe("the review jobs", () => {
     expect(run.run).toContain("unset GITHUB_TOKEN FORGEJO_TOKEN GITEA_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL");
     expect(run.run).toContain("cd /tmp/terragucci-review/work || exit 1");
     expect(run.run).toContain(`( ${REVIEW_COMMAND} ) <"$TG_REVIEW_PROMPT" >/tmp/terragucci-review/out/review.md`);
-    expect(d.jobs.review.env).toBeUndefined();
     expect(JSON.stringify(d.jobs["review-note"])).not.toContain("REVIEW_KEY");
     const checkout = d.jobs.review.steps.find((s: { uses?: string }) => s.uses?.includes("checkout"));
     expect(checkout.with["persist-credentials"]).toBe(false);
@@ -185,6 +232,17 @@ describe("terragucci review prompt", () => {
     // The command's tree is the default branch's.
     expect(readFileSync(join(out, "work", ".smoke/review.sh"), "utf-8")).toBe("echo main's reviewer\n");
     expect(readFileSync(join(out, "out", "instructions"), "utf-8")).toBe("default changed\n");
+    expect(JSON.parse(readFileSync(join(out, "out", "reviewed.json"), "utf-8"))).toEqual({ pr: 7, head, base: "main" });
+  });
+
+  it("takes the pull request a caller read, as on GitHub's workflow_run, over the event", () => {
+    const { dir, head } = repoWithChange();
+    const event = join(tmp(), "e.json");
+    writeFileSync(event, JSON.stringify({ workflow_run: { id: 5 }, repository: { default_branch: "main" } }));
+    const out = tmp("terragucci-review-dir-");
+    const w = writeReviewPrompt({ report: tmp(), dir: out, instructions: ".terragucci/review.md", cwd: dir, env: { GITHUB_EVENT_PATH: event }, pull: { pr: 9, head, base: "main", title: "From the API", body: "b" } });
+    expect(w.pr).toBe(9);
+    expect(readFileSync(join(out, "prompt.md"), "utf-8")).toContain("<title>\nFrom the API\n</title>");
   });
 
   it("says so when the default branch has no instructions, and never reads the head's", () => {
@@ -282,18 +340,21 @@ describe("input.review", () => {
     execFileSync("python3", ["-c", `import json,sys,zipfile\nz=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED)\nfor k,v in json.loads(sys.argv[2]).items(): z.writestr(k,v)\nz.close()`, out, JSON.stringify(files)]);
     return readFileSync(out);
   };
-  const review = (risk: string, rc = "0\n"): Buffer => zip({ "review.md": `Risk: a destroy.\n\nrisk: ${risk}\n`, rc, instructions: "default\n" });
-  /** A forge with runs, their artifacts and the artifacts' zips; it records the paths read. */
-  const forge = (runs: any[], artifacts: Record<number, any>, zips: Record<number, Buffer>) => {
+  const review = (risk: string, o: { rc?: string; reviewed?: unknown } = {}): Buffer =>
+    zip({ "review.md": `Risk: a destroy.\n\nrisk: ${risk}\n`, rc: o.rc ?? "0\n", instructions: "default\n", "reviewed.json": JSON.stringify(o.reviewed ?? { pr: 7, head: HEAD, base: "main" }) });
+  const name = `terragucci-review-${HEAD}`;
+  /** A forge with the repo, its runs by id, the artifacts of the head's name and their zips; it records the paths read. */
+  const forge = (runs: Record<number, any>, artifacts: unknown, zips: Record<number, Buffer>) => {
     const hits: string[] = [];
     const f = {
       repo: "o/r",
       post: async () => null,
       get: async (path: string) => {
         hits.push(path);
-        if (path.startsWith("repos/o/r/actions/runs?")) return { workflow_runs: runs };
-        const m = /^repos\/o\/r\/actions\/runs\/(\d+)\/artifacts\?/.exec(path);
-        if (m) return artifacts[Number(m[1])] ?? [];
+        if (path === "repos/o/r") return { default_branch: "main" };
+        if (path === `repos/o/r/actions/artifacts?name=${name}&per_page=100&limit=50`) return artifacts;
+        const m = /^repos\/o\/r\/actions\/runs\/(\d+)$/.exec(path);
+        if (m && runs[Number(m[1])]) return runs[Number(m[1])];
         // Comments are never read: a note is not where the verdict comes from.
         throw new Error(`unexpected GET ${path}`);
       },
@@ -304,39 +365,89 @@ describe("input.review", () => {
     };
     return { f, bytes, hits };
   };
+  const reviewWf = { event: "workflow_run", path: ".github/workflows/terragucci-review.yml" };
+  const payload = (base: string, number = 7, head = HEAD): string => JSON.stringify({ pull_request: { number, head: { sha: head }, base: { ref: base } } });
+  const target = (base = "main", number = 7, head = HEAD) => ({ event: "pull_request", trigger_event: "pull_request_target", workflow_id: "terragucci-review.yml", event_payload: payload(base, number, head) });
 
-  it("is the verdict in the review artifact of the newest pull_request run of the head, on GitHub", async () => {
+  it("github: is the newest artifact of the head that a workflow_run run of the default branch's review workflow kept", async () => {
     const { f, bytes, hits } = forge(
-      [
-        { id: 10, event: "pull_request", head_sha: HEAD },
-        { id: 12, event: "pull_request", head_sha: HEAD },
-        { id: 13, event: "push", head_sha: HEAD },
-        { id: 14, event: "pull_request", head_sha: other },
+      {
+        10: reviewWf,
+        // The pull request's own pipeline, edited to keep a low verdict under the same name: newer, and passed over.
+        12: { event: "pull_request", path: ".github/workflows/terragucci.yml" },
+        13: { event: "pull_request", path: ".github/workflows/terragucci-review.yml" },
+        14: { event: "workflow_run", path: ".github/workflows/other.yml" },
+      },
+      { artifacts: [10, 12, 13, 14].map((id) => ({ id: id * 10, name, workflow_run: { id } })) },
+      { 100: review("high"), 120: review("low"), 130: review("low"), 140: review("low") },
+    );
+    expect(await reviewOfPull(f, { number: 7, head: HEAD }, bytes, "github")).toEqual({
+      found: true,
+      risk: "high",
+      pull_request: 7,
+      head: HEAD,
+      run: 10,
+      skipped: [
+        { run: 14, why: "it ran .github/workflows/other.yml, not .github/workflows/terragucci-review.yml" },
+        { run: 13, why: "it ran on pull_request, not workflow_run" },
+        { run: 12, why: "it ran on pull_request, not workflow_run" },
       ],
-      { 10: { artifacts: [{ id: 100, name: "terragucci-review", workflow_run: { id: 10 } }] }, 12: { artifacts: [{ id: 120, name: "terragucci-review", workflow_run: { id: 12 } }] } },
-      { 100: review("low"), 120: review("high") },
-    );
-    expect(await reviewOfPull(f, { number: 7, head: HEAD }, bytes)).toEqual({ found: true, risk: "high", pull_request: 7, head: HEAD, run: 12 });
-    expect(hits[0]).toBe(`repos/o/r/actions/runs?event=pull_request&head_sha=${HEAD}&per_page=100&limit=50`);
-    expect(hits).not.toContain("repos/o/r/actions/runs/13/artifacts?name=terragucci-review&per_page=100&limit=50");
-    expect(hits).not.toContain("repos/o/r/actions/runs/14/artifacts?name=terragucci-review&per_page=100&limit=50");
+    });
+    expect(hits[0]).toBe(`repos/o/r/actions/artifacts?name=${name}&per_page=100&limit=50`);
+    for (const id of [120, 130, 140]) expect(hits).not.toContain(`repos/o/r/actions/artifacts/${id}/zip`);
   });
 
-  it("reads Forgejo's runs and artifact lists, and falls back to an older run when the newest kept no review", async () => {
+  it("forgejo: only a pull_request_target run of the review workflow, of the default branch's, of this pull request and head", async () => {
     const { f, bytes } = forge(
-      [{ id: 20, event: "pull_request", commit_sha: HEAD }, { id: 21, event: "pull_request", commit_sha: HEAD }],
-      { 20: [{ id: 200, name: "terragucci-review", run_id: 20 }], 21: [{ id: 210, name: "terragucci-review", run_id: 21, expired: true }] },
-      { 200: review("medium") },
+      {
+        20: target(),
+        21: target("release"),
+        22: target("main", 8),
+        23: { event: "pull_request", trigger_event: "pull_request", workflow_id: "terragucci-review.yml", event_payload: payload("main") },
+        24: { ...target(), workflow_id: "terragucci.yml" },
+      },
+      [20, 21, 22, 23, 24].map((id) => ({ id: id * 10, name, run_id: id })),
+      { 200: review("medium"), 210: review("low"), 220: review("low"), 230: review("low"), 240: review("low") },
     );
-    expect(await reviewOfPull(f, { number: 7, head: HEAD }, bytes)).toEqual({ found: true, risk: "medium", pull_request: 7, head: HEAD, run: 20 });
+    const r = await reviewOfPull(f, { number: 7, head: HEAD }, bytes, "forgejo");
+    expect(r).toMatchObject({ found: true, risk: "medium", run: 20 });
+    expect(r.skipped).toEqual([
+      { run: 24, why: "it ran terragucci.yml, not .forgejo/workflows/terragucci-review.yml" },
+      { run: 23, why: "it ran on pull_request, not pull_request_target" },
+      { run: 22, why: "it reviewed pull request 8 at aaaaaaaa" },
+      { run: 21, why: "it ran the review workflow of release, not of the default branch main" },
+    ]);
   });
 
-  it("is unknown when the review command failed, and not found when no run of the head kept a review", async () => {
-    const failed = forge([{ id: 30, event: "pull_request", head_sha: HEAD }], { 30: [{ id: 300, name: "terragucci-review", run_id: 30 }] }, { 300: review("low", "1\n") });
-    expect(await reviewOfPull(failed.f, { number: 7, head: HEAD }, failed.bytes)).toEqual({ found: true, risk: "unknown", pull_request: 7, head: HEAD, run: 30 });
-    // An artifact listed under another run's id is not this run's.
-    const elsewhere = forge([{ id: 31, event: "pull_request", head_sha: HEAD }], { 31: [{ id: 310, name: "terragucci-review", run_id: 99 }, { id: 311, name: "other", run_id: 31 }] }, { 310: review("low"), 311: review("low") });
-    expect(await reviewOfPull(elsewhere.f, { number: 7, head: HEAD }, elsewhere.bytes)).toEqual({ found: false, risk: "unknown", pull_request: 7, head: HEAD });
+  it("passes over an artifact that says it reviewed another base, and an expired one", async () => {
+    const { f, bytes } = forge(
+      { 30: reviewWf, 31: reviewWf, 32: reviewWf },
+      { artifacts: [{ id: 300, name, workflow_run: { id: 30 } }, { id: 310, name, workflow_run: { id: 31 } }, { id: 320, name, workflow_run: { id: 32 }, expired: true }] },
+      { 300: review("high"), 310: review("low", { reviewed: { pr: 7, head: HEAD, base: "release" } }), 320: review("low") },
+    );
+    const r = await reviewOfPull(f, { number: 7, head: HEAD }, bytes, "github");
+    expect(r).toMatchObject({ found: true, risk: "high", run: 30 });
+    expect(r.skipped).toEqual([{ run: 31, why: "it reviewed pull request 7 at aaaaaaaa against release, not pull request 7 against main" }]);
+  });
+
+  it("is unknown when the review command failed, and not found when no trusted run kept a review", async () => {
+    const failed = forge({ 40: reviewWf }, { artifacts: [{ id: 400, name, workflow_run: { id: 40 } }] }, { 400: review("low", { rc: "1\n" }) });
+    expect(await reviewOfPull(failed.f, { number: 7, head: HEAD }, failed.bytes, "github")).toEqual({ found: true, risk: "unknown", pull_request: 7, head: HEAD, run: 40, skipped: [] });
+    const none = forge({}, { artifacts: [] }, {});
+    expect(await reviewOfPull(none.f, { number: 7, head: HEAD }, none.bytes, "github")).toEqual({ found: false, risk: "unknown", pull_request: 7, head: HEAD, skipped: [] });
+    // Only the pull request's own pipeline kept one; another head's name is not listed under this one.
+    const forged = forge(
+      { 41: { event: "pull_request", path: ".github/workflows/terragucci.yml" } },
+      { artifacts: [{ id: 410, name, workflow_run: { id: 41 } }, { id: 411, name: `terragucci-review-${other}`, workflow_run: { id: 41 } }] },
+      { 410: review("low") },
+    );
+    expect(await reviewOfPull(forged.f, { number: 7, head: HEAD }, forged.bytes, "github")).toMatchObject({ found: false, skipped: [{ run: 41 }] });
+  });
+
+  it("untrustedRun reads a Forgejo payload that will not parse as not the default branch's", () => {
+    expect(untrustedRun({ trigger_event: "pull_request_target", workflow_id: "terragucci-review.yml", event_payload: "{" }, "forgejo", { number: 7, head: HEAD }, "main")).toMatch(/not of the default branch main/);
+    expect(untrustedRun(reviewWf, "github", { number: 7, head: HEAD }, "main")).toBeUndefined();
+    expect(untrustedRun({ ...reviewWf, path: ".github/workflows/terragucci-review.yml@refs/heads/main" }, "github", { number: 7, head: HEAD }, "main")).toBeUndefined();
   });
 
   it("downloads the zip with the job's token and reads a missing one as none", async () => {
@@ -358,5 +469,81 @@ describe("input.review", () => {
     expect(JSON.parse(policyInput({}, '{"resource_changes":[]}', { root: "app", review }))).toEqual({ resource_changes: [], review });
     expect(JSON.parse(policyInput({ input: "hcp" }, '{"resource_changes":[]}', { root: "app", review })).review).toEqual(review);
     expect(policyInput({}, '{"a":1}', { root: "app" })).toBe('{"a":1}');
+  });
+});
+
+describe("the review's pull request and plan report", () => {
+  const zip = (files: Record<string, string>): Buffer => {
+    const out = join(tmp(), "report.zip");
+    execFileSync("python3", ["-c", `import json,sys,zipfile\nz=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED)\nfor k,v in json.loads(sys.argv[2]).items(): z.writestr(k,v)\nz.close()`, out, JSON.stringify(files)]);
+    return readFileSync(out);
+  };
+  const calls = (answers: Record<string, unknown>) => {
+    const hits: string[] = [];
+    const count: Record<string, number> = {};
+    return {
+      hits,
+      f: {
+        repo: "o/r",
+        post: async () => null,
+        get: async (path: string) => {
+          hits.push(path);
+          count[path] = (count[path] ?? 0) + 1;
+          const a = answers[path];
+          if (a === undefined) throw new Error(`unexpected GET ${path}`);
+          return typeof a === "function" ? (a as (n: number) => unknown)(count[path]!) : a;
+        },
+      },
+    };
+  };
+  const subject = { pr: 7, head: HEAD, base: "main", title: "t", body: "" };
+
+  it("github: the workflow_run's head, the one pull request of it, and its title and base from the API", async () => {
+    const { f } = calls({ "repos/o/r/pulls/7": { title: "Tidy", body: "B", base: { ref: "main" } } });
+    const event = { workflow_run: { id: 55, event: "pull_request", head_sha: HEAD, pull_requests: [{ number: 6, head: { sha: "c".repeat(40) } }, { number: 7, head: { sha: HEAD } }] } };
+    expect(await reviewSubject(event, f)).toEqual({ subject: { pr: 7, head: HEAD, base: "main", title: "Tidy", body: "B" }, run: 55 });
+    await expect(reviewSubject({ workflow_run: { ...event.workflow_run, event: "push" } }, f)).rejects.toThrow(/started by push/);
+    await expect(reviewSubject({ workflow_run: { ...event.workflow_run, pull_requests: [] } }, f)).rejects.toThrow(/names 0 pull requests/);
+  });
+
+  it("forgejo: the pull_request_target event's pull request", async () => {
+    const { f, hits } = calls({});
+    expect(await reviewSubject({ pull_request: { number: 7, title: "x", body: "y", head: { sha: HEAD }, base: { ref: "main" } } }, f)).toEqual({ subject: { pr: 7, head: HEAD, base: "main", title: "x", body: "y" } });
+    expect(hits).toEqual([]);
+  });
+
+  it("github: reads the plan note and report, and nothing else, out of the started run's artifact", async () => {
+    const { f } = calls({ "repos/o/r/actions/runs/55/artifacts?name=terragucci-report&per_page=100&limit=50": { artifacts: [{ id: 9, name: "terragucci-report" }] } });
+    const dir = join(tmp(), "report");
+    const said = await fetchPlanReport(f, async (p) => (p === "repos/o/r/actions/artifacts/9/zip" ? zip({ "plan-note.md": "note", "report.json": "{}", "other.txt": "x" }) : undefined), subject, 55, dir);
+    expect(said).toBe("the plan report of run 55: plan-note.md, report.json");
+    expect(readFileSync(join(dir, "plan-note.md"), "utf-8")).toBe("note");
+    expect(() => readFileSync(join(dir, "other.txt"))).toThrow();
+  });
+
+  it("forgejo: waits for the plan job of the pipeline's pull_request run of the head, not the review's own run", async () => {
+    const runs = `repos/o/r/actions/runs?event=pull_request&head_sha=${HEAD}&limit=50`;
+    const { f, hits } = calls({
+      [runs]: {
+        workflow_runs: [
+          { id: 70, event: "pull_request", trigger_event: "pull_request_target", workflow_id: "terragucci-review.yml", commit_sha: HEAD, status: "running" },
+          { id: 69, event: "pull_request", trigger_event: "pull_request", workflow_id: "terragucci.yml", commit_sha: HEAD, status: "running" },
+        ],
+      },
+      "repos/o/r/actions/runs/69/jobs": (n: number) => [{ name: "check", status: "success" }, { name: "plan", status: n < 3 ? "running" : "success" }],
+      "repos/o/r/actions/runs/69/artifacts?name=terragucci-report&per_page=100&limit=50": [{ id: 8, name: "terragucci-report", run_id: 69 }],
+    });
+    const slept: number[] = [];
+    const said = await fetchPlanReport(f, async () => zip({ "report.json": "{}" }), subject, undefined, join(tmp(), "r"), { sleep: async (ms) => void slept.push(ms), pollMs: 5 });
+    expect(said).toBe("the plan report of run 69: report.json");
+    expect(slept).toEqual([5, 5]);
+    expect(hits.some((h) => h.startsWith("repos/o/r/actions/runs/70"))).toBe(false);
+  });
+
+  it("forgejo: reviews without a report when the plan does not finish in time", async () => {
+    const { f } = calls({ [`repos/o/r/actions/runs?event=pull_request&head_sha=${HEAD}&limit=50`]: { workflow_runs: [] } });
+    let t = 0;
+    const said = await fetchPlanReport(f, async () => undefined, subject, undefined, tmp(), { waitMs: 60_000, pollMs: 30_000, now: () => t, sleep: async (ms) => void (t += ms) });
+    expect(said).toBe("no plan report: the pipeline's run of aaaaaaaa did not finish its plan in 1 minute");
   });
 });

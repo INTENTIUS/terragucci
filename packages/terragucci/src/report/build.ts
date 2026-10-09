@@ -63,6 +63,8 @@ export interface RootInput {
   steps?: ReportStep[];
   /** The roots whose state it reads, and which outputs it planned on. */
   reads?: ReportRead[];
+  /** A Terragrunt unit's dependencies, by path. */
+  dependencies?: string[];
 }
 
 export interface WaveInput {
@@ -87,6 +89,8 @@ export interface WaveInput {
   reads?: number[];
   /** A `tf-plan` wave that plans again once these waves apply: no review digest binds it. */
   replansAfter?: number[];
+  /** A `tf-apply` wave of Terragrunt units: its plans against the pull request's preview of them. */
+  preview?: ReportWave["preview"];
 }
 
 export interface BuildInput {
@@ -281,6 +285,7 @@ export function buildReport(input: BuildInput): Report {
       ...(src.applied && src.state ? { state: src.state } : {}),
       ...(src.steps?.length ? { steps: src.steps } : {}),
       ...(src.reads?.length ? { reads: src.reads } : {}),
+      ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
     };
   });
 
@@ -346,6 +351,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.state ? { state: w.state } : {}),
       ...(w.reads?.length ? { reads: w.reads } : {}),
       ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
+      ...(w.preview ? { preview: w.preview } : {}),
     };
   });
 

@@ -1,0 +1,111 @@
+---
+title: Read the estate over MCP
+description: Connect a coding agent to terragucci mcp, a read-only MCP server over the reports bucket, so it reads a root's last apply, the estate, the audit trail and the DORA figures without parsing files.
+claims: [mcp-last-apply]
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-read-over-mcp/.
+  Tell me the command line and the environment variables to add terragucci mcp to my MCP client for this repo's reports bucket; do not add it yourself, and do not create or print credentials.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+`terragucci mcp` is a Model Context Protocol server on stdio. It serves what terragucci already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and the repo, and nothing else: every tool reads. It runs no model of its own.
+
+## What you end up with
+
+An agent that answers "when did `envs/prod/app` last apply, and what did it change?" from the bucket:
+
+```json
+{
+  "project": "github.com/acme/infra",
+  "root": "envs/prod/app",
+  "commit": "ef7f8e50010c12dca8e20ecf90009638a8497f0d",
+  "wave": 1,
+  "approval": "approved",
+  "applied": true,
+  "report": "github.com/acme/infra/2026/10/ef7f8e50010c12dca8e20ecf90009638a8497f0d/tf-apply-wave-1",
+  "result": { "path": "envs/prod/app", "status": "planned", "changes": [{ "address": "terraform_data.app", "action": "create" }] }
+}
+```
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, and a pipeline that has run | the server reads the reports the stages copied there |
+| `terragucci estate` and `terragucci audit` run on a schedule, for the `estate`, `dora` and `audit` tools | the server serves the files they write, and computes nothing |
+| Read access to the bucket, in the environment the client starts the server from | the server takes credentials from its own environment, never from the agent |
+
+## Steps
+
+<Steps>
+
+1. Give the server read access. Use an identity that can read the bucket and nothing more, in the variables [Reports](/terragucci/reference/environment/#reports) lists: for S3 `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` or a role, for GCS `GOOGLE_APPLICATION_CREDENTIALS`, for Azure Blob `AZURE_STORAGE_KEY` or an Entra ID identity. The server never writes, so a write grant buys nothing.
+
+2. Add the server to your MCP client. The command line, from the repo's root, where it reads `terragucci.yml`:
+
+   ```bash
+   npx -y @intentius/terragucci mcp
+   ```
+
+   Outside the repo, name the bucket instead:
+
+   ```bash
+   npx -y @intentius/terragucci mcp --bucket s3://acme-plan-reports --bucket-prefix terragucci
+   ```
+
+   A client starts a stdio server with a few variables of its own, not your whole shell, so name the bucket's in the server's `env`. In a client that expands variables in its config, such as Claude Code's `.mcp.json`, the values stay in your shell:
+
+   ```json
+   {
+     "mcpServers": {
+       "terragucci": {
+         "command": "npx",
+         "args": ["-y", "@intentius/terragucci", "mcp"],
+         "env": {
+           "AWS_ACCESS_KEY_ID": "${AWS_ACCESS_KEY_ID}",
+           "AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
+           "AWS_REGION": "us-east-1"
+         }
+       }
+     }
+   }
+   ```
+
+3. Ask. The agent lists the tools and calls them:
+
+   | Ask | Tool |
+   |---|---|
+   | when did a root last apply, and what changed | `last_apply` |
+   | which runs ran on a commit, and their reports | `index`, then `report` |
+   | where each wave of an applied commit stands | `run_view` |
+   | which state version to restore | `state_versions` |
+   | who approved what | `audit` |
+   | how often you deploy, and how fast you restore | `dora` |
+   | which wave waits, and the command to approve it | `waiting` |
+
+</Steps>
+
+## What the server refuses
+
+| A call | The answer |
+|---|---|
+| `approve`, `apply`, `override`, or any tool it does not list | an error: approvals belong to a person at a shell, and [chant](/terragucci/concepts/glossary/#chant) refuses a gate approval made over MCP |
+| an argument the tool does not list, such as `token` | an error; credentials come from the server's environment |
+| a `report` path outside the bucket's prefix | an error |
+
+The `waiting` tool prints the `terragucci approve` command for each waiting wave. A person runs it; the server cannot. [CLI commands](/terragucci/reference/cli/#mcp) lists each tool's arguments.
+
+## MCP or `--json`
+
+| You want to | Use |
+|---|---|
+| read what terragucci wrote: reports, the estate, state versions, the audit trail, DORA figures | `terragucci mcp` |
+| set terragucci up, check a config, write the pipeline, plan, run a response in dry run | the CLI with `--json` ([JSON output](/terragucci/reference/cli-json/)) |
+| approve, apply, override or merge | neither: a person does it |
+
+## Next
+
+- [Set up with a coding agent](/terragucci/getting-started/agents/) gives the agent's rules.
+- [See every project](/terragucci/guides/see-every-project/) writes the estate page the `estate` tool reads.

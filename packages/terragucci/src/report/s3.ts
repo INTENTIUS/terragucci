@@ -292,6 +292,17 @@ export class S3Client implements ObjectStore {
     return res.text();
   }
 
+  /** Whether a version of an object is in the bucket, from a HEAD by its version id: its metadata, never its body. */
+  async hasVersion(key: string, versionId: string): Promise<boolean> {
+    const t = await this.signer();
+    const url = `${objectUrl(t, key)}?versionId=${encodeStrict(versionId)}`;
+    const res = await this.fetchFn(url, { method: "HEAD", headers: sign(t, "HEAD", url, {}, sha256(""), new Date()) });
+    // S3 answers 400 for a version id it never issued.
+    if (res.status === 404 || res.status === 400) return false;
+    if (!res.ok) throw new StoreError(`HEAD s3://${this.target.bucket}/${key}?versionId=${versionId}: ${res.status}`);
+    return true;
+  }
+
   /** Delete an object. One that is not there is deleted already. */
   async remove(key: string): Promise<void> {
     const { url, headers } = signRequest(await this.signer(), "DELETE", key, "");

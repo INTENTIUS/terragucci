@@ -90,8 +90,8 @@ Every line is `terragucci.audit/v1`, whose JSON Schema ships in the package as `
 
 | `kind` | From | `result` | `detail` |
 |---|---|---|---|
-| `approval-requested` | a pending line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl` for a migration, or `_gates/tf-unlock.jsonl` for a state lock's release | `waiting` | `expires`, `run_id`, `description`, `roots` |
-| `approval` | an approval line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl` or `_gates/tf-unlock.jsonl` | `unsigned`, `sealed` or `review` | `signer` (sealed), `via`, `pr`, `head`, `reviewers` (review), `relayed_by`, `committed_by` |
+| `approval-requested` | a pending line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl` for a migration, `_gates/tf-unlock.jsonl` for a state lock's release, or `_gates/tf-state-export.jsonl` for a [state export](/terragucci/guides/export-a-state-version/) | `waiting` | `expires`, `run_id`, `description`, `roots` |
+| `approval` | an approval line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl`, `_gates/tf-unlock.jsonl` or `_gates/tf-state-export.jsonl` | `unsigned`, `sealed` or `review` | `signer` (sealed), `via`, `pr`, `head`, `reviewers` (review), `relayed_by`, `committed_by` |
 | `approval-revoked` | an approval line a commit removed | `revoked` | `approved_by`, `approved_at`, `signer` (sealed) |
 | `override-requested` | a denial a wave recorded in `_gates/policy-override.jsonl` | `denied` | `expires`, `run_id`, `description`, `rules`, `plan_digest` |
 | `override` | an override line in `_gates/policy-override.jsonl` | `unsigned` or `sealed` | `reason`, `rules`, `plan_digest`, `signer`, `relayed_by`, `committed_by` |
@@ -99,6 +99,7 @@ Every line is `terragucci.audit/v1`, whose JSON Schema ships in the package as `
 | `apply` | a `tf-apply` wave report | `applied`, `failed` or `waiting` | `wave`, `commit`, `roots`, `gate`, `approval` (the id of the approval entry it applied under), `changes`, `failed`, `overrides`, `pull_request`, `state_versions` (each root's state `location`, `version_id` and `versioning`) |
 | `migration` | a line in `_gates/tf-migrate/done.jsonl`, written when a [state migration](/terragucci/reference/migration-files/) wrote its states | `applied` or `failed` | `roots` (each root's `location` and state version `before` and `after`, and both digests), `file_digest`, `error`, `commit`, `run_id` |
 | `unlock` | a line in `_gates/tf-unlock/done.jsonl`, written when [`terragucci unlock-state`](/terragucci/reference/cli/#unlock-state) released a state lock; `who` is who released it and `what` the root | `released` | `location`, `lock_id`, `operation`, `locked_by`, `locked_at` (the lock as the binary wrote it), `approved_by`, `approved_at`, `commit` |
+| `state-export` | a line in `_gates/tf-state-export/done.jsonl`, written by [`terragucci state export`](/terragucci/reference/cli/#state-export) before it writes the file; `who` is the person who exported, `what` the root | `exported` | `location`, `version_id`, `approved_by`, `approved_at`, `content_digest` (the digest of the bytes written, never the bytes) |
 | `refused` | a `tf-apply` wave report's `waves[].refused` | `changed-after-approval`, `changed-after-review`, `changed-after-override` or `denied-by-policy` | `wave`, `commit`, `roots`, `pull_request`, `approved` (the digest approved), `moved` or `denied` (the roots), `rules` (by root, for a denial) |
 
 `result` on an approval says how it was signed. Whether it counted is the wave's decision under the `approval:` mode at base, and the `apply` or `refused` entry of that wave records it.

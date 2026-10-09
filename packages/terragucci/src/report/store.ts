@@ -28,6 +28,7 @@ import { esc, renderHtml } from "./html";
 import { addToChanges, changeRows } from "./history";
 import { addToInventory, inventoryRoots } from "./inventory";
 import { addToStateVersions, stateRecords } from "./state-versions";
+import { addToStateEdges, hasEdgeFacts } from "./state-edges";
 import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
 import type { Report } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
@@ -338,6 +339,8 @@ export interface Uploaded {
   changes?: string;
   /** The project's state versions, when an applied root recorded its state. */
   states?: string;
+  /** The project's cross-state edges, when a root reads another's state or an apply changed a root. */
+  edges?: string;
 }
 
 /** How many times an index is read and written again when another run wrote it in between. */
@@ -383,6 +386,9 @@ export const inventoryKey = (project: string, prefix = ""): string => joinKey(pr
 
 /** The key of a project's state versions: `<prefix>/<project>/states.json`. */
 export const statesKey = (project: string, prefix = ""): string => joinKey(prefix, project, "states.json");
+
+/** The key of a project's cross-state edges: `<prefix>/<project>/edges.json`. */
+export const edgesKey = (project: string, prefix = ""): string => joinKey(prefix, project, "edges.json");
 
 /** The key of a project's resource changes: `<prefix>/<project>/changes.json`. */
 export const changesKey = (project: string, prefix = ""): string => joinKey(prefix, project, "changes.json");
@@ -448,7 +454,13 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
     states = statesKey(project, top);
     await updateJson(s3, states, (body) => addToStateVersions(body, recorded), "its state versions", wait);
   }
-  return { prefix: key, files: files.length, indexes, ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}) };
+  // Each root's reads, its newest plan and its newest apply that changed it, for the estate page's cross-state edges.
+  let edges: string | undefined;
+  if (hasEdgeFacts(report)) {
+    edges = edgesKey(project, top);
+    await updateJson(s3, edges, (body) => addToStateEdges(body, report, run), "its cross-state edges", wait);
+  }
+  return { prefix: key, files: files.length, indexes, ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}) };
 }
 
 /**

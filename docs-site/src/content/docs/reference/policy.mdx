@@ -128,11 +128,11 @@ With [`review.agent`](/terragucci/guides/agent-review-a-pull-request/) set, `inp
 
 | Field | Value |
 |---|---|
-| `review.found` | whether a run of the pull request's head kept the review job's artifact |
+| `review.found` | whether a run of the default branch's review workflow kept a review of the pull request's head |
 | `review.risk` | `low`, `medium` or `high` from that review; `unknown` when none was found, the model gave none, or its command failed |
 | `review.pull_request`, `review.head` | the pull request the commit merged, or the one applied before merge, and its head; `null` for a commit no pull request made |
 
-The wave reads the review from the `terragucci-review` artifact of the newest `pull_request` run of the pull request's head, through the forge's API: the forge ties the artifact to the run and the run to the head. It never reads the note on the pull request, which any run's token can post, the run of another branch included ([threat model](/terragucci/reference/threat-model/#the-review)). On GitHub the apply jobs get `actions: read` for it. An artifact the forge has expired reads as no review. GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
+The wave reads the review from the newest `terragucci-review-<head>` artifact, through the forge's API, that a run of the default branch's review workflow kept: on GitHub a `workflow_run` run of `terragucci-review.yml`, on Forgejo a `pull_request_target` run of it whose event names the default branch as the base, and this pull request and head. The artifact must say it reviewed this pull request and head against the default branch. An artifact of that name from any other run, such as the pull request's own pipeline, is passed over, and the wave's log says why. It never reads the note on the pull request, which any run's token can post, the run of another branch included ([threat model](/terragucci/reference/threat-model/#the-review)). On GitHub the apply jobs get `actions: read` for it. An artifact the forge has expired reads as no review. GitLab has no review job, so there `found` is always `false`. Without `review.agent`, `input.review` is absent.
 
 ```rego
 package main
