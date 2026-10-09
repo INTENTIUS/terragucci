@@ -57,8 +57,9 @@ def run_record(a):
             longest[j["phase"]] = {"seconds": round(secs), "job": j["name"], "repo": j["repo"]}
     notes = []
     for line in open(a.notes):
-        repo, size, roots = line.rstrip("\n").split("\t")
-        notes.append({"repo": repo, "bytes": int(size), "roots": int(roots)})
+        repo, size, roots, *cut = line.rstrip("\n").split("\t")
+        # cut: the note was cut to stay within the forge's comment limit; the job's report has all of it.
+        notes.append({"repo": repo, "bytes": int(size), "roots": int(roots), "cut": bool(cut and int(cut[0]))})
     roots_by_repo = {r["name"]: len(r["roots"]) for r in manifest["repos"]}
     for n in notes:
         if n["roots"] != roots_by_repo.get(n["repo"]):

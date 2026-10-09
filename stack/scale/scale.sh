@@ -429,7 +429,7 @@ run_scale() { # scale
   for pair in "${prs[@]}"; do
     repo="${pair%%=*}"; pr="${pair#*=}"
     note="$(note_of "$repo" "$pr")"
-    printf '%s\t%s\t%s\n' "$repo" "$(printf '%s' "$note" | wc -c | tr -d ' ')" "$(printf '%s' "$note" | sed -n 's/^<!-- terragucci:plan roots=\(.*\) -->$/\1/p' | tr ',' '\n' | grep -c . || true)" >> "$notes"
+    printf '%s\t%s\t%s\n' "$repo" "$(printf '%s' "$note" | wc -c | tr -d ' ')" "$(printf '%s' "$note" | sed -n 's/^<!-- terragucci:plan roots=\(.*\) -->$/\1/p' | tr ',' '\n' | grep -c . || true)" "$(printf '%s' "$note" | grep -c '^\*\*Cut:\*\*' || true)" >> "$notes"
   done
 
   # ── change ──
