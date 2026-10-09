@@ -105,6 +105,7 @@ export default defineConfig({
 								{ label: 'Publish your modules', slug: 'guides/publish-modules' },
 								{ label: 'Re-plan from a comment', slug: 'guides/re-plan-from-a-comment' },
 								{ label: 'Apply a pull request before it merges', slug: 'guides/apply-before-merge' },
+								{ label: 'Move resources between roots', slug: 'guides/move-resources-between-roots' },
 							],
 						},
 						{
@@ -151,6 +152,7 @@ export default defineConfig({
 						{ label: 'The reports bucket', slug: 'reference/reports-bucket' },
 						{ label: 'Webhook event schema', slug: 'reference/notify-event' },
 						{ label: 'The audit trail', slug: 'reference/audit-trail' },
+						{ label: 'Migration files', slug: 'reference/migration-files' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
 						{ label: 'Tips', slug: 'reference/tips' },
 						{ label: 'Policy', slug: 'reference/policy' },

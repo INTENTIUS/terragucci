@@ -21,7 +21,7 @@ packages/terragucci/src/render-agent.ts   comment-agent
 packages/terragucci/src/agent-comment.ts  comment-agent
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history state-versions
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history state-versions migrate-split
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
@@ -33,8 +33,9 @@ packages/terragucci/src/locks.ts          plan-lock* pr-lock pr-apply-lock tg-pr
 packages/terragucci/src/override.ts       policy-override* estate-override
 packages/terragucci/src/reconcile.ts      reconcile reconcile-parallelism estate-control audit-control
 packages/terragucci/src/estate.ts         estate estate-* front-door audit* reader-contracts inventory resource-history state-versions
-packages/terragucci/src/audit.ts          audit*
-packages/terragucci/src/backend.ts        state-versions
+packages/terragucci/src/audit.ts          audit* migrate-split
+packages/terragucci/src/backend.ts        state-versions migrate-split
+packages/terragucci/src/migrate.ts        migrate-split
 packages/terragucci/src/notify.ts         notify-chat notify-webhook
 packages/terragucci/src/notify.schema.json notify-webhook
 packages/terragucci/src/telemetry.ts      traces metrics lock-wait provider-calls summed-timings otlp-headers tg-spans dash-* drill-down alerts-fire
@@ -71,7 +72,7 @@ packages/terragucci/src/report/inventory.schema.json reader-contracts
 packages/terragucci/src/report/state-versions.schema.json reader-contracts
 packages/terragucci/src/report/changes.schema.json reader-contracts
 packages/terragucci/src/report/history.schema.json reader-contracts
-packages/terragucci/src/report/audit.ts   audit* state-versions
+packages/terragucci/src/report/audit.ts   audit* state-versions migrate-split
 packages/terragucci/src/report/highlight.ts highlight*
 packages/terragucci/src/report/azure-blob.ts blob-azure*
 packages/terragucci/src/report/gcs.ts     blob-gcs*
@@ -79,7 +80,7 @@ packages/terragucci/src/report/cost.ts   cost-estimate
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history state-versions
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history state-versions migrate-split
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue

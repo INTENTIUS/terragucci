@@ -75,6 +75,7 @@ import { pinChecker } from "./publish/require";
 import { authProviderOutput } from "./terragrunt";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
+import { runMigrations } from "./migrate";
 import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
@@ -276,7 +277,12 @@ export async function main(argv: string[]): Promise<number> {
             ? { reports: { bucket: str(flags, "bucket")!, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}), ...(str(flags, "bucket-url") ? { url: str(flags, "bucket-url") } : {}) } }
             : {}),
         }, json ? () => {} : console.error);
-        const code = result.failed ? 1 : 0;
+        let code = result.failed ? 1 : 0;
+        // A pull request's plan proves each state migration it carries, read only (./migrate.ts).
+        if (args[0] === "tf-plan" && flags.terragrunt !== true) {
+          const migrations = await runMigrations(cwd, { binary: str(flags, "binary") ?? result.report.run.binary ?? "tofu", planOnly: true, log: json ? console.error : console.log });
+          if (migrations.code !== 0) code = 1;
+        }
         const files = { html: `${result.dir}/report.html`, json: `${result.dir}/report.json`, note: `${result.dir}/note.md` };
         if (json) return emit(envelope("stage", code, { stage: args[0], change_set: result.report.change_set, files, uploaded: result.uploaded ?? null, ...(result.issue ? { issue: result.issue } : {}) }));
         console.log(renderText(result.report));

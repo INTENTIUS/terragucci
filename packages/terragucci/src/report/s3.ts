@@ -265,4 +265,26 @@ export class S3Client implements ObjectStore {
     const version = res.headers?.get("x-amz-version-id") ?? undefined;
     return { exists: true, ...(etag ? { etag } : {}), ...(version && version !== "null" ? { versionId: version } : {}) };
   }
+
+  /**
+   * Write an object only when there is none (If-None-Match: *): true when
+   * this write made it, false when one was there. Unlike put, a store that
+   * refuses the condition fails the write: a lock must never be taken
+   * unconditionally.
+   */
+  async putIfAbsent(key: string, body: string, contentType: string): Promise<boolean> {
+    const { url, headers } = signRequest(await this.signer(), "PUT", key, body, new Date(), contentType, { "if-none-match": "*" });
+    const res = await this.fetchFn(url, { method: "PUT", headers, body });
+    if (res.status === 412 || res.status === 409) return false;
+    if (res.status === 501) throw new StoreError(`PUT s3://${this.target.bucket}/${key}: the store does not take a conditional write (501)`);
+    if (!res.ok) throw new StoreError(`PUT s3://${this.target.bucket}/${key}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    return true;
+  }
+
+  /** Delete an object. One that is not there is deleted already. */
+  async remove(key: string): Promise<void> {
+    const { url, headers } = signRequest(await this.signer(), "DELETE", key, "");
+    const res = await this.fetchFn(url, { method: "DELETE", headers });
+    if (!res.ok && res.status !== 404) throw new StoreError(`DELETE s3://${this.target.bucket}/${key}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  }
 }
