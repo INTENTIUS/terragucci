@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { waveReads, waveState } from "../src/apply";
 import { StoreConflict, type ObjectStore, type StoreCondition } from "../src/report/object-store";
 import { renderRunHtml, RUN_SCHEMA, runSkeleton, runViewKey, updateRunView, withWave, type RunView } from "../src/report/run-view";
+import { unitEdges } from "../src/terragrunt";
 import { tmp, write } from "./helpers";
 
 const backend = (key: string): string => `terraform {\n  backend "s3" {\n    bucket = "s"\n    key    = "${key}"\n  }\n}\n`;
@@ -51,6 +52,21 @@ describe("the run view", () => {
       { number: 2, roots: ["app", "web"], reads: [1], state: "not-started", gate: "wave-2" },
     ]);
     expect(runViewKey("forge/acme/infra", "abc", "/reports/")).toBe("reports/forge/acme/infra/runs/abc");
+  });
+
+  it("a Terragrunt repo's units read the units their dependency blocks name, and the blast radius follows them", () => {
+    const units = [
+      { path: "live/vpc", dependencies: [] },
+      { path: "live/app", dependencies: ["live/vpc"] },
+      { path: "live/web", dependencies: ["live/app", "outside/dns"] },
+    ];
+    const v = runSkeleton("p", "c", [["live/vpc"], ["live/app"], ["live/web"]], unitEdges(units));
+    // An edge to a unit no wave holds is left out.
+    expect(v.roots.map((r) => [r.root, r.reads])).toEqual([["live/vpc", []], ["live/app", ["live/vpc"]], ["live/web", ["live/app"]]]);
+    expect(v.waves.map((w) => w.reads)).toEqual([[], [1], [2]]);
+    const html = renderRunHtml(withWave(undefined, v, { number: 1, state: "applied", changed: ["live/vpc"] }, "t"));
+    expect(html).toContain('<div id="blast" data-roots="1" data-downstream="2">');
+    expect(html).toContain('<path class="edge" data-from="p live/app" data-to="p live/web"');
   });
 
   it("replaces one wave's row and keeps the rows other jobs wrote", () => {

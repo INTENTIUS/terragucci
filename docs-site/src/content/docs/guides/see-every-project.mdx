@@ -1,7 +1,7 @@
 ---
 title: See every project in one page
 description: A scheduled job writes one page to your reports bucket with every project's latest plan, drift check and waiting waves, and a link to open it.
-claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph]
+claims: [estate, estate-control, estate-override, audit, audit-control, inventory, resource-history, dora, estate-graph, tg-estate-graph]
 prompt: |
   Read https://intentius.io/terragucci/guides/see-every-project/.
   In this control repo, add the scheduled estate job the page gives for my forge,
@@ -33,7 +33,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 The page reads `index.json`, `inventory.json`, `changes.json`, `states.json`, `edges.json`, `run.json`, `audit.json` and `audit.jsonl` files. It never opens a report, a plan's text or a root's plan JSON.
 
-A read between projects is a `terraform_remote_state` block in one project whose bucket and key name the state another project's root holds in its backend block. A project shows on the graph once one of its applies wrote a run view, which needs `reports.bucket` in its own config. The graph and the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) are inline SVG in the page: no script loads.
+In a Terragrunt repo the graph's nodes are the units, by the waves their apply cut from `terragrunt find`, and an edge goes from a unit to each unit whose `dependency` or `dependencies` block names it. A read between projects is a `terraform_remote_state` block in one project whose bucket and key name the state another project's root holds in its backend block. A project shows on the graph once one of its applies wrote a run view, which needs `reports.bucket` in its own config. The graph and the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) are inline SVG in the page: no script loads.
 
 ## Before you start
 

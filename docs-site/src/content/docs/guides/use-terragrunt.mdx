@@ -1,7 +1,7 @@
 ---
 title: Use Terragrunt
 description: Add terragucci to a Terragrunt repo, where each unit is a root and dependency order decides the waves.
-claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-preview, tg-preview-gate, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks]
+claims: [tg-zero-config, tg-waves, tg-check, tg-affected, tg-refuse, tg-gate-wait, tg-gate-refuse, tg-sealed, tg-comment-apply, tg-layers, tg-pr-apply, tg-pr-apply-lock, tg-credentials, tg-dependents, tg-preview, tg-preview-gate, tg-cost-gate, tg-steps-gate, tg-wave-jobs, tg-respond-fmt, tg-state-versions, tg-drift-pr, tg-drift-attribute, tg-migrate-split, tg-root-pins, tg-choudoufu, tg-stacks, tg-estate-graph]
 prompt: |
   Read https://intentius.io/terragucci/guides/use-terragrunt/.
   Run `npx terragucci init --dry-run --json`, list the units and waves it found,
@@ -81,6 +81,7 @@ A pipeline that checks with `terragrunt hcl fmt` and `hcl validate`, plans the u
 | `cost` | each unit's saved plan is priced, and `approve_above` holds a wave as it holds a wave of roots ([Estimate the cost of a change](/terragucci/guides/estimate-cost/)) |
 | `steps` | each moment runs once around the wave's `run --all`, in every unit the step's `roots` globs match; `after: init` is refused, since Terragrunt inits each unit inside the plan ([Run steps around a stage](/terragucci/guides/run-steps/#in-a-terragrunt-repo)) |
 | `waves.jobs` | a wide wave's job plans every unit and decides the gate; each share job plans and applies its own units with `run --all --filter` ([A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)) |
+| Dependency graph and blast radius | each unit, its wave and its `dependency` edges are in the run view and on the [estate page's graph](/terragucci/guides/see-every-project/); the plan note's blast radius lists the units that depend on a changed unit ([Blast radius in the plan note](/terragucci/concepts/waves-and-approvals/#blast-radius-in-the-plan-note)) |
 | State versions | each unit's state version is recorded after its wave applies, its backend read from the unit's `remote_state` block ([Find the state version an apply left](/terragucci/guides/find-a-state-version/)) |
 | A failed format check on a branch | the `fmt` job runs `terragrunt hcl fmt` and the binary's `fmt`, and pushes the commit to the branch |
 | Drift | the drift job reports drift by unit; its pull request writes a drifted value into the unit's own `inputs` in `terragrunt.hcl` where its module reads that variable, and `respond.drift: attribute` names who changed it ([Drift](/terragucci/reference/responses/#drift)) |

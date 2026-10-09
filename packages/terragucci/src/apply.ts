@@ -117,7 +117,7 @@ import { changesSomething, forgeCalls, pullOf, reviewDigest, reviewWave, type Re
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
-import { discoverUnits, refineWaves, walkUnits } from "./terragrunt";
+import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { stateVersion } from "./backend";
@@ -769,6 +769,8 @@ interface WaveRun {
   settings?: ResolvedSettings;
   /** How many waves the repo has, once a Terragrunt wave cut them. */
   count?: number;
+  /** A Terragrunt wave: the waves as it cut them, and the units with the units each depends on, for the run view. */
+  units?: { waves: string[][]; edges: Map<string, Set<string>> };
   planned?: WavePlan[];
   roots?: string[];
   started?: string;
@@ -889,8 +891,9 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
   const env = options.env ?? process.env;
   try {
     const facts = runFacts(repo, env, settings.forge);
-    const waves = options.terragrunt ? options.layers : applyWaves(options.layers, options.canary);
-    const reads = options.terragrunt ? new Map<string, Set<string>>() : rootDependencies(repo, options.layers.flat());
+    // A Terragrunt repo's waves and edges are the ones the wave cut from terragrunt find; before it did, the units' files give the edges.
+    const waves = options.terragrunt ? (w.units?.waves ?? options.layers) : applyWaves(options.layers, options.canary);
+    const reads = options.terragrunt ? (w.units?.edges ?? unitEdges(walkUnits(repo, w.settings?.terragrunt?.exclude))) : rootDependencies(repo, options.layers.flat());
     const states = options.terragrunt ? new Map() : rootStates(repo, options.layers.flat());
     const skeleton = runSkeleton(facts.project, facts.commit, waves, reads, states);
     const spans = waveSpans(w);
@@ -1867,6 +1870,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     return EXIT.failed;
   }
   w.count = cut.length;
+  w.units = { waves: cut, edges: unitEdges(found.units) };
   if (cut.length !== listed.length) {
     console.log(`wave ${wave}: Terragrunt's edges cut the pipeline's ${waves(listed.length)} into ${cut.length}; run terragucci init to give each wave its own job`);
   }
