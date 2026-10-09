@@ -221,7 +221,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f0fde540"
+      "commit": "082fc76e"
     },
     {
       "claim": "tg-waves",
@@ -237,7 +237,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "tg-affected",
@@ -277,7 +277,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "respond-refused",
@@ -301,7 +301,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "respond-tips",
@@ -485,7 +485,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "version-bump-job",
@@ -501,7 +501,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "oidc-clouds",
@@ -582,7 +582,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "f0fde540"
+      "commit": "082fc76e"
     },
     {
       "claim": "tg-gate-refuse",
@@ -999,7 +999,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "drift-close",
@@ -1207,7 +1207,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "tg-credentials",
@@ -1215,7 +1215,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "tg-dependents",
@@ -1239,7 +1239,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "tfquery-import",
@@ -1416,7 +1416,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "082fc76e"
     },
     {
       "claim": "dora",
@@ -1537,6 +1537,30 @@
       "verdict": "pass",
       "break": "caught",
       "commit": "f0fde540"
+    },
+    {
+      "claim": "tg-steps-gate",
+      "says": "a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "082fc76e"
+    },
+    {
+      "claim": "tg-wave-jobs",
+      "says": "with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "082fc76e"
+    },
+    {
+      "claim": "tg-state-versions",
+      "says": "a Terragrunt unit whose state is in a versioned S3 bucket applies twice, its backend read from its remote_state block, and the estate page lists both state version ids newest first, each one the bucket holds",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "082fc76e"
     },
     {
       "claim": "tg-drift-pr",
@@ -1700,22 +1724,6 @@
     {
       "claim": "tg-cost-gate",
       "says": "with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "3fc9c23"
-    },
-    {
-      "claim": "tg-steps-gate",
-      "says": "a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "commit": "3fc9c23"
-    },
-    {
-      "claim": "tg-wave-jobs",
-      "says": "with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
