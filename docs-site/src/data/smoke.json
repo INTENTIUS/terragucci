@@ -1239,7 +1239,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "380413b9"
+      "commit": "296eab1c"
     },
     {
       "claim": "tg-preview-gate",
@@ -1472,7 +1472,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "296eab1c"
     },
     {
       "claim": "dora",
@@ -1638,7 +1638,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "9bbb9a3e"
+      "commit": "296eab1c"
     },
     {
       "claim": "tg-respond-fmt",
@@ -1678,7 +1678,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "e105af7f"
+      "commit": "296eab1c"
     },
     {
       "claim": "tg-root-pins",
@@ -1686,7 +1686,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "9bbb9a3e"
+      "commit": "296eab1c"
     },
     {
       "claim": "tg-choudoufu",
@@ -1809,24 +1809,6 @@
       "commit": "6845193c"
     },
     {
-      "claim": "estate-job",
-      "says": "the estate job of the see-every-project page, pasted into .gitlab-ci.yml and run by a pipeline schedule with only its OIDC token, writes estate.html listing the project to the bucket and prints a presigned link",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "02e7f08"
-    },
-    {
-      "claim": "reconcile-mixed",
-      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
-      "needs": null,
-      "verdict": "pass",
-      "break": "caught",
-      "forge": "gitlab",
-      "commit": "02e7f08"
-    },
-    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,
@@ -1854,6 +1836,24 @@
       "commit": "02e7f08"
     },
     {
+      "claim": "drift-issue",
+      "says": "the drift schedule opens one drift issue naming the root and attribute that drifted, updates the same issue when more drifts, and closes it when a run finds none",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "estate-job",
+      "says": "the estate job of the see-every-project page, pasted into .gitlab-ci.yml and run by a pipeline schedule with only its OIDC token, writes estate.html listing the project to the bucket and prints a presigned link",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
       "claim": "explain-refusal",
       "says": "after a wave is refused, the explain-refusal job of the agent-refused-wave page runs wave-refused on the wave reports and a stand-in agent prints a summary naming the root whose plan moved, and a branch pipeline still runs",
       "needs": null,
@@ -1863,8 +1863,8 @@
       "commit": "02e7f08"
     },
     {
-      "claim": "drift-issue",
-      "says": "the drift schedule opens one drift issue naming the root and attribute that drifted, updates the same issue when more drifts, and closes it when a run finds none",
+      "claim": "reconcile-mixed",
+      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
