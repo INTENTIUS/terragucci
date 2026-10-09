@@ -24,6 +24,21 @@ export const workflow = new Workflow({
   concurrency: { group: "nightly", "cancel-in-progress": false },
 });
 
+// Docker Hub limits anonymous pulls per IP, and runners share IPs: pull
+// through Google's Docker Hub mirror, which falls back to Docker Hub for an
+// image it does not hold. The same step as ci/pipeline.ts's prelude.
+const dockerMirror = () =>
+  new Step({
+    name: "Pull Docker Hub images through a mirror",
+    run: [
+      "conf=/etc/docker/daemon.json",
+      "{ sudo cat \"$conf\" 2>/dev/null || echo '{}'; } | jq '. + {\"registry-mirrors\": [\"https://mirror.gcr.io\"]}' > \"$RUNNER_TEMP/daemon.json\"",
+      "sudo cp \"$RUNNER_TEMP/daemon.json\" \"$conf\"",
+      "sudo systemctl restart docker",
+      "docker info --format '{{.RegistryConfig.Mirrors}}'",
+    ].join("\n"),
+  });
+
 export const gitlab = new Job({
   "runs-on": "ubuntu-latest",
   timeoutMinutes: 90,
@@ -32,6 +47,7 @@ export const gitlab = new Job({
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     installJust(),
     new Step({ name: "Install", run: "npm ci" }),
+    dockerMirror(),
     new Step({ name: "Start the gitlab profile", run: "just stack-up gitlab" }),
     new Step({ name: "Run the gitlab claims", run: "just validate-forge gitlab" }),
     new Step({ name: "Stop the stack", if: "always()", run: "just stack-down" }),
@@ -65,6 +81,7 @@ export const sandbox = new Job({
     SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
     installJust(),
     new Step({ name: "Install", run: "npm ci" }),
+    dockerMirror(),
     new Step({
       name: "Use the newest published release",
       run: `echo "TERRAGUCCI_SANDBOX_RELEASE=$(npm view @intentius/terragucci version)" >> "$GITHUB_ENV"`,
