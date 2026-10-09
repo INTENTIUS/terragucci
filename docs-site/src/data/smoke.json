@@ -331,9 +331,9 @@
       "claim": "fresh-plan",
       "says": "on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "5ba02028"
     },
     {
       "claim": "forgejo-oidc",
@@ -549,7 +549,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "5ba02028"
     },
     {
       "claim": "policy-delete-key",
@@ -612,9 +612,9 @@
       "claim": "pr-apply-lock",
       "says": "a second pull request that reaches a root another open pull request has applied is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "5ba02028"
     },
     {
       "claim": "pr-apply-stale",
@@ -1576,7 +1576,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "5ba02028"
     },
     {
       "claim": "linked-states",
@@ -1584,7 +1584,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "ab62494f"
+      "commit": "5ba02028"
     },
     {
       "claim": "mr-widget",
