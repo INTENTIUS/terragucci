@@ -30,7 +30,8 @@
 # stack/.state/smoke-logs/<time>); the SMOKE lines print as runs finish, and
 # the record lists claims in CLAIMS order whatever order they finished in.
 #
-# A run whose log has not grown for SMOKE_STALL_MIN minutes (default 10) is
+# A run whose log has not grown for SMOKE_STALL_MIN minutes (default: the
+# claim timeout plus two, 17 for the default 900 s timeout) is
 # stopped and fails as stalled, its last lines and the stack's job containers
 # printed, so nothing waits out a long timeout without anyone looking.
 #
@@ -5631,6 +5632,10 @@ review_merge() { # name -> REVIEW_MERGE, the merge commit, once its run ended
   wait_run "$USER/$1" "$REVIEW_MERGE" push
 }
 
+head_runs() { # name, sha, [ended] -> how many runs the head has (only the ended ones with ended)
+  api "$URL/api/v1/repos/$USER/$1/actions/runs?head_sha=$2" | jq --arg d "${3:-}" '[.workflow_runs[] | select($d == "" or (.status | IN("success","failure","cancelled","skipped")))] | length'
+}
+
 approval_status() { # name, sha -> the state and description of terragucci/approval on sha
   api "$URL/api/v1/repos/$USER/$1/commits/$2/statuses?limit=50" | jq -r '[.[] | select(.context == "terragucci/approval")] | sort_by(.id) | last | if . == null then "" else .status + ":" + .description end'
 }
@@ -5726,11 +5731,17 @@ claim_pr_review_status() {
   st="$(approval_status pr-review-status "$REVIEW_HEAD")"
   log "after the plan: terragucci/approval is ${st:-absent}"
   case "$st" in pending:*"wave 1"*"waits"*) ;; *) log "expected terragucci/approval pending, naming wave 1"; rc=1 ;; esac
+  local runs0
+  runs0="$(head_runs pr-review-status "$REVIEW_HEAD")"
   [ $rc = 0 ] && { review_approve pr-review-status "$REVIEW_HEAD" || rc=1; }
   if [ $rc = 0 ]; then
+    # The review starts its own run on the head. Once it ended, the status it
+    # set is final: under BREAK that is still pending, with nothing left to wait for.
     for i in $(seq 1 $(( TIMEOUT / 3 ))); do
       st="$(approval_status pr-review-status "$REVIEW_HEAD")"
       case "$st" in success:*) break ;; esac
+      [ "$(head_runs pr-review-status "$REVIEW_HEAD" ended)" -gt "$runs0" ] && break
+      [ $(( i % 20 )) = 0 ] && log "waiting for the review's run on ${REVIEW_HEAD:0:8} (${st:-absent})"
       sleep 3
     done
     log "after the review: terragucci/approval is ${st:-absent}"
@@ -10056,8 +10067,12 @@ finish_run() { # run
   smoke_line "$line"
 }
 
-SMOKE_STALL_MIN="${SMOKE_STALL_MIN:-10}"
-case "$SMOKE_STALL_MIN" in ''|*[!0-9]*|0) SMOKE_STALL_MIN=10 ;; esac
+# A claim can wait silently for up to its timeout (lib.sh's TIMEOUT) on
+# something its break keeps from happening, so the default allows that plus
+# two minutes: a claim silent past its own timeout is stuck.
+stall_default=$(( ${TERRAGUCCI_VALIDATE_TIMEOUT:-900} / 60 + 2 ))
+SMOKE_STALL_MIN="${SMOKE_STALL_MIN:-$stall_default}"
+case "$SMOKE_STALL_MIN" in ''|*[!0-9]*|0) SMOKE_STALL_MIN=$stall_default ;; esac
 
 # A run whose log has not grown for SMOKE_STALL_MIN minutes: say what it was
 # doing and what the stack is running, stop it and its children, and leave a
