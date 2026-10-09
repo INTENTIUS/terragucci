@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 16;
+export const REPORT_MINOR = 17;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -372,6 +372,23 @@ export interface ReportWave {
    * the page to review it on. Absent when no review can approve it.
    */
   review?: { pull_request: number; url: string };
+  /** The wave's monthly cost, when `cost` is on (minor 17): the sums over its roots estimated, and with `cost.approve_above` whether it waits for it. */
+  cost?: ReportWaveCost;
+}
+
+/** One wave's monthly cost (minor 17). */
+export interface ReportWaveCost {
+  currency: string;
+  /** The change over the wave's roots estimated. Null when none was. */
+  monthly_delta: number | null;
+  monthly_total: number | null;
+  past_monthly_total: number | null;
+  /** The wave's roots the estimator gave no figure for. */
+  unestimated?: string[];
+  /** `cost.approve_above` in the config at base, when set. */
+  approve_above?: number;
+  /** With `approve_above`: the change is over it, or cannot be known, so the wave waits for an approval whatever the gate. */
+  over?: boolean;
 }
 
 /**
@@ -478,7 +495,7 @@ export interface Report {
   intent?: ReportIntent;
   /** The run's policy check, when `policy` is on (minor 6). Each root's verdict is under the root. */
   policy?: ReportPolicy;
-  /** The cost estimate of a `tf-plan` run, when `cost` is on (minor 12). */
+  /** The cost estimate of a `tf-plan` run, or of a `tf-apply` wave's plans (minor 17), when `cost` is on (minor 12). */
   cost?: ReportCost;
 }
 

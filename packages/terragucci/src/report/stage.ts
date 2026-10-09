@@ -41,14 +41,14 @@ import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./drift-
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
-import { checkPlans, governingPolicy, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
+import { checkPlans, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
 import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
+import type { Report, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
-import { costCommand, estimateCosts, writeCostFiles, type CostRunner } from "./cost";
+import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
@@ -1013,9 +1013,12 @@ export async function checkPolicy(repo: string, policy: PolicySettings, items: {
  * report still shows what it would change; every checked root carries its
  * verdict and warnings.
  */
-async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void, run: Omit<PolicyRunContext, "root"> = {}): Promise<{ inputs: RootInput[]; policy: ReportPolicy }> {
+async function applyPolicy(repo: string, policy: PolicySettings, inputs: RootInput[], base: string | undefined, trust: TrustedOptions, options: PolicyOptions = {}, log: (line: string) => void, run: Omit<PolicyRunContext, "root" | "cost"> = {}, costOf: (root: string) => PolicyCost | undefined = () => undefined): Promise<{ inputs: RootInput[]; policy: ReportPolicy }> {
   const checked = inputs.filter((i) => i.plan !== undefined && i.error === undefined && !i.terragrunt?.provisional);
-  const found = await checkPlans(repo, policy, checked.map((i) => ({ path: i.path, plan: i.plan })), base, trust, options, log, run);
+  const found = await checkPlans(repo, policy, checked.map((i) => {
+    const cost = costOf(i.path);
+    return { path: i.path, plan: i.plan, ...(cost ? { cost } : {}) };
+  }), base, trust, options, log, run);
   return {
     policy: found.policy,
     inputs: inputs.map((i) => {
@@ -1083,19 +1086,54 @@ async function finish(
   let inputs = planned;
   let policy: ReportPolicy | undefined;
   const drift = stage === "tf-drift";
+  // cost: the estimator over each root's stored plan, before the policy, which reads the figures; a failed estimate is named and fails nothing.
+  // cost.approve_above is read at base, so the note says which waves the amount will hold as the base's config has it.
+  let costOutputs: Map<string, string> | undefined;
+  let cost: ReportCost | undefined;
+  let rule: CostRule = {};
+  if (!drift && !options.noCost) {
+    rule = await costRule(repo, settings.cost, options.base ?? baseRef(env), policyTrust(repo, options));
+    if (rule.note) log(rule.note);
+    if (rule.error) log(`cost: ${rule.error}`);
+    const stored = rule.setting
+      ? inputs.flatMap((i) => {
+        const json = plans.get(i.path)?.json;
+        return json !== undefined ? [{ root: i.path, json }] : [];
+      })
+      : [];
+    if (rule.setting && stored.length > 0) {
+      const costWork = mkdtempSync(join(tmpdir(), "terragucci-cost-"));
+      try {
+        const estimate = await estimateCosts(stored, costCommand(rule.setting), env, costWork, repo, log, options.costRunner);
+        cost = estimate.cost;
+        costOutputs = estimate.outputs;
+      } finally {
+        rmSync(costWork, { recursive: true, force: true });
+      }
+    }
+  }
+  const costWaves = cost ? waves.map((w) => ({ ...w, cost: waveCost(cost!, w.roots, rule.approveAbove) })) : waves;
+  for (const w of costWaves) {
+    if ("cost" in w && w.cost?.over) log(`cost: wave ${w.number}: ${costReason(w.cost, rule.source)}, so it waits for an approval when it applies`);
+  }
+  const costOf = (root: string): PolicyCost | undefined => {
+    if (!cost) return undefined;
+    const w = costWaves.find((x) => x.roots.includes(root));
+    return policyCost(cost, root, w && "cost" in w && w.cost ? { number: w.number, cost: w.cost } : undefined, rule.approveAbove);
+  };
   // The base's policy key decides whether policy runs, so a pull request that deletes it is still checked.
   const governing = drift ? undefined : await governingPolicy(repo, settings.policy, options.base ?? baseRef(env), policyTrust(repo, options));
   if (governing?.note) log(governing.note);
   if (governing?.policy) {
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
     const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
-    ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run));
+    ({ inputs, policy } = await applyPolicy(repo, governing.policy, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
     if (governing.policy.override?.length) inputs = await planOverrides(repo, options, env, inputs, policy, log);
   }
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: inputs,
-    waves,
+    waves: costWaves,
     redacted,
     // The waves of a plan say which the gate will hold, and carry the digest approval: pr-review binds a review to.
     ...(drift ? {} : { gate: settings.gate }),
@@ -1116,24 +1154,7 @@ async function finish(
     }
     for (const line of describeTips(report.tips)) log(line);
   }
-  // cost: the estimator over each root's stored plan; a failed estimate is named and fails nothing.
-  let costOutputs: Map<string, string> | undefined;
-  if (!drift && settings.cost && !options.noCost) {
-    const stored = report.roots.flatMap((r) => {
-      const json = plans.get(r.path)?.json;
-      return json !== undefined ? [{ root: r.path, json }] : [];
-    });
-    if (stored.length > 0) {
-      const costWork = mkdtempSync(join(tmpdir(), "terragucci-cost-"));
-      try {
-        const estimate = await estimateCosts(stored, costCommand(settings.cost), env, costWork, repo, log, options.costRunner);
-        report.cost = estimate.cost;
-        costOutputs = estimate.outputs;
-      } finally {
-        rmSync(costWork, { recursive: true, force: true });
-      }
-    }
-  }
+  if (cost) report.cost = cost;
   observer.addTimings(report);
   const dir = resolve(repo, options.out ?? "terragucci-report");
   // The bucket's address comes from the config when the pipeline names the same bucket without it.

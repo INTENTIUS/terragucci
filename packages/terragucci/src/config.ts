@@ -386,7 +386,7 @@ export function responseTo(settings: ProjectSettings, event: RespondEvent): stri
 }
 
 /** `cost: true`, or the secret holding the estimator's key and the command to run instead of Infracost. */
-export type CostSettings = true | { key_secret?: string; command?: string };
+export type CostSettings = true | { key_secret?: string; command?: string; approve_above?: number };
 
 /** The secret Infracost's key is read from when `cost.key_secret` is unset; the job gets it as this variable too. */
 export const COST_KEY_SECRET = "INFRACOST_API_KEY";
@@ -530,9 +530,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.cost !== undefined && s.cost !== true) {
-    if (!isObject(s.cost)) problems.push(`${where}.cost must be true or a map (settings: key_secret, command)`);
+    if (!isObject(s.cost)) problems.push(`${where}.cost must be true or a map (settings: key_secret, command, approve_above)`);
     else {
-      for (const k of Object.keys(s.cost)) if (k !== "key_secret" && k !== "command") problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command)`);
+      for (const k of Object.keys(s.cost)) if (k !== "key_secret" && k !== "command" && k !== "approve_above") problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command, approve_above)`);
+      if (s.cost.approve_above !== undefined && !(typeof s.cost.approve_above === "number" && Number.isFinite(s.cost.approve_above) && s.cost.approve_above >= 0)) problems.push(`${where}.cost.approve_above must be an amount of 0 or more, in the estimator's currency a month, such as 100`);
       if (s.cost.key_secret !== undefined && !(typeof s.cost.key_secret === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.cost.key_secret))) problems.push(`${where}.cost.key_secret must name the secret that holds the estimator's key, such as INFRACOST_API_KEY`);
       if (s.cost.command !== undefined && !(typeof s.cost.command === "string" && s.cost.command.trim() !== "")) problems.push(`${where}.cost.command must be a command that prints Infracost's JSON`);
     }
