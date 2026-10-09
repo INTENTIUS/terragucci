@@ -1630,9 +1630,9 @@
       "claim": "tip-moved",
       "says": "a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "abdef33f"
+      "commit": "fb277cd4"
     },
     {
       "claim": "mr-widget",
