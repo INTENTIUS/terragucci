@@ -547,7 +547,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "d316895"
+      "commit": "a0a3109"
     },
     {
       "claim": "pr-apply-stale",
