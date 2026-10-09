@@ -13,7 +13,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 This is one of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)). It is off unless `review.agent` is set.
 
-## What you end up with
+## Result
 
 After each plan of a pull request, a note on the pull request. Its Markdown, with the model's review under terragucci's first lines:
 
@@ -31,7 +31,7 @@ risk: high
 
 The note never approves, requests changes or sets a status. Reviewers read it beside the plan note. A policy can act on its risk when the pull request applies ([below](#use-the-risk-in-a-policy)).
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -73,7 +73,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
 
 </Steps>
 
-## What the model is given
+## Model inputs
 
 | Part | From |
 |---|---|
@@ -85,7 +85,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
 
 The prompt marks everything but the instructions as written by the pull request's author, and tells the model to follow nothing in it. It asks for three parts, risk, mismatches between the description and the plan, and questions, and a last line `risk: low`, `risk: medium` or `risk: high`. A review with no such line, or a command that fails, gives risk `unknown`.
 
-## What each job can do
+## Job permissions
 
 | Job | Does | Holds |
 |---|---|---|
@@ -147,5 +147,5 @@ The review command gets everything in its prompt and runs with no tools, so it n
 
 ## Next
 
-- [The threat model](/terragucci/reference/threat-model/#what-the-generated-jobs-reach) lists the review jobs with the rest.
+- [The threat model](/terragucci/reference/threat-model/#job-access) lists the review jobs with the rest.
 - [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) runs a coding agent on a comment.

@@ -15,7 +15,7 @@ prompt: |
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-## What you end up with
+## Result
 
 Everything runs as jobs in your own CI and lands in your git and your bucket, with no account to create. A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Pick your forge in any tab; the other forge tabs on the site follow.
 
@@ -36,7 +36,7 @@ Everything runs as jobs in your own CI and lands in your git and your bucket, wi
 
 Self-managed GitLab works the same. See [one apply at a time](/terragucci/reference/pipeline/#one-apply-at-a-time) for the queue.
 
-## What needs an agent
+## Agent features
 
 No agent is needed to set up or run terragucci. Setup and every pull request feature are plain CI jobs; two opt-in features run a coding agent.
 
@@ -58,7 +58,7 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
 | The `/terragucci agent <ask>` comment (GitHub and Forgejo) | `agent.comment` is set, with a model API key secret | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
 | A summary of a refused wave | you add its job by hand, with a model API key secret | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
-## Before you start
+## Prerequisites
 
 | You need | For |
 |---|---|
@@ -262,7 +262,7 @@ No agent is needed to set up or run terragucci. Setup and every pull request fea
    </TabItem>
    </Tabs>
 
-6. Make approval possible. A wave that destroys something waits for a person, who approves it with `npx terragucci approve` from a checkout, which runs [chant](/terragucci/concepts/glossary/#chant) (`npm i -D @intentius/chant`), or with a review of the pull request under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes). Signing is optional: only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#before-your-first-approval)).
+6. Make approval possible. A wave that destroys something waits for a person, who approves it with `npx terragucci approve` from a checkout, which runs [chant](/terragucci/concepts/glossary/#chant) (`npm i -D @intentius/chant`), or with a review of the pull request under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes). Signing is optional: only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
 
 </Steps>
 

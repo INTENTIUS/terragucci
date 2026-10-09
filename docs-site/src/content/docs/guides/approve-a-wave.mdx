@@ -14,11 +14,11 @@ import Captured from '../../../components/Captured.astro';
 import Shot from '../../../components/Shot.astro';
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 One wave applied, with an approval recorded in your repo that names the exact plans you read.
 
-## Before you start
+## Prerequisites
 
 | You need | Detail |
 |---|---|
@@ -39,7 +39,7 @@ One wave applied, with an approval recorded in your repo that names the exact pl
 | `pr-review` | the merged pull request's approval of its head, by a reviewer other than its author with write access, when the wave plans what the review saw; and any `chant approve` of the digest, as under `ledger` | on GitHub or Forgejo, optionally require `terragucci/approval` in branch protection; on GitLab, an approval rule | a writer other than the author approved the head whose plans these are. An approval by the user the pipeline's token acts as never counts. A `chant approve` still proves only the plans. |
 | `sealed` | only an approval sealed with `--sign` by a key the signers file lists for its approver | a [signers file](#set-up-the-signers-file); `init` lists each wave under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a listed person approved these exact plans |
 
-A wave reads the mode at base, like the signers file ([Which commit the rule is read from](#which-commit-the-rule-is-read-from)), and `terragucci config check` prints the mode in force and its source.
+A wave reads the mode at base, like the signers file ([Which commit the rule is read from](#rule-commit)), and `terragucci config check` prints the mode in force and its source.
 
 | `terragucci.yml` | Mode in force |
 |---|---|
@@ -194,7 +194,7 @@ Every forge. GitLab's merge request approvals name no commit, so there an approv
    | a wave whose plans changed after the approval, before they applied | refused |
    | a wave planning anew after its approved plans applied | waits for an approval of the new plans |
    | an approved wave | applies, resuming where it stopped |
-   | a comment that fails a check | runs nothing; the reply names the check ([the checks](/terragucci/reference/pipeline/#when-a-comment-runs-nothing)) |
+   | a comment that fails a check | runs nothing; the reply names the check ([the checks](/terragucci/reference/pipeline/#ignored-comments)) |
 
    [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
 
@@ -243,7 +243,7 @@ Only `approval: sealed` reads it. With that key in `terragucci.yml`, `terragucci
 
 </Steps>
 
-### Which commit the rule is read from
+### Rule commit
 
 The `approval` key in `terragucci.yml`, the signers file, `.chant/trust.json` and `chant.workspace.json` are read from base, the applied commit's first parent. A pull request's change to them governs only later merges: one that switches `sealed` to `ledger` is still judged sealed.
 
@@ -261,7 +261,7 @@ The `approval` key in `terragucci.yml`, the signers file, `.chant/trust.json` an
 
 Give those changes the same review as the signers file. The [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses them.
 
-## Who can push to `chant/lifecycle`
+## Push access to `chant/lifecycle`
 
 | Who pushes | What | With |
 |---|---|---|

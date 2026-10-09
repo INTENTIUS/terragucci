@@ -8,7 +8,7 @@ CI does this: each job runs in your forge's CI and lands in your git and your bu
 
 | You get | How |
 |---|---|
-| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#what-runs-where) | Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket. |
+| [No server to host](https://intentius.io/terragucci/concepts/how-it-works/#components) | Every job runs in your CI. State, plan reports and approvals stay in your git and your bucket. |
 | [Built for many roots](https://intentius.io/terragucci/concepts/why-plans-are-grouped/) | One grouped note for 200 plans. Canary roots apply first, then the rest in [waves](https://intentius.io/terragucci/concepts/waves-and-approvals/). An approval covers exactly the plans it was shown, and a plan that changed after it is refused. |
 | [A trace of every run](https://intentius.io/terragucci/guides/send-traces-and-metrics/) | One OpenTelemetry trace per stage run, with a span per root and the binary's own spans inside it (lock waits and slow provider calls with choudoufu). Metrics and dashboards come with it. |
 

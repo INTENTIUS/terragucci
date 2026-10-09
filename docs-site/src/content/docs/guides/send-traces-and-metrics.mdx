@@ -13,7 +13,7 @@ prompt: |
 import Shot from '../../../components/Shot.astro';
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 Every plan, drift and apply job sends one trace and its metrics over OTLP to your collector, and your Grafana shows nine dashboards and the alerts `init` writes. The jobs run in your CI and send to your own collector; nothing else receives them.
 
@@ -21,7 +21,7 @@ With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu
 
 <Shot step="see-runs" view="runs" alt="The Runs dashboard: the slowest roots of the plan, the stage durations, and the three runs' traces from Tempo" />
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -142,7 +142,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
 
 </Steps>
 
-## What each dashboard needs
+## Dashboard requirements
 
 | Dashboard | Fills in after |
 |---|---|

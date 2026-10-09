@@ -15,7 +15,7 @@ prompt: |
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-## What you end up with
+## Result
 
 Every module that changed on the default branch released under a new number, each with a digest your roots can pin.
 
@@ -28,7 +28,7 @@ Publishing is opt-in, and so is attesting on top of it:
 | Test | `modules.test: true` | `tofu test` or `terraform test` on each module before a release of it publishes |
 | Attest | `modules.attest: true` as well | a signature, SLSA provenance and an SBOM for each release, and a record of it in the release ledger |
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|

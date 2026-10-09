@@ -22,7 +22,7 @@ CI does this: everything runs as jobs in your CI and lands in your git and your 
 
 | You get | Where it is shown |
 |---|---|
-| No server to host | [What runs where](/terragucci/concepts/how-it-works/#what-runs-where) |
+| No server to host | [What runs where](/terragucci/concepts/how-it-works/#components) |
 | GitHub, GitLab or Forgejo | [Per forge](/terragucci/guides/add-to-a-repo/#per-forge) |
 | Object storage on AWS, GCP or Azure, for state and reports | [Credentials](/terragucci/reference/pipeline/#credentials), [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
 | Tracing and metrics | [Send traces and metrics](/terragucci/guides/send-traces-and-metrics/) |
@@ -38,11 +38,11 @@ CI does this: everything runs as jobs in your CI and lands in your git and your 
 <LinkCard title="Switching from Atlantis or OpenTaco" description="Their commands and settings, and the terragucci equivalent of each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
 </CardGrid>
 
-## What you end up with
+## Result
 
 A pull request with one plan note that groups the roots a change reaches and names every destroy.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -195,7 +195,7 @@ A pull request with one plan note that groups the roots a change reaches and nam
 
 </Steps>
 
-## Before your first approval
+## First approval
 
 With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a person only when its plan destroys or replaces something. You approve it from your machine with [chant](/terragucci/concepts/glossary/#chant), the tool terragucci's stages are written in.
 

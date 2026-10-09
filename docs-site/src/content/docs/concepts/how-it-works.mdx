@@ -30,7 +30,7 @@ Each step names its stage and the identity it runs with. Every step runs on GitH
 
    <Shot step="wave-waiting" view="log" alt="Wave 4's apply job stopped with exit code 3, printing the chant approve command with the wave's set digest" />
 
-6. The apply: `tf-apply` with the apply identity. `terragucci approve` restarts the waiting wave; you can also rerun the job, push, or comment `/terragucci apply` (on GitLab with the `comments` schedule). The wave re-plans and refuses on a changed digest. It never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) runs nothing.
+6. The apply: `tf-apply` with the apply identity. `terragucci approve` restarts the waiting wave; you can also rerun the job, push, or comment `/terragucci apply` (on GitLab with the `comments` schedule). The wave re-plans and refuses on a changed digest. It never applies a root twice. A comment that fails a [check](/terragucci/reference/pipeline/#ignored-comments) runs nothing.
 
 7. Drift: with `drift:` set to a schedule, `tf-drift` plans every root with `-refresh-only` under the plan identity and keeps one issue updated, closing it when drift is gone. It never applies.
 
@@ -38,7 +38,7 @@ Each step names its stage and the identity it runs with. Every step runs on GitH
 
 </Steps>
 
-## What runs where
+## Components
 
 | Where | What |
 |---|---|
@@ -50,7 +50,7 @@ Each step names its stage and the identity it runs with. Every step runs on GitH
 
 The plan identity is read-only because pull request code runs with it. Applying before merge gives the apply identity to unmerged code, so it is opt-in.
 
-## Where to go next
+## Next
 
 - [Get your first plan note](/terragucci/getting-started/) sets it up on your repository.
 - [The tutorial](/terragucci/tutorial/) runs each step above on a 15-root example on your laptop.

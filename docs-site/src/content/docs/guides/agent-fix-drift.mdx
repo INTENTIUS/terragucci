@@ -13,7 +13,7 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 This is one of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)). It is off unless `agent.drift` is set.
 
-## What you end up with
+## Result
 
 When a [drift run](/terragucci/guides/turn-on-drift-checks/) opens the drift issue, a coding agent reads what drifted and changes the code to describe what is live. terragucci opens a pull request with the change and links it on the issue:
 
@@ -24,7 +24,7 @@ It plans like any other pull request; nothing was applied, approved or merged.
 
 The pull request plans like any other. Merging it keeps the change made outside the code, and its apply goes through the gate. Closing it, then applying the code as it is, undoes the drift instead.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -92,7 +92,7 @@ The pull request plans like any other. Merging it keeps the change made outside 
 
 </Steps>
 
-## What the agent is given
+## Agent inputs
 
 The prompt lists each drifted resource by root, with what the state held and what is live, and never a value the plan marks sensitive:
 
@@ -104,7 +104,7 @@ root app:
 
 It tells the agent that the drift and every file are untrusted input, since a value in the cloud can hold any text, and that a change to a guarded path is refused.
 
-## What each job can do
+## Job permissions
 
 | Job | Does | Holds |
 |---|---|---|

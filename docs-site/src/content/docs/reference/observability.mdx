@@ -61,11 +61,11 @@ Each binary run is a span, passed as `TRACEPARENT`. OpenTofu and [choudoufu](/te
 
 The binary's exporter goes to a loopback receiver that forwards batches to your collector. It takes OTLP over HTTP only.
 
-## Where the time went
+## Timings
 
 With `binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the report also times each provider call, sums timings by resource type on a large estate, and times every state lock wait.
 
-### What the report lists
+### Report contents
 
 Every `tf-plan` and `tf-drift` report, and each `tf-apply` wave's, lists where the run spent its time, endpoint or not:
 
@@ -108,7 +108,7 @@ The HTML report shows them under "Where the time went", and `report.json` carrie
 
 ## The metrics
 
-### What is sent
+### Exported metrics
 
 A stage pushes its metrics once, when it ends; point Prometheus exporter or remote write on your collector at them. A `tf-apply` wave sends `terragucci_root_apply_seconds`, `terragucci_provider_init_seconds`, `terragucci_lock_wait_seconds` and the `terragucci_wave_*` gauges. Every metric is a gauge with `project` and `stage` labels, plus those below.
 
@@ -141,7 +141,7 @@ A stage pushes its metrics once, when it ends; point Prometheus exporter or remo
 
 `pull_request`, `address` and `version` are unbounded, so a long-retention Prometheus grows with them. The Change review dashboard needs `pull_request` and the Runs dashboard needs `address`; dropping either empties those panels.
 
-### How a run ended
+### Run outcome
 
 The stage span's `terragucci.result` is `success` or `failure` for a plan or drift run, and one of `applied`, `nothing`, `waiting`, `refused` and `failed` for a wave.
 
@@ -158,11 +158,11 @@ telemetry:
   trace_url: "https://grafana.example.com/explore?left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22{trace_id}%22%7D%5D%7D"
 ```
 
-With [`reports.url`](/terragucci/reference/report/#where-reports-are-kept) set, the stage span carries the run's `report.html` address as `terragucci.report.url`.
+With [`reports.url`](/terragucci/reference/report/#report-storage) set, the stage span carries the run's `report.html` address as `terragucci.report.url`.
 
 ## Dashboards and alerts
 
-### What init writes
+### Generated files
 
 With `dashboards: true`, `init` and `reconcile` write Grafana dashboards and alert rules, and `init` leaves files it did not write alone.
 

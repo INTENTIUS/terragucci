@@ -119,7 +119,7 @@ Other changes are only reported:
 
 In a Terragrunt repo a unit's resources are in the module its `terraform.source` names, and what differs between units is their `inputs`. Where the module sets the drifted attribute to `var.<name>` and the unit's own `terragrunt.hcl` sets `<name>` to a literal in `inputs`, the pull request writes the live value there, so only that unit changes. A literal in the module is reported, since every unit calling the module shares it, and so is a module from outside the repo. The drift job plans again only the units its report shows drifted. `--import` names a root's files, so it is refused in a Terragrunt repo.
 
-With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#what-edits-the-stacks) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
+With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the roots are the app's output, so there is no literal to write: `respond.drift: pull-request` with a `drift` schedule is a config error, and `respond drift` refuses.
 
 For a resource the state lacks, pass `--import <address>=<id>`. On Terraform 1.14.1 and later, a root with a `.tfquery.hcl` file gets imports from `terraform query`.
 
@@ -187,7 +187,7 @@ Each tip is its own pull request.
 
 With `--report`, `tips` reads the plans of a `stage tf-plan` report and proposes only the `moved` blocks; run it in a checkout of the branch that renamed the resources, after its plan. The generated tips job runs without it, after the applies, from the default branch.
 
-With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#what-edits-the-stacks) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
+With [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
 
 <Shot step="tips" view="fix" alt="The pull request the tips job opens for a provider taken by a range: one file, main.tf, pinning hashicorp/aws at the version its lock file holds" optional />
 
@@ -210,6 +210,6 @@ The bump comes from the [version bump rules](/terragucci/reference/stages/#versi
 
 <Shot step="publish" view="release" alt="The release pull request the version-bump job opened on Forgejo, Release modules/queue 0.1.1: it proposes a patch bump, says no commit since 0.1.0 carries a conventional type and the decision service did not answer, explains that merging writes the module's version file for the next tf-publish run, and lists the commit since the last release" />
 
-## Where it runs
+## Runtime
 
 Responses run in CI with no model. To hand a result to your own agent, run the command with `--json` in a job whose token can only comment, as in [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/). The agent never holds an apply role or a gate's signing key.

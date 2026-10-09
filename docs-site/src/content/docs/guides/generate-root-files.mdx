@@ -11,7 +11,7 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 `terragucci generate` writes these files from `terragucci.yml`:
 
@@ -31,7 +31,7 @@ Each is plain HCL in the layout `fmt` keeps, with a first line that says terragu
 | is missing | a new directory matched, and nobody ran `generate` |
 | is left over | the config no longer asks for it |
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
@@ -88,7 +88,7 @@ Each is plain HCL in the layout `fmt` keeps, with a first line that says terragu
 
 </Steps>
 
-## How the levels stack
+## Level precedence
 
 | Order | Level | Applies to |
 |---|---|---|
@@ -114,7 +114,7 @@ With no `required_version` at any level, `versions.tf` takes the release `versio
 
 An exact `required_version` that disagrees with the pin stops `generate`. A range such as `">= 1.6"` is kept as written. `required_version: null` writes none. Under `binary: choudoufu`, `version` names a [choudoufu](/terragucci/concepts/glossary/#choudoufu) release, which is not a `required_version`.
 
-## Which directories get files
+## Target directories
 
 `generate` writes for the directories `init` plans, found by `roots` or by detection, and for each path under `generate.roots`. Naming a new directory there gives it a backend before it has one of its own. `generate` deletes a generated file the config stops asking for, and `generate --check` refuses it.
 

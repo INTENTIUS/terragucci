@@ -293,7 +293,7 @@ On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments`
 | `/terragucci lock`, `unlock`, with `--when pull-request` | the merge request is open | starts the same pipeline |
 | `/terragucci lock`, `unlock` without it, `agent` | | replies that the verb does not run here |
 
-[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#when-a-comment-runs-nothing) lists the checks every comment passes before a job uses a credential.
+[The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#ignored-comments) lists the checks every comment passes before a job uses a credential.
 
 ## review
 

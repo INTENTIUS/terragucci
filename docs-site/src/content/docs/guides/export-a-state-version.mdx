@@ -11,13 +11,13 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-## What you end up with
+## Result
 
 One version of a root's state in a file on your machine that only you can read. A record on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) names who exported which root and version, and who approved it. The [audit trail](/terragucci/reference/audit-trail/) lists it as a `state-export` entry.
 
 The state goes to the person who runs the command and nowhere else. It never goes to the reports bucket, and no job writes it as an artifact: a job's artifact is readable by everyone with read access to the repo for as long as the forge keeps it, which on a public repo is everyone, and a state holds every secret its resources hold. Run on your machine, the state reaches only someone whose own cloud identity can already read the bucket. What terragucci adds is the approval by someone else and the record.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|

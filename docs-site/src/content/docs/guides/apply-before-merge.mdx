@@ -13,18 +13,18 @@ prompt: |
 import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 import Shot from '../../../components/Shot.astro';
 
-## What you end up with
+## Result
 
 An open change that applies from its head in the same waves and gates as a merge. It merges once every wave applied, and the push after the merge applies nothing.
 
-## Before you start
+## Prerequisites
 
 | You need | Why |
 |---|---|
 | Plain roots or a Terragrunt repo on GitHub, GitLab or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/) or [Use Terragrunt](/terragucci/guides/use-terragrunt/) | the pipeline `init` writes holds the jobs below |
 | On GitLab, [`comments:`](/terragucci/guides/re-plan-from-a-comment/) and its pipeline schedule | a merge request note starts no pipeline; the `comments` job reads `/terragucci apply` |
 | Branch protection on the default branch that requires a review | the review is the guard: the applying job runs the change's code with the apply role |
-| The [trade](/terragucci/reference/config/#apply-before-merge) accepted | [what the pull request's code can reach](/terragucci/reference/pipeline/#what-the-pull-requests-code-can-reach) with the apply role |
+| The [trade](/terragucci/reference/config/#apply-before-merge) accepted | [what the pull request's code can reach](/terragucci/reference/pipeline/#pull-request-code-access) with the apply role |
 
 ## Steps
 
@@ -68,7 +68,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 3. Open the change as usual and get its head approved on the forge by a reviewer other than its author. A push after the review needs a fresh approval.
 
-4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#when-a-comment-runs-nothing).
+4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#ignored-comments).
 
    | Check (`apply.requires`) | Fails when | Fix |
    |---|---|---|
@@ -121,7 +121,7 @@ GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothi
 
 `approved` counts an approval given after the merge request's latest push, by a Developer or above other than its author. `mr-apply` posts no status on the head; its replies say what happened. A note is answered on the schedule's next run.
 
-## Which config applies
+## Config source
 
 An open change's apply reads its settings from the default branch. Edits to `terragucci.yml` in the change count once it merges.
 
