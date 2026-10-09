@@ -220,7 +220,7 @@ const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: 
 const index = (reports: IndexEntry[]): string => JSON.stringify({ schema: "terragucci.report-index/v1", reports });
 
 describe("terragucci estate", () => {
-  it("in a single repo, reads the top index for the projects, each project's index.json, inventory.json and changes.json and the audit summary and record, and nothing else", async () => {
+  it("in a single repo, reads the top index for the projects, each project's index.json, inventory.json, changes.json and states.json and the audit summary and record, and nothing else", async () => {
     const objects = new Map<string, string>();
     const all = threeProjects();
     objects.set("acme-reports:reports/index.json", index(all.flatMap((p) => p.reports!)));
@@ -234,12 +234,15 @@ describe("terragucci estate", () => {
       "GET acme-reports:reports/github.com/acme/data/index.json",
       "GET acme-reports:reports/github.com/acme/data/inventory.json",
       "GET acme-reports:reports/github.com/acme/data/changes.json",
+      "GET acme-reports:reports/github.com/acme/data/states.json",
       "GET acme-reports:reports/github.com/acme/web/index.json",
       "GET acme-reports:reports/github.com/acme/web/inventory.json",
       "GET acme-reports:reports/github.com/acme/web/changes.json",
+      "GET acme-reports:reports/github.com/acme/web/states.json",
       "GET acme-reports:reports/gitlab.example.com/platform/network/index.json",
       "GET acme-reports:reports/gitlab.example.com/platform/network/inventory.json",
       "GET acme-reports:reports/gitlab.example.com/platform/network/changes.json",
+      "GET acme-reports:reports/gitlab.example.com/platform/network/states.json",
       "GET acme-reports:reports/audit.json",
       "GET acme-reports:reports/audit.jsonl",
     ]);
@@ -280,9 +283,11 @@ describe("terragucci estate", () => {
       `GET central:r/${web.project}/index.json`,
       `GET central:r/${web.project}/inventory.json`,
       `GET central:r/${web.project}/changes.json`,
+      `GET central:r/${web.project}/states.json`,
       `GET other:x/${data.project}/index.json`,
       `GET other:x/${data.project}/inventory.json`,
       `GET other:x/${data.project}/changes.json`,
+      `GET other:x/${data.project}/states.json`,
       "GET locked:github.com/acme/locked/index.json",
       "GET central:r/github.com/acme/fresh/index.json",
       "GET central:r/audit.json",

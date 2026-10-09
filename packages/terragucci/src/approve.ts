@@ -20,6 +20,12 @@
  * that denied the plan, and runs `chant approve policy-override <root> --plan
  * <digest> --note <reason>`, with `--sign` under `approval: sealed`.
  *
+ * `terragucci approve <migration>` approves a state migration that wave 1
+ * waits on (./migrate.ts): `chant approve tf-migrate <name> --plan <digest>`,
+ * with what the migration moves from the plan record it kept. With one gate
+ * waiting, wave or migration, it needs no argument, and `--plan` finds a
+ * migration by its digest as it finds a wave. Then it resumes wave 1.
+ *
  * A person runs either, at a shell: chant refuses a gate approval made over
  * MCP or ACP, whatever wraps it.
  */
@@ -32,6 +38,7 @@ import { checkoutApproval } from "./approval";
 import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
 import type { Fetch } from "./forge";
 import { originOf, resumeAfterApproval } from "./resume";
+import { keptPath, MIGRATE_LEDGER, MIGRATE_OP } from "./migrate";
 
 export interface WaitingWave {
   wave: number;
@@ -101,9 +108,29 @@ export interface ApproveOptions {
  * Returns chant's exit code (0 for a dry run), or 1 with no command when
  * `plan` names a digest no wave waits for.
  */
-export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ code: number; command: string; wave?: WaitingWave }> {
+export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ code: number; command: string; wave?: WaitingWave; migration?: WaitingMigration }> {
   const log = o.log ?? ((l: string) => console.log(l));
   const waiting = waitingWaves(readLedger(repo));
+  // A state migration waits inside wave 1 on a gate of its own; it is approved the same way, by name or by digest.
+  const migrations = waitingMigrations(readLedger(repo, MIGRATE_LEDGER));
+  const named = o.wave !== undefined && !/^(?:wave-)?\d+$/.test(o.wave) ? o.wave : undefined;
+  if (named !== undefined) {
+    const m = migrations.find((x) => x.migration === named);
+    if (!m) throw new ConfigError(`no migration ${named} waits for an approval${migrations.length ? `; waiting: ${migrations.map((x) => x.migration).join(", ")}` : ""}`);
+    if (o.plan !== undefined && !samePlanDigest(m.digest, o.plan.trim())) {
+      log(`not approved: migration ${named} waits for ${m.digest}, not ${o.plan.trim()}. The states moved since that digest; read the new proof, then approve its digest`);
+      return { code: 1, command: "" };
+    }
+    return approveMigration(repo, m, o, log);
+  }
+  if (o.plan !== undefined && o.wave === undefined) {
+    const m = migrations.find((x) => samePlanDigest(x.digest, o.plan!.trim()));
+    if (m) return approveMigration(repo, m, o, log);
+  }
+  if (o.plan === undefined && o.wave === undefined && waiting.length + migrations.length === 1 && migrations.length === 1) return approveMigration(repo, migrations[0]!, o, log);
+  if (o.plan === undefined && o.wave === undefined && waiting.length + migrations.length > 1 && migrations.length > 0) {
+    throw new ConfigError(`${waiting.length + migrations.length} gates wait (${[...waiting.map((w) => waveGate(w.wave)), ...migrations.map((m) => `migration ${m.migration}`)].join(", ")}); name one: terragucci approve wave-<k> or terragucci approve <migration>`);
+  }
   let chosen: WaitingWave | undefined;
   if (o.plan !== undefined) {
     const plan = o.plan.trim();
@@ -154,6 +181,74 @@ export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ c
     else log(await resumeAfterApproval({ origin, wave, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
   }
   return { code, command, wave };
+}
+
+/** A state migration waiting for an approval of its digest. */
+export interface WaitingMigration {
+  migration: string;
+  digest: string;
+  since: string;
+  expiresAt: string;
+  description?: string;
+  runId?: string;
+  commit?: string;
+}
+
+/** The migrations waiting: each migration gate's newest pending fact whose digest no approval at or after it names. By name. */
+export function waitingMigrations(ledger: GateLedger): WaitingMigration[] {
+  const newest = new Map<string, GateLedger["pending"][number]>();
+  for (const p of ledger.pending) {
+    const before = newest.get(p.gate);
+    if (p.planDigest && (!before || at(p.timestamp) >= at(before.timestamp))) newest.set(p.gate, p);
+  }
+  const out: WaitingMigration[] = [];
+  for (const [gate, p] of newest) {
+    if (ledger.resolutions.some((r) => r.gate === gate && samePlanDigest(r.planDigest, p.planDigest) && at(r.timestamp) >= at(p.timestamp))) continue;
+    out.push({ migration: gate, digest: p.planDigest!, since: p.timestamp, expiresAt: p.expiresAt, ...(p.description ? { description: p.description } : {}), ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+  }
+  return out.sort((a, b) => (a.migration < b.migration ? -1 : 1));
+}
+
+/** What a waiting migration's kept plan record says it does: its moves, and each root's state before. */
+export function describeMigration(text: string | undefined): string[] {
+  if (!text) return ["  (the migration kept no plan record; read its proof in wave 1's log)"];
+  try {
+    const r = JSON.parse(text) as { moves?: { from: string; to: string; addresses: string[] }[]; roots?: { root: string; location?: string; before?: { version_id?: string; digest?: string | null } }[] };
+    const lines = (r.moves ?? []).map((m) => `  moves ${m.addresses.join(", ")} from ${m.from} to ${m.to}`);
+    for (const x of r.roots ?? []) lines.push(`  ${x.root}: ${x.location ?? "state"}${x.before?.version_id ? ` at version ${x.before.version_id}` : ""}${x.before?.digest ? "" : ", no state yet"}`);
+    lines.push("  every root planned with no change against its new state");
+    return lines;
+  } catch {
+    return ["  (the migration's plan record could not be read)"];
+  }
+}
+
+/** Approve a waiting migration's digest with chant, then resume wave 1, which runs it. */
+async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOptions, log: (line: string) => void): Promise<{ code: number; command: string; migration: WaitingMigration }> {
+  const configPath = findConfig(repo);
+  const config = configPath ? await loadConfig(configPath) : {};
+  const mode: Approval = checkoutApproval(repo, config)?.mode ?? "ledger";
+  log(`migration ${m.migration} waits for an approval of ${m.digest}${m.description ? ` (${m.description})` : ""}, since ${m.since}`);
+  const kept = spawnSync("git", ["show", `refs/remotes/origin/chant/lifecycle:${keptPath(m.migration, m.digest)}`], { cwd: repo, encoding: "utf-8" });
+  for (const l of describeMigration(kept.status === 0 ? kept.stdout : undefined)) log(l);
+  if (at(m.expiresAt) < Date.now()) log(`  its pending fact expired at ${m.expiresAt}; the approval still counts if wave 1 proves the same digest`);
+  const sign = o.sign ?? (mode === "sealed" ? true : undefined);
+  const args = ["approve", MIGRATE_OP, m.migration, "--plan", m.digest, ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
+  const command = `chant ${args.join(" ")}`;
+  if (o.dryRun) {
+    log(`would run: ${command}`);
+    return { code: 0, command, migration: m };
+  }
+  const code = runChant(repo, args, command, o, log);
+  if (code === 0) {
+    log(`approved migration ${m.migration}`);
+    const url = spawnSync("git", ["remote", "get-url", "origin"], { cwd: repo, encoding: "utf-8" }).stdout?.trim() ?? "";
+    const origin = originOf(url, typeof (config as { forge?: unknown }).forge === "string" ? (config as { forge: string }).forge : undefined);
+    if (o.resume === false) log("not resumed (--no-resume): run wave 1 again, comment /terragucci apply, or let the resume job run it");
+    else if (!origin) log("not resumed from here: the origin is not on github.com or gitlab.com and terragucci.yml names no forge; run wave 1 again, or comment /terragucci apply");
+    else log(await resumeAfterApproval({ origin, wave: { wave: 1, ...(m.runId ? { runId: m.runId } : {}), ...(m.commit ? { commit: m.commit } : {}) }, ...(o.env ? { env: o.env } : {}), ...(o.fetch ? { fetch: o.fetch } : {}) }));
+  }
+  return { code, command, migration: m };
 }
 
 /** Run chant with `args` from the repo, node_modules/.bin first on the path. Returns its exit code. */

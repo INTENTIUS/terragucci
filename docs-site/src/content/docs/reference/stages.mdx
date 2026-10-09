@@ -144,6 +144,10 @@ A wave whose plans changed since approval applies nothing and exits 4:
 
 <Shot step="wave-refused" view="log" alt="The log of the apply-wave-4 job after a refusal. It says the wave changed after it was approved, so nothing was applied, lists the approved and the new digest, and the changes per root. The job ends with exit code 4." />
 
+## State migrations
+
+A file in `migrations/` moves resources from one root's state to another's. `stage tf-plan` proves the first migration that has not applied, since a later one plans against the states it writes: every affected root plans with no change against its new state. The job fails when one would change. Wave 1 of `stage tf-apply` proves it again before it plans its roots and waits on the gate `tf-migrate <name>`, with the same exit codes as a wave: 3 while it waits, 4 when a state moved since the approval, 1 when it cannot be proved or written. Approved, it writes the new states under each state's lock and records each version before and after. See [Move resources between roots](/terragucci/guides/move-resources-between-roots/) and [Migration files](/terragucci/reference/migration-files/).
+
 ## Rolling out a module version
 
 How a root takes a module decides how a new version reaches it.
