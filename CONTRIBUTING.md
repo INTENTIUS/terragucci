@@ -223,6 +223,8 @@ just example-gitlab logs                # the failing lines of the last pipeline
 just example-gitlab change drift        # delete a queue, run the drift schedule, print the issue
 ```
 
+The GitLab screenshots the docs place in their GitLab tabs (the plan note, the failed check, the waiting wave's log, the drift issue and the Pipelines must succeed setting, each light and dark) come from `just example-gitlab capture`, which writes `docs-site/src/data/tutorial/gitlab.json` and `docs-site/src/assets/tutorial/gitlab-*.png`. On the GitLab lab it is `TGLAB=1 just example-gitlab up`, then `TGLAB=1 just example-gitlab capture`, about 11 minutes; there the jobs run this tree's bundle in the lab's own image, as the GitLab claims do.
+
 | Step | Took on an Apple silicon Mac, GitLab under emulation |
 |---|---|
 | `just stack-up gitlab` | about 2.5 minutes; ten or more on a slower machine |

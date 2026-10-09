@@ -71,13 +71,15 @@ One comment saying what changed between the approved plan and the plan that was 
        ```
      </TabItem>
      <TabItem label="GitLab">
-       Add a job after the wave's job; its artifact unpacks at `terragucci-report/`. Give it `ANTHROPIC_API_KEY` as a masked variable. The job posts nothing: read the summary in its log.
+       Add a job after the wave's job; its artifact unpacks at `terragucci-report/`. Its rule is the apply jobs' own, so a branch's pipeline, which has no `apply-wave-2`, does not need it. Give it `ANTHROPIC_API_KEY` as a masked variable. The job posts nothing: read the summary in its log.
 
        ```yaml
        explain-refusal:
          stage: apply
          needs: [apply-wave-2]
-         when: on_failure
+         rules:
+           - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+             when: on_failure
          image: node:24
          script:
            - >
