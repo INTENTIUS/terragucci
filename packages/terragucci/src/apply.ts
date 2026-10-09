@@ -89,9 +89,10 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { APPROVALS, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
-import { globMatch, remoteStateReads, rootDependencies } from "./detect";
+import { APPROVALS, BRANCHES_NOT_TERRAGRUNT, ConfigError, findConfig, GATES, loadConfig, resolveRepo, type Approval, type Gate, type ResolvedSettings } from "./config";
+import { globMatch, remoteStateReads, rootDependencies, rootStates } from "./detect";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
+import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
 import { runPath } from "./report/store";
 import { buildReport, planFiles } from "./report/build";
@@ -111,7 +112,7 @@ import { decideOverride, OVERRIDE_LEDGER, OVERRIDE_OP, overrideCommand, override
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
 import { changesSomething, forgeCalls, pullOf, reviewDigest, reviewWave, type ReviewOutcome } from "./review";
-import { noReview, reviewOfPull, type PolicyReview } from "./review-agent";
+import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
 import { baseCommit, sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, walkUnits } from "./terragrunt";
@@ -147,6 +148,45 @@ export function applyWaves(layers: string[][], canary: readonly string[] = []): 
   const first = layers.map((l) => l.filter(isCanary));
   const rest = layers.map((l) => l.filter((r) => !isCanary(r)));
   return [...first, ...rest].filter((l) => l.length > 0);
+}
+
+/**
+ * `apply.branches` as the pipeline passes it: `release=envs/prod/*,envs/dr/*;staging=envs/staging/*`.
+ */
+export function parseBranches(spec: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const part of spec.split(";").filter(Boolean)) {
+    const eq = part.indexOf("=");
+    const globs = eq > 0 ? part.slice(eq + 1).split(",").filter(Boolean) : [];
+    if (eq <= 0 || globs.length === 0) throw new ConfigError(`--branches takes <branch>=<glob>[,<glob>...][;...], not ${JSON.stringify(part)}`);
+    out[part.slice(0, eq)] = globs;
+  }
+  return out;
+}
+
+/** `apply.branches` for `--branches`. */
+export const branchesArg = (branches: Record<string, string[]>): string =>
+  Object.entries(branches).map(([b, globs]) => `${b}=${globs.join(",")}`).join(";");
+
+/**
+ * The layers a push to `branch` applies under `apply.branches`: on a branch
+ * the map names, only the roots its globs match; anywhere else (the default
+ * branch, and a comment's apply of a merge into it), every root but those
+ * any branch's globs match. Empty layers drop out of the waves.
+ */
+export function branchLayers(layers: string[][], branches: Record<string, string[]>, branch?: string): { layers: string[][]; note: string } {
+  const own = branch !== undefined ? branches[branch] : undefined;
+  const mapped = Object.values(branches).flat();
+  const keep = own
+    ? (r: string): boolean => own.some((g) => globMatch(g, r))
+    : (r: string): boolean => !mapped.some((g) => globMatch(g, r));
+  const out = layers.map((l) => l.filter(keep));
+  const kept = out.flat();
+  const left = layers.flat().filter((r) => !kept.includes(r));
+  const note = own
+    ? `apply.branches: ${branch} applies ${kept.length ? kept.join(", ") : "none of this repo's roots"}`
+    : `apply.branches: ${left.length ? `${left.join(", ")} ${left.length === 1 ? "applies" : "apply"} from ${[...new Set(left.map((r) => Object.keys(branches).find((b) => branches[b].some((g) => globMatch(g, r)))))].join(", ")}, not here` : "no root here is another branch's"}`;
+  return { layers: out, note };
 }
 
 /**
@@ -671,10 +711,24 @@ export interface ApplyWaveOptions {
   installer?: Installer;
   /** Runs the cost estimator, with `cost` set; tests pass one. */
   costRunner?: CostRunner;
+  /** `apply.branches`: the roots another branch applies. With it the layers are cut to the branch's (branchLayers). */
+  branches?: Record<string, string[]>;
+  /** The branch the push applies; unset means the default branch. */
+  branch?: string;
 }
 
 /** Run one wave, or with `rest` a Terragrunt repo's wave and the waves after it. Returns the exit code; what happened is printed. */
 export async function applyWave(repo: string, options: ApplyWaveOptions): Promise<number> {
+  if (options.branches && Object.keys(options.branches).length > 0) {
+    if (options.terragrunt) throw new ConfigError(`--branches: ${BRANCHES_NOT_TERRAGRUNT}`);
+    const cut = branchLayers(options.layers, options.branches, options.branch || undefined);
+    console.log(`wave ${options.wave}: ${cut.note}`);
+    if (cut.layers.flat().length === 0) {
+      console.log(`wave ${options.wave}: no root applies from ${options.branch || "this branch"}, so there is nothing to apply`);
+      return EXIT.applied;
+    }
+    options = { ...options, layers: cut.layers, branches: undefined };
+  }
   if (!options.rest) return (await applyOneWave(repo, options)).code;
   if (!options.terragrunt) throw new ConfigError("--rest runs the waves of a Terragrunt repo, so it needs --terragrunt");
   for (let k = options.wave; ; k++) {
@@ -699,6 +753,7 @@ async function applyOneWave(repo: string, options: ApplyWaveOptions): Promise<{ 
   } finally {
     if (code !== undefined) writeOutcomeJson(env, options.wave, code, wave);
     if (code !== undefined) wave.state = waveState(code, wave);
+    wave.ended = new Date().toISOString();
     // The report is written once the wave's roots planned, whatever came of the gate and the apply.
     if (wave.planned) await writeWaveReport(repo, options, wave as Required<WaveRun>, env).catch((e) => console.log(`wave ${options.wave}: the report was not written: ${(e as Error).message}`));
     rmSync(work, { recursive: true, force: true });
@@ -762,6 +817,31 @@ interface WaveRun {
   reads?: Map<string, ReportRead[]>;
   /** The waves whose roots its roots read. */
   waveReads?: number[];
+  /** When its roots finished planning. */
+  plannedAt?: string;
+  /** When the wait at its gate began: the pending record its approval answered, or the first run that asked. */
+  gateSince?: string;
+  /** When the approval that let it through was given. */
+  approvedAt?: string;
+  /** When it began applying. */
+  applyStarted?: string;
+  /** When the job ended. */
+  ended?: string;
+  /** The roots whose plan changes something. */
+  changedRoots?: string[];
+}
+
+/**
+ * A wave job's spans for the run view's timeline: its plan, its wait at the
+ * gate (open while it waits), and its apply (open while it applies).
+ */
+export function waveSpans(w: Pick<WaveRun, "started" | "plannedAt" | "gateSince" | "approvedAt" | "applyStarted" | "ended" | "share" | "state">): Span[] {
+  const share = w.share !== undefined ? { share: w.share } : {};
+  const out: Span[] = [];
+  if (w.started) out.push({ phase: "plan", start: w.started, ...(w.plannedAt ? { end: w.plannedAt } : {}), ...share });
+  if (w.gateSince) out.push({ phase: "gate", start: w.gateSince, ...(w.approvedAt ? { end: w.approvedAt } : w.state !== undefined && w.state !== "waiting" && w.ended ? { end: w.ended } : {}) });
+  if (w.applyStarted) out.push({ phase: "apply", start: w.applyStarted, ...(w.ended && w.state !== "applying" ? { end: w.ended } : {}), ...share });
+  return out;
 }
 
 /** Where a wave stands, from how it ended. */
@@ -807,8 +887,11 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
     const facts = runFacts(repo, env, settings.forge);
     const waves = options.terragrunt ? options.layers : applyWaves(options.layers, options.canary);
     const reads = options.terragrunt ? new Map<string, Set<string>>() : rootDependencies(repo, options.layers.flat());
-    const skeleton = runSkeleton(facts.project, facts.commit, waves, reads);
-    const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...row });
+    const states = options.terragrunt ? new Map() : rootStates(repo, options.layers.flat());
+    const skeleton = runSkeleton(facts.project, facts.commit, waves, reads, states);
+    const spans = waveSpans(w);
+    const timing = { ...(spans.length ? { spans } : {}), ...(w.changedRoots ? { changed: w.changedRoots } : {}) };
+    const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...timing, ...row });
     console.log(`wave ${options.wave}: run view at ${key}`);
   } catch (e) {
     console.log(`wave ${options.wave}: the run view was not written: ${(e as Error).message}`);
@@ -1003,6 +1086,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   await eachLimited(roots, limit.value, async (r, i) => {
     planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws);
   });
+  w.plannedAt = new Date().toISOString();
   w.planned = planned;
   w.roots = roots;
   const failed = planned.filter((p) => p.error);
@@ -1020,6 +1104,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   // pull request's note shows is the one this wave asks approval for when nothing moved.
   const all = planned.map((p) => p.member!).sort((a, b) => (a.member < b.member ? -1 : 1));
   const changing = new Set(planned.filter((p) => changesSomething(p.plan)).map((p) => p.root));
+  w.changedRoots = [...changing].sort();
   // With cost.approve_above at base the wave's cost is one more member: an approval of these plans at one cost does not apply them at another.
   const priced = costMember(w.waveCost);
   const members = [...all.filter((m) => changing.has(m.member)), ...(priced && changing.size > 0 ? [priced] : [])];
@@ -1060,6 +1145,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     return EXIT.applied;
   }
 
+  w.applyStarted = new Date().toISOString();
   if (changes > 0) await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), digest });
   // The roots of a wave do not read each other, so they apply together, as many at once as plan at once: each apply
   // starts its own provider, and a wave of a hundred roots started together runs the job out of memory.
@@ -1226,8 +1312,10 @@ async function runShare(
   await eachLimited(roots, limit.value, async (r, i) => {
     planned[i] = await planRoot(repo, binaries, r, work, i, w.observer, cache, ws);
   });
+  w.plannedAt = new Date().toISOString();
   w.planned = planned;
   w.roots = roots;
+  w.changedRoots = planned.filter((p) => !p.error && changesSomething(p.plan)).map((p) => p.root).sort();
   for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.summary}`);
   const failed = planned.filter((p) => p.error);
   if (failed.length > 0) {
@@ -1251,6 +1339,7 @@ async function runShare(
     writeOutcome(options.env, `wave ${wave} share ${share} changed since the wave decided: ${moved.join(", ")}`, w);
     return EXIT.refused;
   }
+  w.applyStarted = new Date().toISOString();
   const ok: boolean[] = new Array(planned.length);
   await eachLimited(planned, limit.value, async (p, i) => {
     ok[i] = await applyRoot(repo, p, w.observer, ws);
@@ -1321,10 +1410,11 @@ async function priceWave(
 }
 
 /**
- * What the wave's policy reads as `input.review`: the review note of the head
- * of the pull request this commit merged (or `TG_PR`'s, applied before merge),
- * posted by the pipeline's own token. GitLab has no review job, and a commit
- * no pull request made has no review: both read as not found.
+ * What the wave's policy reads as `input.review`: the verdict the review job
+ * kept as its artifact, in a run of the head of the pull request this commit
+ * merged (or `TG_PR`'s, applied before merge). Notes on the pull request are
+ * not read: any run's token can post one. GitLab has no review job, and a
+ * commit no pull request made has no review: both read as not found.
  */
 async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string): Promise<PolicyReview> {
   if (env.GITLAB_CI === "true") return noReview();
@@ -1336,10 +1426,10 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
       console.log(`${label}: review: no pull request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
       return noReview();
     }
-    const review = await reviewOfPull(f, pr);
+    const { run, ...review } = await reviewOfPull(f, pr, artifactBytes(env, (options.fetch ?? fetch) as unknown as FetchBytes));
     console.log(review.found
-      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk}, which the policy reads as input.review`
-      : `${label}: review: no review note of pull request ${pr.number}'s head ${pr.head.slice(0, 8)}, so input.review.found is false`);
+      ? `${label}: review: pull request ${pr.number}'s head ${pr.head.slice(0, 8)} was reviewed with risk ${review.risk} in run ${run}, which the policy reads as input.review`
+      : `${label}: review: no run of pull request ${pr.number}'s head ${pr.head.slice(0, 8)} kept a review, so input.review.found is false`);
     return review;
   } catch (e) {
     console.log(`${label}: review: could not read the pull request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
@@ -1585,6 +1675,12 @@ async function gateWave(
     if (decision.status === "approved") {
       console.log(`${label}: approved by ${decision.by} for this digest`);
       w.approval = "approved";
+      // The wait the approval ended: from the newest pending record of the gate made before it.
+      const asked = ledger.pending.filter((p) => p.gate === name && at(p.timestamp) <= at(decision.at)).reduce<string | undefined>((a, p) => (!a || at(p.timestamp) > at(a) ? p.timestamp : a), undefined);
+      if (asked) {
+        w.gateSince = asked;
+        w.approvedAt = decision.at;
+      }
       // Recorded before anything applies, so no approval is ever used without the ledger saying so; a record that cannot be pushed stops the wave.
       const env = options.env ?? process.env;
       const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
@@ -1608,6 +1704,7 @@ async function gateWave(
       const env = options.env ?? process.env;
       facts.waitingSince = decision.standing?.timestamp ?? now;
       w.waitingSince = facts.waitingSince;
+      w.gateSince = facts.waitingSince;
       // The report of this wave's plans, as respond wave-refused reads it.
       const report = (): string =>
         JSON.stringify(buildReport({
@@ -1819,6 +1916,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     });
   }
   const units = roots.filter((r) => planned.has(r)).map((r) => planned.get(r)!);
+  w.plannedAt = new Date().toISOString();
   w.planned = units;
   for (const p of units) console.log(p.error ? `FAILED ${p.root}: ${p.error.split("\n")[0]}` : `${p.root}: ${p.changes === 0 ? "no changes" : `${p.changes} change${p.changes === 1 ? "" : "s"}, ${p.destroys} destroy${p.destroys === 1 ? "" : "s"}`}`);
   const failed = units.filter((p) => p.error !== undefined);
@@ -1833,6 +1931,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   if (refusedByPolicy !== undefined) return refusedByPolicy;
   // A unit applies when its plan changes a resource or an output: a later wave reads the outputs.
   const changing = units.filter((p) => p.changes > 0 || p.outputs);
+  w.changedRoots = changing.map((p) => p.root).sort();
   if (changing.length === 0) {
     facts.nothing = true;
     w.applied = new Set(units.map((p) => p.root));
@@ -1849,6 +1948,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   if (stop !== undefined) return stop;
   recordOverridesUsed(repo, options, changing);
   // The saved plans, and nothing planned anew.
+  w.applyStarted = new Date().toISOString();
   await noteRunView(repo, options, w, { state: "applying", ...(w.approval ? { approval: w.approval } : {}), ...(w.digest ? { digest: w.digest } : {}) });
   const applied = await applyTerragruntWave({ ...run, units: changing.map((p) => p.root), workDir: planDir });
   console.log(applied.log.trim());

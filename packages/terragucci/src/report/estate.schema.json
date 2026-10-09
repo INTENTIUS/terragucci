@@ -53,9 +53,48 @@
         "generated": { "type": "string" },
         "deployments": { "type": "integer", "description": "The estate's applied waves in the metrics' window." }
       }
+    },
+    "graph": {
+      "type": "object",
+      "description": "The dependency graph, from the run view of each project's newest applied commit: every root by wave, and an edge from each root to each root that reads its state through terraform_remote_state. An edge between two projects matched a read of a state outside the reader's project to the root of the other that holds it. Absent when no project has a run view.",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["project", "root", "wave"],
+            "properties": {
+              "project": { "type": "string" },
+              "root": { "type": "string" },
+              "wave": { "type": "integer" }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "description": "Each edge: to reads the state of from.",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "$ref": "#/$defs/graphRoot" },
+              "to": { "$ref": "#/$defs/graphRoot" }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
+    "graphRoot": {
+      "type": "object",
+      "required": ["project", "root"],
+      "properties": {
+        "project": { "type": "string" },
+        "root": { "type": "string" }
+      }
+    },
     "totals": {
       "type": "object",
       "required": ["create", "update", "replace", "delete"],
@@ -130,7 +169,17 @@
         "overridden": { "type": "integer", "description": "Roots the newest commit's apply waves applied under a policy override. Absent when none." },
         "inventory": { "$ref": "#/$defs/inventory", "description": "The resources its roots hold, from its inventory.json. Absent until an apply records them." },
         "states": { "type": "array", "description": "Each root's state versions, from its states.json. Absent until an apply records them.", "items": { "$ref": "#/$defs/stateRoot" } },
-        "edges": { "type": "array", "description": "Each cross-state edge, from its edges.json: a consumer root, the producer root whose state it reads, the consumer's last plan and the producer's last apply that changed it. Absent until a run records an edge.", "items": { "$ref": "#/$defs/edge" } }
+        "edges": { "type": "array", "description": "Each cross-state edge, from its edges.json: a consumer root, the producer root whose state it reads, the consumer's last plan and the producer's last apply that changed it. Absent until a run records an edge.", "items": { "$ref": "#/$defs/edge" } },
+        "run_view": {
+          "type": "object",
+          "description": "The run view of the project's newest applied commit, which the dependency graph read: its commit, when a wave last wrote it, and its run.html when the page can link it. Absent until a wave writes one.",
+          "required": ["commit", "updated"],
+          "properties": {
+            "commit": { "type": "string" },
+            "updated": { "type": "string" },
+            "page": { "type": "string" }
+          }
+        }
       }
     },
     "edgeRun": {

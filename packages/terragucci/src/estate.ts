@@ -11,6 +11,7 @@
  * In a single repo the projects are the ones the top-of-prefix index lists.
  *
  * It reads each project's `index.json`, `inventory.json`, `changes.json`, `states.json` and `edges.json`,
+ * and the run view (`runs/<commit>/run.json`) of its newest applied commit for the dependency graph,
  * and never a report, a plan's text or a root's plan JSON (see
  * report/estate.ts). Beside the page it reads `audit.json`, the summary
  * `terragucci audit` writes (./audit.ts), so the page can link the audit
@@ -31,6 +32,7 @@ import { buildHistory, CHANGES_SCHEMA, historyId, renderHistoryHtml, type Change
 import { INVENTORY_SCHEMA, type Inventory } from "./report/inventory";
 import { readStateVersions, type StateVersions } from "./report/state-versions";
 import { readStateEdges, type StateEdges } from "./report/state-edges";
+import { RUN_SCHEMA, runViewKey, type RunView } from "./report/run-view";
 import { changesKey, edgesKey, inventoryKey, statesKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 import { buildDora, DORA_FILE, doraGauges, duration, type Dora } from "./report/dora";
 import { metricsBody, send, telemetryFromEnv, type OtlpFetch } from "./telemetry";
@@ -130,7 +132,24 @@ async function readProject(project: string, reports: Reports | undefined, out: R
   const changes = rows ? await readChangesOf(client(reports), changesKey(project, reports.prefix ?? "")) : undefined;
   const states = rows ? await readStatesOf(client(reports), statesKey(project, reports.prefix ?? "")) : undefined;
   const edges = rows ? await readEdgesOf(client(reports), edgesKey(project, reports.prefix ?? "")) : undefined;
-  return { project, ...(rows ? { reports: rows } : {}), ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}), ...(base !== undefined ? { base } : {}) };
+  const run = rows ? await readRunOf(client(reports), project, rows, reports.prefix ?? "") : undefined;
+  return { project, ...(rows ? { reports: rows } : {}), ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}), ...(edges ? { edges } : {}), ...(run ? { run } : {}), ...(base !== undefined ? { base } : {}) };
+}
+
+/** The run view of the project's newest applied commit, for the dependency graph; one that cannot be read leaves the project out of the graph, never off the page. */
+async function readRunOf(store: ObjectStore, project: string, rows: IndexEntry[], prefix: string): Promise<RunView | undefined> {
+  const applies = rows.filter((r) => r.project === project && r.stage === "tf-apply");
+  if (applies.length === 0) return undefined;
+  const last = applies.reduce((a, r) => ((Date.parse(r.finished) || 0) > (Date.parse(a.finished) || 0) ? r : a));
+  try {
+    const text = await store.get(`${runViewKey(project, last.commit, prefix)}/run.json`);
+    if (text === undefined) return undefined;
+    const parsed = JSON.parse(text) as Partial<RunView>;
+    return parsed.schema === RUN_SCHEMA && Array.isArray(parsed.roots) && Array.isArray(parsed.waves) ? (parsed as RunView) : undefined;
+  } catch (e) {
+    if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
+    throw e;
+  }
 }
 
 /** A project's state versions, when an apply recorded them; an unreadable file leaves the project without them, never without its runs. */
