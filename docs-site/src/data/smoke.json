@@ -1587,6 +1587,22 @@
       "commit": "5ba02028"
     },
     {
+      "claim": "mcp-last-apply",
+      "says": "an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3587b8be"
+    },
+    {
+      "claim": "drift-agent",
+      "says": "with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3587b8be"
+    },
+    {
       "claim": "mr-widget",
       "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
       "needs": null,
