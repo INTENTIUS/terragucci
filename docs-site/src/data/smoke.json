@@ -692,9 +692,9 @@
       "claim": "estate",
       "says": "terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page",
       "needs": null,
-      "verdict": "pass",
+      "verdict": "fail",
       "break": "caught",
-      "commit": "bef822d"
+      "commit": "4107acc"
     },
     {
       "claim": "drift-overdue",
@@ -983,7 +983,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bef822d"
+      "commit": "4107acc"
     },
     {
       "claim": "comment-refused",
@@ -1280,7 +1280,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bef822d"
+      "commit": "4107acc"
     },
     {
       "claim": "audit-override",
@@ -1312,7 +1312,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bef822d"
+      "commit": "4107acc"
     },
     {
       "claim": "resource-history",
@@ -1328,7 +1328,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bef822d"
+      "commit": "4107acc"
     },
     {
       "claim": "dora",
@@ -1336,7 +1336,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "bef822d"
+      "commit": "4107acc"
     },
     {
       "claim": "notify-chat",
