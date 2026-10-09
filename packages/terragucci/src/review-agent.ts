@@ -1,22 +1,29 @@
 /**
  * `review.agent`: a model reviews a pull request's intent against its plan.
  *
- * Two jobs after the plan, on GitHub and Forgejo, so the model never shares a
- * container with a token that can write:
+ * The review is a workflow of its own (REVIEW_PATHS) that the forge runs from
+ * the default branch, never from the pull request: GitHub on `workflow_run`
+ * once the pipeline's `pull_request` run completes, Forgejo on
+ * `pull_request_target`. A pull request that edits the review workflow changes
+ * nothing until it merges. Two jobs, so the model never shares a container
+ * with a token that can write:
  *
- * review       the job's token reads the repository and nothing else. Its
- *              first step (`terragucci review prompt`) writes the prompt: the
- *              pull request's title and description from the event file, the
- *              diff against its base, the plan note and the policy results
- *              from the plan job's report, and the review instructions read
- *              from the default branch with `git show`, never from the
- *              checkout. It also unpacks the default branch's tree, where the
- *              review command runs, so a script the command names is the
- *              default branch's copy. The command runs with the prompt on
- *              stdin, the model's key in its step alone and the runner's
- *              token variables cleared; what it prints is the review. The
- *              review and the command's exit code leave the job as an
- *              artifact.
+ * review       its first step (`terragucci review prompt`) reads the pull
+ *              request from the event (on GitHub, from the API by the number
+ *              the event names), fetches the plan job's report from the
+ *              pipeline's run of the head (on Forgejo it waits for that plan
+ *              first) and writes the prompt: the title and description, the
+ *              diff against the base, the plan note and the policy results,
+ *              and the review instructions read from the default branch with
+ *              `git show`, never from the checkout. The checkout is the head,
+ *              without credentials, and nothing in it runs. The step also
+ *              unpacks the default branch's tree, where the review command
+ *              runs, so a script the command names is the default branch's
+ *              copy. The command runs with the prompt on stdin, the model's
+ *              key in its step alone and the runner's token variables
+ *              cleared; what it prints is the review. The review, the
+ *              command's exit code and the pull request it reviewed leave the
+ *              job as the artifact `terragucci-review-<head>`.
  * review-note  a fresh container that checks nothing out. It reads the
  *              review as data and posts it as one note on the pull request
  *              (`terragucci review post`), with the job's token. It posts a
@@ -25,7 +32,8 @@
  * The review ends with a `risk:` line (low, medium or high), which the note
  * carries in its marker for people to read. A `tf-apply` wave gives the
  * policy the risk of the merged pull request's head as `input.review`, read
- * from the review job's artifact of a run of that head, never from a note.
+ * from that artifact only when the forge says a run of the default branch's
+ * review workflow kept it (reviewOfPull), never from a note.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -96,7 +104,7 @@ export type Risk = (typeof RISKS)[number];
 
 /** What `input.review` holds in a `tf-apply` wave. */
 export interface PolicyReview {
-  /** Whether a review note of the merged pull request's head was found. */
+  /** Whether the default branch's review workflow kept a review of the merged pull request's head. */
   found: boolean;
   /** The review's risk; `unknown` when no review was found or it gave none. */
   risk: Risk | "unknown";
@@ -200,6 +208,40 @@ export interface WritePromptOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   git?: (args: string[]) => string;
+  /** The pull request, when the caller read it already (reviewSubject); else the event file's `pull_request`. */
+  pull?: ReviewSubject;
+}
+
+/** The pull request a review run reviews. */
+export interface ReviewSubject {
+  pr: number;
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+}
+
+/** Where the review job says which pull request, head and base it reviewed. */
+export const REVIEWED_FILE = "reviewed.json";
+
+function readEvent(env: NodeJS.ProcessEnv): any {
+  try {
+    return JSON.parse(readFileSync(env.GITHUB_EVENT_PATH ?? "", "utf-8"));
+  } catch (e) {
+    throw new ConfigError(`review prompt reads the pull request from the event file, and could not (${(e as Error).message})`);
+  }
+}
+
+/** The pull request of a `pull_request` or `pull_request_target` event. */
+function subjectOfPullEvent(event: any): ReviewSubject {
+  const pull = event?.pull_request;
+  return checkedSubject({ pr: pull?.number, head: pull?.head?.sha, base: pull?.base?.ref, title: pull?.title, body: pull?.body });
+}
+
+function checkedSubject(p: { pr: unknown; head: unknown; base: unknown; title: unknown; body: unknown }): ReviewSubject {
+  if (!Number.isInteger(p.pr) || typeof p.head !== "string" || !SHA.test(p.head)) throw new ConfigError("review prompt runs on a pull request event; the event names no pull request and head");
+  if (typeof p.base !== "string" || !BRANCH.test(p.base)) throw new ConfigError("the pull request's base branch is not a branch name terragucci reads");
+  return { pr: p.pr as number, head: p.head, base: p.base, title: typeof p.title === "string" ? p.title : "", body: typeof p.body === "string" ? p.body : "" };
 }
 
 export interface WrittenPrompt {
@@ -222,19 +264,10 @@ export function writeReviewPrompt(o: WritePromptOptions): WrittenPrompt {
   // Hooks, fsmonitor, external diff drivers and textconv off: nothing here runs code from the change.
   const git = o.git ?? ((args: string[]): string =>
     execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"], env: { ...env, GIT_TERMINAL_PROMPT: "0" } }));
-  let event: any;
-  try {
-    event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH ?? "", "utf-8"));
-  } catch (e) {
-    throw new ConfigError(`review prompt reads the pull request from the event file, and could not (${(e as Error).message})`);
-  }
-  const pull = event?.pull_request;
-  const pr = pull?.number;
-  const head = pull?.head?.sha;
-  const base = pull?.base?.ref;
+  // A caller that read the pull request already may still have the event: it names the default branch.
+  const event = o.pull ? (() => { try { return readEvent(env); } catch { return undefined; } })() : readEvent(env);
+  const { pr, head, base, title, body } = o.pull ?? subjectOfPullEvent(event);
   const defaultBranch = env.TG_DEFAULT_BRANCH || event?.repository?.default_branch;
-  if (!Number.isInteger(pr) || typeof head !== "string" || !SHA.test(head)) throw new ConfigError("review prompt runs on a pull request event; the event names no pull request and head");
-  if (typeof base !== "string" || !BRANCH.test(base)) throw new ConfigError("the pull request's base branch is not a branch name terragucci reads");
   if (typeof defaultBranch !== "string" || !BRANCH.test(defaultBranch)) throw new ConfigError("review prompt needs the default branch: TG_DEFAULT_BRANCH, or repository.default_branch in the event");
   const path = o.instructions.replace(/^\.\//, "");
   if (!path || path.startsWith("/") || path.split("/").some((s) => s === ".." || s === "") || !/^[A-Za-z0-9_.\/-]+$/.test(path)) {
@@ -261,8 +294,8 @@ export function writeReviewPrompt(o: WritePromptOptions): WrittenPrompt {
   const planNote = noteFile === undefined ? undefined : planNoteBodyOf(noteFile).replace(/<!--[\s\S]*?-->\n?/g, "");
   const prompt = reviewPrompt({
     pr,
-    title: typeof pull.title === "string" ? pull.title : "",
-    body: typeof pull.body === "string" ? pull.body : "",
+    title,
+    body,
     diff,
     ...(planNote !== undefined ? { planNote } : {}),
     policy: policyResults(read("report.json")),
@@ -279,6 +312,8 @@ export function writeReviewPrompt(o: WritePromptOptions): WrittenPrompt {
   execFileSync("tar", ["-xf", tar, "-C", join(dir, "work")], { stdio: ["ignore", "ignore", "pipe"] });
   const written: WrittenPrompt = { pr, head, instructions: instructions !== undefined ? "default" : "none", changed };
   writeFileSync(join(dir, "out", "instructions"), `${written.instructions}${changed ? " changed" : ""}\n`);
+  // What was reviewed, for the wave that reads the verdict: the pull request, its head, and the base the diff was taken against.
+  writeFileSync(join(dir, "out", REVIEWED_FILE), `${JSON.stringify({ pr, head, base })}\n`);
   return written;
 }
 
@@ -373,8 +408,22 @@ export async function postReview(o: PostReviewOptions): Promise<{ posted: boolea
   return { posted: true, risk, reason: `posted the review of ${head.slice(0, 8)} on pull request ${pr}: risk ${risk}` };
 }
 
-/** The artifact the review job keeps the review in, and a wave reads the verdict from. */
+/** The review workflow: a file of its own, beside the pipeline, which the forge runs from the default branch. */
+export const REVIEW_PATHS = {
+  github: ".github/workflows/terragucci-review.yml",
+  forgejo: ".forgejo/workflows/terragucci-review.yml",
+} as const;
+
+/** The event each forge runs the review workflow on, from the default branch's copy of it. */
+export const REVIEW_EVENTS = { github: "workflow_run", forgejo: "pull_request_target" } as const;
+
+/** The pipeline's workflow file and the artifact its plan job keeps the report in (render.ts PIPELINE_PATHS and REPORT_DIR). */
+export const PIPELINE_WORKFLOW = "terragucci.yml";
+export const PLAN_REPORT_ARTIFACT = "terragucci-report";
+
+/** The artifact the review job keeps the review of a head in, and a wave reads the verdict from. */
 export const REVIEW_ARTIFACT = "terragucci-review";
+export const reviewArtifactName = (head: string): string => `${REVIEW_ARTIFACT}-${head}`;
 
 /** The verdict of a review job's output: the review's risk, or unknown when the command failed. */
 export function verdictOf(o: { review: string; rc: string }): Risk | "unknown" {
@@ -398,40 +447,173 @@ export function artifactBytes(env: NodeJS.ProcessEnv, doFetch: FetchBytes = fetc
   };
 }
 
-/**
- * The review a wave's policy reads: the verdict in the `terragucci-review`
- * artifact of the newest `pull_request` run of the pull request's head. The
- * forge binds the artifact to that run and the run to the head, so only the
- * review job of a run of that head can have written it. A note on the pull
- * request counts for nothing: any run of the repo holds a token that can post
- * one, the run of another branch's change included.
- */
-export async function reviewOfPull(f: ForgeCalls, pr: ReviewedPull, bytes: ArtifactFiles): Promise<PolicyReview & { run?: number }> {
-  const none = noReview(pr);
-  const listed = await f.get(`repos/${f.repo}/actions/runs?event=pull_request&head_sha=${pr.head}&per_page=100&limit=50`);
-  // GitHub names the commit head_sha, Forgejo commit_sha. The filter is checked here as well: a forge that ignored it would list other heads' runs.
-  const runs = (Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [])
-    .filter((r: any) => Number.isInteger(r?.id) && r?.event === "pull_request" && (r?.head_sha ?? r?.commit_sha) === pr.head)
+/** An artifact list as either forge answers it: GitHub `{artifacts}`, Forgejo a bare array or `{artifacts}`. */
+function artifactsOf(got: any, name: string): any[] {
+  return (Array.isArray(got) ? got : Array.isArray(got?.artifacts) ? got.artifacts : [])
+    .filter((a: any) => a?.name === name && a?.expired !== true && Number.isInteger(a?.id))
     .sort((a: any, b: any) => b.id - a.id);
-  for (const run of runs) {
-    const got = await f.get(`repos/${f.repo}/actions/runs/${run.id}/artifacts?name=${REVIEW_ARTIFACT}&per_page=100&limit=50`);
-    const artifacts = (Array.isArray(got) ? got : Array.isArray(got?.artifacts) ? got.artifacts : [])
-      .filter((a: any) => a?.name === REVIEW_ARTIFACT && a?.expired !== true && Number.isInteger(a?.id) && (a?.run_id ?? a?.workflow_run?.id ?? run.id) === run.id)
-      .sort((a: any, b: any) => b.id - a.id);
-    const artifact = artifacts[0];
-    if (!artifact) continue;
+}
+
+function entryOf(zip: Buffer, name: string): string | undefined {
+  try {
+    return unzipEntry(zip, name).toString("utf-8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The pull request a review run reviews. On Forgejo the event is the
+ * `pull_request_target` event, which names it. On GitHub it is the
+ * `workflow_run` event of the pipeline's run: the run's head, the pull
+ * request among those the event names that has that head, and its title,
+ * description and base read from the API. `run` is the pipeline's run, whose
+ * plan report the prompt reads.
+ */
+export async function reviewSubject(event: any, f: ForgeCalls): Promise<{ subject: ReviewSubject; run?: number }> {
+  const wr = event?.workflow_run;
+  if (!wr) return { subject: subjectOfPullEvent(event) };
+  if (wr.event !== "pull_request") throw new ConfigError(`the review runs after a pull_request run of the pipeline; this one was started by ${String(wr.event)}`);
+  const head = wr.head_sha;
+  const prs = (Array.isArray(wr.pull_requests) ? wr.pull_requests : []).filter((p: any) => Number.isInteger(p?.number) && p?.head?.sha === head);
+  if (prs.length !== 1 || !Number.isInteger(wr.id)) throw new ConfigError(`the pipeline's run names ${prs.length} pull requests of its head, not one, so there is nothing to review`);
+  const pull = await f.get(`repos/${f.repo}/pulls/${prs[0].number}`);
+  return { subject: checkedSubject({ pr: prs[0].number, head, base: pull?.base?.ref, title: pull?.title, body: pull?.body }), run: wr.id };
+}
+
+export interface FetchReportOptions {
+  /** How long to wait for the pipeline's plan on Forgejo, in ms. */
+  waitMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+const DONE = new Set(["success", "failure", "cancelled", "skipped", "completed"]);
+
+/**
+ * The plan job's report, from the pipeline's run of the head, into `dir`: the
+ * plan note and report.json, read out of the artifact by name. On GitHub the
+ * run is the one that started the review, and it has finished. On Forgejo
+ * `pull_request_target` starts the review with the pipeline, so this waits
+ * for the newest `pull_request` run of the head to finish its plan job. What
+ * it returns is said in the log. The report is the change's own run's, so it
+ * is data like the diff, never trusted.
+ */
+export async function fetchPlanReport(f: ForgeCalls, bytes: ArtifactFiles, subject: ReviewSubject, run: number | undefined, dir: string, o: FetchReportOptions = {}): Promise<string> {
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = o.now ?? Date.now;
+  let id = run;
+  if (id === undefined) {
+    const deadline = now() + (o.waitMs ?? 30 * 60_000);
+    for (;;) {
+      const listed = await f.get(`repos/${f.repo}/actions/runs?event=pull_request&head_sha=${subject.head}&limit=50`);
+      // Forgejo lists a pull_request_target run as a pull_request run of the head; trigger_event tells them apart.
+      const pipeline = (Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [])
+        .filter((r: any) => Number.isInteger(r?.id) && (r?.trigger_event ?? r?.event) === "pull_request" && r?.workflow_id === PIPELINE_WORKFLOW && (r?.commit_sha ?? r?.head_sha) === subject.head)
+        .sort((a: any, b: any) => b.id - a.id)[0];
+      if (pipeline) {
+        const jobs = await f.get(`repos/${f.repo}/actions/runs/${pipeline.id}/jobs`);
+        const plan = (Array.isArray(jobs) ? jobs : Array.isArray(jobs?.jobs) ? jobs.jobs : []).find((j: any) => j?.name === "plan");
+        if (DONE.has(plan?.status) || DONE.has(pipeline.status)) {
+          id = pipeline.id;
+          break;
+        }
+      }
+      if (now() >= deadline) {
+        const minutes = Math.round((o.waitMs ?? 30 * 60_000) / 60_000);
+        return `no plan report: the pipeline's run of ${subject.head.slice(0, 8)} did not finish its plan in ${minutes} minute${minutes === 1 ? "" : "s"}`;
+      }
+      await sleep(o.pollMs ?? 10_000);
+    }
+  }
+  const artifact = artifactsOf(await f.get(`repos/${f.repo}/actions/runs/${id}/artifacts?name=${PLAN_REPORT_ARTIFACT}&per_page=100&limit=50`), PLAN_REPORT_ARTIFACT)[0];
+  const zip = artifact ? await bytes(`repos/${f.repo}/actions/artifacts/${artifact.id}/zip`) : undefined;
+  if (!zip) return `no plan report: run ${id} kept none`;
+  mkdirSync(dir, { recursive: true });
+  const kept: string[] = [];
+  for (const name of [PLAN_NOTE_FILE, "report.json"]) {
+    const text = entryOf(zip, name);
+    if (text !== undefined) {
+      writeFileSync(join(dir, name), text);
+      kept.push(name);
+    }
+  }
+  return `the plan report of run ${id}: ${kept.length ? kept.join(", ") : "no plan note and no report in it"}`;
+}
+
+/**
+ * Why a run is not the default branch's review workflow reviewing this pull
+ * request, or undefined when it is. GitHub runs a `workflow_run` workflow from
+ * the default branch alone, whatever branch's run started it, so the event
+ * and the file say it all. Forgejo runs a `pull_request_target` workflow from
+ * the pull request's base, so the base the event named must be the default
+ * branch, and the event's pull request and head this one. Forgejo lists such a
+ * run with event `pull_request`; `trigger_event` is the workflow's own.
+ */
+export function untrustedRun(run: any, forge: "github" | "forgejo", pr: ReviewedPull, defaultBranch: string): string | undefined {
+  if (forge === "github") {
+    if (run?.event !== REVIEW_EVENTS.github) return `it ran on ${String(run?.event)}, not workflow_run`;
+    const path = typeof run?.path === "string" ? run.path.replace(/@.*$/, "") : "";
+    if (path !== REVIEW_PATHS.github) return `it ran ${String(run?.path)}, not ${REVIEW_PATHS.github}`;
+    return undefined;
+  }
+  if (run?.trigger_event !== REVIEW_EVENTS.forgejo) return `it ran on ${String(run?.trigger_event ?? run?.event)}, not pull_request_target`;
+  if (run?.workflow_id !== REVIEW_PATHS.forgejo.split("/").pop()) return `it ran ${String(run?.workflow_id)}, not ${REVIEW_PATHS.forgejo}`;
+  let payload: any;
+  try {
+    payload = typeof run?.event_payload === "string" ? JSON.parse(run.event_payload) : run?.event_payload;
+  } catch {
+    payload = undefined;
+  }
+  const pull = payload?.pull_request;
+  if (pull?.base?.ref !== defaultBranch) return `it ran the review workflow of ${String(pull?.base?.ref)}, not of the default branch ${defaultBranch}`;
+  if (pull?.number !== pr.number || pull?.head?.sha !== pr.head) return `it reviewed pull request ${String(pull?.number)} at ${String(pull?.head?.sha).slice(0, 8)}`;
+  return undefined;
+}
+
+/**
+ * The review a wave's policy reads: the verdict in the newest
+ * `terragucci-review-<head>` artifact that the forge says a run of the
+ * default branch's review workflow kept (untrustedRun), and that says it
+ * reviewed this pull request's head against the default branch. Any run of the
+ * repo can keep an artifact of that name, the pull request's own pipeline
+ * included, and any run's token can post a note, so neither counts by itself.
+ * `skipped` says which artifacts were passed over, and why.
+ */
+export async function reviewOfPull(f: ForgeCalls, pr: ReviewedPull, bytes: ArtifactFiles, forge: "github" | "forgejo"): Promise<PolicyReview & { run?: number; skipped: { run: number | null; why: string }[] }> {
+  const skipped: { run: number | null; why: string }[] = [];
+  const name = reviewArtifactName(pr.head);
+  const artifacts = artifactsOf(await f.get(`repos/${f.repo}/actions/artifacts?name=${name}&per_page=100&limit=50`), name);
+  if (!artifacts.length) return { ...noReview(pr), skipped };
+  const defaultBranch = (await f.get(`repos/${f.repo}`))?.default_branch;
+  if (typeof defaultBranch !== "string" || !BRANCH.test(defaultBranch)) throw new Error("the forge did not say the repository's default branch");
+  for (const artifact of artifacts) {
+    const runId = artifact.run_id ?? artifact.workflow_run?.id;
+    if (!Number.isInteger(runId)) {
+      skipped.push({ run: null, why: "the forge names no run that kept it" });
+      continue;
+    }
+    const why = untrustedRun(await f.get(`repos/${f.repo}/actions/runs/${runId}`), forge, pr, defaultBranch);
+    if (why) {
+      skipped.push({ run: runId, why });
+      continue;
+    }
     const zip = await bytes(`repos/${f.repo}/actions/artifacts/${artifact.id}/zip`);
     if (!zip) continue;
-    const file = (name: string): string => {
-      try {
-        return unzipEntry(zip, name).toString("utf-8");
-      } catch {
-        return "";
-      }
-    };
-    return { found: true, risk: verdictOf({ review: file(REVIEW_FILE), rc: file("rc") }), pull_request: pr.number, head: pr.head, run: run.id };
+    let reviewed: any;
+    try {
+      reviewed = JSON.parse(entryOf(zip, REVIEWED_FILE) ?? "");
+    } catch {
+      reviewed = undefined;
+    }
+    if (reviewed?.pr !== pr.number || reviewed?.head !== pr.head || reviewed?.base !== defaultBranch) {
+      skipped.push({ run: runId, why: `it reviewed ${reviewed ? `pull request ${String(reviewed.pr)} at ${String(reviewed.head).slice(0, 8)} against ${String(reviewed.base)}` : "no pull request it names"}, not pull request ${pr.number} against ${defaultBranch}` });
+      continue;
+    }
+    return { found: true, risk: verdictOf({ review: entryOf(zip, REVIEW_FILE) ?? "", rc: entryOf(zip, "rc") ?? "" }), pull_request: pr.number, head: pr.head, run: runId, skipped };
   }
-  return none;
+  return { ...noReview(pr), skipped };
 }
 
 /** `input.review` when no pull request or no review could be read. */

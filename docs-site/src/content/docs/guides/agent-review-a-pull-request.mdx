@@ -36,6 +36,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
 | You need | Why |
 |---|---|
 | The pipeline from [Get your first plan note](/terragucci/getting-started/), on GitHub or Forgejo | the review runs after the pull request's plan job; GitLab has no review job, and `init` refuses `review` there |
+| Actions on the default branch able to start a workflow on `workflow_run` (GitHub) or `pull_request_target` (Forgejo) | the review is a workflow of its own that the forge runs from the default branch |
 | Your model's API key in your forge's secrets, such as `ANTHROPIC_API_KEY` | the review runs on your model and your key |
 
 ## Steps
@@ -68,7 +69,7 @@ The note never approves, requests changes or sets a status. Reviewers read it be
    npx terragucci init
    ```
 
-   The pull request that adds the jobs is the first one they review.
+   `init` writes the review workflow, `.github/workflows/terragucci-review.yml` or `.forgejo/workflows/terragucci-review.yml`. The forge runs it from the default branch, so the pull requests opened after this one merges are the first it reviews.
 
 </Steps>
 
@@ -76,9 +77,9 @@ The note never approves, requests changes or sets a status. Reviewers read it be
 
 | Part | From |
 |---|---|
-| The title and description | the pull request event |
+| The title and description | the pull request, from the event (Forgejo) or the API (GitHub) |
 | The diff | `git diff` of the base branch and the head |
-| The plan note | the plan job's report, without its markers |
+| The plan note | the plan job's report, from the pipeline's run of the head, without its markers |
 | The policy results | each planned root's result, denials and warnings, from the same report |
 | The instructions | `review.instructions` (default `.terragucci/review.md`) on the default branch, read with `git show` |
 
@@ -88,11 +89,12 @@ The prompt marks everything but the instructions as written by the pull request'
 
 | Job | Does | Holds |
 |---|---|---|
-| `review` | checks out the head with no credentials kept, writes the prompt, unpacks the default branch's files into an empty directory and runs the review command there with the prompt on stdin; keeps what it prints | a read-only job token, which the command's step runs without; the model's key, in that step alone |
+| `review` | checks out the head with no credentials kept, fetches the plan report, writes the prompt, unpacks the default branch's files into an empty directory and runs the review command there with the prompt on stdin; keeps what it prints | the job's token (read-only on GitHub), which the command's step runs without; the model's key, in that step alone |
 | `review-note` | in a fresh container, posts the review as one note on the pull request, and edits that note on the next push | the job's token, to comment |
 
 | Guard | What it stops |
 |---|---|
+| both jobs are in the default branch's review workflow, which GitHub runs on `workflow_run` and Forgejo on `pull_request_target` | a pull request editing the review it gets |
 | the command's step clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables, and neither job has a cloud role | the model commenting, pushing or calling the cloud |
 | the command runs in the default branch's files, not the checkout | a script the command names, or a setting file it reads, coming from the change |
 | `review-note` turns every HTML comment in the review into text before it posts | a review that forges terragucci's markers, such as the plan note's |
@@ -137,7 +139,7 @@ deny contains msg if {
 }
 ```
 
-The wave reads the risk from the review job's artifact in the pull request's run of that head, not from the note, so a note someone posts on the pull request changes nothing the policy sees. A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
+The wave reads the risk from the review job's artifact, and only from a run of the default branch's review workflow, not from the note. A note someone posts on the pull request, or an artifact the pull request's own pipeline keeps, changes nothing the policy sees. A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
 
 ## Next
 

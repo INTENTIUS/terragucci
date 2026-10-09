@@ -76,8 +76,8 @@ import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
-import { reviewJobs } from "./render-review";
-import type { ReviewInput } from "./review-agent";
+import { reviewWorkflow } from "./render-review";
+import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, DECIDED_DIR, waveShares } from "./apply";
 import { CHECK_DIR } from "./check";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
@@ -187,7 +187,7 @@ export interface PipelineInput {
   agentComment?: AgentCommentInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
-  /** `review.agent` is on: a pull request gets the review and review-note jobs after its plan (render-review.ts). GitHub and Forgejo only. */
+  /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
   review?: ReviewInput;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the `mr-apply` pipeline), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
   applyWhen?: ApplyWhen;
@@ -204,7 +204,7 @@ export interface PipelineInput {
 export interface RenderedPipeline {
   path: string;
   content: string;
-  /** Further workflow files on GitHub and Forgejo: the resume workflow, and the rollout workflow with `rollouts`. */
+  /** Further workflow files on GitHub and Forgejo: the resume workflow, the review workflow with `review.agent`, and the rollout workflow with `rollouts`. */
   extra?: { path: string; content: string }[];
 }
 
@@ -2195,7 +2195,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     } as never) as never);
   }
   if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
-  if (input.review) for (const [name, job] of reviewJobs(forge, image, input.review, { sameRepo, reportDir: REPORT_DIR })) entities.set(name, job);
   if (locksPlan) {
     // locks: plan. The workflow is the default branch's on pull_request_target and on a comment, and the job checks out
     // only the default branch: it reads the change as data from git, runs no binary and assumes no cloud role. So it may
@@ -2384,6 +2383,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ]);
     extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(resume)) });
   }
+  // review.agent: the review is a workflow of its own, which the forge runs from the default branch (render-review.ts).
+  if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv }))) });
   if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined))) });
   return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + text(serializer.serialize(entities)), ...(extra.length ? { extra } : {}) };
 }

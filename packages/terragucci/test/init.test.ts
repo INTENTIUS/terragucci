@@ -46,6 +46,20 @@ describe("init", () => {
     expect(r.files.some((f) => f.path === path)).toBe(false);
   });
 
+  it("review.agent writes the review workflow beside the pipeline, refuses one it did not write, and removes the one it wrote once review is off", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "review:\n  agent: true\n" });
+    const path = join(dir, ".github/workflows/terragucci-review.yml");
+    let r = await init(dir, { binary: "tofu" });
+    expect(r.files.find((f) => f.path === path)?.status).toBe("created");
+    expect(readFileSync(path, "utf-8")).toContain("workflow_run:");
+    write(dir, { "terragucci.yml": "review:\n  agent: false\n" });
+    r = await init(dir, { binary: "tofu" });
+    expect(r.files.find((f) => f.path === path)?.status).toBe("removed");
+    expect(existsSync(path)).toBe(false);
+    write(dir, { "terragucci.yml": "review:\n  agent: true\n", ".github/workflows/terragucci-review.yml": "name: mine\n" });
+    await expect(init(dir, { binary: "tofu", dryRun: true })).rejects.toThrow(/terragucci-review.yml exists and terragucci did not write it/);
+  });
+
   it("rollouts refuses to overwrite a rollout workflow it did not write, and on GitLab names the schedule to add", async () => {
     const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'rollouts: "*/15 * * * *"\n', ".github/workflows/terragucci-rollout.yml": "name: mine\n" });
     await expect(init(dir, { binary: "tofu", dryRun: true })).rejects.toThrow(/terragucci-rollout.yml exists and terragucci did not write it/);

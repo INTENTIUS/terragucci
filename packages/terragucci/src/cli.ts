@@ -41,7 +41,7 @@
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
- *   terragucci review prompt --report <dir> [--instructions <path>]   (write the review's prompt from the pull request, its plan and the default branch's instructions; run by the generated pipeline's review job)
+ *   terragucci review prompt --report <dir> [--instructions <path>]   (fetch the plan report of the pull request's run and write the review's prompt from the pull request, its plan and the default branch's instructions; run by the review workflow's review job)
  *   terragucci review post --dir <dir>   (post the review as a note on the pull request; run by the review-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
  *   terragucci notify drift [--report <dir>]   (post the drift job's findings to Slack and Teams, with a Re-plan button; run by the generated pipeline)
@@ -62,13 +62,13 @@ import { APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { pollGitLabComments } from "./comment-gitlab";
-import { approvalStatus } from "./review";
+import { approvalStatus, forgeCalls } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
 import { approve, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
-import { postReview, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
+import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { detectForge } from "./detect";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
@@ -628,8 +628,18 @@ export async function main(argv: string[]): Promise<number> {
       case "review": {
         const sub = args[0];
         if (sub === "prompt") {
-          const report = str(flags, "report") ?? "terragucci-report";
-          const w = writeReviewPrompt({ report: resolve(cwd, report), instructions: str(flags, "instructions") ?? REVIEW_INSTRUCTIONS });
+          const report = resolve(cwd, str(flags, "report") ?? "terragucci-report");
+          // The review workflow's event names the pull request; its plan report comes from the pipeline's run of the head.
+          let event: unknown;
+          try {
+            event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf-8"));
+          } catch (e) {
+            throw new ConfigError(`review prompt reads the pull request from the event file, and could not (${(e as Error).message})`);
+          }
+          const f = forgeCalls(process.env);
+          const { subject, run } = await reviewSubject(event, f);
+          console.log(`terragucci review: ${await fetchPlanReport(f, artifactBytes(process.env), subject, run, report)}`);
+          const w = writeReviewPrompt({ report, instructions: str(flags, "instructions") ?? REVIEW_INSTRUCTIONS, pull: subject });
           console.log(`terragucci review: wrote the prompt for pull request ${w.pr} at ${w.head.slice(0, 8)}; instructions: ${w.instructions === "default" ? "the default branch's" : "none on the default branch"}${w.changed ? ", which this pull request changes" : ""}`);
           return 0;
         }

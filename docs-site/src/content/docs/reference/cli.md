@@ -296,14 +296,14 @@ terragucci review prompt --report <dir> [--instructions <path>]
 terragucci review post --dir <dir>
 ```
 
-The two halves of the [review](/terragucci/guides/agent-review-a-pull-request/), run by the generated `review` and `review-note` jobs.
+The two halves of the [review](/terragucci/guides/agent-review-a-pull-request/), run by the `review` and `review-note` jobs of the generated review workflow.
 
 | Command | Does |
 |---|---|
-| `review prompt` | reads the pull request from the event file, the diff of its base and head from git, and the plan note and policy results from the report in `--report`; reads the instructions (`--instructions`, default `.terragucci/review.md`) from `origin/<default branch>` with `git show`, never from the checkout; writes the prompt to `/tmp/terragucci-review/prompt.md` and unpacks the default branch's files into `/tmp/terragucci-review/work` |
+| `review prompt` | reads the pull request from the event file (on a `workflow_run` event, the one pull request of the run's head, with its title, description and base from the API); fetches the plan job's report from the pipeline's run of the head into `--report`, on a `pull_request_target` event waiting up to 30 minutes for the plan job; reads the diff of the base and head from git, and the plan note and policy results from the report; reads the instructions (`--instructions`, default `.terragucci/review.md`) from `origin/<default branch>` with `git show`, never from the checkout; writes the prompt to `/tmp/terragucci-review/prompt.md`, the pull request, head and base to `/tmp/terragucci-review/out/reviewed.json`, and unpacks the default branch's files into `/tmp/terragucci-review/work` |
 | `review post` | reads the review and its command's exit code from `--dir` and posts them as one note on the pull request `TG_PR` names, with the head `TG_SHA` names; edits the note the pipeline posted before |
 
-`review prompt` exits 2 when the event names no pull request, or the checkout has no default branch ref. `review post` exits 0 even when the forge refuses the note, and says why.
+`review prompt` exits 2 when the event names no pull request, a `workflow_run` event was not started by a `pull_request` run or names no one pull request of its head, or the checkout has no default branch ref. It needs `TG_TOKEN`, a token that reads the repository's runs and artifacts. `review post` exits 0 even when the forge refuses the note, and says why.
 
 ## pr-lock
 
