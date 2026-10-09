@@ -1,0 +1,13 @@
+{
+  "name": "shop-db",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon sql -o dist/schema.json"
+  },
+  "devDependencies": {
+    "@intentius/chant": "^0.112.0",
+    "@intentius/chant-lexicon-sql": "^0.112.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,11 @@
+forge: forgejo
+gate: always
+drift: "0 6 * * *"
+sql:
+  credentials:
+    plan:
+      POSTGRES_USER: PG_READER_USER
+      POSTGRES_PASSWORD: PG_READER_PASSWORD
+    apply:
+      POSTGRES_USER: PG_WRITER_USER
+      POSTGRES_PASSWORD: PG_WRITER_PASSWORD

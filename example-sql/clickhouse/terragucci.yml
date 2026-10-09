@@ -1,0 +1,11 @@
+forge: forgejo
+gate: always
+drift: "0 6 * * *"
+sql:
+  credentials:
+    plan:
+      CLICKHOUSE_USER: CH_READER_USER
+      CLICKHOUSE_PASSWORD: CH_READER_PASSWORD
+    apply:
+      CLICKHOUSE_USER: CH_WRITER_USER
+      CLICKHOUSE_PASSWORD: CH_WRITER_PASSWORD

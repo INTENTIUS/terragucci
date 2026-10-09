@@ -1,0 +1,183 @@
+---
+title: Manage SQL databases
+description: SQL Yodeler runs a ClickHouse or Postgres schema through the same pull request flow as a Terraform root, from plan note to drift issue.
+claims: [sql-ch-plan, sql-ch-apply, sql-ch-drift, sql-pg-plan, sql-pg-apply, sql-pg-drift]
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/manage-sql-databases/.
+  Find the chant projects in this repo that use the sql lexicon, add an ApplyOp with no gate for each environment that has none,
+  add `sql.credentials` to terragucci.yml, run `npx terragucci init`, and open a pull request.
+  Never apply, approve (a pull request review, `terragucci approve`, `chant approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## What you end up with
+
+SQL Yodeler is terragucci's database unit. A [chant](https://intentius.io/chant/) project that declares a ClickHouse or Postgres schema with the `sql` lexicon gets the pipeline a Terraform root gets:
+
+- a plan note on every pull request, with each change classified by what it does to the server;
+- an apply after the merge, behind the wave's gate, with the approval bound to the plan's digest;
+- a scheduled drift check that keeps one issue open while the server differs from the code.
+
+A change the database cannot make in place is refused on the pull request, and nothing in that unit is applied while it stands.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| A ClickHouse or Postgres server the CI runner can reach | every job connects to it. A ClickHouse Cloud service has to allow the runner's addresses, and a Postgres on a private network needs a runner inside that network |
+| Two users on the server: one that can only read, and one that can change the schema | the plan and drift jobs hold the first, the apply jobs the second |
+| npm in the repo | each job installs the project's packages and runs chant from them |
+| terragucci ([Get your first plan note](/terragucci/getting-started/)) | `init` writes the pipeline |
+
+## Steps
+
+<Steps>
+
+1. Make a chant project for the database in a directory of its own, `db` here. Its `package.json` names chant and the `sql` lexicon, and a build script that writes `dist/schema.json`:
+
+   ```json title="db/package.json"
+   {
+     "name": "shop-db",
+     "private": true,
+     "type": "module",
+     "scripts": {
+       "build": "chant build src --lexicon sql -o dist/schema.json"
+     },
+     "devDependencies": {
+       "@intentius/chant": "^0.112.0",
+       "@intentius/chant-lexicon-sql": "^0.112.0",
+       "typescript": "^5.9.3"
+     }
+   }
+   ```
+
+   Run `npm install` in `db` and commit the `package-lock.json` it writes, which the jobs install from with `npm ci`.
+
+2. Bind an environment to the server in `db/chant.config.ts`. The profile names the variables that hold the user and the password, never the values:
+
+   ```ts title="db/chant.config.ts"
+   import type { ChantConfig } from "@intentius/chant";
+   import "@intentius/chant-lexicon-sql";
+
+   export default {
+     lexicons: ["sql"],
+     sql: {
+       dialect: "clickhouse",
+       profiles: {
+         prod: {
+           url: "https://clickhouse.example.com:8443",
+           user: { env: "CLICKHOUSE_USER" },
+           password: { env: "CLICKHOUSE_PASSWORD" },
+           databases: ["analytics"],
+         },
+       },
+     },
+   } satisfies ChantConfig;
+   ```
+
+   For Postgres, set `dialect: "postgres"` and give the profile a `postgres://` URL. A Postgres profile lists `schemas` in place of `databases`.
+
+3. Import what the server holds now, as the baseline the first pull request plans against:
+
+   ```bash
+   npx chant import --from prod --output src/
+   ```
+
+4. Declare the Op that applies the environment, with no gate of its own: the wave's gate is the approval.
+
+   ```ts title="db/ops/schema-apply.op.ts"
+   import { ApplyOp } from "@intentius/chant/op";
+
+   const { op } = ApplyOp({ name: "schema-apply", env: "prod", target: "clickhouse" });
+
+   export default op;
+   ```
+
+   Each environment that an `ApplyOp` for ClickHouse or Postgres applies becomes one unit, named `<directory>@<environment>`, here `db@prod`. A second environment needs a second Op, and becomes a second unit.
+
+5. Say which secrets fill those variables in each job, in `terragucci.yml`:
+
+   ```yaml
+   gate: always
+   drift: "17 4 * * *"
+   sql:
+     credentials:
+       plan:
+         CLICKHOUSE_USER: CH_READER_USER
+         CLICKHOUSE_PASSWORD: CH_READER_PASSWORD
+       apply:
+         CLICKHOUSE_USER: CH_WRITER_USER
+         CLICKHOUSE_PASSWORD: CH_WRITER_PASSWORD
+   ```
+
+   Store the four secrets on the forge. With `gate: always` every schema change waits for an approval. The default gate, `on-destroy`, holds only a wave that drops a table or a column.
+
+6. Write the pipeline.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   `init` lists `db@prod` among the roots, with the Op that applies it. Commit the pipeline and open a pull request.
+
+</Steps>
+
+## What a pull request shows
+
+The plan job builds the project with its build script and runs `chant sql plan prod` against the database as the read-only user. The note shows the unit's plan the way chant prints it, every change with its class and rule.
+
+```
+events (analytics.events)
+  [background rewrite] ttl: ts + toIntervalDay ( 180 ) -> ts + toIntervalDay ( 90 )
+      SQLCH205 Change a TTL. MODIFY TTL is recorded in metadata, and with materialize_ttl_after_modify (on by default) the server recalculates the TTL over existing data as a mutation.
+```
+
+A ClickHouse change is classed by how much data it rewrites. A Postgres change names the lock it takes:
+
+```
+orders (app.orders)
+  [metadata only] columns.shipped_at: shipped_at timestamp with time zone
+      SQLPG201 Add a column. ADD COLUMN with no default, or with a non-volatile default, changes only the catalog under ACCESS EXCLUSIVE ...
+ordersStatus (app.orders_status_idx)
+  [needs CONCURRENTLY] index: app.orders_status_idx
+      SQLPG240 Create an index CONCURRENTLY. CREATE INDEX CONCURRENTLY builds the index without blocking writes (SHARE UPDATE EXCLUSIVE) ...
+```
+
+The note's wave table carries the digest of the unit's plan, and the command that approves it.
+
+## A change that cannot be made in place
+
+Some changes need the data copied: a new ClickHouse sort key, or a Postgres column renamed or retyped. chant classes them as a rebuild or as expand and contract, and the unit refuses them. The note names the unit under its refusals, with the rule and the Op that makes the change instead, `ClickHouseRebuildOp` or `PostgresMigrationOp`; `terragucci/plan` fails. Nothing in the unit applies while the change stands. Run that Op on its own; `chant sql plan` prints its declaration.
+
+## Approving and applying
+
+A unit applies in the last wave, after every Terraform root, so a root that creates the server applies first. Its wave works as a wave of roots does ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)):
+
+1. Approve the digest from the note before the merge, or approve the wave once it waits: `chant approve tf-apply wave-<n> --plan <digest>`.
+2. After the merge the wave plans the unit again, as the writer.
+3. When that plan has the approved digest, the wave runs the unit's `ApplyOp` with `chant run`. When the database or main moved since the approval, the digest differs. The wave then applies nothing and names the unit that moved, with the command that approves the new plan.
+
+`/terragucci apply` on the merged pull request runs the waves again from its merge commit, as for roots.
+
+## Credentials
+
+| Jobs | Get |
+|---|---|
+| `plan`, `replan`, `confirm`, `drift` | `sql.credentials.plan` |
+| the `apply-wave` jobs, `apply-comment`, `mr-apply` | `sql.credentials.apply` |
+
+A GitHub or Forgejo job sees only the secrets its pipeline maps into it. GitLab gives every job the project's variables, so mark the writer's variables Protected to keep them to pipelines on protected branches.
+
+## Drift
+
+The drift job runs on the `drift:` schedule. It runs `chant lifecycle diff prod --live` in the project as the read-only user and keeps the [drift issue](/terragucci/guides/turn-on-drift-checks/) as it does for roots. It reports an object the project owns that changed in the database, and a declared object that is gone. An object the project does not own is not reported.
+
+The comparison is between the database and what main declares, so a change merged to main and not yet applied, such as one in a refused wave, is reported too.
+
+## What a unit leaves to chant
+
+- The check job formats and validates Terraform roots. Run `npx chant lint` in the project to lint the schema.
+- `policy` and `cost` read Terraform plans, and leave units out.
+- An `ApplyOp` with a gate of its own stops at that gate, and the wave fails, saying so.

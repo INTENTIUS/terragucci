@@ -110,6 +110,12 @@ decide:
   url: http://decide:8790
 audit_region: eu-west-1
 dashboards: true
+sql:
+  credentials:
+    plan:
+      CLICKHOUSE_PASSWORD: CH_READER_PASSWORD
+    apply:
+      CLICKHOUSE_PASSWORD: CH_WRITER_PASSWORD
 ```
 
 ## Keys
@@ -136,6 +142,7 @@ dashboards: true
 | `env` | `{}` | environment variables every job gets; values only, never secrets |
 | `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
+| `sql` | none | `credentials.plan` and `credentials.apply`: each maps a variable a chant `sql.profiles` entry names to the secret that fills it. The plan, re-plan, confirm and drift jobs get `plan`, and only the apply jobs get `apply`; see [Manage SQL databases](/terragucci/guides/manage-sql-databases/) |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, by forge | the forge token `reconcile`, `rollout` and `respond --mode apply` use |
 | `oidc` | none | plan and apply identities per cloud; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
 | `parallelism` | 3 for GitLab-managed state, else 4 | roots planned at once, and applied at once in a wave; Terragrunt uses `terragrunt.parallelism`. Each root running starts its own providers: with the AWS provider, about 800 MB each, so 4 fit a 7 GB runner and 16 need about 13 GB |
