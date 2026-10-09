@@ -14,6 +14,13 @@
 //   GET    /api/v3/repos/:o/:r/pulls/:n
 //   PATCH  /api/v3/repos/:o/:r/pulls/:n           state=closed|open
 //   PUT    /api/v3/repos/:o/:r/pulls/:n/merge     a merge commit on the base branch
+//   GET    /api/v3/repos/:o/:r/issues?state=&per_page=&page=  issues and pull requests, newest
+//                                                 first; 422 on a query parameter github.com
+//                                                 does not take, and on `type`, since the
+//                                                 mock defines no issue types (github.com
+//                                                 answers 422 to type=issues)
+//   POST   /api/v3/repos/:o/:r/issues             open an issue
+//   GET|PATCH /api/v3/repos/:o/:r/issues/:n       title, body, state=closed|open
 //   GET|POST /api/v3/repos/:o/:r/issues/:n/comments, PATCH .../issues/comments/:id
 //   POST   /api/v3/repos/:o/:r/statuses/:sha        a commit status
 //   GET    /api/v3/repos/:o/:r/commits/:sha/statuses newest first
@@ -35,7 +42,7 @@ const USER = process.env.MOCK_USER ?? "terragucci-admin";
 const PUBLIC = process.env.MOCK_PUBLIC_URL ?? `http://localhost:${PORT}`;
 mkdirSync(DATA, { recursive: true });
 
-/** repo full name -> { pulls: [], comments: [] } */
+/** repo full name -> { pulls: [], issues: [], comments: [] }; issues and pull requests share their numbers, as on GitHub */
 const state = new Map();
 const repoDir = (o, r) => join(DATA, o, `${r}.git`);
 const git = (dir, ...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -60,6 +67,12 @@ function repoJson(o, r) {
   let branch = "main";
   try { branch = git(dir, "symbolic-ref", "--short", "HEAD"); } catch { /* keep main */ }
   return { id: 1, name: r, full_name: `${o}/${r}`, private: false, owner: { login: o }, default_branch: branch, html_url: `${PUBLIC}/${o}/${r}`, clone_url: `${PUBLIC}/${o}/${r}.git` };
+}
+/** The query parameters github.com's "list repository issues" takes. */
+const ISSUE_LIST_PARAMS = new Set(["milestone", "state", "assignee", "creator", "mentioned", "labels", "sort", "direction", "since", "per_page", "page"]);
+const nextNumber = (st) => st.pulls.length + (st.issues ?? []).length + 1;
+function issueJson(o, r, i) {
+  return { number: i.number, state: i.state, title: i.title, body: i.body, user: { login: USER }, created_at: i.created_at, html_url: `${PUBLIC}/${o}/${r}/issues/${i.number}` };
 }
 const sha = (dir, ref) => { try { return git(dir, "rev-parse", "--verify", `refs/heads/${ref}`); } catch { return null; } };
 
@@ -180,7 +193,7 @@ createServer(async (req, res) => {
         const dir = repoDir(o, r);
         if (!sha(dir, data.head) || !sha(dir, data.base)) return json(res, 422, { message: "Validation Failed: head or base is not a branch" });
         if (sha(dir, data.head) === sha(dir, data.base)) return json(res, 422, { message: "Validation Failed: no commits between base and head" });
-        const p = { number: st.pulls.length + 1, state: "open", merged: false, head: data.head, base: data.base, title: data.title ?? "", body: data.body ?? "" };
+        const p = { number: nextNumber(st), created_at: new Date().toISOString(), state: "open", merged: false, head: data.head, base: data.base, title: data.title ?? "", body: data.body ?? "" };
         st.pulls.push(p);
         return json(res, 201, pullJson(o, r, p));
       }
@@ -196,6 +209,38 @@ createServer(async (req, res) => {
       }
       if (rest.length === 2 && req.method === "GET") return json(res, 200, pullJson(o, r, p));
       if (rest.length === 2 && req.method === "PATCH") { if (data.state) p.state = data.state; return json(res, 200, pullJson(o, r, p)); }
+    }
+    if (rest[0] === "issues" && rest.length === 1) {
+      st.issues ??= [];
+      if (req.method === "GET") {
+        for (const k of url.searchParams.keys()) {
+          if (k === "type") return json(res, 422, { message: "Validation Failed", errors: [{ resource: "Issue", field: "type", code: "invalid", value: url.searchParams.get(k) }] });
+          if (!ISSUE_LIST_PARAMS.has(k)) return json(res, 422, { message: `Validation Failed: ${k} is not a parameter this endpoint takes` });
+        }
+        const want = url.searchParams.get("state") ?? "open";
+        const all = [
+          ...st.issues.map((i) => issueJson(o, r, i)),
+          ...st.pulls.map((p) => ({ ...issueJson(o, r, { ...p, state: p.state }), html_url: `${PUBLIC}/${o}/${r}/pull/${p.number}`, pull_request: { url: `${PUBLIC}/api/v3/repos/${o}/${r}/pulls/${p.number}` } })),
+        ].filter((i) => want === "all" || i.state === want).sort((a, b) => b.number - a.number);
+        const per = Math.min(Number(url.searchParams.get("per_page") ?? 30), 100);
+        const page = Number(url.searchParams.get("page") ?? 1);
+        return json(res, 200, all.slice((page - 1) * per, page * per));
+      }
+      if (req.method === "POST") {
+        if (!data.title) return json(res, 422, { message: "Validation Failed: title is missing" });
+        const i = { number: nextNumber(st), state: "open", title: data.title, body: data.body ?? "", created_at: new Date().toISOString() };
+        st.issues.push(i);
+        return json(res, 201, issueJson(o, r, i));
+      }
+    }
+    if (rest[0] === "issues" && rest.length === 2) {
+      const i = (st.issues ?? []).find((x) => x.number === Number(rest[1]));
+      if (!i) return notFound(res);
+      if (req.method === "GET") return json(res, 200, issueJson(o, r, i));
+      if (req.method === "PATCH") {
+        for (const k of ["title", "body", "state"]) if (data[k] !== undefined) i[k] = data[k];
+        return json(res, 200, issueJson(o, r, i));
+      }
     }
     if (rest[0] === "issues") {
       if (rest[1] === "comments" && rest.length === 3 && req.method === "PATCH") {

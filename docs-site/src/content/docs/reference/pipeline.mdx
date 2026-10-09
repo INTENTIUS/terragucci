@@ -16,6 +16,8 @@ Pushes apply one at a time in the order they arrived; none cancels another.
 | GitLab | a resource group |
 | Forgejo | a named group, plus a lock on the remote that a waiter takes over once the holder's run ends or its lease is two hours old |
 
+On Forgejo 16.0.5 and earlier, a run waiting in the group can stay waiting with the runner idle after the run ahead of it ends, when that run's last job was skipped or the run was cancelled before any job started. Forgejo hands the waiting job out once any other job in the instance ends, or once forgejo-runner restarts.
+
 | Rule | What happens |
 |---|---|
 | [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs) above 1 | on GitHub and Forgejo every apply job takes the lock on the remote, held by the run rather than by one job, so a wave's share jobs apply side by side outside the concurrency group while another push's apply waits; on GitHub the apply a comment starts and the resume job take it too |
@@ -129,7 +131,7 @@ With [`locks: plan`](/terragucci/reference/config/#plan-locks), `init` adds one 
 |---|---|
 | the default branch's workflow and checkout; `contents: write` (to push `_locks/tf-apply.json` to `chant/lifecycle`), `statuses: write`, `pull-requests: write` | a checkout of the pull request, a cloud role, an OIDC token, a run of the binary or Terragrunt |
 
-It reads the change as data from git: the diff, and in a Terragrunt repo each unit's `terragrunt.hcl`. A fork's pull request takes no lock. Under `apply.when: merge` the lock gates nothing by itself: require `terragucci/lock` in branch protection to hold the merge.
+It reads the change as data from git: the diff, and in a Terragrunt repo each unit's `terragrunt.hcl`. A fork's pull request takes no lock. A head that moved since the event is locked as the forge has it now. The `fmt` job commits the formatting with the job's own token, a push that starts no run, so with `locks: plan` it then runs the same step itself and answers the lock on the formatted head; it gets `statuses: write` and `pull-requests: write` for that. Under `apply.when: merge` the lock gates nothing by itself: require `terragucci/lock` in branch protection to hold the merge.
 
 ### Pull request code access
 

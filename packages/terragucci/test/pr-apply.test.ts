@@ -81,6 +81,7 @@ function setup(comment: string, f: Forge, forgejo = false): { env: NodeJS.Proces
     if (path.includes("/reviews")) return answer(200, f.reviews ?? []) as never;
     if (path.endsWith("/status")) return answer(200, { statuses: f.statuses ?? [] }) as never;
     if (path.includes("/check-runs")) return answer(200, { check_runs: f.checkRuns ?? [] }) as never;
+    if (/pulls\?state=open/.test(path)) return answer(200, [f.pr]) as never;
     const other = /pulls\/(\d+)$/.exec(path);
     if (other && Number(other[1]) !== 7) return answer(200, { state: f.others?.[Number(other[1])] ?? "closed" }) as never;
     if (path.endsWith("pulls/7")) {
@@ -392,7 +393,7 @@ describe("locks: plan, the pr-lock job", () => {
     return s;
   };
   const statuses = (s: { sent: Sent[] }) => s.sent.filter((x) => x.method === "POST" && x.path.includes("/statuses/")).map((x) => [x.body.state, x.body.context, x.body.description]);
-  const lock = (r: ReturnType<typeof repos>, s: ReturnType<typeof setup>, when?: "pull-request") => decidePlanLock({ layers, env: s.env, fetch: s.fetch, git: r.git, repo: r.work, ...(when ? { when } : {}) });
+  const lock = (r: ReturnType<typeof repos>, s: ReturnType<typeof setup>, when?: "pull-request") => decidePlanLock({ layers, env: s.env, fetch: s.fetch, git: r.git, repo: r.work, wait: async () => {}, ...(when ? { when } : {}) });
 
   it("a pull request opened takes plan locks on the roots its head reaches, posts terragucci/lock success, and says nothing", async () => {
     const r = repos();
@@ -432,6 +433,37 @@ describe("locks: plan, the pr-lock job", () => {
     expect((await lock(r, fork)).reason).toContain("comes from a fork");
     expect(readLocks(r.work).locks).toEqual({});
     expect(statuses(fork)).toEqual([]);
+  });
+
+  it("a head that moved since the event, by a push that starts no run, is locked as the forge has it now", async () => {
+    // GitHub: the check job pushes the format fix with the job token, which starts no workflow, so no later
+    // pull_request_target event follows. The run of the first event locks the new head.
+    const r = repos();
+    const stale = "b".repeat(40);
+    const s = target("opened", OPEN(r.head));
+    writeFileSync(s.env.GITHUB_EVENT_PATH!, JSON.stringify({ action: "opened", number: 7, pull_request: { number: 7, ...OPEN(stale) }, repository: { full_name: "acme/infra", default_branch: "main" } }));
+    await lock(r, s);
+    expect(readLocks(r.work).locks.network).toEqual(expect.objectContaining({ pr: 7, head: r.head, stage: "plan" }));
+    expect(statuses(s)).toEqual([["success", "terragucci/lock", "holds network"]]);
+    expect(s.sent.find((x) => x.path.endsWith(`statuses/${r.head}`))).toBeDefined();
+    // When the forge does not have the fetched head either, it stands down for the run that push started.
+    const elsewhere = target("opened", OPEN("c".repeat(40)));
+    writeFileSync(elsewhere.env.GITHUB_EVENT_PATH!, JSON.stringify({ action: "opened", number: 7, pull_request: { number: 7, ...OPEN(stale) }, repository: { full_name: "acme/infra", default_branch: "main" } }));
+    expect((await lock(r, elsewhere)).reason).toBe("pull request 7 moved since this event; its next run locks the new head");
+    expect(statuses(elsewhere)).toEqual([]);
+    expect(elsewhere.sent.filter((x) => x.path.endsWith("pulls/7"))).toHaveLength(4);
+  });
+
+  it("a push to a pull request's branch, from the fmt job after its formatting commit, locks the pull request's new head", async () => {
+    const r = repos();
+    const s = target("opened", OPEN(r.head));
+    writeFileSync(s.env.GITHUB_EVENT_PATH!, JSON.stringify({ ref: "refs/heads/feature", after: r.head, repository: { full_name: "acme/infra", default_branch: "main" } }));
+    expect((await lock(r, s)).reason).toBe(`pull request 7 at ${r.head.slice(0, 8)} holds network`);
+    expect(readLocks(r.work).locks.network).toEqual(expect.objectContaining({ pr: 7, head: r.head, stage: "plan" }));
+    expect(statuses(s)).toEqual([["success", "terragucci/lock", "holds network"]]);
+    const none = target("opened", OPEN(r.head));
+    writeFileSync(none.env.GITHUB_EVENT_PATH!, JSON.stringify({ ref: "refs/heads/other", repository: { full_name: "acme/infra", default_branch: "main" } }));
+    expect((await lock(r, none)).reason).toBe("no open pull request comes from other");
   });
 
   it("a plan keeps the pull request's own apply lock, and the apply takes over its plan lock", async () => {

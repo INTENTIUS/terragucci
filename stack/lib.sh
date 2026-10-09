@@ -146,9 +146,60 @@ run_logs() { # repo, run id
   done
 }
 
+# Forgejo 16 (16.0.5 and before) can leave a job waiting after the run ahead of
+# it in its concurrency group ends, with the runner idle. A runner asks for work
+# only when Forgejo's task version has moved since its last ask, and the version
+# moves when a task reports its result, not when the run ends after it: a run
+# that ends through a job the server skips (an `if: failure()` job whose needs
+# passed) or a cancel of a run whose jobs never started frees its group with no
+# move, so the waiting job sits until something else moves the version. On a
+# busy stack another job's end soon does; on a quiet one nothing does.
+# Forgejo fixed it in v17 (forgejo#14576, forgejo#14642).
+#
+# runner_watch, called once per poll of a wait loop: when Forgejo has a job
+# waiting that the runner's labels serve and no job running, for a minute,
+# it restarts forgejo-runner, whose first ask after a restart reads the queue
+# afresh. Nothing is running, so the restart stops no job. A stamp in the
+# shared lock dir keeps every worktree's waits to one restart a minute.
+# TG_RUNNER_WATCH=off turns it off (the runner-nudge claim's BREAK).
+RUNNER_STUCK_SINCE=""
+RUNNER_NUDGES=0
+RUNNER_WATCHED=0
+runner_watch() {
+  [ "${LIB_FORGE:-forgejo}" = forgejo ] && [ "${TG_RUNNER_WATCH:-on}" != off ] || return 0
+  local runners jobs stuck now stamp last=0
+  now="$(date +%s)"
+  # A look every 10 seconds is enough for a minute's wait, and spares Forgejo.
+  [ $(( now - RUNNER_WATCHED )) -ge 10 ] || return 0
+  RUNNER_WATCHED="$now"
+  runners="$(api "$URL/api/v1/admin/actions/runners" 2>/dev/null)" || return 0
+  jobs="$(api "$URL/api/v1/admin/actions/runners/jobs" 2>/dev/null)" || return 0
+  stuck="$(jq -rn --argjson r "${runners:-[]}" --argjson j "${jobs:-null}" '
+    ([$r[]? | select(.status != "offline") | .labels[]?] | unique) as $labels
+    | ($j // []) as $jobs
+    | if ($labels | length) == 0 then "no"
+      elif any($jobs[]; .status == "running") then "no"
+      elif any($jobs[]; .status == "waiting" and ((.runs_on // []) - $labels | length) == 0) then "yes"
+      else "no" end' 2>/dev/null)" || return 0
+  if [ "$stuck" != yes ]; then RUNNER_STUCK_SINCE=""; return 0; fi
+  [ -n "$RUNNER_STUCK_SINCE" ] || { RUNNER_STUCK_SINCE="$now"; return 0; }
+  [ $(( now - RUNNER_STUCK_SINCE )) -ge "${TG_RUNNER_WATCH_AFTER:-60}" ] || return 0
+  stamp="${SMOKE_LOCKS:-$LIB_HERE/.state}/runner-nudge"
+  read -r last 2>/dev/null <"$stamp" || last=0
+  case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  if [ $(( now - last )) -ge 60 ]; then
+    mkdir -p "$(dirname "$stamp")" && echo "$now" >"$stamp"
+    echo "[runner-watch] a job has waited $(( now - RUNNER_STUCK_SINCE ))s with no job running; restarting forgejo-runner (Forgejo 16, forgejo#14576)" >&2
+    docker restart terragucci-forgejo-runner >/dev/null 2>&1 || true
+    RUNNER_NUDGES=$(( RUNNER_NUDGES + 1 ))
+  fi
+  RUNNER_STUCK_SINCE=""
+}
+
 wait_run() { # repo, sha, [event]
   local repo="$1" sha="$2" event="${3:-}" deadline=$(( $(date +%s) + TIMEOUT )) run="" status=""
   while :; do
+    runner_watch
     # A branch with a pull request has two runs on its head: the push run and
     # the pull_request run, in whichever order Forgejo queued them. Forgejo
     # lists a pull_request_target run as event pull_request too.

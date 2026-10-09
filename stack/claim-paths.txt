@@ -135,6 +135,7 @@ stack/mounted.sh                          ALL
 stack/bootstrap.sh                        ALL
 stack/docker-compose.yml                  ALL
 stack/example.sh                          ALL
+stack/mock-github/                        github-drift-issue
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/linked-states              linked-*
