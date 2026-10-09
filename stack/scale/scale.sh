@@ -50,7 +50,7 @@ ADMIN_PW="Tgscale-local-pw-1234"
 CAPACITY="${TGSCALE_CAPACITY:-3}"
 PER_REPO="${TGSCALE_ROOTS_PER_REPO:-100}"
 # Roots each job plans and applies at once. Every one starts an AWS provider of
-# about 800 MB, so the default 16, in three jobs at once, needs some 40 GB.
+# about 800 MB, so 4 in each of three jobs at once is some 10 GB.
 PARALLELISM="${TGSCALE_PARALLELISM:-4}"
 CHOUDOUFU_REF="${TGSCALE_CHOUDOUFU_REF:-1c8ede26372fcb0b653084574d1b326f1c58d935}"
 STATE_BUCKET=terralith-state
