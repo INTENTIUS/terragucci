@@ -337,7 +337,10 @@ chat-approve-lambda|the relay built as the AWS Lambda function of the guide, run
 chat-approve-teams|a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave|
 chat-replan|with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch|
 linked-plan|a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies|
-linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|'
+linked-states|after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands|
+plan-no-lock|a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it|
+sensitive-redacted|a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket|
+provider-cache-once|a wave of eight roots that use one provider downloads it once: the job log names one download and the cache volume holds one copy|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -1147,10 +1150,17 @@ build_cli() {
   # each rebuild it. build-cli.mjs renames the finished files into place, so a
   # build that does run never leaves another run a half-written bundle.
   local bundle="$HERE/../packages/terragucci/dist/terragucci.mjs"
-  if [ -f "$bundle" ] && [ -z "$(find "$HERE/../packages/terragucci/src" "$HERE/../packages/terragucci/package.json" "$HERE/../scripts/build-cli.mjs" -type f -newer "$bundle" -print -quit 2>/dev/null)" ]; then
+  if [ -f "$bundle" ] && [ -z "$(find "$HERE/../packages/terragucci/src" "$HERE/../packages/terragucci/package.json" "$HERE/../scripts/build-cli.mjs" "$HERE/../scripts/cli-bundle.mjs" -type f -newer "$bundle" -print -quit 2>/dev/null)" ]; then
     return 0
   fi
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null)
+}
+
+# The CLI bundle with cuts in its sources (stack/break-bundle.mjs), for a
+# claim whose BREAK takes its property out of the code itself: written to
+# out, and mounted in place of the bundle build_cli wrote.
+break_bundle() { # out, then file find replace, once or more
+  (cd "$HERE/.." && node stack/break-bundle.mjs "$@") >&2
 }
 
 report_run() {
@@ -9384,6 +9394,236 @@ HCL
   return $rc
 }
 
+# ── plans and the state lock, sensitive values, the provider cache ────────
+
+claim_plan_no_lock() {
+  # One root on floci's S3 with use_lockfile, applied once. An apply of a
+  # change to it takes the root's lock and holds it at its approval prompt.
+  # While the lock object is in the bucket, a pull request plan of the change
+  # (tf-plan with TG_BASE) and a drift run (tf-drift) run on the root, each
+  # with -lock-timeout=30s, as a job that waits for locks sets it. Both must
+  # plan the root, and the apply must still hold its lock when both are done:
+  # neither took the lock or waited for it.
+  # BREAK: a bundle whose plan leaves out -lock=false (break_bundle), so the
+  # pull request plan waits 30s for the lock and fails.
+  log() { echo "[smoke plan-no-lock] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" bucket=terragucci-smoke-lock
+  local key holder="terragucci-smoke-plan-no-lock-$STAMP${BREAK:+-break}" base i rc=0 s t0 took
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    # shellcheck disable=SC2016 # TypeScript, not shell
+    break_bundle "$bundle" report/stage.ts '"-input=false", "-no-color", "-lock=false", `-out=${planFile}`' '"-input=false", "-no-color", `-out=${planFile}`' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  key="plan-no-lock/$STAMP${BREAK:+-break}/terraform.tfstate"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  root_tf() { # input
+    printf 'terraform {\n  backend "s3" {\n    bucket         = "%s"\n    key            = "%s"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "x" {\n  input = "%s"\n}\n' "$bucket" "$key" "$1"
+  }
+  mkdir -p "$work/repo/app" "$work/holder/app"
+  root_tf one > "$work/repo/app/main.tf"
+  root_tf two > "$work/holder/app/main.tf"
+  printf 'binary: tofu\nroots: ["app"]\n' > "$work/repo/terragucci.yml"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "plan-no-lock: one"
+  base="$(git -C "$work/repo" rev-parse HEAD)"
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo/app "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    "$image" sh -c 'tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 \
+    || { log "the first apply failed"; drop_work "$work"; return 1; }
+  clean_mounted "$work/repo"
+  # The holder's apply plans input = two and waits at its approval prompt, the
+  # lock held, until /tmp/release appears (or ten minutes pass); then stdin
+  # closes, the apply is cancelled and lets go of the lock.
+  # shellcheck disable=SC2016 # expanded by the container's shell
+  run_copied -d --name "$holder" --network terragucci -v "$work/holder:/repo" -w /repo/app "${AWS_DOCKER_ENV[@]}" \
+    "$image" sh -c 'tofu init -input=false -no-color >/dev/null && { i=0; while [ ! -f /tmp/release ] && [ $i -lt 600 ]; do sleep 1; i=$((i+1)); done; } | tofu apply -input=true -no-color' >/dev/null \
+    || { log "the holding apply did not start"; drop_work "$work"; return 1; }
+  lock_held() { [ "$(curl -s -o /dev/null -w '%{http_code}' "$FLOCI/$bucket/$key.tflock")" = 200 ]; }
+  for i in $(seq 1 90); do lock_held && break; sleep 1; done
+  if ! lock_held; then
+    log "the apply never took the lock ($key.tflock is not in $bucket)"; docker logs "$holder" 2>&1 | tail -5 >&2 || true; rc=1
+  else
+    log "the apply holds $key.tflock"
+  fi
+  root_tf two > "$work/repo/app/main.tf"
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "plan-no-lock: two"
+  for s in tf-plan tf-drift; do
+    [ $rc = 0 ] || break
+    t0="$(date +%s)"
+    run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+      "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e TF_CLI_ARGS_plan=-lock-timeout=30s -e "TG_BASE=$base" \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+      "$image" terragucci stage "$s" --layers app --out "$s-report" >&2 || { log "$s failed while the apply held the lock"; rc=1; }
+    took=$(( $(date +%s) - t0 ))
+    clean_mounted "$work/repo"
+    [ $rc = 0 ] || break
+    jq -e '.roots[] | select(.path == "app" and .status == "planned")' "$work/repo/$s-report/report.json" >/dev/null 2>&1 || { log "$s did not plan app"; rc=1; break; }
+    lock_held && [ "$(docker inspect -f '{{.State.Running}}' "$holder" 2>/dev/null)" = true ] \
+      || { log "the apply no longer holds the lock once $s is done: $s waited for it"; rc=1; break; }
+    log "$s planned app in ${took}s, the apply still holding the lock"
+  done
+  # tf-drift has no base: the refresh-only plan reads the real objects.
+  [ $rc = 0 ] && { jq -e '.run.stage == "tf-drift"' "$work/repo/tf-drift-report/report.json" >/dev/null || { log "the drift report is not a tf-drift report"; rc=1; }; }
+  docker exec "$holder" touch /tmp/release >/dev/null 2>&1 || true
+  for i in $(seq 1 30); do [ "$(docker inspect -f '{{.State.Running}}' "$holder" 2>/dev/null)" = true ] || break; sleep 1; done
+  # awk ends the last line, which the prompt leaves open, so the SMOKE line starts a line of its own.
+  docker logs "$holder" 2>&1 | tail -3 | awk '{ print "[holder] " $0 }' >&2 || true
+  docker rm -f "$holder" >/dev/null 2>&1 || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$key.tflock" || true
+  curl -s -o /dev/null -X DELETE "$FLOCI/$bucket/$key" || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "a pull request plan and a drift run planned app while an apply held its lock, and neither waited"
+  return $rc
+}
+
+claim_sensitive_redacted() {
+  # One root with a sensitive variable, db_password, that a terraform_data
+  # takes as its input, and a sensitive output, token, its upper case. Applied
+  # with one password and planned by tf-plan with another, the report copied
+  # to a fresh prefix of the reports bucket on floci. Neither password nor
+  # either token is in the plan note, report.json, report.html, any other file
+  # of the report, the job log, index.json or any object under the prefix.
+  # BREAK: a bundle whose redactPlan returns the plan as the binary printed it
+  # (break_bundle), so show -json's plain values reach plan.json.
+  log() { echo "[smoke sensitive-redacted] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" prefix="smoke-sensitive-$STAMP${BREAK:+-break}" rc=0
+  local old="tg-old-pw-$STAMP" new="tg-new-pw-$STAMP" values=() v f k keys dir n=0
+  values=("$old" "$new" "$(tr '[:lower:]' '[:upper:]' <<<"$old")" "$(tr '[:lower:]' '[:upper:]' <<<"$new")")
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    break_bundle "$bundle" report/redact.ts 'export function redactPlan(plan: unknown): Redacted {' 'export function redactPlan(plan: unknown): Redacted {
+  return { plan, values: 0 };' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  mkdir -p "$work/repo/app"
+  cat > "$work/repo/app/main.tf" <<'HCL'
+terraform {
+  backend "local" {}
+}
+
+variable "db_password" {
+  type      = string
+  sensitive = true
+}
+
+resource "terraform_data" "db" {
+  input = var.db_password
+}
+
+output "token" {
+  value     = upper(var.db_password)
+  sensitive = true
+}
+HCL
+  printf 'binary: tofu\nroots: ["app"]\nreports:\n  bucket: s3://%s\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/repo/terragucci.yml"
+  in_image "$work/repo" env "TF_VAR_db_password=$old" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 \
+    || { log "the first apply failed"; drop_work "$work"; return 1; }
+  clean_mounted "$work/repo"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" remote add origin "http://forgejo:3000/$USER/example.git"
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke sensitive-redacted"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    "${AWS_DOCKER_ENV[@]}" -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e "TF_VAR_db_password=$new" \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --layers app >"$work/job.log" 2>&1 || { log "the plan run exited non-zero"; rc=1; }
+  sed 's/^/[job] /' "$work/job.log" >&2
+  clean_mounted "$work/repo"
+  dir="$work/repo/terragucci-report"
+  leaks() { # what, file: the values the file holds
+    for v in "${values[@]}"; do grep -qF -- "$v" "$2" && { log "$1 holds a sensitive value ($v)"; return 0; }; done
+    return 1
+  }
+  if [ $rc = 0 ]; then
+    for f in note.md report.json report.html; do [ -s "$dir/$f" ] || { log "the run wrote no $f"; rc=1; }; done
+    # The plan must change both, or there is nothing to redact.
+    jq -e '.roots[] | select(.path == "app") | .changes[] | select(.address == "terraform_data.db" and .action == "update")' "$dir/report.json" >/dev/null \
+      || { log "the report shows no update of terraform_data.db"; rc=1; }
+    grep -q 'token' "$dir/$(jq -r '.roots[] | select(.path == "app") | .plan.text' "$dir/report.json")" || { log "the plan shows no change to the output token"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    while IFS= read -r f; do
+      n=$((n + 1))
+      leaks "${f#"$dir"/}" "$f" && rc=1
+    done < <(find "$dir" -type f)
+    leaks "the job log" "$work/job.log" && rc=1
+    keys="$(curl -fsS "$FLOCI/$REPORT_BUCKET?list-type=2&prefix=$prefix/" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' || true)"
+    grep -q '/index.json$' <<<"$keys" || { log "no index.json under $REPORT_BUCKET/$prefix"; rc=1; }
+    grep -q '/report.json$' <<<"$keys" || { log "no report.json under $REPORT_BUCKET/$prefix"; rc=1; }
+    for k in $keys; do
+      curl -fsS -o "$work/object" "$FLOCI/$REPORT_BUCKET/$k" || { log "could not read $k"; rc=1; continue; }
+      leaks "$REPORT_BUCKET/$k" "$work/object" && rc=1
+    done
+  fi
+  drop_work "$work"
+  [ $rc = 0 ] && log "a changed sensitive variable and output: none of the four values is in the $n report files, the job log or the $(wc -w <<<"$keys" | tr -d ' ') objects under $REPORT_BUCKET/$prefix"
+  return $rc
+}
+
+claim_provider_cache_once() {
+  # A wave of eight roots, r1 to r8, each a null_resource of hashicorp/null
+  # 3.2.4 with the .terraform.lock.hcl that pins it (stack/fixtures/
+  # provider-cache), planned by tf-plan in one job whose TF_PLUGIN_CACHE_DIR
+  # is an empty volume of its own. The job log names one download of the
+  # provider, and the volume holds one copy of it.
+  # BREAK: a bundle in which each root inits with a cache of its own under
+  # the volume (break_bundle), so each of the eight downloads the provider.
+  log() { echo "[smoke provider-cache-once] $*" >&2; }
+  local work image bundle="$HERE/../packages/terragucci/dist/terragucci.mjs" vol="terragucci-smoke-provider-cache-$STAMP${BREAK:+-break}" layer="" i rc=0 got copies
+  image="$(image_tag tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  if [ -n "${BREAK:-}" ]; then
+    bundle="$work/break.mjs"
+    # shellcheck disable=SC2016 # TypeScript, not shell
+    break_bundle "$bundle" \
+      report/stage.ts 'const initTurn = oneAtATime();' 'const initTurn = oneAtATime();
+  const rootCache = (i: number): string => { const d = join(binEnv.TF_PLUGIN_CACHE_DIR!, `root-${i}`); mkdirSync(d, { recursive: true }); return d; };' \
+      report/stage.ts 'observer.commandAsync(timing, path, args, binEnv, (e) =>' 'observer.commandAsync(timing, path, args, { ...binEnv, TF_PLUGIN_CACHE_DIR: rootCache(index) }, (e) =>' \
+      || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
+  fi
+  for i in 1 2 3 4 5 6 7 8; do
+    mkdir -p "$work/repo/r$i"
+    printf 'terraform {\n  required_providers {\n    null = {\n      source  = "hashicorp/null"\n      version = "3.2.4"\n    }\n  }\n}\n\nresource "null_resource" "n" {\n  triggers = {\n    root = "r%s"\n  }\n}\n' "$i" > "$work/repo/r$i/main.tf"
+    cp "$HERE/fixtures/provider-cache/.terraform.lock.hcl" "$work/repo/r$i/"
+    layer="${layer:+$layer,}r$i"
+  done
+  printf 'binary: tofu\n' > "$work/repo/terragucci.yml"
+  git -C "$work/repo" init -q -b main
+  git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke provider-cache-once"
+  docker volume create "$vol" >/dev/null || { log "could not make the volume $vol"; drop_work "$work"; return 1; }
+  run_copied --rm --network terragucci -v "$work/repo:/repo" -w /repo -v "$bundle:/usr/local/bin/terragucci:ro" \
+    -v "$vol:/cache" -e TF_PLUGIN_CACHE_DIR=/cache -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    "$image" terragucci stage tf-plan --layers "$layer" >"$work/job.log" 2>&1 || { log "the plan run exited non-zero"; rc=1; }
+  sed 's/^/[job] /' "$work/job.log" >&2
+  clean_mounted "$work/repo"
+  if [ $rc = 0 ]; then
+    got="$(jq '[.roots[] | select(.status == "planned")] | length' "$work/repo/terragucci-report/report.json" 2>/dev/null || echo 0)"
+    [ "$got" = 8 ] || { log "the wave planned $got of its eight roots"; rc=1; }
+    got="$(grep -c ': downloaded hashicorp/null v3.2.4' "$work/job.log" || true)"
+    [ "$got" = 1 ] || { log "the job log names $got downloads of hashicorp/null v3.2.4"; rc=1; }
+    copies="$(docker run --rm -v "$vol:/cache" "$image" sh -c 'find /cache -type d -path "*/hashicorp/null/3.2.4/*" -name "*_*"' | grep -c . || true)"
+    [ "$copies" = 1 ] || { log "the cache volume holds $copies copies of hashicorp/null v3.2.4"; rc=1; }
+  fi
+  docker volume rm -f "$vol" >/dev/null 2>&1 || true
+  drop_work "$work"
+  [ $rc = 0 ] && log "eight roots planned with one download of hashicorp/null v3.2.4 in the job log and one copy in the cache volume"
+  return $rc
+}
+
 # ── approval upkeep ───────────────────────────────────────────────────────
 
 claim_approval_revoke() {
@@ -13022,6 +13262,9 @@ chat-approve         runner self! weight=300
 chat-approve-teams   runner self! weight=300
 chat-approve-lambda  runner self! weight=350
 chat-replan          self! weight=90
+plan-no-lock         weight=120
+sensitive-redacted   weight=90
+provider-cache-once  weight=90
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.
