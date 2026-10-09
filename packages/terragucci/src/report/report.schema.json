@@ -189,6 +189,18 @@
                 "previous_address": { "type": "string" }
               }
             }
+          },
+          "state": {
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 16).",
+            "type": "object",
+            "required": ["backend", "versioning"],
+            "properties": {
+              "backend": { "type": "string" },
+              "location": { "type": "string" },
+              "version_id": { "type": "string" },
+              "versioning": { "enum": ["on", "off", "unknown"] },
+              "note": { "type": "string" }
+            }
           }
         }
       }

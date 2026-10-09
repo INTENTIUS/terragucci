@@ -231,6 +231,12 @@ const REFUSED: Record<ReportRefusal["reason"], string> = {
   policy: "denied-by-policy",
 };
 
+/** The state version each root of an apply report recorded, by root: the version id, never the contents. Undefined when none recorded one. */
+function stateVersions(report: Report): { root: string; location?: string; version_id?: string; versioning: string }[] | undefined {
+  const rows = report.roots.filter((r) => r.state).map((r) => ({ root: r.path, ...(r.state!.location ? { location: r.state!.location } : {}), ...(r.state!.version_id ? { version_id: r.state!.version_id } : {}), versioning: r.state!.versioning }));
+  return rows.length > 0 ? rows : undefined;
+}
+
 /**
  * The entry of one `tf-apply` wave report. An applied wave names the
  * approval it applied under: the newest approval entry of its gate and
@@ -283,7 +289,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
     kind: "apply",
     who: approval?.who ?? (overrides.length > 0 ? overrides.map((o) => o.by).join(", ") : null),
     result,
-    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides }),
+    detail: drop({ ...common, gate: wave.approval, approval: approval?.id, changes: { create: report.totals.create, update: report.totals.update, replace: report.totals.replace, delete: report.totals.delete }, failed, overrides, state_versions: stateVersions(report) }),
   };
 }
 

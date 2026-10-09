@@ -21,6 +21,7 @@ import {
   type ReportDeferred,
   type ReportPolicy,
   type ReportRootPolicy,
+  type ReportStateVersion,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave,
 } from "./schema";
 
@@ -49,6 +50,8 @@ export interface RootInput {
   policy?: ReportRootPolicy;
   /** A `tf-apply` wave applied the root, or it had nothing to apply: the report lists the resources its plan leaves. */
   applied?: boolean;
+  /** The state version the root's backend holds after the apply. */
+  state?: ReportStateVersion;
 }
 
 export interface WaveInput {
@@ -249,6 +252,7 @@ export function buildReport(input: BuildInput): Report {
       why,
       ...(src.policy ? { policy: src.policy } : {}),
       ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: planAppliedChanges(src.plan) } : {}),
+      ...(src.applied && src.state ? { state: src.state } : {}),
     };
   });
 

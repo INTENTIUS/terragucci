@@ -9,7 +9,8 @@
  * A `tf-apply` wave's upload also replaces the resource lists of the roots it
  * applied in `<prefix>/<project>/inventory.json` (inventory.ts), and adds
  * what it did to each resource to `<prefix>/<project>/changes.json`
- * (history.ts).
+ * (history.ts), and adds each state version an applied root's backend holds
+ * to `<prefix>/<project>/states.json` (state-versions.ts).
  * An index keeps INDEX_ROWS rows and the newest of each project, stage and
  * wave; `terragucci estate` (estate.ts) reads nothing else.
  *
@@ -26,6 +27,7 @@ import { dirname, join, relative } from "node:path";
 import { esc, renderHtml } from "./html";
 import { addToChanges, changeRows } from "./history";
 import { addToInventory, inventoryRoots } from "./inventory";
+import { addToStateVersions, stateRecords } from "./state-versions";
 import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
 import type { Report } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
@@ -303,6 +305,8 @@ export interface Uploaded {
   inventory?: string;
   /** The project's resource changes, when an applied root changed something. */
   changes?: string;
+  /** The project's state versions, when an applied root recorded its state. */
+  states?: string;
 }
 
 /** How many times an index is read and written again when another run wrote it in between. */
@@ -345,6 +349,9 @@ export async function updateIndex(s3: ObjectStore, key: string, entry: IndexEntr
 
 /** The key of a project's inventory: `<prefix>/<project>/inventory.json`. */
 export const inventoryKey = (project: string, prefix = ""): string => joinKey(prefix, project, "inventory.json");
+
+/** The key of a project's state versions: `<prefix>/<project>/states.json`. */
+export const statesKey = (project: string, prefix = ""): string => joinKey(prefix, project, "states.json");
 
 /** The key of a project's resource changes: `<prefix>/<project>/changes.json`. */
 export const changesKey = (project: string, prefix = ""): string => joinKey(prefix, project, "changes.json");
@@ -404,7 +411,13 @@ export async function uploadReport(s3: ObjectStore, dir: string, report: Report,
     changes = changesKey(project, top);
     await updateJson(s3, changes, (body) => addToChanges(body, rows), "its changes", wait);
   }
-  return { prefix: key, files: files.length, indexes, ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}) };
+  const recorded = stateRecords(report, run);
+  let states: string | undefined;
+  if (recorded.length > 0) {
+    states = statesKey(project, top);
+    await updateJson(s3, states, (body) => addToStateVersions(body, recorded), "its state versions", wait);
+  }
+  return { prefix: key, files: files.length, indexes, ...(inventory ? { inventory } : {}), ...(changes ? { changes } : {}), ...(states ? { states } : {}) };
 }
 
 /**

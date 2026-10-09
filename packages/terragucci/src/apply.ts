@@ -46,7 +46,10 @@
  * Once its roots planned, the wave writes its report to `terragucci-report/`
  * (and copies it to the config's `reports` bucket when one is named): the
  * wave's plans, and each root's timings, the plan's and the apply's, from the
- * binary's spans as `stage tf-plan` reads them.
+ * binary's spans as `stage tf-plan` reads them. For each root that applied,
+ * or had nothing to apply, it names the state version the root's backend
+ * holds afterwards (./backend.ts): an S3 version id, read from the state
+ * object's metadata, never from its contents.
  *
  * A Terragrunt wave (`--terragrunt`) is one dependency layer of the repo's
  * units: the pipeline's wave, split again by the edges `terragrunt find`
@@ -81,7 +84,7 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
-import type { ReportPolicy, ReportRootPolicy, ReportWave } from "./report/schema";
+import type { ReportPolicy, ReportRootPolicy, ReportStateVersion, ReportWave } from "./report/schema";
 import { artifactReportUrl, eachLimited, oneAtATime, reportLinks, rootsParallelism, runFacts, unitTimes, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { telemetryFromEnv } from "./telemetry";
@@ -95,6 +98,7 @@ import { sealRefusal } from "./seal";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves } from "./terragrunt";
 import { binaryEnv, terragruntExec } from "./binary-env";
+import { stateVersion } from "./backend";
 
 /** The op every wave gate is recorded under. */
 export const APPLY_OP = "tf-apply";
@@ -587,6 +591,8 @@ interface WaveRun {
   failed?: string[];
   /** The roots it applied, and those it had nothing to apply to: the report lists the resources each holds. */
   applied?: Set<string>;
+  /** The state version each applied root's backend holds afterwards, by root. */
+  states?: Map<string, ReportStateVersion>;
 }
 
 /**
@@ -612,7 +618,8 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       const policy = p.policy ? { policy: p.policy } : {};
       // A root the policy refused keeps its plan, so the report shows what it would have changed.
       if (p.error && !(p.policy && p.policy.result !== "passed" && p.plan !== undefined)) return { path: p.root, planner: plannerForBinary(binary), error: p.error.split("\n")[0], ...policy };
-      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...(w.applied?.has(p.root) ? { applied: true } : {}) };
+      const state = w.states?.get(p.root);
+      return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}) };
     }),
     waves: [{ number: wave, roots: w.roots, ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}) }],
     redacted,
@@ -734,6 +741,7 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
     ok[i] = await applyRoot(repo, binary, p, w.observer);
   });
   w.applied = new Set(planned.filter((_, i) => ok[i]).map((p) => p.root));
+  w.states = await recordStateVersions(repo, planned.filter((_, i) => ok[i]), limit.value);
   if (ok.includes(false)) {
     w.failed = planned.filter((_, i) => !ok[i]).map((p) => p.root);
     console.log(`${label}: an apply failed`);
@@ -741,6 +749,25 @@ async function runWave(repo: string, options: ApplyWaveOptions, work: string, w:
   }
   console.log(`${label} applied`);
   return EXIT.applied;
+}
+
+/**
+ * The state version each root's backend holds now that the wave applied it:
+ * read from the state object's metadata, never its body (./backend.ts), and
+ * printed one line per root. A version that cannot be read is recorded as
+ * unknown and never fails the wave.
+ */
+async function recordStateVersions(repo: string, applied: PlannedRoot[], limit: number): Promise<Map<string, ReportStateVersion>> {
+  const out = new Map<string, ReportStateVersion>();
+  await eachLimited(applied, limit, async (p) => {
+    out.set(p.root, await stateVersion(join(repo, p.root), p.env));
+  });
+  for (const p of applied) {
+    const v = out.get(p.root)!;
+    const where = v.location ? ` ${v.location}` : "";
+    console.log(`${p.root}: state${where}${v.version_id ? ` version ${v.version_id}` : `, versions ${v.versioning}${v.note ? ` (${v.note})` : ""}`}`);
+  }
+  return out;
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
