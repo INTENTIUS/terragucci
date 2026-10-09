@@ -56,6 +56,19 @@ const prelude = [
   SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
   installJust(),
   new Step({ name: "Install", run: "npm ci" }),
+  // Docker Hub limits anonymous pulls per IP, and runners share IPs: pull
+  // through Google's Docker Hub mirror, which falls back to Docker Hub for an
+  // image it does not hold.
+  new Step({
+    name: "Pull Docker Hub images through a mirror",
+    run: [
+      "conf=/etc/docker/daemon.json",
+      "{ sudo cat \"$conf\" 2>/dev/null || echo '{}'; } | jq '. + {\"registry-mirrors\": [\"https://mirror.gcr.io\"]}' > \"$RUNNER_TEMP/daemon.json\"",
+      "sudo cp \"$RUNNER_TEMP/daemon.json\" \"$conf\"",
+      "sudo systemctl restart docker",
+      "docker info --format '{{.RegistryConfig.Mirrors}}'",
+    ].join("\n"),
+  }),
 ];
 const start = (forge: string) => new Step({ name: `Start the ${forge} profile`, run: `just stack-up ${forge}` });
 const claims = (forge: string) => new Step({ name: `Run the ${forge} claims`, run: `just validate-forge ${forge}` });
