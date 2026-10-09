@@ -131,7 +131,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "5fbc18a"
     },
     {
       "claim": "require-recorded",
@@ -139,7 +139,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "5fbc18a"
+    },
+    {
+      "claim": "tg-require-attested",
+      "says": "with modules.require: attested in a Terragrunt repo tf-check and tf-plan refuse a unit whose terraform source pins an unattested release, and pass one that pins an attested release",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5fbc18a"
     },
     {
       "claim": "tips",
@@ -213,7 +221,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "5fbc18a"
     },
     {
       "claim": "tg-waves",
@@ -229,7 +237,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "5fbc18a"
     },
     {
       "claim": "tg-affected",
