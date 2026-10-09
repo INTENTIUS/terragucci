@@ -66,14 +66,16 @@ function checkCaptures(label, text) {
     if (!c) { problems.push(`${label}: no capture for step ${step}; ${fix(step)}`); continue; }
     if (c.source_hash !== exampleHash) problems.push(`${label}: capture ${step} was made from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`);
   }
-  for (const [, step, view] of text.matchAll(/<Shot\s+step="([^"]+)"\s+view="([^"]+)"/g)) {
+  for (const [tag, step, view] of text.matchAll(/<Shot\s+step="([^"]+)"\s+view="([^"]+)"[^>]*>/g)) {
+    // An optional shot (as the Shot component reads it) may be missing until its step is captured.
+    const optional = /\soptional(\s|\/|>)/.test(tag);
     const c = capture(step);
     if (!c) { problems.push(`${label}: no capture for step ${step}, so no screenshot ${step}-${view}; ${fix(step)}`); continue; }
     if (c.source_hash !== exampleHash) problems.push(`${label}: screenshot ${step}-${view} was taken from example ${c.source_hash}, but example/ is now ${exampleHash}; ${fix(step)}`);
     for (const theme of ["light", "dark"]) {
       const png = join(shots, `${step}-${view}-${theme}.png`);
       const want = c.shots?.[`${view}-${theme}`];
-      if (!existsSync(png)) problems.push(`${label}: no screenshot ${step}-${view}-${theme}.png; ${fix(step)}`);
+      if (!existsSync(png)) { if (!optional) problems.push(`${label}: no screenshot ${step}-${view}-${theme}.png; ${fix(step)}`); }
       else if (!want) problems.push(`${label}: capture ${step} records no screenshot ${view}-${theme}; ${fix(step)}`);
       else if (shaOf(png) !== want) problems.push(`${label}: ${step}-${view}-${theme}.png is not the screenshot capture ${step} took; ${fix(step)}`);
     }
