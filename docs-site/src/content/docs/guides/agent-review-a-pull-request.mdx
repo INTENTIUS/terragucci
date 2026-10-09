@@ -137,7 +137,7 @@ deny contains msg if {
 }
 ```
 
-A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
+The wave reads the risk from the review job's artifact in the pull request's run of that head, not from the note, so a note someone posts on the pull request changes nothing the policy sees. A denied wave applies nothing, and a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
 
 ## MCP or `--json`
 

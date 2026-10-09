@@ -5,6 +5,16 @@
   "description": "run.json under <prefix>/<project>/runs/<commit>/: the apply of one commit, every wave of it, the roots in each and the roots whose state each reads, and where each wave stands at its gate. Each tf-apply wave job rewrites its own row when it starts applying and when it ends. Within v1 fields are only added, and an existing field never changes meaning.",
   "type": "object",
   "required": ["schema", "project", "commit", "updated", "roots", "waves"],
+  "$defs": {
+    "state": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "bucket": { "type": "string" },
+        "key": { "type": "string" }
+      }
+    }
+  },
   "properties": {
     "schema": { "const": "terragucci.run/v1" },
     "project": { "type": "string" },
@@ -19,7 +29,21 @@
         "properties": {
           "root": { "type": "string" },
           "wave": { "type": "integer" },
-          "reads": { "type": "array", "items": { "type": "string" } }
+          "reads": { "type": "array", "items": { "type": "string" } },
+          "state": { "$ref": "#/$defs/state", "description": "The state its backend block names, which a root of another project may read." },
+          "external": {
+            "type": "array",
+            "description": "Its terraform_remote_state reads of a state no root of the project holds: the block's label and the state it names. The estate page matches them to other projects' roots.",
+            "items": {
+              "type": "object",
+              "required": ["data", "key"],
+              "properties": {
+                "data": { "type": "string" },
+                "bucket": { "type": "string" },
+                "key": { "type": "string" }
+              }
+            }
+          }
         }
       }
     },
@@ -41,6 +65,21 @@
           "report": { "type": "string", "description": "Its report's directory, relative to the project's index.json." },
           "shares": { "type": "integer", "description": "A wave split across jobs: how many share jobs apply it." },
           "shares_applied": { "type": "array", "items": { "type": "integer" }, "description": "The shares that applied; the wave is applied once every share has." },
+          "changed": { "type": "array", "items": { "type": "string" }, "description": "The roots whose plan in this wave changes a resource or an output: where the run's blast radius starts." },
+          "spans": {
+            "type": "array",
+            "description": "The wave's time, oldest first: each plan, each wait at its gate (no end while it waits) and each apply (no end while it applies). At most 24.",
+            "items": {
+              "type": "object",
+              "required": ["phase", "start"],
+              "properties": {
+                "phase": { "enum": ["plan", "gate", "apply"] },
+                "start": { "type": "string" },
+                "end": { "type": "string" },
+                "share": { "type": "integer", "description": "The share of a wave split across jobs that planned or applied." }
+              }
+            }
+          },
           "updated": { "type": "string" }
         }
       }

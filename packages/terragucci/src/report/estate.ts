@@ -11,6 +11,11 @@
  * project's inventory.json (./inventory.ts): addresses, types and providers,
  * never a value. Last, the state versions each root's applies left, from the
  * project's states.json (./state-versions.ts): version ids, never contents.
+ *
+ * The dependency graph comes from the run view of each project's newest
+ * applied commit (./run-view.ts): its roots by wave and the roots each reads,
+ * and each root's state and its reads of states outside the project, which
+ * match another project's roots into edges between projects.
  */
 import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
@@ -20,6 +25,8 @@ import type { StateVersions } from "./state-versions";
 import { renderDoraSection, type Dora } from "./dora";
 import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
+import { GRAPH_CSS, renderGraphSvg, type GraphEdge } from "./graph";
+import type { RunState, RunView } from "./run-view";
 
 export const ESTATE_SCHEMA = "terragucci.estate/v1";
 
@@ -41,6 +48,8 @@ export interface ProjectIndex {
   changes?: ChangeRow[];
   /** Its states.json, when an apply recorded a root's state. */
   states?: StateVersions;
+  /** The run view (run.json) of its newest applied commit, when a wave wrote one. */
+  run?: RunView;
 }
 
 /** One root's state on the page: where it is, whether its backend keeps versions, and the versions its applies left, newest first. */
@@ -137,6 +146,15 @@ export interface EstateProject {
   inventory?: EstateInventory;
   /** Each root's state versions, from its states.json. Absent until an apply records them. */
   states?: EstateStateRoot[];
+  /** The run view the graph read: its commit, when a wave last wrote it, and its page when the page can link it. Absent until a wave writes one. */
+  run_view?: { commit: string; updated: string; page?: string };
+}
+
+/** The estate's dependency graph: every root of each project's run view by wave, and an edge from each root to each root that reads its state. */
+export interface EstateGraph {
+  nodes: { project: string; root: string; wave: number }[];
+  /** `to` reads the state of `from`; an edge between two projects matched a read of a state outside the reader's project to a root of the other. */
+  edges: GraphEdge[];
 }
 
 export interface Estate {
@@ -153,6 +171,8 @@ export interface Estate {
   history?: { page: string; resources: number; generated: string };
   /** The DORA metrics beside the page (dora.json): when they were built, and the estate's applied waves in their window. */
   dora?: { file: string; generated: string; deployments: number };
+  /** The dependency graph, from the projects' run views. Absent when no project has one. */
+  graph?: EstateGraph;
 }
 
 const at = (iso: string): number => Date.parse(iso) || 0;
@@ -273,7 +293,39 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     ...(overridden > 0 ? { overridden } : {}),
     ...(p.inventory ? { inventory: inventoryOf(p.inventory, base) } : {}),
     ...(p.states ? { states: statesOf(p.states, base) } : {}),
+    ...(p.run ? { run_view: { commit: p.run.commit, updated: p.run.updated, ...(base !== undefined ? { page: `${base}runs/${p.run.commit}/run.html` } : {}) } } : {}),
   };
+}
+
+const sameState = (a: RunState, b: RunState): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
+
+/**
+ * The graph from every project's run view: each project's own edges, and an
+ * edge from a root of one project to a root of another whose read of a state
+ * outside its project names the first root's state.
+ */
+export function estateGraph(indexes: readonly ProjectIndex[]): EstateGraph | undefined {
+  const views = indexes.filter((p) => p.reports && p.error === undefined && p.run && p.run.project === p.project).map((p) => p.run!);
+  if (views.length === 0) return undefined;
+  const nodes = views.flatMap((v) => v.roots.map((r) => ({ project: v.project, root: r.root, wave: r.wave })));
+  const edges: GraphEdge[] = [];
+  for (const v of views) {
+    for (const r of v.roots) for (const u of r.reads) edges.push({ from: { project: v.project, root: u }, to: { project: v.project, root: r.root } });
+  }
+  const held = views.flatMap((v) => v.roots.filter((r) => r.state).map((r) => ({ project: v.project, root: r.root, state: r.state! })));
+  for (const v of views) {
+    for (const r of v.roots) {
+      for (const x of r.external ?? []) {
+        for (const h of held) {
+          if (h.project === v.project || !sameState(h.state, x)) continue;
+          if (!edges.some((e) => e.from.project === h.project && e.from.root === h.root && e.to.project === v.project && e.to.root === r.root)) {
+            edges.push({ from: { project: h.project, root: h.root }, to: { project: v.project, root: r.root } });
+          }
+        }
+      }
+    }
+  }
+  return { nodes, edges };
 }
 
 /** The estate from every project's index. Projects keep the order given. */
@@ -301,6 +353,10 @@ export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Es
     },
     projects,
     recent,
+    ...((): { graph?: EstateGraph } => {
+      const graph = estateGraph(indexes);
+      return graph ? { graph } : {};
+    })(),
   };
 }
 
@@ -349,7 +405,8 @@ function applyCell(p: EstateProject, now: Date): string {
           : w.approval ?? "ran";
     return `<li>${link(w.report, `wave ${w.wave ?? 0}${w.share !== undefined ? `, share ${w.share}` : ""}`)}: ${state}${w.overridden ? `, <span class="warn">${w.overridden} by policy override</span>` : ""}</li>`;
   });
-  return `<td><ul>${waves.join("")}</ul><small>${short(p.apply.commit)}</small></td>`;
+  const view = p.run_view?.page && p.run_view.commit === p.apply.commit ? ` ${link(p.run_view.page, "run view")}` : "";
+  return `<td><ul>${waves.join("")}</ul><small>${short(p.apply.commit)}${view}</small></td>`;
 }
 
 /** A provider's source address without the public registry's host. */
@@ -400,6 +457,25 @@ function statesSection(estate: Estate, now: Date): string {
   return blocks.join("\n");
 }
 
+/** The dependency graph section: the picture, and its edges between projects as a list. */
+function graphSection(estate: Estate): string {
+  const g = estate.graph;
+  if (!g) return `<p class="none">No apply has written a run view yet, so the roots' order is not known.</p>`;
+  const projects = estate.projects
+    .filter((p) => g.nodes.some((n) => n.project === p.project))
+    .map((p) => ({ project: p.project, ...(p.run_view?.page ? { href: p.run_view.page } : {}), roots: g.nodes.filter((n) => n.project === p.project).map((n) => ({ root: n.root, wave: n.wave })) }));
+  const svg = renderGraphSvg(projects, g.edges);
+  const cross = g.edges.filter((e) => e.from.project !== e.to.project);
+  const within = g.edges.length - cross.length;
+  const crossList = cross.length
+    ? `<h3>Between projects</h3><ul id="cross-edges">${cross.map((e) => `<li data-from="${esc(`${e.from.project} ${e.from.root}`)}" data-to="${esc(`${e.to.project} ${e.to.root}`)}">${esc(e.to.project)}: <code>${esc(e.to.root)}</code> reads ${esc(e.from.project)}: <code>${esc(e.from.root)}</code></li>`).join("")}</ul>`
+    : "";
+  const views = estate.projects.filter((p) => p.run_view).map((p) => `${link(p.run_view!.page, esc(p.project))} at ${short(p.run_view!.commit)}`);
+  return `<p>${g.nodes.length} ${g.nodes.length === 1 ? "root" : "roots"} by wave, ${within} ${within === 1 ? "read" : "reads"} within a project and ${cross.length} between projects, from the run view of each project's newest apply: ${views.join(", ")}. An arrow points from a root to the roots that read its state; a dashed one crosses projects.</p>
+<div class="graphwrap">${svg}</div>
+${crossList}`;
+}
+
 /**
  * The page. Its numbers are in the HTML, so it reads with scripts off; a
  * small script only moves the "ago" times forward while it is open, and the
@@ -435,7 +511,7 @@ export function renderEstateHtml(estate: Estate, dora?: Dora): string {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
 <title>terragucci estate</title>
 ${TACO_ICON}
-<style>${TACO_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
+<style>${TACO_CSS}${GRAPH_CSS}:root{--bg:#fbfbfa;--fg:#1d1d1b;--dim:#6b6b64;--line:#deded8;--link:#1f5fbf;--warn:#9a5b00;--bad:#b3261e;--tile:#f0f0ec}@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--dim:#a3a39a;--line:#34342f;--link:#8ab4ff;--warn:#f0b35a;--bad:#ff8a80;--tile:#1f1f1d}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}main{max-width:1100px;margin:0 auto;padding:16px}a{color:var(--link)}h2{font-size:16px;margin:24px 0 8px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.tile{background:var(--tile);border-radius:6px;padding:10px 12px}.tile b{display:block;font-size:24px}.tile span{color:var(--dim)}.tile.hot b{color:var(--warn)}
 .scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px 12px 6px 0;text-align:left;vertical-align:top}th{color:var(--dim);font-weight:600}ul{margin:0;padding-left:16px}h3{font-size:14px;margin:16px 0 4px}.types{margin:0 0 6px}tbody.inv th,tbody.states th{font-weight:400;padding-top:12px}input[type=search]{width:100%;max-width:420px;padding:6px 8px;font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}small,.none{color:var(--dim)}dl.defs{margin:0 0 8px}dl.defs dt{font-weight:600}dl.defs dd{margin:0 0 4px;color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}code{font:12.5px ui-monospace,Menlo,monospace}</style>
@@ -449,6 +525,8 @@ ${waitingRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Wave<
 <div class="scroll"><table><tr><th>Project</th><th>Latest plan</th><th>Latest drift check</th><th>Apply waves</th></tr>
 ${projectRows.join("\n")}
 </table></div>
+<h2 id="dependencies">Dependencies</h2>
+${graphSection(estate)}
 <h2>Recent runs</h2>
 ${recentRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Stage</th><th>Commit</th><th>Pull request</th><th>Changes</th><th></th><th>Finished</th><th></th></tr>\n${recentRows.join("\n")}\n</table></div>` : `<p class="none">No runs yet.</p>`}
 ${dora ? `<h2 id="delivery">Delivery</h2>\n${renderDoraSection(dora, (name) => link(estate.projects.find((p) => p.project === name)?.index, esc(name)))}\n` : ""}<h2 id="resources">Resources</h2>

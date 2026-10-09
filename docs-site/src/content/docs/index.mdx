@@ -108,7 +108,7 @@ Only these four features run a model. Each is off until you set it up, and each 
 | Comment `/terragucci agent <ask>` and an agent commits the change to the pull request | `agent.comment` in `terragucci.yml` | GitHub and Forgejo | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
 | When drift opens the drift issue, an agent changes the code to match what is live, in a pull request | `agent.drift` in `terragucci.yml` | GitHub and Forgejo | [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) |
 | A note on each pull request comparing its description with its plan: risk, mismatches, questions | `review.agent` in `terragucci.yml` | GitHub and Forgejo | [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) |
-| A summary of what moved in a refused wave | add the explain-refusal job to the pipeline by hand | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
+| A summary of what moved in a refused wave | add the explain-refusal job under `own_jobs` | all three | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
 A coding agent at your desk reads the estate, a root's last apply, the audit trail and the DORA figures through `terragucci mcp`, a read-only MCP server that runs no model ([Read the estate over MCP](/terragucci/guides/agent-read-over-mcp/)).
 
