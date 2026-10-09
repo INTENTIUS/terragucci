@@ -24,6 +24,10 @@
  * `/terragucci apply` on the pull request that made the commit. Without a
  * token it says so, and the resume job, or a re-run by hand, picks it up.
  *
+ * A state migration (./migrate.ts) waits inside wave 1, on a gate of its own
+ * in `_gates/tf-migrate.jsonl`. An approved migration resumes as wave 1 does:
+ * wave 1 runs the migration before it plans.
+ *
  * Neither approves anything: the wave's own gate decides again when it runs.
  */
 import { spawnSync } from "node:child_process";
@@ -35,6 +39,8 @@ import type { Fetch } from "./forge";
 /** A wave the ledger says can apply now. */
 export interface Resumable {
   wave: number;
+  /** A state migration's name, when it is the migration wave 1 waits on that was approved (./migrate.ts). */
+  migration?: string;
   digest: string;
   /** Who approved it. */
   by: string;
@@ -50,22 +56,30 @@ const at = (iso: string): number => new Date(iso).getTime();
  * Each wave whose newest pending digest an approval names, made after that
  * pending fact, and that no apply has used yet. Lowest wave first.
  */
-export function resumable(ledger: GateLedger, now: string): Resumable[] {
+export function resumable(ledger: GateLedger, now: string, migrations?: GateLedger): Resumable[] {
+  const out: Resumable[] = approvedGates(ledger, now, (gate) => /^wave-\d+$/.test(gate)).map(({ gate, ...r }) => ({ wave: Number(gate.slice(5)), ...r }));
+  // A migration waits inside wave 1, so an approved one resumes wave 1, which runs it before it plans.
+  if (migrations) out.push(...approvedGates(migrations, now, () => true).map(({ gate, ...r }) => ({ wave: 1, migration: gate, ...r })));
+  return out.sort((a, b) => a.wave - b.wave || Number(Boolean(b.migration)) - Number(Boolean(a.migration)));
+}
+
+/** Each gate (that `take` keeps) whose newest pending digest an approval names, made after it, that no apply has used. */
+function approvedGates(ledger: GateLedger, now: string, take: (gate: string) => boolean): (Omit<Resumable, "wave" | "migration"> & { gate: string })[] {
   const newest = new Map<string, PendingRecord>();
   for (const p of ledger.pending) {
     const before = newest.get(p.gate);
-    if (/^wave-\d+$/.test(p.gate) && p.planDigest && (!before || at(p.timestamp) >= at(before.timestamp))) newest.set(p.gate, p);
+    if (take(p.gate) && p.planDigest && (!before || at(p.timestamp) >= at(before.timestamp))) newest.set(p.gate, p);
   }
-  const out: Resumable[] = [];
+  const out: (Omit<Resumable, "wave" | "migration"> & { gate: string })[] = [];
   for (const [gate, p] of newest) {
     const d = decideGate(ledger, gate, p.planDigest!, now);
     if (d.status !== "approved") continue;
     // An approval an apply already used: that apply ran, so there is nothing to resume.
     const used = (ledger.applied ?? []).some((a) => a.gate === gate && samePlanDigest(a.planDigest, p.planDigest) && at(a.approvedAt) >= at(d.at));
     if (used) continue;
-    out.push({ wave: Number(gate.slice(5)), digest: p.planDigest!, by: d.by, ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
+    out.push({ gate, digest: p.planDigest!, by: d.by, ...(p.runId ? { runId: p.runId } : {}), ...(p.commit ? { commit: p.commit } : {}) });
   }
-  return out.sort((a, b) => a.wave - b.wave);
+  return out;
 }
 
 export type ForgeKind = "github" | "forgejo" | "gitlab";
@@ -80,8 +94,8 @@ export type ResumeStep =
   | { kind: "retried"; job: string; pipeline: number; url?: string; waves: Resumable[] };
 
 /** The resume job's decision, from the ledger and, on GitLab, the default branch's newest push pipeline. Never throws for a forge it cannot read: it says why. */
-export async function resumeStep(o: { ledger: GateLedger; forge: ForgeKind; sha: string; env: NodeJS.ProcessEnv; now?: string; fetch?: Fetch }): Promise<ResumeStep> {
-  const waves = resumable(o.ledger, o.now ?? new Date().toISOString());
+export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedger; forge: ForgeKind; sha: string; env: NodeJS.ProcessEnv; now?: string; fetch?: Fetch }): Promise<ResumeStep> {
+  const waves = resumable(o.ledger, o.now ?? new Date().toISOString(), o.migrations);
   if (waves.length === 0) return { kind: "none", why: "no wave waits with an approval that stands" };
   if (o.forge !== "gitlab") {
     let pr: number | undefined;
