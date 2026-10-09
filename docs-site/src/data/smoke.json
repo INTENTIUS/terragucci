@@ -1424,7 +1424,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "9e511cc"
+    },
+    {
+      "claim": "chat-approve-lambda",
+      "says": "the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9e511cc"
     },
     {
       "claim": "chat-approve-teams",
@@ -1432,7 +1440,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "68fd6a8"
+      "commit": "9e511cc"
     },
     {
       "claim": "chat-replan",

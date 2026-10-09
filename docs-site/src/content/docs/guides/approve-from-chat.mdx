@@ -1,7 +1,7 @@
 ---
 title: Approve from Slack and Teams
 description: Approve or decline a waiting wave from its chat message, through a relay you run in your own cloud, which checks who clicked against the signers file and approves only the plans the message showed.
-claims: [chat-approve, chat-approve-teams]
+claims: [chat-approve, chat-approve-teams, chat-approve-lambda]
 prompt: |
   Read https://intentius.io/terragucci/guides/approve-from-chat/.
   Add `relay: terragucci` under `notify:` in terragucci.yml, and `apply.resume` if it is missing, run `npx terragucci config check` and `npx terragucci init`, and open a pull request.
@@ -88,14 +88,17 @@ Decline records nothing. The relay says in the thread who declined, and the wave
        ```
      </TabItem>
      <TabItem label="Function">
-       An AWS Lambda function from a container image, with a function URL. The Lambda Web Adapter extension passes each request to the same server:
+       An AWS Lambda function from a container image, with a function URL. The [Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter) 1.1.0 extension passes each request to the same server, once `/healthz` answers:
 
        ```dockerfile
        FROM ghcr.io/intentius/terragucci-tofu:<the tag init names>
-       COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
+       COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.1.0 /lambda-adapter /opt/extensions/lambda-adapter
        ENV PORT=8080
+       ENV AWS_LWA_READINESS_CHECK_PATH=/healthz
        CMD ["terragucci", "relay"]
        ```
+
+       The adapter reads `PORT` when `AWS_LWA_PORT` is unset, and the relay serves on it. Give the function a timeout of 30 seconds or more: each cold start fetches the repo before the first request.
 
        Keep the token and the secrets in Secrets Manager and pass them to the function's environment.
      </TabItem>
