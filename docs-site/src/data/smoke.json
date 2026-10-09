@@ -150,6 +150,14 @@
       "commit": "ab62494f"
     },
     {
+      "claim": "module-registry",
+      "says": "with modules.registry each release is written as the module registry protocol to a bucket, and a root that pins ~> 1.0 resolves the newest 1.x from it; with modules.test an untested release is refused",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9dc70fca"
+    },
+    {
       "claim": "tips",
       "says": "tips are on by default and name their rule",
       "needs": null,
