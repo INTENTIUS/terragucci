@@ -28,6 +28,7 @@ import type { ReleaseRecord } from "@intentius/chant/lifecycle/release-ledger";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { version as TOOL_VERSION } from "../../package.json";
 import { ConfigError } from "../config";
+import { COSIGN_VERSION } from "../install";
 import { sha256 } from "./archive";
 import { ATTEST_FILES, attestDir, LEDGER_ENV, releaseRecord } from "./ledger";
 import { moduleSbom } from "./sbom";
@@ -249,7 +250,7 @@ export function cosignSigner(env: NodeJS.ProcessEnv = process.env, cosign = "cos
   const childEnv = { ...env, [PASSWORD_ENV]: env[PASSWORD_ENV] ?? "" };
   const run = (args: string[], extra: NodeJS.ProcessEnv = {}): void => {
     const r = spawnSync(cosign, args, { env: { ...childEnv, ...extra }, encoding: "utf-8" });
-    if (r.error) throw new ConfigError(`modules.attest needs cosign, which did not run (${r.error.message}); the terragucci images carry it`);
+    if (r.error) throw new ConfigError(`modules.attest needs cosign, which did not run (${r.error.message}); the generated publish job installs it with terragucci install cosign ${COSIGN_VERSION}`);
     if (r.status !== 0) throw new ConfigError(`cosign ${args[0]} failed: ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ")}`);
   };
   const bundle = (blob: string, name: string): string => `${blob}.${name}.bundle`;

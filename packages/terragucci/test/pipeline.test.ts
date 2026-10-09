@@ -916,6 +916,9 @@ describe("publish job", () => {
     const jobs = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, attest: true }).content).jobs;
     expect(jobs.publish.env.COSIGN_PRIVATE_KEY).toBe("${{ secrets.COSIGN_PRIVATE_KEY }}");
     expect(jobs.publish.env.COSIGN_PASSWORD).toBe("${{ secrets.COSIGN_PASSWORD }}");
+    const steps = jobs.publish.steps.map((s: { run?: string }) => s.run ?? "");
+    expect(steps.findIndex((r: string) => r.includes("terragucci install cosign 2.6.5"))).toBe(steps.length - 2);
+    expect(JSON.stringify(body(withPublish(forge)).jobs.publish)).not.toContain("install cosign");
     for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("COSIGN");
   });
 
@@ -926,6 +929,10 @@ describe("publish job", () => {
     expect(doc.publish.variables.GIT_DEPTH).toBe("0");
     expect(doc.publish.script.join("\n")).toContain("terragucci publish");
     expect(JSON.stringify(doc["apply-wave-2"])).not.toContain("terragucci publish");
+    expect(doc.publish.script.join("\n")).not.toContain("install cosign");
+    const attested = body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, attest: true }).content);
+    expect(attested.publish.script[0]).toContain('dir="$(terragucci install cosign 2.6.5)"');
+    expect(attested.publish.script[0]).toContain('export PATH="$dir:$PATH"');
   });
 });
 

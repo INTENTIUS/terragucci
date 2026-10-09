@@ -1336,6 +1336,9 @@ claim_tips() {
   log "terragucci-floating-range names envs/dev/search; tips: false removes it; the digests match"
 }
 
+# The cosign release the publish job installs for modules.attest (COSIGN_VERSION in packages/terragucci/src/install.ts).
+COSIGN_VERSION="$(sed -n 's/^export const COSIGN_VERSION = "\(.*\)";$/\1/p' "$HERE/../packages/terragucci/src/install.ts")"
+
 # The TLS registry the publish claims push to, on a certificate made for this
 # run. It bind-mounts its certificates and outlives the claim. They live in a
 # directory no run removes and are rewritten in place (same inode), so Docker
@@ -1453,9 +1456,9 @@ claim_publish_attest() {
   local certs="$HERE/.state/registry-certs" tree="$work/tree"
   mkdir -p "$tree/modules/service" "$tree/envs/dev" "$work/keys"
   registry_up "$work" "$port" || { log "the registry did not come up"; drop_work "$work"; return 1; }
-  # The key pair, made by the image's cosign; the private half goes to the repo's secrets only.
-  docker run --rm -v "$work/keys:/k" -w /k -e COSIGN_PASSWORD=smoke-attest "$image" cosign generate-key-pair >/dev/null 2>&1 \
-    && [ -s "$work/keys/cosign.key" ] && [ -s "$work/keys/cosign.pub" ] || { log "cosign in $image could not make a key pair"; drop_work "$work"; return 1; }
+  # The key pair, made by the cosign the publish job installs; the private half goes to the repo's secrets only.
+  in_image "$work/keys" sh -c "export PATH=\"\$(terragucci install cosign $COSIGN_VERSION):\$PATH\" && COSIGN_PASSWORD=smoke-attest cosign generate-key-pair && chmod 644 cosign.key" >/dev/null 2>&1 \
+    && [ -s "$work/keys/cosign.key" ] && [ -s "$work/keys/cosign.pub" ] || { log "cosign $COSIGN_VERSION could not make a key pair"; drop_work "$work"; return 1; }
   fresh_repo "$name" || { drop_work "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
   secret() { jq -n --arg d "$2" '{data: $d}' | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/secrets/$1" || { log "could not set the $1 secret"; return 1; }; }
@@ -1495,7 +1498,7 @@ claim_publish_attest() {
   [ "$(jq -s --arg d "$digest" '[.[] | select(.component == "modules/service" and .env == "modules")] | length' <<<"$records")" = 2 ] \
     && [ "$(jq -s --arg d "$digest" '[.[] | select(.digest == $d)] | length' <<<"$records")" = 1 ] \
     || { echo "$records" >&2; log "the ledger does not hold one record per target with the verified digest"; drop_work "$work"; return 1; }
-  in_image "$work" sh -c "cd c && cosign verify --key cosign.pub --insecure-ignore-tlog --registry-cacert registry.crt registry:5000/$repo/service@$digest" >/dev/null 2>&1 \
+  in_image "$work" sh -c "cd c && export PATH=\"\$(terragucci install cosign $COSIGN_VERSION):\$PATH\" && cosign verify --key cosign.pub --insecure-ignore-tlog --registry-cacert registry.crt registry:5000/$repo/service@$digest" >/dev/null 2>&1 \
     || { log "cosign did not verify the signature attached to registry:5000/$repo/service@$digest"; drop_work "$work"; return 1; }
   log "the publish job signed, attested and recorded modules/service 0.1.0 on both targets, and verify-release and cosign verified it from a fresh clone"
   drop_work "$work"

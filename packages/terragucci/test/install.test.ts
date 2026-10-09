@@ -11,8 +11,16 @@ describe("install", () => {
     ["terraform", "1.14.0", "amd64", "https://releases.hashicorp.com/terraform/1.14.0/terraform_1.14.0_linux_amd64.zip", "zip"],
     ["terragrunt", "1.1.6", "amd64", "https://github.com/gruntwork-io/terragrunt/releases/download/v1.1.6/terragrunt_linux_amd64", "binary"],
     ["choudoufu", "0.23.0", "arm64", "https://github.com/INTENTIUS/choudoufu/releases/download/v0.23.0/choudoufu_v0.23.0_linux_arm64.tar.gz", "tar.gz"],
+    ["cosign", "2.6.5", "amd64", "https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign-linux-amd64", "binary"],
   ] as const)("%s %s on %s comes from %s", (tool, version, arch, url, kind) => {
     expect(release(tool, version, arch)).toMatchObject({ url, kind });
+  });
+
+  it("checks cosign against the release's cosign_checksums.txt", () => {
+    const r = release("cosign", "2.6.5", "arm64");
+    expect(r.sums).toBe("https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign_checksums.txt");
+    const sums = `${"4".repeat(64)}  cosign-linux-arm64\n${"5".repeat(64)}  cosign-linux-arm64.sig\n`;
+    expect(expectedSum(sums, r.file)).toBe("4".repeat(64));
   });
 
   it("refuses something that is not a version", () => {

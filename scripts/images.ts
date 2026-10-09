@@ -8,7 +8,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { COSIGN_VERSION, REGISTRY, TOOL_VERSIONS, decideImage, imageTag } from "../packages/terragucci/src/images";
+import { REGISTRY, TOOL_VERSIONS, decideImage, imageTag } from "../packages/terragucci/src/images";
 
 const root = join(import.meta.dirname, "..");
 const NAMES = ["tofu", "terraform", "terragrunt", "choudoufu"] as const;
@@ -82,7 +82,7 @@ if (cmd === "tags") {
   let failed = false;
   for (const n of NAMES) {
     const plat = platform ? ["--platform", platform] : [];
-    for (const [argv, want] of [...PROBES[n], [["cosign", "version"], COSIGN_VERSION], [["terragucci", "--help"], "terragucci init"], [["sh", "-c", FOREIGN_CHECKOUT], "git: safe"], [["sh", "-c", `mkdir -p /tmp/w && cd /tmp/w && ${UNNAMED_UID[n]} && echo 'init: ok'`], "init: ok"]] as Array<[string[], string]>) {
+    for (const [argv, want] of [...PROBES[n], [["terragucci", "--help"], "terragucci init"], [["sh", "-c", FOREIGN_CHECKOUT], "git: safe"], [["sh", "-c", `mkdir -p /tmp/w && cd /tmp/w && ${UNNAMED_UID[n]} && echo 'init: ok'`], "init: ok"]] as Array<[string[], string]>) {
       const unnamed = argv[2]?.includes("init: ok");
       const out = spawnSync("docker", ["run", "--rm", ...plat, ...(unnamed ? ["--user", "4242:4242", "-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318"] : []), ref(n), ...argv], { encoding: "utf-8" });
       const text = `${out.stdout}${out.stderr}`;

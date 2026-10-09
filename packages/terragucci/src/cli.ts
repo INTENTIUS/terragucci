@@ -13,7 +13,7 @@
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destroy|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>]
  *   terragucci check-root <dir> [--binary <b>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
- *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>   (Linux builds, for a CI job)
+ *   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
@@ -87,7 +87,7 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>]
   terragucci check-policy [--config <file>] [--base <ref>]
-  terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>   (Linux builds, for a CI job)
+  terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
@@ -298,8 +298,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "install": {
         const [tool, version] = args;
-        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost"].includes(tool)) {
-          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost <version>");
+        if (!tool || !version || !["tofu", "terraform", "terragrunt", "choudoufu", "infracost", "cosign"].includes(tool)) {
+          throw new ConfigError("usage: terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>");
         }
         assertLinux();
         console.log(await install(tool as Tool, version));

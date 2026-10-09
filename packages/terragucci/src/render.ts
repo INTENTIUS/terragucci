@@ -70,7 +70,7 @@ import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs } from "./render-agent";
 import { applyWaves } from "./apply";
 import { CHECK_DIR } from "./check";
-import { INFRACOST_VERSION, type Tool } from "./install";
+import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
 import {
   cacheExports,
   credentialsScript,
@@ -1571,7 +1571,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         // A scheduled pipeline has no apply job for its needs to name.
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-publish",
-        script: script(bash("PUBLISH", publishScript(forge))),
+        script: [...(input.attest ? [installScript("cosign", COSIGN_VERSION, forge)] : []), ...script(bash("PUBLISH", publishScript(forge)))],
       } as never) as never);
     }
     if (drift) {
@@ -1909,6 +1909,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       steps: [
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
         ...(installStep && install ? [new Step({ name: `Install ${install.binary} ${install.version}`, run: installStep })] : []),
+        ...(input.attest ? [new Step({ name: `Install cosign ${COSIGN_VERSION}`, run: installScript("cosign", COSIGN_VERSION, forge) })] : []),
         new Step({ name: "Publish the modules that changed", shell: "bash", run: publishScript(forge) }),
       ],
     } as never) as never);

@@ -21,13 +21,6 @@ export const TOOL_VERSIONS = {
   choudoufu: "0.23.0",
 } as const;
 
-/**
- * cosign, in every image beside the toolchain, for `modules.attest`: the
- * publish job signs with it. sigstore/cosign's 2.x line, whose key-based
- * signing takes `--tlog-upload=false`.
- */
-export const COSIGN_VERSION = "2.6.5";
-
 export interface ImageRef {
   repository: string;
   tag: string;

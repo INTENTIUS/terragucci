@@ -12,7 +12,7 @@
  */
 import { Dockerfile } from "@intentius/chant-lexicon-docker";
 import pkg from "../packages/terragucci/package.json" with { type: "json" };
-import { COSIGN_VERSION, DECIDE_IMAGE, LAYA_MODEL, TOOL_VERSIONS } from "../packages/terragucci/src/images";
+import { DECIDE_IMAGE, LAYA_MODEL, TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 /**
  * Base images by index digest, so a rebuild cannot change underneath a tag.
@@ -75,18 +75,6 @@ const choudoufuFetch = (v: string): string => {
   ].join(" && ");
 };
 
-/** cosign, for `modules.attest`: one static binary, checked against the release's cosign_checksums.txt. */
-const cosignFetch = (v: string): string =>
-  [
-    'case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac',
-    verified(
-      `https://github.com/sigstore/cosign/releases/download/v${v}/cosign-linux-$a`,
-      `https://github.com/sigstore/cosign/releases/download/v${v}/cosign_checksums.txt`,
-      `cosign-linux-$a`,
-    ),
-    `mkdir -p /out && install -m 0755 "/tmp/cosign-linux-$a" /out/cosign`,
-  ].join(" && ");
-
 const finalStage = (name: string, description: string) => ({
   from: NODE,
   // A forge may run the job as a uid with no /etc/passwd entry. Go reads the user
@@ -125,14 +113,14 @@ const finalStage = (name: string, description: string) => ({
 
 export const tofu = new Dockerfile({
   stages: [
-    { from: DEBIAN, as: "fetch", arg: ["TARGETARCH"], run: [fetchTools, tofuFetch(TOOL_VERSIONS.tofu), cosignFetch(COSIGN_VERSION)] },
+    { from: DEBIAN, as: "fetch", arg: ["TARGETARCH"], run: [fetchTools, tofuFetch(TOOL_VERSIONS.tofu)] },
     finalStage("tofu", `OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`),
   ],
 });
 
 export const terraform = new Dockerfile({
   stages: [
-    { from: DEBIAN, as: "fetch", arg: ["TARGETARCH"], run: [fetchTools, terraformFetch(TOOL_VERSIONS.terraform), cosignFetch(COSIGN_VERSION)] },
+    { from: DEBIAN, as: "fetch", arg: ["TARGETARCH"], run: [fetchTools, terraformFetch(TOOL_VERSIONS.terraform)] },
     finalStage("terraform", `Terraform ${TOOL_VERSIONS.terraform} and the terragucci engine`),
   ],
 });
@@ -143,7 +131,7 @@ export const terragrunt = new Dockerfile({
       from: DEBIAN,
       as: "fetch",
       arg: ["TARGETARCH"],
-      run: [fetchTools, tofuFetch(TOOL_VERSIONS.tofu), terragruntFetch(TOOL_VERSIONS.terragrunt), cosignFetch(COSIGN_VERSION)],
+      run: [fetchTools, tofuFetch(TOOL_VERSIONS.tofu), terragruntFetch(TOOL_VERSIONS.terragrunt)],
     },
     finalStage("terragrunt", `Terragrunt ${TOOL_VERSIONS.terragrunt}, OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`),
   ],
@@ -151,7 +139,7 @@ export const terragrunt = new Dockerfile({
 
 export const choudoufu = new Dockerfile({
   stages: [
-    { from: DEBIAN, as: "fetch", arg: ["TARGETARCH"], run: [fetchTools, choudoufuFetch(TOOL_VERSIONS.choudoufu), cosignFetch(COSIGN_VERSION)] },
+    { from: DEBIAN, as: "fetch", arg: ["TARGETARCH"], run: [fetchTools, choudoufuFetch(TOOL_VERSIONS.choudoufu)] },
     finalStage("choudoufu", `choudoufu ${TOOL_VERSIONS.choudoufu} and the terragucci engine`),
   ],
 });
