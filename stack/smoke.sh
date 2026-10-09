@@ -228,6 +228,7 @@ foreign-checkout|a job that runs as root in the CI image on a checkout another u
 tg-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
 policy-source|a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref|
 reconcile-parallelism|a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there|
+provider-project|the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting|
 pr-requires|with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable|
 pr-lock|/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named|
 front-door|the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request|
@@ -6343,6 +6344,144 @@ YML
   grep -q "planning one root at a time (terragucci.yml)" "$work/plan.log" || { log "the plan job did not plan one root at a time from terragucci.yml"; rc=1; }
   drop_work "$work"
   [ $rc = 0 ] && log "reconcile wrote the control repo's parallelism: 1 into the project's terragucci.yml, and the plan job planned its two roots one at a time"
+  return $rc
+}
+
+# The terragucci provider, built from this tree for the CI images' platform,
+# into the directory $1. Without Go on the host it builds in golang's image.
+build_provider() {
+  local out="$1" src="$HERE/../terraform-provider-terragucci" arch go
+  arch="$(docker version -f '{{.Server.Arch}}' 2>/dev/null)"; [ -n "$arch" ] || arch=amd64
+  mkdir -p "$out"
+  if command -v go >/dev/null 2>&1; then
+    (cd "$src" && GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -o "$out/terraform-provider-terragucci" .) >&2
+  else
+    go="$(sed -n 's/^go \([0-9.]*\)$/\1/p' "$src/go.mod")"
+    tar -C "$src" -c . | docker run -i --rm -v "$out:/out" -v terragucci-go-cache:/root/go \
+      -e GOOS=linux -e GOARCH="$arch" -e CGO_ENABLED=0 -e GOFLAGS=-buildvcs=false "golang:${go:-1}" \
+      sh -c 'mkdir -p /src && tar -x -C /src && cd /src && go build -o /out/terraform-provider-terragucci .' >&2
+  fi
+}
+
+claim_provider_project() {
+  # A control repo on Forgejo with only a README, and a project repo with one
+  # root and no pipeline, Actions off in both so nothing runs. tofu, in the
+  # tofu CI image, applies a config that installs the terragucci provider
+  # built from this tree through dev_overrides: terragucci_defaults sets
+  # forge, binary and token_env, and terragucci_project adds the project with
+  # its url and a drift schedule. Then:
+  # - the control repo's terragucci.yml holds both, committed through the API;
+  # - a second plan shows no change;
+  # - a plan with parallelism added to the project shows that setting;
+  # - reconcile --mode apply on the control repo's file opens the project's
+  #   pull request, and once it is merged the project's pipeline runs drift
+  #   on the schedule the provider wrote;
+  # - destroy removes the file from the control repo.
+  # BREAK: the config drops the project's drift setting, so the pipeline
+  # reconcile writes has no schedule and the claim's check of it fails.
+  log() { echo "[smoke provider-project] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work control="$USER/provider-control" repo="$USER/provider-project" drift='    drift = "17 4 * * *"' name out code=0 pr sha file rc=0 i
+  [ -n "${BREAK:-}" ] && drift=''
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  answers() { [ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: token $TOKEN" "$URL/api/v1/$1")" = "$2" ]; }
+  settle() { local i; for i in $(seq 1 30); do answers "$1" "$2" && return 0; sleep 1; done; log "$1 never answered $2"; return 1; }
+  for name in provider-control provider-project; do
+    api -o /dev/null -X DELETE "$URL/api/v1/repos/$USER/$name" 2>/dev/null || true
+    settle "repos/$USER/$name" 404 || { drop_work "$work"; return 1; }
+    api -o /dev/null -H 'content-type: application/json' -X POST \
+      -d "{\"name\":\"$name\",\"private\":false,\"auto_init\":true,\"readme\":\"Default\",\"default_branch\":\"main\"}" "$URL/api/v1/user/repos"
+    settle "repos/$USER/$name" 200 || { drop_work "$work"; return 1; }
+    api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":false}' "$URL/api/v1/repos/$USER/$name"
+  done
+  mkdir -p "$work/project/app"
+  printf 'terraform {\n  backend "local" {}\n}\n\nresource "terraform_data" "this" {\n  input = "provider-project"\n}\n' > "$work/project/app/main.tf"
+  push_tree "$work/project" "$repo" main "One root, no pipeline" >/dev/null
+  [ -n "$(remote_head "$repo" main)" ] || { log "the project's main is not listed by git"; drop_work "$work"; return 1; }
+
+  mkdir -p "$work/tf"
+  build_provider "$work/tf/bin" || { log "the provider did not build"; drop_work "$work"; return 1; }
+  cat > "$work/tf/dev.tfrc" <<'RC'
+provider_installation {
+  dev_overrides {
+    "intentius/terragucci" = "/repo/bin"
+  }
+  direct {}
+}
+RC
+  cat > "$work/tf/main.tf" <<TF
+terraform {
+  required_providers {
+    terragucci = {
+      source = "intentius/terragucci"
+    }
+  }
+}
+
+provider "terragucci" {
+  forge      = "forgejo"
+  url        = "http://forgejo:3000"
+  repository = "$control"
+}
+
+resource "terragucci_defaults" "this" {
+  settings = {
+    forge     = "forgejo"
+    binary    = "tofu"
+    token_env = "TERRAGUCCI_FORGEJO_TOKEN"
+  }
+}
+
+resource "terragucci_project" "app" {
+  key = "localhost/$repo"
+  settings = {
+    url = "$URL/$repo"
+$drift
+  }
+}
+TF
+  # tofu with the provider from bin and the token from the image's environment.
+  tf() { in_image "$work/tf" sh -c 'export TF_CLI_CONFIG_FILE=/repo/dev.tfrc TERRAGUCCI_TOKEN="$TERRAGUCCI_FORGEJO_TOKEN"; tofu "$@"' tofu "$@"; }
+  out="$(tf apply -auto-approve -no-color 2>&1)" || { echo "$out" >&2; log "tofu apply failed"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  file="$(file_at "$control" main "$(remote_head "$control" main)" terragucci.yml)" || { log "the control repo has no terragucci.yml"; drop_work "$work"; return 1; }
+  printf '%s\n' "$file" >&2
+  grep -q '^  token_env: TERRAGUCCI_FORGEJO_TOKEN$' <<<"$file" || { log "terragucci.yml has no defaults.token_env"; rc=1; }
+  grep -q "^  localhost/$repo:\$" <<<"$file" || { log "terragucci.yml has no project localhost/$repo"; rc=1; }
+
+  out="$(tf plan -detailed-exitcode -no-color 2>&1)" || code=$?
+  [ "$code" = 0 ] || { echo "$out" >&2; log "a plan right after the apply exited $code, not 0: it shows a change"; rc=1; }
+  perl -pi.bak -e 's#^(    url = .*)$#$1\n    parallelism = 2#' "$work/tf/main.tf"
+  code=0; out="$(tf plan -detailed-exitcode -no-color 2>&1)" || code=$?
+  echo "$out" >&2
+  [ "$code" = 2 ] || { log "a plan with parallelism added exited $code, not 2"; rc=1; }
+  grep -Eq '\+ *"?parallelism"? *= *2' <<<"$out" || { log "the plan does not show parallelism = 2 added"; rc=1; }
+  grep -q '1 to change' <<<"$out" || { log "the plan does not change the one project"; rc=1; }
+  mv "$work/tf/main.tf.bak" "$work/tf/main.tf"
+
+  git clone -q "${URL/#http:\/\//http://${USER}:${TOKEN}@}/$control.git" "$work/control" 2>/dev/null || { log "cannot clone $control"; drop_work "$work"; return 1; }
+  out="$(TERRAGUCCI_FORGEJO_TOKEN="$TOKEN" "$TERRAGUCCI" reconcile --config "$work/control/terragucci.yml" --mode apply 2>&1)" || { echo "$out" >&2; log "reconcile failed"; drop_work "$work"; return 1; }
+  echo "$out" >&2
+  pr="$(api "$URL/api/v1/repos/$repo/pulls?state=open" | jq -r '.[] | select(.head.ref == "terragucci/pipeline") | .number' | head -1)"
+  if [ -z "$pr" ]; then
+    log "reconcile opened no pull request on $repo"; rc=1
+  else
+    # Forgejo checks a new pull request's mergeability a moment after opening it.
+    for i in $(seq 1 30); do
+      api -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$repo/pulls/$pr/merge" 2>/dev/null && break
+      sleep 1
+    done
+    sha="$(remote_head "$repo" main)"
+    file="$(file_at "$repo" main "$sha" .forgejo/workflows/terragucci.yml)" || { log "the project's main has no pipeline after the merge"; rc=1; }
+    grep -q "cron: '17 4 \* \* \*'" <<<"$file" || { log "the project's pipeline does not run drift on 17 4 * * *, the schedule the provider wrote"; rc=1; }
+  fi
+
+  out="$(tf destroy -auto-approve -no-color 2>&1)" || { echo "$out" >&2; log "tofu destroy failed"; rc=1; }
+  answers "repos/$control/contents/terragucci.yml" 404 || { log "destroy left terragucci.yml in the control repo"; rc=1; }
+  drop_work "$work"
+  [ $rc = 0 ] && log "tofu applied the defaults and the project into $control's terragucci.yml, a plan showed parallelism added, and reconcile gave $repo its pipeline with the drift schedule; destroy removed the file"
   return $rc
 }
 
@@ -16114,6 +16253,7 @@ foreign-checkout     ex after=boot weight=150
 tg-layers            runner self! weight=300
 policy-source        self! weight=150
 reconcile-parallelism weight=120
+provider-project self! weight=90
 pr-requires          runner self! weight=300
 pr-lock              runner self! weight=200
 front-door           self! weight=40
