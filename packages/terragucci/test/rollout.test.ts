@@ -237,6 +237,38 @@ describe("continuing every rollout in flight", () => {
     expect([c.rollouts[0]!.action, c.rollouts[0]!.reason]).toEqual(["done", "wave 3 of 3, the last, merged"]);
   }, 30_000);
 
+  it("continues a registry version pin and an oci:// tag pin, each on its own branch and in the shape it had", async () => {
+    const oci = "oci://registry.example.com/acme/modules/network";
+    const reg = "acme/network/aws";
+    const { repo, bare } = checkout(
+      write(tmp(), {
+        "terragucci.yml": 'waves:\n  canary: ["dev/*"]\n',
+        "dev/oci/main.tf": backend("dev/oci.tfstate") + `module "n" {\n  source = "${oci}?tag=1.3.0"\n}\n`,
+        "prod/oci/main.tf": backend("prod/oci.tfstate") + `module "n" {\n  source = "${oci}?tag=1.3.0"\n}\n`,
+        "dev/reg/main.tf": backend("dev/reg.tfstate") + `module "n" {\n  source  = "${reg}"\n  version = "1.3.0"\n}\n`,
+        "prod/reg/main.tf": backend("prod/reg.tfstate") + `module "n" {\n  source  = "${reg}"\n  version = "1.3.0"\n}\n`,
+      }),
+    );
+    const forge = new MemoryForge(bare);
+    for (const name of ["modules/network", reg]) await rollout(repo, { kind: "module", name, to: "1.4.0", mode: "apply", forge: () => forge });
+    const ociBranch = (n: number) => waveBranch("modules/network", "1.4.0", n);
+    const regBranch = (n: number) => waveBranch(reg, "1.4.0", n);
+    expect([ociBranch(1), regBranch(1)]).toEqual(["terragucci/rollout/modules-network-1.4.0/wave-1", "terragucci/rollout/acme-network-aws-1.4.0/wave-1"]);
+    expect([changedFiles(bare, ociBranch(1)), changedFiles(bare, regBranch(1))]).toEqual([["dev/oci/main.tf"], ["dev/reg/main.tf"]]);
+    for (const b of [ociBranch(1), regBranch(1)]) {
+      forge.merge(b);
+      forge.apply(b);
+    }
+    const c = await continueRollouts(repo, { mode: "apply", forge: () => forge });
+    expect(c.rollouts.map((r) => [r.name, r.from, r.to, r.action, r.result?.status]).sort()).toEqual([
+      ["acme/network/aws", "1.3.0", "1.4.0", "ran", "opened"],
+      ["modules/network", "1.3.0", "1.4.0", "ran", "opened"],
+    ]);
+    expect([changedFiles(bare, ociBranch(2)), changedFiles(bare, regBranch(2))]).toEqual([["prod/oci/main.tf"], ["prod/reg/main.tf"]]);
+    expect(git(bare, "show", `${ociBranch(2)}:prod/oci/main.tf`)).toContain(`source = "${oci}?tag=1.4.0"`);
+    expect(git(bare, "show", `${regBranch(2)}:prod/reg/main.tf`)).toContain('version = "1.4.0"');
+  }, 30_000);
+
   it("reads the wave count from the title when the body predates it, and leaves a closed wave stopped", async () => {
     const { repo, bare } = checkout(pinnedRepo());
     const forge = new MemoryForge(bare);
@@ -434,6 +466,32 @@ describe("the forge", () => {
     expect(await gh.listPullRequests("terragucci/rollout/")).toEqual([{ branch: "terragucci/rollout/x-1.4.0/wave-1", url: "g/2", title: "t2", state: "merged", body: "b2" }]);
     const gl = fetchForge(fetch, { forge: "gitlab", origin: "https://gitlab.example.com", path: "acme/infra", token: "" });
     expect((await gl.listPullRequests("terragucci/rollout/")).map((p) => [p.url, p.state])).toEqual([["l/1", "open"], ["l/0", "closed"]]);
+  });
+
+  it("opens a pull request on a Forgejo repo whose list answers 404 just after its first push, and throws on any other 404", async () => {
+    const run = async (repo: { empty: boolean } | null, listAnswers: number[]) => {
+      const asked: string[] = [];
+      const fetch: Fetch = async (url, init) => {
+        const path = url.replace("https://forge.example.com/api/v1", "");
+        asked.push(`${init?.method} ${path}`);
+        if (path === "/repos/acme/infra") return { ok: !!repo, status: repo ? 200 : 404, json: async () => repo, text: async () => "" };
+        if (init?.method === "GET") {
+          const status = listAnswers.shift() ?? 200;
+          return { ok: status === 200, status, json: async () => [], text: async () => "The target couldn't be found." };
+        }
+        return { ok: true, status: 201, json: async () => ({ html_url: "u/1", number: 1 }), text: async () => "" };
+      };
+      const f = fetchForge(fetch, { forge: "forgejo", origin: "https://forge.example.com", path: "acme/infra", token: "" });
+      const url = await f.createPullRequest({ base: "main", head: "w1", title: "t", body: "b" });
+      return { url, asked };
+    };
+    // Still empty: no pull request is open, so one is made.
+    expect(await run({ empty: true }, [404])).toEqual({ url: "u/1", asked: ["GET /repos/acme/infra/pulls?state=open", "GET /repos/acme/infra", "POST /repos/acme/infra/pulls"] });
+    // No longer empty by the time the repo is read: the list is asked again.
+    expect((await run({ empty: false }, [404, 200])).asked).toEqual(["GET /repos/acme/infra/pulls?state=open", "GET /repos/acme/infra", "GET /repos/acme/infra/pulls?state=open", "POST /repos/acme/infra/pulls"]);
+    // A list that keeps answering 404 for a repo with commits is a real failure.
+    await expect(run({ empty: false }, [404, 404])).rejects.toThrow(/answered 404/);
+    await expect(run(null, [404])).rejects.toThrow(/answered 404/);
   });
 
   it("reads one apply job per wave, and the terragucci/apply status over them", () => {
