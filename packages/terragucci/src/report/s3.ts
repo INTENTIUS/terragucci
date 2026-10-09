@@ -125,7 +125,7 @@ export function signRequest(t: S3Location & S3Credentials, method: string, key: 
   return { url, headers: sign(t, method, url, { ...(contentType ? { "content-type": contentType } : {}), ...extra }, sha256(body), now) };
 }
 
-/** Signature Version 4 headers for a request with no query string. `headers` are signed too. */
+/** Signature Version 4 headers for a request; its query string, if any, is signed in canonical order. `headers` are signed too. */
 export function sign(t: Pick<S3Location, "region"> & S3Credentials, method: string, rawUrl: string, extra: Record<string, string>, payload: string, now: Date): Record<string, string> {
   const url = new URL(rawUrl);
   const amzDate = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -138,7 +138,8 @@ export function sign(t: Pick<S3Location, "region"> & S3Credentials, method: stri
     ...(t.sessionToken ? { "x-amz-security-token": t.sessionToken } : {}),
   };
   const names = Object.keys(headers).sort();
-  const canonical = [method, url.pathname, "", ...names.map((n) => `${n}:${headers[n].trim()}`), "", names.join(";"), payload].join("\n");
+  const query = [...url.searchParams].map(([k, v]) => `${encodeStrict(k)}=${encodeStrict(v)}`).sort().join("&");
+  const canonical = [method, url.pathname, query, ...names.map((n) => `${n}:${headers[n].trim()}`), "", names.join(";"), payload].join("\n");
   const scope = `${day}/${t.region}/s3/aws4_request`;
   const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonical)].join("\n");
   const key4 = hmac(hmac(hmac(hmac(`AWS4${t.secretAccessKey}`, day), t.region), "s3"), "aws4_request");
@@ -248,5 +249,53 @@ export class S3Client implements ObjectStore {
   /** The object's text, or undefined when there is none. */
   async get(key: string): Promise<string | undefined> {
     return (await this.read(key)).body;
+  }
+
+  /**
+   * The object's metadata and never its body: whether it exists, its ETag,
+   * and its version id when the bucket keeps versions. S3 sends no version id
+   * for a bucket whose versioning was never on, and `null` for an object
+   * written while it was suspended; both read as no version.
+   */
+  async head(key: string): Promise<{ exists: boolean; etag?: string; versionId?: string }> {
+    const { url, headers } = signRequest(await this.signer(), "HEAD", key, "");
+    const res = await this.fetchFn(url, { method: "HEAD", headers });
+    if (res.status === 404) return { exists: false };
+    if (!res.ok) throw new StoreError(`HEAD s3://${this.target.bucket}/${key}: ${res.status}`);
+    const etag = res.headers?.get("etag") ?? undefined;
+    const version = res.headers?.get("x-amz-version-id") ?? undefined;
+    return { exists: true, ...(etag ? { etag } : {}), ...(version && version !== "null" ? { versionId: version } : {}) };
+  }
+
+  /**
+   * Write an object only when there is none (If-None-Match: *): true when
+   * this write made it, false when one was there. Unlike put, a store that
+   * refuses the condition fails the write: a lock must never be taken
+   * unconditionally.
+   */
+  async putIfAbsent(key: string, body: string, contentType: string): Promise<boolean> {
+    const { url, headers } = signRequest(await this.signer(), "PUT", key, body, new Date(), contentType, { "if-none-match": "*" });
+    const res = await this.fetchFn(url, { method: "PUT", headers, body });
+    if (res.status === 412 || res.status === 409) return false;
+    if (res.status === 501) throw new StoreError(`PUT s3://${this.target.bucket}/${key}: the store does not take a conditional write (501)`);
+    if (!res.ok) throw new StoreError(`PUT s3://${this.target.bucket}/${key}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    return true;
+  }
+
+  /** One version of an object's text, by its version id; undefined when there is no such version. */
+  async readVersion(key: string, versionId: string): Promise<string | undefined> {
+    const t = await this.signer();
+    const url = `${objectUrl(t, key)}?versionId=${encodeStrict(versionId)}`;
+    const res = await this.fetchFn(url, { method: "GET", headers: sign(t, "GET", url, {}, sha256(""), new Date()) });
+    if (res.status === 404) return undefined;
+    if (!res.ok) throw new StoreError(`GET s3://${this.target.bucket}/${key}?versionId=${versionId}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    return res.text();
+  }
+
+  /** Delete an object. One that is not there is deleted already. */
+  async remove(key: string): Promise<void> {
+    const { url, headers } = signRequest(await this.signer(), "DELETE", key, "");
+    const res = await this.fetchFn(url, { method: "DELETE", headers });
+    if (!res.ok && res.status !== 404) throw new StoreError(`DELETE s3://${this.target.bucket}/${key}: ${res.status} ${(await res.text()).slice(0, 300)}`);
   }
 }

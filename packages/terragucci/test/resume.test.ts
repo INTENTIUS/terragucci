@@ -38,6 +38,29 @@ describe("resumable", () => {
   });
 });
 
+describe("resumable, a state migration", () => {
+  const mig = (l: Partial<GateLedger>): GateLedger => ledger(l);
+  it("resumes wave 1 for a migration whose newest digest an approval names, until wave 1 applied under it", () => {
+    const pend = pending("split-b", "jcs1-sha256:mm", 0, { op: "tf-migrate", runId: "88", commit: "c".repeat(40) });
+    const ok = resolution("split-b", "jcs1-sha256:mm", 5);
+    expect(resumable(ledger({}), T(6), mig({ pending: [pend], resolutions: [ok] }))).toEqual([{ wave: 1, migration: "split-b", digest: "jcs1-sha256:mm", by: "alice", runId: "88", commit: "c".repeat(40) }]);
+    expect(resumable(ledger({}), T(8), mig({ pending: [pend], resolutions: [ok], applied: [{ version: 1, kind: "applied", op: "tf-migrate", gate: "split-b", planDigest: "jcs1-sha256:mm", approvedAt: T(5), approvedBy: "alice", timestamp: T(7) }] }))).toEqual([]);
+    expect(resumable(ledger({}), T(6), mig({ pending: [pend] }))).toEqual([]);
+  });
+
+  it("on GitLab retries apply-wave-1 for an approved migration, which waited there", async () => {
+    const env = { CI_API_V4_URL: "https://api.test", CI_PROJECT_ID: "9", TG_TOKEN: "t", CI_DEFAULT_BRANCH: "main" };
+    const { fetch, calls } = forge({
+      "GET projects/9/pipelines": [{ id: 300 }],
+      "GET projects/9/pipelines/300/jobs": [{ id: 1, name: "apply-wave-1", status: "failed" }, { id: 2, name: "apply-wave-2", status: "skipped" }],
+      "POST projects/9/jobs/1/retry": {},
+    });
+    const migrations = mig({ pending: [pending("split-b", "jcs1-sha256:mm", 0, { op: "tf-migrate" })], resolutions: [resolution("split-b", "jcs1-sha256:mm", 5)] });
+    expect(await resumeStep({ ledger: ledger({}), migrations, forge: "gitlab", sha: "d".repeat(40), env, now: T(6), fetch })).toMatchObject({ kind: "retried", job: "apply-wave-1", waves: [{ wave: 1, migration: "split-b" }] });
+    expect(calls).toContain("POST projects/9/jobs/1/retry");
+  });
+});
+
 describe("resumeStep", () => {
   const approved = ledger({ pending: [pending("wave-2", "jcs1-sha256:aa", 0, { runId: "77" })], resolutions: [resolution("wave-2", "jcs1-sha256:aa", 5)] });
   const SHA = "d".repeat(40);

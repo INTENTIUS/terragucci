@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 19;
+export const REPORT_MINOR = 20;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -29,7 +29,7 @@ export interface ReportRun {
   stage: ReportStage;
   /** Set on a `tf-apply` wave's report. */
   wave?: number;
-  /** On a `tf-apply` wave split across jobs (`waves.jobs`), the share this report applied, from 1 (minor 16); `waves[0].roots` are its roots. */
+  /** On a `tf-apply` wave split across jobs (`waves.jobs`), the share this report applied, from 1 (minor 20); `waves[0].roots` are its roots. */
   share?: number;
   binary: string;
   runtime: string;
@@ -283,6 +283,12 @@ export interface ReportRoot {
    * changed, by name (minor 15). Never a value.
    */
   applied_changes?: ReportAppliedChange[];
+  /**
+   * On a `tf-apply` wave, a root that applied or had nothing to apply: the
+   * state version its backend holds afterwards (minor 20). The version id
+   * and where the state is, never its contents.
+   */
+  state?: ReportStateVersion;
   /** The steps that ran for it (minor 17), in the order they ran. Absent when none did. */
   steps?: ReportStep[];
 }
@@ -303,6 +309,23 @@ export interface ReportStep {
   /** The exit code; null when it was killed or could not start. */
   exit: number | null;
   seconds: number;
+}
+
+/**
+ * The state a root's backend holds after an apply (minor 20): read from the
+ * object's metadata, never from its body.
+ */
+export interface ReportStateVersion {
+  /** The backend the root initialised: `s3`, `local`, `gcs` and so on. */
+  backend: string;
+  /** Where the state is: `s3://<bucket>/<key>`, or the local file's path in the root. */
+  location?: string;
+  /** The backend's id for this version of the state: an S3 version id. Absent when the backend keeps no versions or none could be read. */
+  version_id?: string;
+  /** `on`: the backend keeps each version; `off`: it keeps only the latest; `unknown`: terragucci could not tell. */
+  versioning: "on" | "off" | "unknown";
+  /** Why the version could not be read, or what `off` means for this backend. */
+  note?: string;
 }
 
 /** What one apply did to one resource (minor 15). */
