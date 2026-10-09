@@ -27,7 +27,9 @@ import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates } from "../approval";
 import { decideOverride, OVERRIDE_LEDGER } from "../override";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings } from "../config";
-import { applyLayers, detectBinary, findRoots, globMatch, rootDependencies } from "../detect";
+import { applyLayers, detectBinary, findRoots, globMatch, remoteStateReads, rootDependencies } from "../detect";
+import { linkRoot, type Link, type Linked } from "../linked";
+import { plannedOutputs, plannedReadLine, unknownUpstreams, wavesOf } from "../planned-outputs";
 import { describeBinary, RootBinaries, type Installer } from "../pins";
 import { detectTerragrunt, discoverUnits, refineWaves, unitWaves } from "../terragrunt";
 import { findIssue, ForgeError, type Fetch } from "../forge";
@@ -47,7 +49,7 @@ import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRun } from "./schema";
+import type { Report, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRun } from "./schema";
 import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
 import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
@@ -374,6 +376,8 @@ interface RootOutcome {
   deferred?: ReportDeferred;
   /** The names of its `on_failure: approve` steps that failed: its wave waits for an approval. */
   holds?: string[];
+  /** The upstreams it planned on whose outputs it reads are known only once they apply. */
+  unknownFrom?: string[];
 }
 
 const GITLAB_STATE = /\/api\/v4\/projects\/[^"\s]*\/terraform\/state\//;
@@ -774,14 +778,48 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const held = new Set<string>();
   const upstreamState = new Map<string, boolean | undefined>();
   const heldBySteps = new Set<string>();
+  const unknownFrom = new Map<string, string[]>();
   const readsOf = drift ? new Map<string, Set<string>>() : rootDependencies(repo, all);
+  // Linked states: the terraform_remote_state blocks of each root, and the plans of the roots this run planned, whose outputs a later layer plans on.
+  const blocksOf = drift ? new Map<string, { name: string; upstream: string; repeated: boolean }[]>() : remoteStateReads(repo, all);
+  const upstreamPlans = new Map<string, unknown>();
   let redacted = 0;
+
+  /** How a root reads each upstream: the links a plan on their planned outputs takes, and the reads the report names. */
+  const linksFor = (root: string): { links: Link[]; reads: ReportRead[] } => {
+    const links: Link[] = [];
+    const reads: ReportRead[] = [];
+    for (const b of blocksOf.get(root) ?? []) {
+      const applied = (why: string): void => void reads.push({ upstream: b.upstream, data: b.name, outputs: "applied", why });
+      if (!roots.includes(b.upstream)) {
+        applied("this change does not reach it, so its state stands");
+        continue;
+      }
+      const plan = upstreamPlans.get(b.upstream);
+      if (plan === undefined) {
+        applied("it did not plan in this run");
+        continue;
+      }
+      if (b.repeated) {
+        applied("the block has count or for_each, which a linked plan does not follow");
+        continue;
+      }
+      const planned = plannedOutputs(plan);
+      if (!planned) applied("its plan names no output changes");
+      else if (!planned.changed) applied("its plan changes no output, so its state stands");
+      else links.push({ name: b.name, upstream: b.upstream, outputs: planned.outputs });
+    }
+    return { links, reads };
+  };
 
   /** One root planned, its outcome kept apart so the report and the log take roots in order, not in the order they finish. */
   const planRoot = async (root: string, index: number): Promise<RootOutcome> => {
     const lines: string[] = [];
     const dir = join(repo, root);
-    // A root that reads the state of a root nothing has applied cannot plan: hold it back.
+    const { links, reads } = linksFor(root);
+    // A root that reads the state of a root nothing has applied cannot plan: its terraform_remote_state block reads that
+    // state even when its references point at the upstream's plan. Hold it back. An upstream that has applied and has a
+    // change pending is the linked path: the root plans on that upstream's planned outputs.
     const waitsFor = [...(readsOf.get(root) ?? [])].filter((up) => upstreamState.get(up) === true).sort();
     if (waitsFor.length > 0) {
       lines.push(`${root}: held back, ${waitsFor.join(", ")} has no state yet`);
@@ -805,7 +843,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     };
     const failed = (error: string, line: string): RootOutcome => {
       lines.push(line);
-      return { root, lines, ...(holds.length ? { holds } : {}), input: { path: root, planner, binary: bin, error, preventDestroy: new Set(), ...(ran.length ? { steps: ran } : {}) } };
+      return { root, lines, ...(holds.length ? { holds } : {}), input: { path: root, planner, binary: bin, error, preventDestroy: new Set(), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}) } };
     };
     const refused = pinRefusals.get(root);
     if (refused) {
@@ -830,7 +868,38 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
       // A refresh-only plan compares the state with the real objects and ignores the code.
-      const p = await run("plan", ...(drift ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
+      const planOnce = () => run("plan", ...(drift ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", `-out=${planFile}`);
+      // Linked: the root plans on the planned outputs of the upstreams this run planned, its files put back once the plan is made.
+      let linked: Linked | undefined;
+      const unlink = (why: string): void => {
+        for (const l of links) reads.push({ upstream: l.upstream, data: l.name, outputs: "applied", why });
+      };
+      if (links.length > 0) {
+        try {
+          linked = linkRoot(dir, links);
+        } catch (e) {
+          unlink(`no linked plan: ${(e as Error).message}`);
+        }
+      }
+      let p: Awaited<ReturnType<typeof planOnce>>;
+      try {
+        p = await planOnce();
+      } finally {
+        linked?.restore();
+      }
+      if (linked && (p.status !== 0 || !existsSync(planFile))) {
+        // A plan the planned outputs fail (a count or for_each on an unknown value) plans again on the applied state, and says so.
+        const why = (p.stderr || p.stdout).match(/Error: (.*)/)?.[1]?.trim() ?? "the plan failed";
+        lines.push(`${root}: the plan on the planned outputs of ${links.map((l) => l.upstream).join(", ")} failed (${why}), so it plans on their applied state`);
+        unlink(`the plan on its planned outputs failed: ${why}`);
+        linked = undefined;
+        p = await planOnce();
+      }
+      if (linked) {
+        reads.push(...linked.reads);
+        for (const r of linked.reads) lines.push(plannedReadLine(root, r));
+      }
+      reads.sort((a, b) => (a.upstream < b.upstream ? -1 : a.upstream > b.upstream ? 1 : a.data < b.data ? -1 : 1));
       if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
       stepError = await step(`after-${planStep}`, planFile);
       if (stepError) return failed(stepError, `${root}: a step after ${planStep} failed`);
@@ -842,6 +911,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
       } catch {
         return failed(`show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, `${root}: show -json failed`);
       }
+      if (!drift) upstreamPlans.set(root, plan);
+      const unknownFrom = unknownUpstreams(reads);
       const safe = redactPlan(plan);
       let attributed: Attributed | undefined;
       if (audit && driftCount(plan) > 0) {
@@ -853,12 +924,12 @@ export async function runStage(stage: string, repo: string, options: StageOption
       }
       lines.push(drift ? `${root}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${root}: ${p.stdout.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned"}`);
       return {
-        root, lines, redacted: safe.values, ...(holds.length ? { holds } : {}),
+        root, lines, redacted: safe.values, ...(holds.length ? { holds } : {}), ...(unknownFrom.length ? { unknownFrom } : {}),
         // The binary masks what the plan marks sensitive; a value copied into an unmarked attribute is masked here too.
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(ran.length ? { steps: ran } : {}) },
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}) },
       };
     } finally {
       observer.endRoot(timing);
@@ -874,6 +945,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     }
     if (o.input) inputs.push(o.input);
     if (o.holds?.length) heldBySteps.add(o.root);
+    if (o.unknownFrom?.length) unknownFrom.set(o.root, o.unknownFrom);
     if (o.plan) plans.set(o.root, o.plan);
     if (o.names) names.set(o.root, o.names);
     if (o.attributed) attributions.set(o.root, o.attributed);
@@ -907,15 +979,23 @@ export async function runStage(stage: string, repo: string, options: StageOption
 
   // The apply's waves (canary layers first, one dependency layer each), cut from every root so the numbers match its wave-<k> gates.
   // Drift is not applied, so there are no waves to gate.
-  const waves: WaveInput[] = drift
-    ? []
-    : applyWaves(full, options.canary ?? settings.waves?.canary)
-        .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
-        .filter((w) => w.roots.length > 0)
-        .map((w) => {
-          const holding = w.roots.filter((r) => heldBySteps.has(r));
-          return holding.length ? { ...w, heldBySteps: holding } : w;
-        });
+  const applyOrder = drift ? [] : applyWaves(full, options.canary ?? settings.waves?.canary);
+  const waveOf = new Map(applyOrder.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
+  const waves: WaveInput[] = applyOrder
+    .map((w, i) => ({ number: i + 1, roots: w.filter((r) => roots.includes(r) && !held.has(r)) }))
+    .filter((w) => w.roots.length > 0)
+    .map((w) => {
+      const holding = w.roots.filter((r) => heldBySteps.has(r));
+      const reads = wavesOf(waveOf, w.roots.flatMap((r) => [...(readsOf.get(r) ?? [])]), w.number);
+      const replansAfter = wavesOf(waveOf, w.roots.flatMap((r) => unknownFrom.get(r) ?? []), w.number);
+      return {
+        ...w,
+        state: "planned" as const,
+        ...(holding.length ? { heldBySteps: holding } : {}),
+        ...(reads.length ? { reads } : {}),
+        ...(replansAfter.length ? { replansAfter } : {}),
+      };
+    });
 
   return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}) });
 }
@@ -1014,6 +1094,20 @@ async function runTerragruntStage(
   const stepsRefused = terragruntStepsRefusal(steps);
   if (stepsRefused) throw new ConfigError(stepsRefused);
   if (steps.length > 0) log(`steps: ${steps.length} read from terragucci.yml at ${stepsRead.from}`);
+  // modules.require: attested, checked for every unit before any wave plans, as for plain roots: a refused unit fails and does not plan.
+  const refusedUnits: RootInput[] = [];
+  if (!drift) {
+    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env });
+    for (const unit of pins ? waves.flat() : []) {
+      const r = await pins!(unit);
+      if (r.refused.length) {
+        log(`${unit}: refused by modules.require: attested`);
+        refusedUnits.push({ path: unit, planner: plannerForBinary(binary), error: r.refused.join("\n"), preventDestroy: new Set(), terragrunt: { stack: stackOfUnit(unit), selection: reasons.get(unit) ?? everyUnit, provisional: false, run_result: "not run" } });
+      } else if (r.verified.length) log(`${unit}: attested ${r.verified.join("; ")}`);
+    }
+    const refused = new Set(refusedUnits.map((u) => u.path));
+    waves = waves.map((w) => w.filter((u) => !refused.has(u))).filter((w) => w.length > 0);
+  }
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), drift ? "tf-drift" : "tf-plan", env);
   // Each unit's plan sends its spans here through the TG_TF_PATH wrapper, for its per-resource timings.
@@ -1025,6 +1119,7 @@ async function runTerragruntStage(
       selection: (u) => reasons.get(u) ?? everyUnit,
     }, log);
     const { inputs, plans, redacted, mockReads } = planned;
+    inputs.push(...refusedUnits);
     for (const u of planned.waiting) {
       if (drift) {
         // A refresh needs the upstream's real outputs; with none, the unit cannot be checked.

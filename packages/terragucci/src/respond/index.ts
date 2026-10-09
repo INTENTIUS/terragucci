@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
-import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
+import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, SYNTH_DRIFT_PR, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, findRoots, globMatch } from "../detect";
 import { detectTerragrunt } from "../terragrunt";
 import { defaultBranch, type Fetch } from "../forge";
@@ -186,6 +186,7 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const t = triage(o.log!);
     r = { text: describeTriage(t), data: t };
   } else if (ev === "drift") {
+    if (settings.synth) throw new ConfigError(`respond drift: ${SYNTH_DRIFT_PR}`);
     const attributing = response === "attribute" ? { audit: o.audit ?? awsAuditLog({ region: settings.audit_region }), decide: settings.decide, options: o.decideOptions, known: knownAttributions(repo, o.attributions) } : undefined;
     const d = await drift(repo, roots(), binary(), o.imports ?? [], env, attributing);
     const body = [
@@ -198,8 +199,11 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const proposed = await propose(repo, settings, d.files.size ? [{ branch: "terragucci/drift", title: "Codify drift", body: `A refresh-only plan found drift. Merging this accepts the change made outside Terraform.\n\n${body}`, files: d.files }] : [], { mode, env, fetch: o.fetch });
     r = { text: [body || "no drift", ...proposed.map(said)].join("\n"), data: { codified: d.codified, imports: d.imports, left: d.left, ...(attributing ? { attributions: d.attributions, notes: d.notes } : {}) }, proposals: proposed };
   } else if (ev === "tips") {
-    const proposed = await propose(repo, settings, tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms }), { mode, env, fetch: o.fetch });
-    r = { text: proposed.map(said).join("\n") || "no tip to fix", proposals: proposed };
+    // With synth the roots are on disk only once the command has run, as the tips job runs it.
+    if (settings.synth && roots().length === 0) throw new ConfigError(`respond tips found no roots: synth writes them, so run ${settings.synth} first`);
+    const tips = tipProposals(repo, roots(), binary(), { canary: settings.waves?.canary, platforms: o.platforms, synth: Boolean(settings.synth) });
+    const proposed = await propose(repo, settings, tips.proposals, { mode, env, fetch: o.fetch });
+    r = { text: [...tips.left, ...proposed.map(said)].join("\n") || "no tip to fix", proposals: proposed };
   } else if (ev === "fmt") {
     r = await fmt(repo, settings, binary(), mode, o, env);
   } else if (ev === "publish") {
