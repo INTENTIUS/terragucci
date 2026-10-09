@@ -8820,12 +8820,12 @@ claim_tg_generate() {
   # hcl fmt, generate --check and hcl validate. tf-apply --terragrunt wave 1
   # then applies both units: each state lands at the key generate gives it,
   # and the providers.tf Terragrunt wrote for live/prod/app names eu-west-1.
-  # BREAK: live/prod/app does not include terragucci.hcl, so the check step
-  # refuses it by name and fails.
+  # BREAK: after generate, live/prod/app's include of terragucci.hcl is
+  # dropped, so the check step refuses it by name and fails.
   log() { echo "[smoke tg-generate] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work image bucket="tggen-$STAMP" body code=0 u rc=0 inc
+  local work image bucket="tggen-$STAMP" body code=0 u rc=0
   image="$(image_tag terragrunt)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
   build_cli || return 1
@@ -8836,10 +8836,7 @@ claim_tg_generate() {
   printf '# Every unit takes its backend and providers from terragucci.hcl.\n' > "$work/wave/root.hcl"
   for u in live/dev/app live/prod/app; do
     mkdir -p "$work/wave/$u"
-    inc='include "terragucci" {\n  path = find_in_parent_folders("terragucci.hcl")\n}\n\n'
-    [ -n "${BREAK:-}" ] && [ "$u" = live/prod/app ] && inc=''
-    # shellcheck disable=SC2059 # the include is the format's own text
-    printf "${inc}terraform {\n  source = \"../../../modules/app\"\n}\n" > "$work/wave/$u/terragrunt.hcl"
+    printf 'include "terragucci" {\n  path = find_in_parent_folders("terragucci.hcl")\n}\n\nterraform {\n  source = "../../../modules/app"\n}\n' > "$work/wave/$u/terragrunt.hcl"
     cp "$EXAMPLE/envs/dev/platform/.terraform.lock.hcl" "$work/wave/$u/"
   done
   cat > "$work/wave/terragucci.yml" <<YML
@@ -8866,6 +8863,8 @@ YML
   printf '.terragrunt-cache/\nterragucci-report/\n' > "$work/wave/.gitignore"
   (cd "$work/wave" && "$TERRAGUCCI" generate >&2) || { log "generate failed"; drop_work "$work"; return 1; }
   [ -f "$work/wave/terragucci.hcl" ] || { log "generate wrote no terragucci.hcl"; drop_work "$work"; return 1; }
+  # After generate, someone drops live/prod/app's include.
+  [ -n "${BREAK:-}" ] && printf 'terraform {\n  source = "../../../modules/app"\n}\n' > "$work/wave/live/prod/app/terragrunt.hcl"
   (cd "$work/wave" && TERRAGUCCI_TERRAGRUNT=/nonexistent/terragrunt "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
   body="$(check_step_body "$work/wave/.forgejo/workflows/terragucci.yml")"
   grep -q '^terragucci generate --check$' <<<"$body" || { log "the check step runs no terragucci generate --check"; rc=1; }
