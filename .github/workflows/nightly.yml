@@ -32,6 +32,13 @@ jobs:
           just --version
       - name: Install
         run: npm ci
+      - name: Pull Docker Hub images through a mirror
+        run: |
+          conf=/etc/docker/daemon.json
+          { sudo cat "$conf" 2>/dev/null || echo '{}'; } | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$conf"
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
       - name: Start the gitlab profile
         run: just stack-up gitlab
       - name: Run the gitlab claims
@@ -71,6 +78,13 @@ jobs:
           just --version
       - name: Install
         run: npm ci
+      - name: Pull Docker Hub images through a mirror
+        run: |
+          conf=/etc/docker/daemon.json
+          { sudo cat "$conf" 2>/dev/null || echo '{}'; } | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' > "$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$conf"
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
       - name: Use the newest published release
         run: echo "TERRAGUCCI_SANDBOX_RELEASE=$(npm view @intentius/terragucci version)" >> "$GITHUB_ENV"
       - name: Prove the features on the sandbox
