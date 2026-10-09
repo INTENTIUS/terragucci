@@ -57,7 +57,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "refuse",
@@ -65,7 +65,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "sealed",
@@ -164,7 +164,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "apply-serial",
@@ -213,7 +213,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "tg-waves",
@@ -726,7 +726,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "pr-review-moved",
@@ -774,7 +774,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "resume-schedule",
@@ -782,7 +782,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "approve-plan",
@@ -1344,15 +1344,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "migrate-resume",
       "says": "with apply.resume set, a migration that waits in wave 1 of a Forgejo run is approved with terragucci approve and no argument, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again",
       "needs": null,
-      "verdict": "fail",
+      "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "migrate-backend",
@@ -1360,7 +1360,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "migrate-revert",
@@ -1368,7 +1368,15 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
+    },
+    {
+      "claim": "migrate-resume-never",
+      "says": "with gate: never and apply.resume set, init still writes the resume workflow, and one run of it applies an approved migration that waits in wave 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7759a35"
     },
     {
       "claim": "migrate-split",
@@ -1376,7 +1384,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "dora",
@@ -1432,7 +1440,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "8fd354f"
+      "commit": "7759a35"
     },
     {
       "claim": "cdktn-affected",
