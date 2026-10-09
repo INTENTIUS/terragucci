@@ -328,7 +328,8 @@ steps-gate|a step with on_failure approve that fails holds its wave at the gate 
 tg-cost-gate|with cost.approve_above set, a Terragrunt wave whose saved unit plans are priced over the amount waits for an approval under gate: never, while a wave within it applies|
 tg-steps-gate|a step after plan with on_failure approve runs in the unit its glob picks after the run --all plan of the wave, holds the Terragrunt wave at its gate under gate never, and an approval of the digest applies it|
 tg-wave-jobs|with waves.jobs: 2 a Terragrunt wave of two units waits at one gate in its own job, and once approved each share job plans and applies its own unit with run --all --filter, under one approval used once|
-tg-respond-fmt|in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else|'
+tg-respond-fmt|in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else|
+tg-state-versions|a Terragrunt unit whose state is in a versioned S3 bucket applies twice, its backend read from its remote_state block, and the estate page lists both state version ids newest first, each one the bucket holds|'
 
 say() { echo "SMOKE claim=$1 verdict=$2${3:+ $3}"; }
 
@@ -10155,7 +10156,7 @@ audit_in() { # work, command... -> runs it in the CI image in /repo ($1/wave), w
   run_copied --rm --network terragucci -v "$work/wave:/repo" -v "$work/origin.git:/origin.git" -w /repo \
     -v "$bundle:/usr/local/bin/terragucci:ro" -v "$JOB_CACHE_VOLUME:/cache" -e TF_PLUGIN_CACHE_DIR=/cache "${AWS_DOCKER_ENV[@]}" \
     -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-    "$(image_tag tofu)" "$@"
+    "$(image_tag "${AUDIT_IMAGE:-tofu}")" "$@"
 }
 
 audit_wave() { # work, gate -> AUDIT_CODE, the exit code of wave 1
@@ -10672,6 +10673,89 @@ claim_state_versions() {
   fi
   drop_work "$work" "$image"
   [ $rc = 0 ] && log "the estate page lists app's two state versions, newest first, each one the bucket holds, and no state content"
+  return $rc
+}
+
+# The state-versions repo as Terragrunt units: root.hcl keeps each unit's
+# state in the claim's bucket under its path, and live/app takes its one
+# resource from modules/app, so it runs from Terragrunt's cache.
+tg_state_versions_repo() { # work, prefix, state bucket, input -> $1/wave and $1/origin.git
+  local work="$1" prefix="$2" bucket="$3"
+  mkdir -p "$work/wave/live/app" "$work/wave/modules/app"
+  printf 'remote_state {\n  backend = "s3"\n  generate = {\n    path      = "backend.tf"\n    if_exists = "overwrite_terragrunt"\n  }\n  config = {\n    bucket         = "%s"\n    key            = "${path_relative_to_include()}/terraform.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n' "$bucket" > "$work/wave/root.hcl"
+  printf 'variable "input" {\n  type = string\n}\n\nresource "terraform_data" "app" {\n  input = var.input\n}\n' > "$work/wave/modules/app/main.tf"
+  tg_state_versions_unit "$work" "$4"
+  printf 'binary: tofu\nreports:\n  bucket: s3://%s\n  endpoint: http://floci:4566\n  prefix: %s\n' "$REPORT_BUCKET" "$prefix" > "$work/wave/terragucci.yml"
+  audit_origin "$work"
+}
+
+tg_state_versions_unit() { # work, input
+  printf 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n\nterraform {\n  source = "../../modules/app"\n}\n\ninputs = {\n  input = "%s"\n}\n' "$2" > "$1/wave/live/app/terragrunt.hcl"
+}
+
+claim_tg_state_versions() {
+  # A Terragrunt unit, live/app, whose state is in a versioned bucket on floci
+  # and whose module comes through Terragrunt's cache, applies in tf-apply
+  # --terragrunt wave 1, then again with a new input. Each wave's log names
+  # the unit's state and its version, read from the unit's remote_state block,
+  # and its upload adds it to states.json. terragucci estate then lists
+  # live/app's two versions, newest first, each one floci holds for its key,
+  # the newest the object's current one, and no input value.
+  # BREAK: the bucket's versioning is never turned on, so no version is listed.
+  log() { echo "[smoke tg-state-versions] $*" >&2; }
+  # shellcheck source=lib.sh
+  . "$HERE/lib.sh"
+  local work image rc=0 prefix="tgstates-$STAMP" bucket="tgtsv-$STAMP" key="live/app/terraform.tfstate" n project states page ids held current
+  image="$(image_tag terragrunt)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just example-terragrunt up' first"; return 1; }
+  build_cli || return 1
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || { log "could not create the state bucket $bucket"; return 1; }
+  if [ -z "${BREAK:-}" ]; then
+    curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket?versioning" -H 'content-type: application/xml' \
+      --data-binary '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>' \
+      || { log "could not turn on versioning for $bucket"; return 1; }
+  fi
+  tg_state_versions_repo "$work" "$prefix" "$bucket" "tsv-$STAMP-1"
+  for n in 1 2; do
+    [ $rc = 0 ] || break
+    if [ $n = 2 ]; then
+      tg_state_versions_unit "$work" "tsv-$STAMP-2"
+      git -C "$work/wave" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qam "live/app input 2"
+    fi
+    AUDIT_CODE=0
+    AUDIT_IMAGE=terragrunt audit_in "$work" env TG_TF_PATH=tofu TG_NON_INTERACTIVE=true terragucci stage tf-apply --wave 1 --layers live/app --binary tofu --gate never --terragrunt > "$work/run.log" 2>&1 || AUDIT_CODE=$?
+    cat "$work/run.log" >&2
+    clean_mounted "$work/wave" "$image"
+    [ "$AUDIT_CODE" = 0 ] || { log "apply $n exited $AUDIT_CODE, not 0"; rc=1; }
+    grep -q "^live/app: state s3://$bucket/$key" "$work/run.log" || { log "apply $n printed no state line for live/app"; rc=1; }
+  done
+  if [ $rc = 0 ]; then
+    AUDIT_IMAGE=terragrunt audit_in "$work" terragucci estate --link-hours 1 >&2 || { log "terragucci estate failed"; rc=1; }
+    clean_mounted "$work/wave" "$image"
+  fi
+  if [ $rc = 0 ]; then
+    project="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/index.json" | jq -r '.reports[0].project // empty')"
+    states="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/$project/states.json")" || { log "no states.json at $REPORT_BUCKET/$prefix/$project"; rc=1; }
+    page="$(curl -fsS "$FLOCI/$REPORT_BUCKET/$prefix/estate.json")" || { log "no estate.json at $REPORT_BUCKET/$prefix"; rc=1; }
+  fi
+  if [ $rc = 0 ]; then
+    jq -c '.projects[].states[]? | {root, backend, location, versioning, note, versions: [.versions[] | {version_id, wave}]}' <<<"$page" >&2
+    ids="$(jq -r '[.projects[].states[]? | select(.root == "live/app") | .versions[].version_id] | join(" ")' <<<"$page")"
+    [ "$(jq -r '[.projects[].states[]? | select(.root == "live/app") | .versioning] | join(",")' <<<"$page")" = "on" ] || { log "the page does not say live/app's bucket keeps versions"; rc=1; }
+    [ "$(wc -w <<<"$ids" | tr -d ' ')" = 2 ] || { log "the page lists live/app's versions as [$ids], not two"; rc=1; }
+    [ "$(jq -r '[.roots[] | select(.root == "live/app") | .versions[].version_id] | join(" ")' <<<"$states")" = "$ids" ] || { log "states.json and the page disagree on live/app's versions"; rc=1; }
+    held="$(curl -fsS "$FLOCI/$bucket?versions&prefix=$key" | grep -o '<VersionId>[^<]*</VersionId>' | sed 's/<[^>]*>//g' | tr '\n' ' ')"
+    for n in $ids; do
+      case " $held " in *" $n "*) ;; *) log "version $n is not one floci holds for $key ($held)"; rc=1 ;; esac
+    done
+    current="$(curl -fsS -o /dev/null -D - "$FLOCI/$bucket/$key" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-amz-version-id" { print $2 }')"
+    [ "${ids%% *}" = "$current" ] || { log "the newest version listed is ${ids%% *}, and $key's current version is $current"; rc=1; }
+    if grep -q "tsv-$STAMP-" <<<"$states$page"; then log "an input value from the state reached states.json or the page"; rc=1; fi
+  fi
+  drop_work "$work" "$image"
+  [ $rc = 0 ] && log "the estate page lists live/app's two state versions, read from its remote_state block, newest first, each one the bucket holds"
   return $rc
 }
 
@@ -12206,6 +12290,7 @@ tg-cost-gate         runner self! weight=200
 tg-steps-gate        runner self! weight=200
 tg-wave-jobs         runner self! weight=300
 tg-respond-fmt       runner self! weight=150
+tg-state-versions    weight=150
 '
 
 # The Forgejo claims' table, which orders the rows of smoke.json on any forge.

@@ -21,7 +21,7 @@ packages/terragucci/src/render-agent.ts   comment-agent
 packages/terragucci/src/agent-comment.ts  comment-agent
 
 # Stages.
-packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split tg-gate-* tg-layers tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs
+packages/terragucci/src/apply.ts          boot waves publish-attest apply-serial pr-apply* tg-waves tg-pr-apply* comment-apply tg-comment-apply tf-terraform tg-terraform refuse approval-used respond-refused policy-wave policy-override* audit* pr-review* notify-chat apply-outcome inventory resource-history wave-jobs steps-* root-pins cost-* state-versions migrate-split tg-gate-* tg-layers tg-sealed tg-mock-trap tg-policy tg-cost-gate tg-steps-gate tg-wave-jobs tg-state-versions
 packages/terragucci/src/plan.ts           grouped report highlight* affected fresh-plan note-* tips plan-lock* wave-report tf-terraform tg-terraform foreign-checkout policy policy-* check
 packages/terragucci/src/check.ts          check require-* check-diagnostics tg-check tg-mock-lint description-check
 packages/terragucci/src/detect.ts         affected tg-affected zero-config tg-zero-config comment-not-affected tg-dependents cdktn-*
@@ -86,7 +86,7 @@ packages/terragucci/src/report/cost.ts   cost-* tg-cost-gate
 packages/terragucci/src/report/spans.ts   traces tg-spans drill-down provider-calls summed-timings
 packages/terragucci/src/report/wave-telemetry.ts metrics dash-* alerts-fire
 packages/terragucci/src/report/observe.ts traces metrics dash-* drill-down alerts-fire
-packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert tg-steps-gate tg-cost-gate
+packages/terragucci/src/report            report require-* highlight* drill-down note-* wave-report index-writes blob-* report-oidc grouped tips cdktn-* audit* inventory resource-history dora steps-before-plan steps-gate root-pins cost-* state-versions migrate-split migrate-backend migrate-revert tg-steps-gate tg-cost-gate tg-state-versions
 packages/terragucci/src/dashboards        dash-* drill-down alerts-fire dora
 packages/terragucci/src/decide            decide-backends respond-triage
 packages/terragucci/src/respond           respond-* drift-attribute drift-close rollout-continue tg-respond-fmt
@@ -111,6 +111,6 @@ stack/example.sh                          ALL
 stack/fixtures/cdktn                      cdktn-*
 stack/fixtures/migrate-roots              migrate-resume migrate-resume-never
 stack/fixtures/cost-policy                cost-gate cost-policy tg-cost-gate
-stack/fixtures/tg-gated-waves            tg-gate-* tg-sealed tg-policy tg-credentials tg-cost-gate tg-steps-gate tg-wave-jobs tg-respond-fmt
+stack/fixtures/tg-gated-waves            tg-gate-* tg-sealed tg-policy tg-credentials tg-cost-gate tg-steps-gate tg-wave-jobs tg-respond-fmt tg-state-versions
 stack/fixtures/stand-in                   decide-backends otlp-headers tg-credentials role-refused blob-*-key index-writes alerts-fire notify-chat notify-webhook cost-estimate
 example-terragrunt/                       tg-*

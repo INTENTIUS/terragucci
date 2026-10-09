@@ -25,6 +25,7 @@ describe("changesOutputs", () => {
 function fakeTerragrunt(
   found: { path: string; dependencies: string[] }[] = [{ path: "live/a", dependencies: [] }, { path: "live/b", dependencies: ["live/a"] }],
   inputs: Record<string, string> = {},
+  rendered: Record<string, unknown> = {},
 ): { exec: TerragruntExec; applied: Set<string>; calls: string[][]; inputs: Record<string, string> } {
   const applied = new Set<string>();
   const calls: string[][] = [];
@@ -34,7 +35,7 @@ function fakeTerragrunt(
     if (args[0] === "find") {
       return { code: 0, stdout: JSON.stringify(found.map((u) => ({ type: "unit", ...u }))), stderr: "" };
     }
-    if (args[0] === "render") return { code: 0, stdout: "{}", stderr: "" };
+    if (args[0] === "render") return { code: 0, stdout: JSON.stringify(rendered[args[args.indexOf("--working-dir") + 1]] ?? {}), stderr: "" };
     if (args[0] !== "run") return { code: 1, stdout: "", stderr: `unexpected ${args.join(" ")}` };
     calls.push([...args]);
     const units = args.flatMap((a, i) => (args[i - 1] === "--filter" ? [/^\{\.\/(.+)\}$/.exec(a)![1]] : []));
@@ -332,6 +333,26 @@ describe("a Terragrunt wave behind its gate", () => {
       expect(readDecision(decided)).toMatchObject({ changes: 0 });
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, share: 1, now: T(2) })).toBe(0);
       expect(runs(tg)).toEqual(["plan live/c,live/d,live/e"]);
+    });
+  });
+
+  describe("state versions", () => {
+    it("records each applied unit's state version from its evaluated remote_state, and names a unit whose backend cannot be read", async () => {
+      const { work } = setupWith({ "terragucci.yml": "gate: never\n" }, ["live/c", "live/d", "live/e"]);
+      const out = vi.spyOn(console, "log").mockImplementation(() => {});
+      const three = [{ path: "live/c", dependencies: [] }, { path: "live/d", dependencies: [] }, { path: "live/e", dependencies: [] }];
+      const tg = fakeTerragrunt(three, {}, {
+        "live/c": { remote_state: { backend: "local", config: { path: "c.tfstate" } }, terraform: { source: "../../modules/x" } },
+        "live/d": { remote_state: { backend: "gcs", config: { bucket: "b", prefix: "d" } } },
+        "live/e": { remote_state: null, terraform: { source: "../../modules/x" } },
+      });
+      expect(await applyWave(work, { layers: [["live/c", "live/d", "live/e"]], binary: "tofu", gate: "never", env: {}, terragrunt: true, terragruntExec: tg.exec, wave: 1, now: T(1) })).toBe(0);
+      const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
+      const state = Object.fromEntries(report.roots.map((r: { path: string; state?: unknown }) => [r.path, r.state]));
+      expect(state["live/c"]).toEqual({ backend: "local", location: "c.tfstate", versioning: "off", note: "a local backend keeps only the latest state" });
+      expect(state["live/d"]).toMatchObject({ backend: "gcs", versioning: "unknown" });
+      expect(state["live/e"]).toMatchObject({ backend: "unknown", versioning: "unknown", note: expect.stringContaining("names no remote_state block") });
+      expect(out.mock.calls.flat().join("\n")).toContain("live/c: state c.tfstate, versions off");
     });
   });
 });

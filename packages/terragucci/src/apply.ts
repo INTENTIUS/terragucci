@@ -993,11 +993,7 @@ async function recordStateVersions(repo: string, applied: PlannedRoot[], limit: 
   await eachLimited(applied, limit, async (p) => {
     out.set(p.root, await stateVersion(join(repo, p.root), p.env));
   });
-  for (const p of applied) {
-    const v = out.get(p.root)!;
-    const where = v.location ? ` ${v.location}` : "";
-    console.log(`${p.root}: state${where}${v.version_id ? ` version ${v.version_id}` : `, versions ${v.versioning}${v.note ? ` (${v.note})` : ""}`}`);
-  }
+  logStateVersions(applied.map((p) => p.root), out);
   return out;
 }
 
@@ -1822,6 +1818,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     // A unit with no change had nothing to apply; a changing one applied when Terragrunt says it succeeded.
     const succeeded = new Set(applied.results.filter((r) => r.status === "succeeded").map((r) => r.unit));
     w.applied = new Set(units.filter((p) => !changing.includes(p) || (applied.code === 0 && succeeded.has(p.root))).map((p) => p.root));
+    w.states = await recordUnitStateVersions(repo, roots.filter((r) => w.applied!.has(r)), run, env);
     if (applied.code !== 0 || bad.length > 0) {
       for (const r of bad) console.log(`FAILED ${r.unit}: ${r.result}${r.error ? `: ${r.error}` : ""}`);
       w.failed = bad.map((r) => r.unit);
@@ -1860,6 +1857,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
     if (changing.length === 0) {
       facts.nothing = true;
       w.applied = new Set(units.map((p) => p.root));
+      w.states = await recordUnitStateVersions(repo, roots, run, env);
       console.log(`${label}: no changes`);
       console.log(`${label} applied`);
       return EXIT.applied;
@@ -1899,6 +1897,7 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
       return handOff(w.digest);
     }
     w.applied = new Set(units.map((p) => p.root));
+    w.states = await recordUnitStateVersions(repo, roots, run, env);
     console.log(`${label}: no changes`);
     console.log(`${label} applied`);
     return EXIT.applied;
@@ -1915,6 +1914,61 @@ async function runTerragruntWave(repo: string, options: ApplyWaveOptions, work: 
   recordOverridesUsed(repo, options, changing);
   if (deciding) return handOff(digest);
   return applyUnits();
+}
+
+/** One line per root or unit: where its state is, and its version or why there is none. */
+function logStateVersions(roots: readonly string[], versions: Map<string, ReportStateVersion>): void {
+  for (const root of roots) {
+    const v = versions.get(root);
+    if (!v) continue;
+    const where = v.location ? ` ${v.location}` : "";
+    console.log(`${root}: state${where}${v.version_id ? ` version ${v.version_id}` : `, versions ${v.versioning}${v.note ? ` (${v.note})` : ""}`}`);
+  }
+}
+
+/**
+ * The state version each unit's backend holds now that the wave applied it.
+ * A unit's working directory is in Terragrunt's cache, so the backend comes
+ * from its evaluated `remote_state` block (`terragrunt render --json`), and
+ * the version from the state object's metadata, as for a plain root. A unit
+ * with no `remote_state` and no `terraform.source` is its own working
+ * directory, read as a plain root is. Anything else is recorded as unknown,
+ * with why; nothing here fails the wave.
+ */
+async function recordUnitStateVersions(
+  repo: string,
+  units: readonly string[],
+  run: { terragrunt: string; exec: TerragruntExec; binary: string },
+  env: NodeJS.ProcessEnv,
+): Promise<Map<string, ReportStateVersion>> {
+  const out = new Map<string, ReportStateVersion>();
+  await eachLimited([...units], 8, async (unit) => {
+    const dir = join(repo, unit);
+    const r = await run.exec(run.terragrunt, ["render", "--json", "--non-interactive", "--no-color", "--working-dir", unit], { cwd: repo, env: { TG_TF_PATH: run.binary, TG_NON_INTERACTIVE: "true" } });
+    let rendered: { remote_state?: { backend?: unknown; config?: unknown } | null; terraform?: { source?: unknown } | null } | undefined;
+    try {
+      rendered = r.code === 0 ? JSON.parse(r.stdout) : undefined;
+    } catch {
+      rendered = undefined;
+    }
+    if (!rendered) {
+      out.set(unit, { backend: "unknown", versioning: "unknown", note: `terragrunt render could not say the unit's backend (exit ${r.code}): ${(r.stderr || r.stdout).trim().split("\n").pop() ?? ""}` });
+      return;
+    }
+    const backend = typeof rendered.remote_state?.backend === "string" && rendered.remote_state.backend ? rendered.remote_state.backend : undefined;
+    if (backend) {
+      const config = rendered.remote_state?.config && typeof rendered.remote_state.config === "object" ? (rendered.remote_state.config as Record<string, unknown>) : {};
+      out.set(unit, await stateVersion(dir, env, undefined, { type: backend, config }));
+      return;
+    }
+    if (typeof rendered.terraform?.source !== "string" || !rendered.terraform.source) {
+      out.set(unit, await stateVersion(dir, env));
+      return;
+    }
+    out.set(unit, { backend: "unknown", versioning: "unknown", note: "the unit names no remote_state block and runs from Terragrunt's cache, so its backend cannot be read" });
+  });
+  logStateVersions(units, out);
+  return out;
 }
 
 /** Write the decision a wave split across jobs hands its shares. */
