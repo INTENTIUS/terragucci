@@ -70,7 +70,7 @@ REPO="${TERRAGUCCI_SANDBOX_REPO:-INTENTIUS/terragucci-sandbox}"
 DIR="${TERRAGUCCI_SANDBOX_DIR:-${TMPDIR:-/tmp}/terragucci-sandbox}"
 DIR="${DIR%/}"
 # The published release whose `init` writes the pipeline, and so its images.
-RELEASE="${TERRAGUCCI_SANDBOX_RELEASE:-0.4.3}"
+RELEASE="${TERRAGUCCI_SANDBOX_RELEASE:-0.4.4}"
 # The container stack/shot.mjs runs in: Node 22 and Chromium.
 SHOT_IMAGE="${TERRAGUCCI_SHOT_IMAGE:-mcr.microsoft.com/playwright:v1.55.0-noble}"
 SIGNER="sandbox-signer"
