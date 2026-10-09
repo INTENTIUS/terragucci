@@ -2323,6 +2323,39 @@ describe("no forge token where the change's code runs", () => {
   });
 });
 
+describe("the check step's restart line, for every binary", () => {
+  const TG = { version: "0.99.0", parallelism: 4, exclude: [], installs: [] };
+  const checkRun = (forge: "github" | "forgejo", binary: "tofu" | "terraform" | "choudoufu", tg: boolean): string =>
+    body(renderPipeline({ forge, binary, version: "1.13.1", image: "img:1", layers: tg ? [["live/dev/app"]] : layers, env: {}, ...(tg ? { terragrunt: TG } : {}) }).content)
+      .jobs.check.steps.find((s: { run?: string }) => typeof s.run === "string" && s.run.includes(" fmt ")).run as string;
+  const cases = [["tofu", false], ["terraform", false], ["choudoufu", false], ["tofu", true]] as const;
+  const tokens = { GITHUB_TOKEN: "x1", GITEA_TOKEN: "x2", ACTIONS_RUNTIME_TOKEN: "x3", TG_TOKEN: "x4" };
+  const after = 'echo "reached ${GITHUB_TOKEN:-none} ${GITEA_TOKEN:-none} ${ACTIONS_RUNTIME_TOKEN:-none} ${TG_TOKEN:-none}"';
+
+  it.each(cases)("%s (terragrunt: %s): under sh -c, with or without a PATH, the step runs on without the tokens", (binary, tg) => {
+    for (const forge of ["github", "forgejo"] as const) {
+      const first = checkRun(forge, binary, tg).split("\n")[0];
+      expect(first).toBe(dropForgeTokens("sh"));
+      // `sh -c` makes $0 "sh", which is no script file, and an empty environment has no PATH for env.
+      for (const [shell, env] of [["/bin/sh", { ...tokens }], ["sh", { PATH: process.env.PATH, ...tokens }]] as const) {
+        const r = spawnSync(shell, ["-c", `${first}\n${after}`], { env, encoding: "utf-8" });
+        expect(r.stderr).not.toMatch(/cannot (open|execute)/);
+        expect(r.status, r.stderr).toBe(0);
+        expect(r.stdout.trim()).toBe("reached none none none none");
+      }
+    }
+  });
+
+  it.each(cases)("%s (terragrunt: %s): run as the runner runs it, sh -e <file>, the shell starts again without the tokens", (binary, tg) => {
+    const dir = mkdtempSync(join(tmpdir(), "restart-"));
+    const script = join(dir, "step.sh");
+    writeFileSync(script, `${checkRun("forgejo", binary, tg).split("\n")[0]}\n${after} "\${TG_NO_FORGE_TOKEN:-}"\n`);
+    const r = spawnSync("sh", ["-e", script], { env: { PATH: process.env.PATH, ...tokens }, encoding: "utf-8" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("reached none none none none 1");
+  });
+});
+
 describe("the resume and rollout workflows run merged code only", () => {
   it.each(["github", "forgejo"] as const)("%s: each starts on its schedule or by hand, never on a pull request or a comment, from the default branch", (forge) => {
     const r = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gate: "always", resume: 15, rollouts: "*/15 * * * *" });
